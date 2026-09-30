@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node / front end
+node_modules/
+frontend/dist/
+
+# Runtime data and secrets
+data/
+*.sqlite
+.env
+
+# Generated images from the CLI's default output directory
+outputs/
+
+# OS
+.DS_Store
