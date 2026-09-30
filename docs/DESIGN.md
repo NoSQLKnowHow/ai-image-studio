@@ -51,7 +51,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 20 | Starting defaults and limits | Size 2048×2048 (1:1), 40 steps, 1 image per click (max 8), queue cap 10, idle unload 15 min, runs expire after 30 days (§6, §13) | DECIDED |
 | 21 | Security for v1 | As §11: no login; required custom header plus no CORS; upload validation; strict CSP; non-root container; no Docker socket; `STUDIO_TOKEN` hook present but off | DECIDED |
 | 22 | Review cadence | I stop after **every milestone** (M1–M8), report what works and what the tests showed, and wait for your go-ahead | DECIDED |
-| 23 | Repository | A dedicated **private** GitHub repository, `NoSQLKnowHow/dgx-spark-image-studio`, separate from `LiveLabs-Image-Dev`. Nothing for this project is written to `LiveLabs-Image-Dev` | DECIDED (repo not yet created on GitHub, §18 item 8) |
+| 23 | Repository | A dedicated **private** GitHub repository, `NoSQLKnowHow/ai-image-studio` (renamed from the working name `dgx-spark-image-studio`), separate from `LiveLabs-Image-Dev`. Nothing for this project is written to `LiveLabs-Image-Dev` | DECIDED |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -294,7 +294,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 - **Layout:**
 
 ```
-dgx-spark-image-studio/   (repository root)
+ai-image-studio/   (repository root)
   backend/studio/    api, queue, worker, pipeline (real + fake), db, storage, config
   backend/tests/
   frontend/          Vite + React + TS (src/, tests/)
@@ -351,7 +351,7 @@ The server re-implements the size presets, RGBA wrapper, filename scheme and err
 | M7 | Containerfile, compose, docs | Image builds; criterion 17 on the Spark |
 | M8 | Spark smoke test with you | Criteria 1, 10, 17 and the real-hardware checklist |
 
-Each milestone is committed separately. **After each milestone I stop, report what works and what the tests showed, and wait for your go-ahead (decision #22).** Pushing is blocked until GitHub access is fixed, so you review through my summaries and the files in the working copy.
+Each milestone is committed separately. **After each milestone I stop, report what works and what the tests showed, and wait for your go-ahead (decision #22).** Each milestone is pushed to `ai-image-studio` so you can review the diff on GitHub.
 
 ## 18. Open items and facts to verify
 
@@ -362,7 +362,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 5. **`diffusers` commit to pin** — support merged 2026-09-18 (huggingface/diffusers PR #14804); choose and record a specific commit.
 6. **Base image / PyTorch build** — NGC `nvcr.io/nvidia/pytorch` 25.10 or later is reported to support the GB10 (`sm_121`). Choose the newest tag that works and pin it after testing on the Spark.
 7. **Size and memory limits** — max pixels (4.5 MP) and the 8-image cap are guesses until measured on the Spark next to Hermes.
-8. **GitHub repository** — the GitHub integration in my environment is refused (HTTP 403, "Resource not accessible by integration") both when creating repositories and when pushing, so `NoSQLKnowHow/dgx-spark-image-studio` has to be created by you on github.com (empty: no README, license or .gitignore). The Claude GitHub App must also be given access to it. Until then this repository exists only as a local copy in my container.
+8. **GitHub repository** — resolved. `NoSQLKnowHow/ai-image-studio` (private) was created by you and attached to my session with push access. Earlier, the GitHub integration was refused (HTTP 403) when creating repositories and when pushing to `LiveLabs-Image-Dev`; that repository is deliberately not used for this project.
 9. **Memory budget** — the model's real footprint (transformer, text encoder, VAE, activations at 2K) next to Hermes' LLM server; sets `STUDIO_MIN_FREE_GB` and the size and batch caps.
 10. **NVIDIA's pages were unreachable** — docs.nvidia.com and build.nvidia.com are blocked from my sandbox, so §9a and §12 rest on search summaries and community posts. Before building, compare them with the current Container Runtime, NGC and Hermes playbook pages.
 
@@ -383,5 +383,5 @@ Note: NVIDIA publishes a ComfyUI playbook for the Spark, and ComfyUI reportedly 
 
 - **Round 5 (2026-09-30):** you reviewed the key proposals and confirmed: separate worker process (#13), starting defaults and limits (#20), security approach (#21), and review after every milestone (#22). All other PROPOSED items are implementation details left to my judgement (see the status labels at the top).
 - **Not yet done:** your explicit go to start M1. Nothing is built until you give it.
-- **Still pending from you (not blocking M1–M7):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9), and GitHub write access (§18 item 8).
-- **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account, named `dgx-spark-image-studio`. The two earlier commits (CLI script, design spec) were replayed into the new local repository with their messages intact and then removed from the LiveLabs clone.
+- **Still pending from you (not blocking M1–M7):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9).
+- **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.

@@ -1,4 +1,4 @@
-# dgx-spark-image-studio
+# ai-image-studio
 
 Generate and edit images with Qwen-Image-2.1 on an NVIDIA DGX Spark.
 
