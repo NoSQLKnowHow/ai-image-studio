@@ -1,0 +1,133 @@
+"""Server configuration, read from environment variables (DESIGN.md §13).
+
+Every problem is collected and reported at once, so a misconfigured container
+fails at start-up with one readable message instead of failing later.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Mapping, Optional
+
+PIPELINES = ("real", "fake")
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off", ""}
+
+
+class ConfigError(Exception):
+    """The environment configuration is invalid. The message lists every problem."""
+
+
+@dataclass(frozen=True)
+class Settings:
+    model: str = "Qwen/Qwen-Image-2.1"
+    data_dir: Path = Path("/data")
+    pipeline: str = "real"
+    host: str = "0.0.0.0"
+    port: int = 8080
+    allowed_hosts: tuple[str, ...] = ()  # empty = accept any Host header
+    idle_timeout_min: int = 15
+    queue_cap: int = 10
+    retention_days: int = 30
+    max_images_per_run: int = 8
+    max_prompt_chars: int = 8000
+    max_upload_mb: int = 20
+    min_free_gb: Optional[float] = None  # None = memory pre-flight check off (set after measuring, M2)
+    cpu_offload: bool = False
+    local_files_only: bool = False
+    fake_step_delay_ms: int = 30
+
+    @property
+    def db_path(self) -> Path:
+        return self.data_dir / "studio.sqlite"
+
+    @classmethod
+    def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "Settings":
+        env = os.environ if env is None else env
+        errors: list[str] = []
+
+        def text(name: str, default: str) -> str:
+            value = env.get(name, default).strip()
+            if not value:
+                errors.append(f"{name} must not be empty.")
+                return default
+            return value
+
+        def integer(name: str, default: int, lo: int, hi: int) -> int:
+            raw = env.get(name)
+            if raw is None or raw.strip() == "":
+                return default
+            try:
+                value = int(raw.strip())
+            except ValueError:
+                errors.append(f"{name}={raw!r} is not a whole number.")
+                return default
+            if not lo <= value <= hi:
+                errors.append(f"{name}={value} is out of range ({lo}-{hi}).")
+                return default
+            return value
+
+        def boolean(name: str, default: bool) -> bool:
+            raw = env.get(name)
+            if raw is None:
+                return default
+            value = raw.strip().lower()
+            if value in _TRUE:
+                return True
+            if value in _FALSE:
+                return False
+            errors.append(f"{name}={raw!r} is not a boolean (use true/false).")
+            return default
+
+        def optional_float(name: str, lo: float) -> Optional[float]:
+            raw = env.get(name)
+            if raw is None or raw.strip() == "":
+                return None
+            try:
+                value = float(raw.strip())
+            except ValueError:
+                errors.append(f"{name}={raw!r} is not a number.")
+                return None
+            if not value >= lo:
+                errors.append(f"{name}={value} must be at least {lo}.")
+                return None
+            return value
+
+        pipeline = env.get("STUDIO_PIPELINE", "real").strip().lower()
+        if pipeline not in PIPELINES:
+            errors.append(f"STUDIO_PIPELINE={pipeline!r} must be one of: {', '.join(PIPELINES)}.")
+            pipeline = "real"
+
+        allowed_hosts = tuple(
+            h.strip().lower() for h in env.get("STUDIO_ALLOWED_HOSTS", "").split(",") if h.strip()
+        )
+
+        if env.get("STUDIO_TOKEN", "").strip():
+            errors.append(
+                "STUDIO_TOKEN is reserved for a future shared-password feature and is not implemented yet. "
+                "Unset it; setting it would NOT protect the server."
+            )
+
+        settings = cls(
+            model=text("STUDIO_MODEL", cls.model),
+            data_dir=Path(text("STUDIO_DATA_DIR", str(cls.data_dir))).expanduser(),
+            pipeline=pipeline,
+            host=text("STUDIO_HOST", cls.host),
+            port=integer("STUDIO_PORT", cls.port, 1, 65535),
+            allowed_hosts=allowed_hosts,
+            idle_timeout_min=integer("STUDIO_IDLE_TIMEOUT_MIN", cls.idle_timeout_min, 0, 1440),
+            queue_cap=integer("STUDIO_QUEUE_CAP", cls.queue_cap, 1, 1000),
+            retention_days=integer("STUDIO_RETENTION_DAYS", cls.retention_days, 0, 36500),
+            max_images_per_run=integer("STUDIO_MAX_IMAGES_PER_RUN", cls.max_images_per_run, 1, 64),
+            max_prompt_chars=integer("STUDIO_MAX_PROMPT_CHARS", cls.max_prompt_chars, 100, 100_000),
+            max_upload_mb=integer("STUDIO_MAX_UPLOAD_MB", cls.max_upload_mb, 1, 200),
+            min_free_gb=optional_float("STUDIO_MIN_FREE_GB", 0.0),
+            cpu_offload=boolean("STUDIO_CPU_OFFLOAD", cls.cpu_offload),
+            local_files_only=boolean("STUDIO_LOCAL_FILES_ONLY", cls.local_files_only),
+            fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
+        )
+        if errors:
+            raise ConfigError("Invalid configuration:\n  - " + "\n  - ".join(errors))
+        return settings

@@ -49,7 +49,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 18 | Uploaded source images | Kept with the run; deleted when the run expires or is deleted | DECIDED |
 | 19 | Behaviour when too little memory is free (e.g. Hermes' LLM server is holding most of it) | Pre-flight memory check before loading the model (§9a). If short, **fail fast** with clear instructions; you fix it and click Retry. No waiting in the queue, and the studio never controls the LLM container | DECIDED |
 | 20 | Starting defaults and limits | Size 2048×2048 (1:1), 40 steps, 1 image per click (max 8), queue cap 10, idle unload 15 min, runs expire after 30 days (§6, §13) | DECIDED |
-| 21 | Security for v1 | As §11: no login; required custom header plus no CORS; upload validation; strict CSP; non-root container; no Docker socket; `STUDIO_TOKEN` hook present but off | DECIDED |
+| 21 | Security for v1 | As §11: no login; required custom header plus no CORS; upload validation; strict CSP; non-root container; no Docker socket; `STUDIO_TOKEN` reserved but off (setting it stops the server from starting, so it can't give a false sense of protection) | DECIDED |
 | 22 | Review cadence | I stop after **every milestone** (M1–M8), report what works and what the tests showed, and wait for your go-ahead | DECIDED |
 | 23 | Repository | A dedicated **private** GitHub repository, `NoSQLKnowHow/ai-image-studio` (renamed from the working name `dgx-spark-image-studio`), separate from `LiveLabs-Image-Dev`. Nothing for this project is written to `LiveLabs-Image-Dev` | DECIDED |
 
@@ -177,7 +177,7 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `DELETE /api/runs/{id}` | Delete run and files | 409 if running (cancel first) |
 | `GET /api/images/{id}` | Full PNG | `?download=1` sets a meaningful filename (below) |
 | `GET /api/images/{id}/thumb` | WebP thumbnail | |
-| `GET /api/events` | Server-sent events | `run.created`, `run.updated` (status, progress), `run.deleted`, `worker.state`. On reconnect the client refetches list + status |
+| `GET /api/events` | Server-sent events | `hello` (initial status), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`. A `: ping` comment every 15 s keeps proxies from closing the stream. On reconnect the client refetches list + status |
 
 **Capabilities without a loaded model:** the API process can't inspect a pipeline that isn't loaded, so at start-up it runs a short GPU-free probe subprocess that imports `diffusers` and inspects `QwenImage21Pipeline.__call__` (the same idea as the CLI's early signature check). The result is cached. If the import fails the state is `unavailable` with the reason.
 
@@ -187,7 +187,7 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 
 SQLite in WAL mode; the API process is the only writer.
 
-**`runs`** (one per click): `id`, `created_at`, `started_at`, `finished_at`, `status` (queued / running / done / failed / canceled), `mode`, `prompt`, `effective_prompt` (after the RGBA wrapper), `negative_prompt`, `transparent`, `width`, `height` (null = auto), `steps`, `cfg_scale`, `seed` (of image 0), `num_images`, `model_id`, `input_image_id`, `error_message`, `pinned`, `options_json` (exact snapshot, so Reuse/Retry are faithful).
+**`runs`** (one per click): `id`, `created_at`, `started_at`, `finished_at`, `status` (queued / running / done / failed / canceled), `mode`, `prompt`, `effective_prompt` (after the RGBA wrapper), `negative_prompt`, `transparent`, `width`, `height` (null = auto), `steps`, `cfg_scale`, `seed` (of image 0), `num_images`, `model_id`, `input_image_id`, `error_message`, `error_hint`, `pinned`, `options_json` (exact snapshot, so Reuse/Retry are faithful).
 
 **`images`**: `id`, `run_id`, `idx`, `seed`, `width`, `height`, `has_alpha`, `bytes`, `path`, `thumb_path`, `created_at`. Uploaded reference images are rows here too, flagged `kind = input` (this is what lets "Edit this" and uploads share one code path).
 
@@ -244,7 +244,8 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 - **Uploads:** accept PNG/JPEG/WebP only; verify by decoding with Pillow; cap file size (20 MB), pixel count (16 MP) and use Pillow's decompression-bomb protection; re-encode to PNG on store; random ids.
 - **Output safety:** React escapes everything (no `dangerouslySetInnerHTML`); `Content-Security-Policy` restricting scripts to same origin; `X-Content-Type-Options: nosniff`.
 - **Container:** runs as a non-root user, no privileged mode, only the two volumes mounted, and **no Docker socket** (the studio cannot start or stop other containers).
-- **No internet exposure:** documented as unsupported without adding auth. Reserved hook: if `STUDIO_TOKEN` is set, every request must present it. Off in v1.
+- **No internet exposure:** documented as unsupported without adding auth. `STUDIO_TOKEN` is reserved for a future shared password; in v1 the server **refuses to start** if it is set, so it can never give a false sense of protection.
+- **Host allow-list (optional; added in M1):** `STUDIO_ALLOWED_HOSTS=spark.lan,192.168.1.20` rejects requests whose `Host` header isn't listed, which blocks DNS-rebinding tricks (a web page pointing a host name of its own at the Spark). Off by default because the Spark's LAN name and address aren't known in advance.
 
 ## 12. Container and deployment (PROPOSED, based on NVIDIA's Spark documentation)
 
@@ -283,9 +284,13 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_MAX_IMAGES_PER_RUN` | `8` | Batch cap |
 | `STUDIO_MAX_PROMPT_CHARS` | `8000` | Prompt length cap |
 | `STUDIO_MAX_UPLOAD_MB` | `20` | Upload size cap |
+| `STUDIO_HOST` | `0.0.0.0` | Listen address inside the container (added in M1) |
 | `STUDIO_PORT` | `8080` | Listen port |
+| `STUDIO_ALLOWED_HOSTS` | empty (any) | Comma-separated host names to accept (§11; added in M1) |
 | `STUDIO_PIPELINE` | `real` | `fake` uses the test pipeline (§15) |
-| `STUDIO_TOKEN` | unset | Reserved auth hook |
+| `STUDIO_FAKE_STEP_DELAY_MS` | `30` | Fake pipeline only: delay per step (added in M1) |
+| `STUDIO_FAKE_LOAD_FAIL` | unset | Fake pipeline only: simulate a model load failure (added in M1) |
+| `STUDIO_TOKEN` | unset | Reserved; setting it stops the server from starting (§11) |
 
 ## 14. Tech stack and repo layout (PROPOSED)
 
@@ -309,6 +314,8 @@ The server re-implements the size presets, RGBA wrapper, filename scheme and err
 ## 15. Testing strategy (PROPOSED)
 
 **The key idea: a fake pipeline.** With `STUDIO_PIPELINE=fake` the worker produces deterministic synthetic images (seed-dependent colours, the prompt drawn on it, optional alpha), simulates progress and delay, and can inject faults (out-of-memory, load failure, crash) on demand. The whole stack can then be developed and tested without a GPU or the weights — which is exactly my situation in this sandbox (no GPU, no access to the model).
+
+Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`, `[fake:crash]` and `[fake:noise]` (stray output on stdout), optionally `@N` to target image N only, e.g. `[fake:crash@1]`. `STUDIO_FAKE_LOAD_FAIL=1` simulates a load failure. Fake images are clearly labelled "FAKE PIPELINE". (Added in M1.)
 
 - **Unit:** validation and limits, slug and filenames, queue ordering and cap, retention and pinning, options persistence parsing (corrupt/old localStorage).
 - **API integration:** pytest with the fake worker — every endpoint, SSE events, restart recovery, failure paths.
@@ -352,6 +359,8 @@ The server re-implements the size presets, RGBA wrapper, filename scheme and err
 | M8 | Spark smoke test with you | Criteria 1, 10, 17 and the real-hardware checklist |
 
 Each milestone is committed separately. **After each milestone I stop, report what works and what the tests showed, and wait for your go-ahead (decision #22).** Each milestone is pushed to `ai-image-studio` so you can review the diff on GitHub.
+
+**Progress:** M1 is complete on branch `m1-backend` (2026-10-01) and awaiting your review: backend, database, API, queue, worker process and fake pipeline, with 77 automated tests passing. Deliberately left for later milestones: the real model, idle unload and memory pre-flight (M2), uploads and Edit mode (M5), cancel, pin and retention (M6).
 
 ## 18. Open items and facts to verify
 

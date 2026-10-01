@@ -1,0 +1,10 @@
+[project]
+name = "ai-image-studio-backend"
+version = "0.1.0"
+description = "Backend for AI Image Studio (Qwen-Image-2.1 on an NVIDIA DGX Spark)"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"
