@@ -82,8 +82,9 @@ def test_a_size_smaller_in_either_side_is_refused(client, run, full):
     ({"width": 512, "height": 512, "steps": 1000}, "steps", "Must be between"),
 ])
 def test_a_full_size_is_checked_like_any_size(client, full, field, fragment):
-    response = post(client, {"width": 256, "height": 256, "steps": 3, "full": full})
-    assert fragment in errors_of(response)[("body", "options", "full", field)]
+    errors = errors_of(post(client, {"width": 256, "height": 256, "steps": 3, "full": full}))
+    assert fragment in errors[("body", "options", "full", field)]
+    assert set(errors) == {("body", "options", "full", field)}  # one problem, said once
 
 
 def test_only_generate_records_one(client):
