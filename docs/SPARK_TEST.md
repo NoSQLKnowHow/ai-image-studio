@@ -251,9 +251,12 @@ photo of an object or pet, and a scene. Any JPEG, PNG or WebP.
 
 **Before you update:** this version changes the database layout. The first start upgrades it and keeps a
 copy of the old one as `data/studio.sqlite.before-schema-2`. That copy is also the way back to version 1.1
-(an older studio refuses a database a newer one has touched): stop the studio, put that file over
-`data/studio.sqlite`, and start the 1.1 image. A backup first (`scripts/backup.sh`) is still the better
-safety net.
+(an older studio refuses a database a newer one has touched, with a message saying so). To go back: check
+out the 1.1 code and rebuild, then `docker compose stop`, delete `data/studio.sqlite-wal` and
+`data/studio.sqlite-shm` if they exist, copy `data/studio.sqlite.before-schema-2` over
+`data/studio.sqlite`, and `docker compose up -d`. The history is then as it was at the upgrade: anything
+made since is gone from the page (its image files stay in `data/images`). I tried exactly this with a
+database written by the real 1.1 code. A backup (`scripts/backup.sh`) first is still the better safety net.
 
 ```bash
 git pull && docker compose up -d --build

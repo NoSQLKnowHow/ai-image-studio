@@ -97,6 +97,54 @@ def test_cmyk_and_greyscale_jpegs_become_rgb(client):
     assert fetch(client, stage(client, grey.getvalue())["url"]).mode == "RGB"
 
 
+def png_16_bit_rgb(r: int, g: int, b: int, size: int = 4) -> bytes:
+    """A 16-bit-per-channel RGB PNG, written by hand (Pillow can read these but not make them)."""
+    import struct
+    import zlib
+
+    raw = b"".join(b"\x00" + struct.pack(">HHH", r, g, b) * size for _ in range(size))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    header = struct.pack(">IIBBBBB", size, size, 16, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
+@pytest.mark.parametrize("value,expected", [(65535, 255), (30000, 117), (32768, 128), (256, 1), (255, 0), (0, 0)])
+def test_a_16_bit_greyscale_png_is_scaled_not_clipped_to_white(client, value, expected):
+    """Pillow's own conversion clips every 16-bit value above 255 to white, which silently ruins such an image."""
+    buffer = io.BytesIO()
+    Image.new("I;16", (8, 8), value).save(buffer, format="PNG")
+    stored = fetch(client, stage(client, buffer.getvalue())["url"])
+    assert stored.mode == "RGB" and stored.getpixel((2, 2)) == (expected,) * 3
+
+
+def test_a_16_bit_colour_png_keeps_its_colours(client):
+    stored = fetch(client, stage(client, png_16_bit_rgb(65535, 32768, 0))["url"])
+    assert stored.getpixel((1, 1)) == (255, 128, 0)
+
+
+def test_unusual_but_valid_files_load_as_ordinary_rgb(client):
+    """1-bit and palette-free greyscale PNGs, an animated WebP (first frame) and an animated PNG (first frame)."""
+    cases = {}
+    one_bit = io.BytesIO()
+    Image.new("1", (16, 16), 1).save(one_bit, format="PNG")
+    cases["1-bit"] = (one_bit.getvalue(), (255, 255, 255))
+    grey = io.BytesIO()
+    Image.new("L", (16, 16), 7).save(grey, format="PNG")
+    cases["greyscale"] = (grey.getvalue(), (7, 7, 7))
+    frames = [Image.new("RGB", (40, 30), c) for c in ((255, 0, 0), (0, 0, 255))]
+    for fmt in ("WEBP", "PNG"):
+        animated = io.BytesIO()
+        extra = {"lossless": True} if fmt == "WEBP" else {}  # WebP is lossy by default, which would blur the colour
+        frames[0].save(animated, format=fmt, save_all=True, append_images=frames[1:], duration=100, **extra)
+        cases[f"animated {fmt}"] = (animated.getvalue(), (255, 0, 0))
+    for label, (data, colour) in cases.items():
+        stored = fetch(client, stage(client, data)["url"])
+        assert stored.mode == "RGB" and stored.getpixel((2, 2)) == colour, label
+
+
 # ------------------------------------------------------------------ what is refused, and that nothing is left behind
 @pytest.mark.parametrize("data,status,code", [
     (b"", 422, "unreadable"),

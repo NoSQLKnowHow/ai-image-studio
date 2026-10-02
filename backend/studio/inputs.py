@@ -79,6 +79,8 @@ def decode_upload(data: bytes) -> Image.Image:
     try:
         image.load()
         image = ImageOps.exif_transpose(image)  # phone photos carry their rotation in a tag the model never sees
+        if image.mode.startswith("I"):  # 16-bit greyscale: convert() would clip every value above 255 to white
+            image = image.convert("I").point(lambda value: value * (1 / 256)).convert("L")
         return image.convert("RGBA" if _has_transparency(image) else "RGB")
     except Exception:
         raise UploadError(422, "The image is damaged and can't be read.") from None
