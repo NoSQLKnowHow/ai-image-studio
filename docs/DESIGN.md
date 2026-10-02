@@ -361,12 +361,12 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 
 Each milestone is committed separately. **After each milestone I stop, report what works and what the tests showed, and wait for your go-ahead (decision #22).** Each milestone is pushed to `ai-image-studio` so you can review the diff on GitHub.
 
-**Batches (decided 2026-10-02):** milestones are grouped into batches, **one pull request per batch**, so you can test something real sooner. Batch 2 is **M2 + M3 + M4 + M7** (the real model, the web page and the container); M7 moved ahead of M5 and M6 so the studio can run on the Spark before Edit mode and the queue extras exist. M5, M6 and M8 follow.
+**Batches (decided 2026-10-02):** milestones are grouped into batches, **one pull request per batch**, so you can test something real sooner. Each batch's pull request targets `main` directly, never another batch's branch: a stacked pull request merges into its base branch, not `main`, unless that base has been deleted first (that is how batch 2 first landed on `m1-backend`). Batch 2 is **M2 + M3 + M4 + M7** (the real model, the web page and the container); M7 moved ahead of M5 and M6 so the studio can run on the Spark before Edit mode and the queue extras exist. M5, M6 and M8 follow.
 
 **Progress:**
 
 - **M1** (2026-10-01, branch `m1-backend`): backend, database, API, queue, worker process and fake pipeline.
-- **Batch 2** (2026-10-02, branch `batch2-real-model-ui`):
+- **Batch 2** (2026-10-02; reviewed as #2, merged to `main` via #3):
   - **M2:** the real `QwenImage21Pipeline` (checked against the diffusers source, not guessed: sizes must be multiples of 32, output can be RGBA, the per-step callback and `true_cfg_scale` exist); a start-up capability check; idle unload; the memory pre-flight from `/proc/meminfo`; errors translated into actionable messages.
   - **M3–M4:** the web page as specified in §5, with live updates. The browser tests found and fixed real bugs: a run that failed within milliseconds could show "Queued" forever (the live stream now opens with a consistent snapshot and older copies of a run never replace newer ones, §7), images requested while their run was being deleted gave a 500, and keyboard focus was lost when dialogs closed.
   - **M7:** `Dockerfile`, `compose.yaml`, `.env.example`, `docs/SPARK_TEST.md`.

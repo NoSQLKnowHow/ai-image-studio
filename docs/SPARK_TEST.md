@@ -19,8 +19,7 @@ access token, set up the way you normally do).
 
 ```bash
 git clone https://github.com/NoSQLKnowHow/ai-image-studio.git
-cd ai-image-studio
-git checkout batch2-real-model-ui      # until the pull request is merged
+cd ai-image-studio                     # main has everything; no branch to switch to
 ```
 
 ## 2. Check Docker and the GPU
