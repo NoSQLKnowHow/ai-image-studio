@@ -12,23 +12,26 @@ import json
 import logging
 import secrets
 import sqlite3
+import time
+from datetime import datetime, timezone
 from contextlib import suppress
 from typing import Any, Optional
 
-from . import __version__
+from . import __version__, sysinfo
 from .config import Settings
 from .db import Database
 from .events import EventBus
 from .runspec import ResolvedRun
 from .serialize import run_payload, utcnow
 from .storage import Storage
-from .worker_client import WorkerClient, WorkerGone
+from .worker_client import WorkerClient, WorkerGone, worker_env
 
 log = logging.getLogger("studio.jobs")
 
 RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "run_finished", "run_failed"})
 FAKE_MODEL_ID = "fake-pipeline"
 SHUTDOWN_MESSAGE = "Interrupted because the server was stopped."
+PROBE_TIMEOUT_SECONDS = 300  # importing torch + diffusers can be slow on a cold start
 WORKER_RESTART_HINT = "The worker is restarted automatically for the next job; the server log has details."
 
 
@@ -58,16 +61,24 @@ class JobManager:
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
+        self._probe_task: Optional[asyncio.Task] = None
+        self._probe: dict[str, Any] = {"state": "pending"}
+        self._unload_at: Optional[float] = None
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
         recovered = self.db.recover_interrupted(utcnow())
         if recovered:
             log.warning("marked %d run(s) interrupted by a previous shutdown as failed", len(recovered))
+        self._probe_task = asyncio.create_task(self._run_probe(), name="capability-probe")
         self._task = asyncio.create_task(self._loop(), name="job-loop")
 
     async def stop(self) -> None:
         busy = self._current is not None  # read before cancelling: the loop clears it on the way out
+        if self._probe_task is not None:
+            self._probe_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._probe_task
         if self._task is not None:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
@@ -81,18 +92,35 @@ class JobManager:
         return FAKE_MODEL_ID if self.settings.pipeline == "fake" else self.settings.model
 
     def worker_status(self) -> dict[str, Any]:
-        return {**self._worker_state, "pipeline": self.settings.pipeline, "pid": self._worker.pid}
+        unload_at = None
+        if self._unload_at is not None:
+            unload_at = datetime.fromtimestamp(self._unload_at, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        return {
+            **self._worker_state,
+            "pipeline": self.settings.pipeline,
+            "pid": self._worker.pid,
+            "unload_at": unload_at,
+            "device": self._probe.get("device"),
+            "probe": self._probe.get("state"),
+        }
 
     def status(self) -> dict[str, Any]:
         return {
             "version": __version__,
             "worker": self.worker_status(),
             "queue": {"running": self._current, "queued": self.db.count_queued(), "cap": self.settings.queue_cap},
+            "memory": self.memory_status(),
         }
+
+    def memory_status(self) -> dict[str, Any]:
+        mem = sysinfo.memory() or {}
+        return {**mem, "min_free_gb": self.settings.min_free_gb, "worker_rss_gb": sysinfo.process_rss_gb(self._worker.pid)}
 
     def supports(self) -> dict[str, bool]:
         if self._worker_info and isinstance(self._worker_info.get("supports"), dict):
             return dict(self._worker_info["supports"])
+        if isinstance(self._probe.get("supports"), dict):
+            return dict(self._probe["supports"])
         if self.settings.pipeline == "fake":
             from .pipelines.fake import FakePipeline
 
@@ -160,7 +188,7 @@ class JobManager:
             if row is None:
                 self._wakeup.clear()
                 if self.db.next_queued() is None:  # re-check after clear: no lost wake-ups
-                    await self._wakeup.wait()
+                    await self._wait_while_idle()
                 continue
             try:
                 await self._execute(row)
@@ -184,6 +212,11 @@ class JobManager:
         try:
             try:
                 if not self._worker.alive():
+                    shortfall = self._memory_shortfall()
+                    if shortfall:
+                        self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
+                        self._finish(run_id, "failed", shortfall, sysinfo.MEMORY_HINT)
+                        return
                     self._set_worker_state("loading")
                     await self._worker.start()
                 await self._worker.send({"cmd": "run", "job": self._job_for(row)})
@@ -232,6 +265,85 @@ class JobManager:
                 message = f"The image worker stopped unexpectedly (exit code {event.get('returncode')})."
                 self._finish(run_id, "failed", self._with_partial(run_id, row, message), WORKER_RESTART_HINT)
                 return
+
+    async def _wait_while_idle(self) -> None:
+        """Wait for work. A loaded model is unloaded (worker exits, memory freed) after the idle timeout."""
+        if not self._worker.alive():
+            await self._wakeup.wait()
+            return
+        timeout = self.settings.idle_timeout_min * 60
+        self._unload_at = time.time() + timeout
+        self.bus.publish("worker.state", self.worker_status())
+        try:
+            await asyncio.wait_for(self._wakeup.wait(), timeout)
+        except asyncio.TimeoutError:
+            log.info("unloading the model after %.1f idle minute(s)", self.settings.idle_timeout_min)
+            self._unload_at = None
+            await self._worker.stop()
+        finally:
+            if self._unload_at is not None:
+                self._unload_at = None
+                self.bus.publish("worker.state", self.worker_status())
+
+    def _memory_shortfall(self) -> Optional[str]:
+        """Fail fast (decision #19) instead of starting a load that can't fit next to Hermes."""
+        needed = self.settings.min_free_gb
+        if needed is None:
+            return None
+        mem = sysinfo.memory()
+        if mem is None:
+            log.warning("could not read free memory; skipping the pre-load memory check")
+            return None
+        if mem["available_gb"] < needed:
+            return (f"Not enough free memory to load the model: {mem['available_gb']:.1f} GB available, "
+                    f"{needed:g} GB required (STUDIO_MIN_FREE_GB).")
+        return None
+
+    async def _run_probe(self) -> None:
+        """Check the pipeline and GPU without loading weights, so problems show before the first job."""
+        self._probe = {"state": "running"}
+        result: dict[str, Any] = {}
+        proc: Optional[asyncio.subprocess.Process] = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *self._worker.command(probe=True), stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, env=worker_env(), limit=1 << 20)
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), PROBE_TIMEOUT_SECONDS)
+            except asyncio.TimeoutError:
+                proc.kill()
+                await proc.wait()
+                out = b""
+                result = {"ok": False, "error": {"kind": "error", "message": "The start-up capability check timed out.", "hint": None}}
+            for line in reversed(out.decode("utf-8", "replace").splitlines()):
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("event") == "probe":
+                    result = event
+                    break
+        except OSError as exc:
+            result = {"ok": False, "error": {"kind": "error", "message": f"Could not run the capability check: {exc}", "hint": None}}
+        except asyncio.CancelledError:  # server stopping: don't leave the check running behind us
+            if proc is not None and proc.returncode is None:
+                proc.kill()
+                await proc.wait()
+            raise
+        if not result:
+            result = {"ok": False, "error": {"kind": "error", "message": "The capability check produced no result.", "hint": "See the server log."}}
+        if result.get("ok"):
+            self._probe = {"state": "done", "supports": result.get("supports") or {}, "device": result.get("device")}
+            log.info("capability check passed: %s", result.get("device"))
+        else:
+            error = result.get("error") or {}
+            self._probe = {"state": "failed", "error": error}
+            log.warning("capability check failed: %s", error.get("message"))
+            if self._current is None and not self._worker.alive():
+                state = "unavailable" if error.get("kind") == "unavailable" else "error"
+                self._set_worker_state(state, error.get("message"), error.get("hint"))
+        self.bus.publish("capabilities.updated", {"supports": self.supports()})
+        self.bus.publish("worker.state", self.worker_status())
 
     def _with_partial(self, run_id: str, row: sqlite3.Row, message: str) -> str:
         done = len(self.db.images_for_runs([run_id])[run_id])

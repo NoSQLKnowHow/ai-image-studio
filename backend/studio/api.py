@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from . import presets as P
@@ -27,6 +29,7 @@ log = logging.getLogger("studio.api")
 HEARTBEAT_SECONDS = 15.0  # keep-alive comment on idle event streams (stops proxies closing them)
 POLL_SECONDS = 1.0  # how quickly an idle event stream notices that the server is shutting down
 IMMUTABLE = "private, max-age=31536000, immutable"
+DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"  # dev checkout
 
 
 def server_stopping(app: FastAPI) -> bool:
@@ -40,7 +43,7 @@ PLACEHOLDER_HTML = """<!doctype html>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#222;background:#fafafa}
 @media (prefers-color-scheme:dark){body{color:#eee;background:#16161a}}code{font-size:.9em}</style></head>
 <body><h1>AI Image Studio</h1>
-<p>The backend is running. The web interface arrives in milestone M3.</p>
+<p>The backend is running, but the web interface has not been built. Build it with <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code> (the container image does this for you).</p>
 <p>API: <code>/api/health</code>, <code>/api/status</code>, <code>/api/capabilities</code>, <code>/api/runs</code>,
 <code>/api/events</code>.</p></body></html>"""
 
@@ -89,10 +92,6 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def jobs_of(request: Request) -> JobManager:
         return request.app.state.jobs
 
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def index() -> str:
-        return PLACEHOLDER_HTML
-
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {"ok": True, "version": __version__}
@@ -124,6 +123,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
             },
             "queue_cap": settings.queue_cap,
+            "device": jobs.worker_status().get("device"),
         }
 
     @app.post("/api/runs", status_code=201)
@@ -238,5 +238,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    static_dir = settings.static_dir or DEFAULT_STATIC_DIR
+    if (static_dir / "index.html").is_file():
+        # Registered last, so every /api route above takes precedence.
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")
+        log.info("serving the web UI from %s", static_dir)
+    else:
+        if settings.static_dir is not None:
+            log.warning("STUDIO_STATIC_DIR=%s has no index.html; serving a placeholder page", static_dir)
+
+        @app.get("/", response_class=HTMLResponse, include_in_schema=False)
+        async def index() -> str:
+            return PLACEHOLDER_HTML
 
     return app

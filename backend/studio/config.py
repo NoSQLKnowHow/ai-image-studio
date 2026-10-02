@@ -28,7 +28,7 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8080
     allowed_hosts: tuple[str, ...] = ()  # empty = accept any Host header
-    idle_timeout_min: int = 15
+    idle_timeout_min: float = 15.0  # 0 = unload as soon as the queue is empty
     queue_cap: int = 10
     retention_days: int = 30
     max_images_per_run: int = 8
@@ -38,6 +38,7 @@ class Settings:
     cpu_offload: bool = False
     local_files_only: bool = False
     fake_step_delay_ms: int = 30
+    static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
     @property
     def db_path(self) -> Path:
@@ -81,6 +82,20 @@ class Settings:
             errors.append(f"{name}={raw!r} is not a boolean (use true/false).")
             return default
 
+        def number(name: str, default: float, lo: float, hi: float) -> float:
+            raw = env.get(name)
+            if raw is None or raw.strip() == "":
+                return default
+            try:
+                value = float(raw.strip())
+            except ValueError:
+                errors.append(f"{name}={raw!r} is not a number.")
+                return default
+            if not lo <= value <= hi:
+                errors.append(f"{name}={value:g} is out of range ({lo:g}-{hi:g}).")
+                return default
+            return value
+
         def optional_float(name: str, lo: float) -> Optional[float]:
             raw = env.get(name)
             if raw is None or raw.strip() == "":
@@ -117,7 +132,7 @@ class Settings:
             host=text("STUDIO_HOST", cls.host),
             port=integer("STUDIO_PORT", cls.port, 1, 65535),
             allowed_hosts=allowed_hosts,
-            idle_timeout_min=integer("STUDIO_IDLE_TIMEOUT_MIN", cls.idle_timeout_min, 0, 1440),
+            idle_timeout_min=number("STUDIO_IDLE_TIMEOUT_MIN", cls.idle_timeout_min, 0, 1440),
             queue_cap=integer("STUDIO_QUEUE_CAP", cls.queue_cap, 1, 1000),
             retention_days=integer("STUDIO_RETENTION_DAYS", cls.retention_days, 0, 36500),
             max_images_per_run=integer("STUDIO_MAX_IMAGES_PER_RUN", cls.max_images_per_run, 1, 64),
@@ -127,6 +142,7 @@ class Settings:
             cpu_offload=boolean("STUDIO_CPU_OFFLOAD", cls.cpu_offload),
             local_files_only=boolean("STUDIO_LOCAL_FILES_ONLY", cls.local_files_only),
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
+            static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )
         if errors:
             raise ConfigError("Invalid configuration:\n  - " + "\n  - ".join(errors))

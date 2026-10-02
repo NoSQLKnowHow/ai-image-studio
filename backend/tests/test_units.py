@@ -131,7 +131,7 @@ def test_blank_negative_prompt_becomes_none():
 
 @pytest.mark.parametrize("options,field,fragment", [
     ({"width": 1024}, "height", "together"),
-    ({"width": 1000, "height": 1024}, "width", "multiple of 16"),
+    ({"width": 1040, "height": 1024}, "width", "multiple of 32"),  # fine for 16, not for the pipeline's 32
     ({"width": 128, "height": 1024}, "width", "between 256"),
     ({"width": 4096, "height": 2048}, "width", "MP"),
     ({"steps": 0}, "steps", "between 1"),

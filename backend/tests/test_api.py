@@ -12,7 +12,8 @@ from conftest import close, create_run, wait_for, wait_for_worker_state
 
 def test_health_index_and_capabilities(client):
     assert client.get("/api/health").json()["ok"] is True
-    assert "web interface arrives in milestone M3" in client.get("/").text
+    page = client.get("/").text  # no UI build in this test's settings -> placeholder
+    assert "AI Image Studio" in page and "/api/health" in page
     caps = client.get("/api/capabilities").json()
     assert caps["pipeline"] == "fake" and caps["modes"] == ["generate"] and caps["model"] == "fake-pipeline"
     assert caps["defaults"]["width"] == 2048 and caps["defaults"]["steps"] == 40 and caps["queue_cap"] == 10
@@ -142,12 +143,12 @@ def test_model_load_failure_is_reported(client_factory, monkeypatch):
     assert "Simulated model load failure" in worker["detail"] and worker["hint"]
 
 
-def test_real_pipeline_reports_unavailable_until_m2(client_factory):
-    client = client_factory(pipeline="real")
+def test_real_pipeline_without_pytorch_fails_runs_with_a_clear_reason(client_factory):
+    client = client_factory(pipeline="real")  # this test environment has no PyTorch
     assert client.get("/api/capabilities").json()["model"] == "Qwen/Qwen-Image-2.1"
     run = wait_for(client, create_run(client)["id"])
-    assert run["status"] == "failed" and "M2" in run["error"]["message"]
-    assert "STUDIO_PIPELINE=fake" in run["error"]["hint"]
+    assert run["status"] == "failed" and run["error"]["message"] == "PyTorch is not installed in this environment."
+    assert "container image" in run["error"]["hint"]
     assert wait_for_worker_state(client, "unavailable")["worker"]["detail"]
 
 
