@@ -1,0 +1,259 @@
+#!/usr/bin/env bash
+# Back up AI Image Studio. See README "Backing up and restoring".
+#
+#   scripts/backup.sh [options] DESTINATION_FOLDER
+#
+# Makes DESTINATION_FOLDER/ai-image-studio-backup-<date>-<time>/ holding:
+#   data.tar.gz     your history and images (the ./data folder)           always
+#   image.tar.gz    the Docker image, exactly as built                    unless --no-image
+#   env.backup      your .env settings (may hold a token: kept private)   unless --no-env
+#   model-cache.tar the model's files from the Hugging Face cache         only with --model
+#   MANIFEST.txt, SHA256SUMS   what is in it, and checksums to prove it is intact
+set -euo pipefail
+# shellcheck source=scripts/_backup_common.sh
+. "$(dirname -- "${BASH_SOURCE[0]}")/_backup_common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: scripts/backup.sh [options] DESTINATION_FOLDER
+
+Backs up your history and images (./data), the Docker image and your .env settings into a new,
+dated folder inside DESTINATION_FOLDER. The studio is stopped for the few seconds it takes to copy
+the data, then started again; the image and model are copied while it runs.
+
+Options:
+  --model        also back up the model's files from the Hugging Face cache (about 31 GiB)
+  --no-image     leave out the Docker image
+  --no-env       leave out the .env file
+  --keep N       afterwards delete the oldest backups in DESTINATION_FOLDER, keeping the newest N
+  --yes, -y      don't ask questions (for scheduled runs)
+  --interrupt    back up even if an image is being generated (the run is interrupted and marked failed)
+  --dry-run      show what would be done and change nothing
+  --allow-root   run as root (not recommended)
+  -h, --help     this text
+
+Exit codes: 0 done; 1 an error; 2 wrong usage; 3 not done because the studio is busy or you said no.
+EOF
+}
+
+WITH_MODEL=0; WITH_IMAGE=1; WITH_ENV=1; KEEP=0
+ASSUME_YES=0; DRY=0; INTERRUPT=0; ALLOW_ROOT=0; DEST=""
+while (( $# )); do
+  case $1 in
+    --model)      WITH_MODEL=1 ;;
+    --no-image)   WITH_IMAGE=0 ;;
+    --no-env)     WITH_ENV=0 ;;
+    --keep)       [[ ${2:-} =~ ^[1-9][0-9]*$ ]] || die "--keep needs a whole number, 1 or more." 2
+                  KEEP=$2; shift ;;
+    --keep=*)     KEEP=${1#--keep=}
+                  [[ $KEEP =~ ^[1-9][0-9]*$ ]] || die "--keep needs a whole number, 1 or more." 2 ;;
+    --yes|-y)     ASSUME_YES=1 ;;
+    --interrupt)  INTERRUPT=1 ;;
+    --dry-run)    DRY=1 ;;
+    --allow-root) ALLOW_ROOT=1 ;;
+    -h|--help)    usage; exit 0 ;;
+    -*)           die "Unknown option: $1 (see --help)." 2 ;;
+    *)            [[ -z $DEST ]] || die "Give one destination folder, not two." 2; DEST=$1 ;;
+  esac
+  shift
+done
+if [[ -z $DEST ]]; then usage >&2; exit 2; fi
+case $DEST in /*) ;; *) DEST="$PWD/$DEST" ;; esac   # before we change directory
+DEST=${DEST%/}
+
+# ---------------------------------------------------------------- checks, before anything is touched
+refuse_root
+for tool in tar gzip sha256sum df du docker; do
+  command -v "$tool" >/dev/null 2>&1 || die "'$tool' is needed but isn't installed."
+done
+cd "$REPO"
+[[ -f compose.yaml ]] || die "compose.yaml not found next to the scripts folder ($REPO)."
+[[ -d data ]] || die "There is no data folder yet ($REPO/data), so there is nothing to back up. Has the studio been started?"
+if (( WITH_IMAGE )); then
+  docker image inspect "$IMAGE" >/dev/null 2>&1 \
+    || die "The Docker image $IMAGE doesn't exist on this machine. Build it first (README), or back up without it using --no-image."
+fi
+if (( WITH_ENV )) && [[ ! -f .env ]]; then
+  warn "There is no .env file, so there are no settings to back up (the defaults are in use)."
+  WITH_ENV=0
+fi
+
+HF_DIR=""; MODEL_DIR=""
+if (( WITH_MODEL )); then
+  MODEL_DIR=$(model_dir_name) \
+    || die "STUDIO_MODEL points at a folder on disk, not at the Hugging Face cache; --model can't back that up."
+  HF_DIR=$(hf_cache_dir)
+  [[ -d $HF_DIR/hub/$MODEL_DIR ]] \
+    || die "The model isn't in the cache yet ($HF_DIR/hub/$MODEL_DIR). Generate an image once so it downloads, or leave out --model."
+fi
+
+STAMP=$(date +%Y%m%d-%H%M%S)
+if [[ -e $DEST/${BACKUP_PREFIX}${STAMP} || -e $DEST/.partial-${STAMP} ]]; then
+  sleep 1   # another backup was started in the same second
+  STAMP=$(date +%Y%m%d-%H%M%S)
+fi
+FINAL="$DEST/${BACKUP_PREFIX}${STAMP}"
+PARTIAL="$DEST/.partial-${STAMP}"
+[[ ! -e $FINAL && ! -e $PARTIAL ]] || die "$FINAL already exists. Wait a moment and run it again."
+
+# ---------------------------------------------------------------- what it will cost
+need=$(du -sb data | cut -f1)
+IMAGE_ID=""
+if (( WITH_IMAGE )); then
+  IMAGE_ID=$(docker image inspect "$IMAGE" --format '{{.Id}}')
+  need=$(( need + $(docker image inspect "$IMAGE" --format '{{.Size}}') ))
+fi
+(( WITH_MODEL )) && need=$(( need + $(du -sb "$HF_DIR/hub/$MODEL_DIR" | cut -f1) ))
+
+say "Backing up AI Image Studio ($REPO)"
+say "  to:      $FINAL"
+say "  data:    yes ($(human "$(du -sb data | cut -f1)"))"
+say "  image:   $( ((WITH_IMAGE)) && echo "yes ($IMAGE)" || echo no )"
+say "  .env:    $( ((WITH_ENV)) && echo yes || echo no )"
+say "  model:   $( ((WITH_MODEL)) && echo "yes ($MODEL_DIR)" || echo "no (add --model)" )"
+
+if [[ -d $DEST ]]; then avail=$(df --output=avail -B1 "$DEST" | tail -n 1 | tr -d ' ')
+else                    avail=$(df --output=avail -B1 "$(dirname -- "$DEST")" | tail -n 1 | tr -d ' '); fi
+if (( avail < need )); then
+  warn "Needs up to $(human "$need") (the image is compressed, so less in practice), and $(human "$avail") is free at the destination."
+  (( DRY )) || confirm "Carry on anyway?"
+fi
+
+# ---------------------------------------------------------------- is it busy?
+WAS_RUNNING=0
+if container_running; then
+  WAS_RUNNING=1
+  if busy=$(studio_busy); then
+    if (( INTERRUPT )); then
+      warn "$busy. Backing up anyway (--interrupt): the running image will be marked failed."
+    else
+      die "Not now: $busy. Stopping the studio would cut that off. Try again when it's idle, or use --interrupt." 3
+    fi
+  fi
+fi
+
+if (( DRY )); then
+  say ""
+  say "Dry run: nothing was changed. It would:"
+  (( WAS_RUNNING )) && say "  - stop the studio (docker compose stop $SERVICE)"
+  say "  - pack ./data into data.tar.gz"
+  (( WAS_RUNNING )) && say "  - start the studio again"
+  (( WITH_IMAGE )) && say "  - save $IMAGE (docker save | gzip) into image.tar.gz"
+  (( WITH_MODEL )) && say "  - pack $HF_DIR/hub/$MODEL_DIR into model-cache.tar"
+  (( WITH_ENV )) && say "  - copy .env to env.backup (readable only by you)"
+  say "  - write MANIFEST.txt and SHA256SUMS, check the archives, and name the folder $FINAL"
+  (( KEEP )) && say "  - delete all but the newest $KEEP backups in $DEST"
+  exit 0
+fi
+
+# ---------------------------------------------------------------- clean-up that always happens
+STOPPED_BY_US=0
+# shellcheck disable=SC2317  # runs from the EXIT trap
+finish() {
+  local rc=$?
+  trap - EXIT
+  if (( STOPPED_BY_US )); then
+    warn "Starting the studio again..."
+    docker compose start "$SERVICE" >/dev/null 2>&1 \
+      || warn "Could not start it again. Run: docker compose start $SERVICE"
+  fi
+  if (( rc != 0 )) && [[ -d $PARTIAL ]]; then
+    rm -rf -- "$PARTIAL"
+    warn "The backup did not finish, and the half-written folder was removed."
+  fi
+  exit "$rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+mkdir -p -- "$DEST"
+[[ -w $DEST ]] || die "$DEST isn't writable by you."
+mkdir -- "$PARTIAL"
+
+# ---------------------------------------------------------------- 1. the data, while the studio is stopped
+# The database is in WAL mode, so copying it while the studio runs could give an inconsistent copy.
+if (( WAS_RUNNING )); then
+  say "Stopping the studio for the few seconds it takes to copy the data..."
+  SECONDS=0
+  STOPPED_BY_US=1
+  docker compose stop "$SERVICE" >/dev/null
+fi
+say "Packing your history and images..."
+tar -czf "$PARTIAL/data.tar.gz" -C "$REPO" data
+if (( STOPPED_BY_US )); then
+  docker compose start "$SERVICE" >/dev/null
+  STOPPED_BY_US=0
+  say "  The studio is running again (it was stopped for ${SECONDS}s)."
+fi
+
+# ---------------------------------------------------------------- 2. everything that can be copied while it runs
+if (( WITH_IMAGE )); then
+  say "Saving the Docker image (several GB; a few minutes)..."
+  docker save "$IMAGE" | gzip > "$PARTIAL/image.tar.gz"
+fi
+if (( WITH_MODEL )); then
+  say "Packing the model (about 31 GiB; a few minutes)..."
+  tar -cf "$PARTIAL/model-cache.tar" -C "$HF_DIR" "hub/$MODEL_DIR"
+fi
+if (( WITH_ENV )); then
+  cp -p .env "$PARTIAL/env.backup"
+  chmod 600 "$PARTIAL/env.backup"
+fi
+
+# ---------------------------------------------------------------- 3. say what is in it, and prove it
+included="data"
+(( WITH_IMAGE )) && included+=",image"
+(( WITH_ENV )) && included+=",env"
+(( WITH_MODEL )) && included+=",model"
+git_commit=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo none)
+git_dirty=$(git -C "$REPO" status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo 0)
+version=$(grep -m1 '__version__' backend/studio/__init__.py 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
+{
+  echo "format=1"
+  echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  echo "host=$(hostname)"
+  echo "user=$(id -un)"
+  echo "git_commit=$git_commit"
+  echo "git_uncommitted_files=$git_dirty"
+  echo "studio_version=${version:-unknown}"
+  echo "image_name=$IMAGE"
+  echo "image_id=$IMAGE_ID"
+  echo "included=$included"
+  echo "model_dir=$MODEL_DIR"
+} > "$PARTIAL/MANIFEST.txt"
+
+say "Checking the archives..."
+files=(data.tar.gz)
+gzip -t "$PARTIAL/data.tar.gz"
+if (( WITH_IMAGE )); then gzip -t "$PARTIAL/image.tar.gz"; files+=(image.tar.gz); fi
+if (( WITH_MODEL )); then tar -tf "$PARTIAL/model-cache.tar" >/dev/null; files+=(model-cache.tar); fi
+(( WITH_ENV )) && files+=(env.backup)
+files+=(MANIFEST.txt)
+(cd "$PARTIAL" && sha256sum -- "${files[@]}" > SHA256SUMS)
+mv -- "$PARTIAL" "$FINAL"
+
+# ---------------------------------------------------------------- 4. keep only the newest N
+if (( KEEP )); then
+  i=0
+  while IFS= read -r name; do
+    [[ $name =~ ^${BACKUP_PREFIX}[0-9]{8}-[0-9]{6}$ ]] || continue
+    i=$(( i + 1 ))
+    (( i > KEEP )) || continue
+    if [[ -f $DEST/$name/MANIFEST.txt ]]; then
+      say "Removing old backup $name"
+      rm -rf -- "${DEST:?}/$name"
+    else
+      warn "Leaving $name alone: it has no MANIFEST.txt, so it isn't one of ours."
+    fi
+  done < <(find "$DEST" -maxdepth 1 -mindepth 1 -type d -name "${BACKUP_PREFIX}*" -printf '%f\n' | sort -r)
+fi
+
+say ""
+say "Done: $FINAL"
+( cd "$FINAL" && for f in "${files[@]}"; do printf '  %-18s %s\n' "$f" "$(human "$(stat -c %s "$f")")"; done )
+say ""
+say "To restore it:  scripts/restore.sh \"$FINAL\""
+say "Keep a copy on another machine too, e.g.:  rsync -a \"$FINAL\" user@other-host:backups/"
+(( WITH_ENV )) && say "Note: env.backup may contain your Hugging Face token. Keep the backup folder private."
+exit 0

@@ -13,6 +13,9 @@ frontend/playwright-report/
 
 # Runtime data and secrets
 data/
+data.before-restore-*/
+.env.before-restore-*
+.restore-tmp-*/
 *.sqlite
 .env
 
