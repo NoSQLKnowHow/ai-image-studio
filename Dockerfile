@@ -41,6 +41,12 @@ RUN cat /app/ngc-pins.txt \
     && pip install -c /app/ngc-pins.txt -r /app/backend/requirements-container.txt \
     && pip freeze > /app/pip-freeze.txt
 
+# NVIDIA's image bundles torchao (0.14 in 25.10), a model-quantization library the studio doesn't
+# use. diffusers imports torchao whenever it is installed and needs a newer one (FqnToConfig, added
+# in torchao 0.15), so next to 0.14 the Qwen-Image pipeline can't even be imported. Remove it.
+RUN pip uninstall -y torchao \
+    && pip freeze > /app/pip-freeze.txt
+
 COPY backend/studio /app/backend/studio
 COPY docker/ /app/docker/
 COPY --from=ui /ui/dist /app/static

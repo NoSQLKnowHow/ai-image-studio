@@ -23,7 +23,7 @@ from .base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, Pipel
 log = logging.getLogger("studio.pipelines.real")
 
 PIPELINE_CLASS = "QwenImage21Pipeline"
-REBUILD_HINT = "Rebuild the container image: docker compose build --no-cache"
+REBUILD_HINT = "Get the latest code (git pull) and rebuild the image: docker compose build"
 NO_GPU_HINT = (
     "Start the container with GPU access (the compose file reserves the GPU; with docker run use "
     "--gpus all). Check that `nvidia-smi` works on the host."
@@ -101,7 +101,8 @@ def import_runtime() -> tuple[Any, Any]:
     except Exception as exc:  # e.g. transformers too old for the Qwen3-VL text encoder
         raise PipelineUnavailable(
             f"Loading {PIPELINE_CLASS} failed: {describe_error(exc)}",
-            hint="transformers may be too old for the Qwen3-VL text encoder. " + REBUILD_HINT,
+            hint="A library in the image doesn't match what diffusers expects; the message names it. "
+                 + REBUILD_HINT,
         ) from exc
     # When torch or transformers fail to import, diffusers doesn't raise: it hands out a placeholder
     # class (from diffusers.utils.dummy_*_objects) that only errors once you try to load a model.
