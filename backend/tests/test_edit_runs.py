@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import errno
 import io
+import os
 import shutil
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -389,3 +391,70 @@ def test_capabilities_describe_edits_but_do_not_offer_the_mode_yet(client_factor
     assert caps["supports"]["edit"] is True and caps["supports"]["multi_image"] is True
     # The API accepts edits, but the page cannot make one until M5b, so it must not offer the mode yet.
     assert caps["modes"] == ["generate"]
+
+
+# ------------------------------------------------------------------ gaps the mutation checks found, and the paths changed after review
+def test_the_clean_up_never_touches_the_inputs_of_a_run_that_exists_however_old_they_are(client):
+    """Every edit's input folder is older than the sweep's one-hour grace period before long: it must stay because
+    the database owns it, not because it is young."""
+    run = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(c))) for c in (RED, GREEN)])["id"])
+    storage = client.app.state.storage
+    long_ago = time.time() - 3 * 3600
+    for path in [storage.inputs / run["id"], *(storage.inputs / run["id"]).iterdir(), *(storage.thumbs / run["id"]).iterdir()]:
+        os.utime(path, (long_ago, long_ago))
+    assert client.portal.call(client.app.state.jobs.sweep_uploads) == 0
+    assert inputs_on_disk(client, run["id"]) == ["1.png", "2.png"]
+    assert all(client.get(i["url"]).status_code == 200 for i in run["inputs"])
+
+
+def test_an_upload_id_cannot_name_a_runs_own_image(client):
+    first = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(RED)))])["id"])
+    owned = first["inputs"][0]["id"]
+    response = client.post("/api/runs", json=edit_body("y", [{"upload_id": owned}]))
+    assert response.status_code == 422 and "already used" in response.json()["detail"][0]["msg"]
+    assert client.get(first["inputs"][0]["url"]).status_code == 200 and inputs_on_disk(client, first["id"]) == ["1.png"]
+    assert sorted(p.name for p in client.app.state.storage.inputs.iterdir()) == sorted(["staged", first["id"]])  # nothing new
+
+
+def test_a_file_that_vanishes_while_copying_names_its_position_and_keeps_every_upload(client, monkeypatch):
+    ups = [stage(client, image_bytes(c)) for c in (RED, GREEN, BLUE)]
+    real_copy = shutil.copyfile
+    calls = []
+
+    def vanishing(src, dst, *args, **kwargs):
+        calls.append(dst)
+        if len(calls) == 5:  # images 1 and 2 and their thumbnails went through; image 3's file is gone
+            raise FileNotFoundError(errno.ENOENT, "No such file or directory", str(src))
+        return real_copy(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(inputs_module.shutil, "copyfile", vanishing)
+    response = client.post("/api/runs", json=edit_body("x", [ref(u) for u in ups]))
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "input_images", 2]
+    assert response.json()["detail"][0]["msg"].startswith("Image 3: the image file is missing")
+    assert [p.name for p in client.app.state.storage.inputs.iterdir()] == ["staged"]  # the copies of 1 and 2 are gone
+    assert all(client.get(u["url"]).status_code == 200 for u in ups)
+
+
+def test_an_operating_system_file_error_while_copying_is_not_mistaken_for_a_missing_image(client, monkeypatch):
+    up = stage(client, image_bytes(RED))
+
+    def broken(*args, **kwargs):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(inputs_module.shutil, "copyfile", broken)
+    response = client.post("/api/runs", json=edit_body("x", [ref(up)]))
+    assert response.status_code == 507 and "Permission denied" in response.json()["detail"]
+    assert client.get(up["url"]).status_code == 200
+
+
+def test_a_staged_file_that_cannot_be_removed_after_the_run_exists_does_not_fail_the_submit(client, monkeypatch):
+    up = stage(client, image_bytes(RED))
+
+    def stuck(upload_id):
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(client.app.state.storage, "delete_staged_files", stuck)
+    run = create_edit(client, "x", [ref(up)])  # still a 201: the run exists and is queued
+    assert wait_for(client, run["id"])["status"] == "done"
+    assert client.get(up["url"]).status_code == 404  # the database row is gone, whatever the file is doing

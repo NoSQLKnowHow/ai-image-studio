@@ -18,7 +18,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -31,6 +31,14 @@ log = logging.getLogger("studio.inputs")
 
 ORPHAN_AGE_SECONDS = 3600  # a file or folder nothing in the database claims is only removed once it is this old
 SWEEP_BATCH = 200
+
+
+class InputFileMissing(Exception):
+    """An input's file vanished between looking for it and copying it. `position` is its 1-based place."""
+
+    def __init__(self, position: int):
+        super().__init__(f"the file of image {position} is missing")
+        self.position = position
 
 
 class UploadError(Exception):
@@ -154,10 +162,10 @@ def resolve_refs(db: Database, storage: Storage, refs: list[Any]) -> tuple[list[
     return sources, errors
 
 
-def copy_inputs(db: Database, storage: Storage, run_id: str, sources: list[SourceImage]) -> list[dict[str, Any]]:
+def copy_inputs(storage: Storage, run_id: str, sources: list[SourceImage]) -> list[dict[str, Any]]:
     """Copy each source into the run's own folder. Returns the image rows the run will own (not yet in the
-    database). On any failure everything copied so far is removed. A missing source file raises
-    FileNotFoundError naming the position."""
+    database). On any failure everything copied so far is removed. A source file that is gone raises
+    InputFileMissing."""
     folder = storage.run_inputs_dir(run_id)
     rows: list[dict[str, Any]] = []
     try:
@@ -167,7 +175,7 @@ def copy_inputs(db: Database, storage: Storage, run_id: str, sources: list[Sourc
             try:
                 shutil.copyfile(storage.abs(src.row["path"]), dst)
             except FileNotFoundError:
-                raise FileNotFoundError(src.position) from None
+                raise InputFileMissing(src.position) from None
             thumb_dst = storage.thumbs / run_id / f"in-{src.position}.webp"
             thumb_src = storage.abs(src.row["thumb_path"]) if src.row["thumb_path"] else None
             if thumb_src is not None and thumb_src.is_file():

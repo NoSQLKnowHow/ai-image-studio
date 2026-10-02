@@ -196,11 +196,10 @@ class JobManager:
                 raise RunRequestError(problems)
             width, height = self._shape_for(run, sources)
             try:
-                owned = await asyncio.to_thread(inputs_mod.copy_inputs, self.db, self.storage, run_id, sources)
-            except FileNotFoundError as gone:
-                position = int(gone.args[0])
-                raise RunRequestError([(("input_images", position - 1),
-                                        f"Image {position}: the image file is missing on the server. Add it again.")])
+                owned = await asyncio.to_thread(inputs_mod.copy_inputs, self.storage, run_id, sources)
+            except inputs_mod.InputFileMissing as gone:
+                raise RunRequestError([(("input_images", gone.position - 1),
+                                        f"Image {gone.position}: the image file is missing on the server. Add it again.")])
             except OSError as exc:
                 raise InputStorageError(f"The images could not be copied for this run: {exc.strerror or exc}") from exc
             claims = [src.row["id"] for src in sources if src.staged]
@@ -240,7 +239,10 @@ class JobManager:
                 for src in sources if src.row["id"] == taken
             ])
         for upload_id in dict.fromkeys(claims):  # the run has its own copies now
-            await asyncio.to_thread(self.storage.delete_staged_files, upload_id)
+            try:
+                await asyncio.to_thread(self.storage.delete_staged_files, upload_id)
+            except OSError:  # the run exists and is queued; a file that can't be removed now is swept up later
+                log.warning("could not remove the staged file of upload %s", upload_id, exc_info=True)
         payload = self.payload(run_id)
         assert payload is not None
         self.bus.publish("run.created", payload)

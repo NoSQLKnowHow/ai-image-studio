@@ -53,6 +53,9 @@ services:
       STUDIO_ALLOWED_HOSTS: ${STUDIO_ALLOWED_HOSTS:-}
       STUDIO_QUEUE_CAP: ${STUDIO_QUEUE_CAP:-10}
       STUDIO_RETENTION_DAYS: ${STUDIO_RETENTION_DAYS:-30}
+      STUDIO_MAX_INPUT_IMAGES: ${STUDIO_MAX_INPUT_IMAGES:-4}
+      STUDIO_UPLOAD_TTL_HOURS: ${STUDIO_UPLOAD_TTL_HOURS:-24}
+      STUDIO_MAX_UPLOAD_MB: ${STUDIO_MAX_UPLOAD_MB:-20}
       HF_TOKEN: ${HF_TOKEN:-}
     # The server finishes or fails the current image and stops the worker cleanly on SIGTERM.
     stop_grace_period: 30s

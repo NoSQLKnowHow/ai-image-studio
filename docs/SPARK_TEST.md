@@ -243,6 +243,58 @@ Reload the page. Good: that card says `Will be deleted in 2 days. Press Keep to 
 seconds after start-up the card is gone, and so are its files: `ls data/images | grep "$RUN"` prints
 nothing.
 
+## 15. Editing with several images, through the API (new in 1.2)
+
+The web page can't do this yet (it comes in the next update), but the server can, and this is the first
+time the **real model** is asked to edit, so it is worth trying now. You need two or three pictures: say a
+photo of an object or pet, and a scene. Any JPEG, PNG or WebP.
+
+**Before you update:** this version changes the database layout. The first start upgrades it and keeps a
+copy of the old one as `data/studio.sqlite.before-schema-2`. That copy is also the way back to version 1.1
+(an older studio refuses a database a newer one has touched): stop the studio, put that file over
+`data/studio.sqlite`, and start the 1.1 image. A backup first (`scripts/backup.sh`) is still the better
+safety net.
+
+```bash
+git pull && docker compose up -d --build
+docker compose logs studio | grep -i "schema"        # "upgrading the database from schema 1 to 2 ..."
+curl -s localhost:8080/api/health                    # "version":"1.2"
+```
+
+**a) A first edit** (the first run after a quiet spell loads the model, which takes a while):
+
+```bash
+scripts/edit_via_api.sh "put the object from image 1 into the scene from image 2" thing.jpg scene.jpg
+```
+
+It prints the upload sizes, the progress, and where it saved the result. **Write down:** the seconds from
+`running` to `done` (excluding the model load if it had to load), the result's size (`file edit-*.png`),
+and whether the result obeys the numbers. Whether a prompt can say "image 1" and "image 2" is not
+confirmed by Qwen's documentation, so also try the same edit **without** numbers ("put the object from the
+first picture into the second") and say which worked better.
+
+**b) Resolution.** `scripts/edit_via_api.sh --resolution 2048 ...` is about four times the pixels for every
+image. Write down the time, and `free -h` while it runs. If it runs out of memory the card says so and
+suggests 1K or fewer images; that is a finding too, not a failure of the test.
+
+**c) More images, and the shape.** Try three or four images at 1K. Then `--shape-from 1` (the result follows
+image 1's shape instead of the last image's) and `--size 1024x768` (an explicit size). Good: the result
+size changes as described, and the images are used in the order you gave them.
+
+**d) Transparency.** With a PNG that has a transparent background as one input, and `--transparent`, ask
+for something like "put the subject of image 1 on a transparent background". Open the result in an image
+viewer that shows transparency (or the web page, which shows a checkerboard). **Write down** whether the
+result has real transparency, and whether it also did without `--transparent`.
+
+**e) The page shows these runs.** They appear in the history with an **Edit** badge (the source
+thumbnails come with the page's editing support), and **Cancel**, **Keep** and **Delete** work on them.
+Deleting one removes its input pictures too: `ls data/inputs` has one folder per edit run still in the
+history, plus `staged` for uploads that no run has used yet (those are removed after 24 hours).
+
+**f) The limits.** `scripts/edit_via_api.sh` with five images should be refused with `at most 4 images` (set
+`STUDIO_MAX_INPUT_IMAGES` in `.env` and `docker compose up -d` to change it, up to 10). **If you have time,
+raise it and try more images at 1K while watching the memory: that number sets the default cap.**
+
 ---
 
 ## Troubleshooting
@@ -273,3 +325,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 4. Anything that didn't match "Good", with the message the page or the log showed.
 5. Whether transparent output really had transparency (step 10).
 6. The numbers from step 14: seconds from clicking **Stop generating** to the card saying **Canceled**, and the memory before and after.
+7. The numbers and observations from step 15 (edits through the API).
