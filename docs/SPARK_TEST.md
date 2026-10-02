@@ -26,7 +26,7 @@ cd ai-image-studio                     # main has everything; no branch to switc
 
 ```bash
 docker ps                              # must work without sudo
-docker run --rm --runtime=nvidia --gpus=all nvcr.io/nvidia/cuda:13.0.1-devel-ubuntu24.04 nvidia-smi
+docker run --rm --runtime=nvidia --gpus=all nvcr.io/nvidia/cuda:13.0.1-base-ubuntu24.04 nvidia-smi
 ```
 
 Good: `docker ps` lists containers (perhaps Hermes'), and `nvidia-smi` prints a table naming the
