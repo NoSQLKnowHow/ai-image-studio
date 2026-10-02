@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import io
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 import pytest
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from studio.api import create_app
 from studio.config import Settings
@@ -79,3 +81,33 @@ def wait_for_worker_state(client: TestClient, state: str, timeout: float = 15.0)
         if time.monotonic() > deadline:
             raise AssertionError(f"worker state still {status['worker']['state']!r} after {timeout}s")
         time.sleep(0.02)
+
+
+# ---------------------------------------------------------------- images for upload and edit tests
+def image_bytes(color=(255, 0, 0), size=(120, 80), mode: str = "RGB", fmt: str = "PNG", **save) -> bytes:
+    """A solid-colour image file, so a test can tell images apart by one pixel."""
+    out = io.BytesIO()
+    Image.new(mode, size, color).save(out, format=fmt, **save)
+    return out.getvalue()
+
+
+def stage(client: TestClient, data: bytes, expect: int = 201, **headers: str) -> dict[str, Any]:
+    response = client.post("/api/uploads", content=data, headers=headers or None)
+    assert response.status_code == expect, response.text
+    return response.json()
+
+
+def edit_body(prompt: str, refs: list[dict[str, Any]], **options: Any) -> dict[str, Any]:
+    return {"mode": "edit", "prompt": prompt, "input_images": refs, "options": {"steps": 3, "seed": 7, **options}}
+
+
+def create_edit(client: TestClient, prompt: str, refs: list[dict[str, Any]], expect: int = 201, **options: Any) -> dict[str, Any]:
+    response = client.post("/api/runs", json=edit_body(prompt, refs, **options))
+    assert response.status_code == expect, response.text
+    return response.json()
+
+
+def open_result(client: TestClient, run: dict[str, Any], index: int = 0) -> Image.Image:
+    response = client.get(run["images"][index]["url"])
+    assert response.status_code == 200
+    return Image.open(io.BytesIO(response.content))

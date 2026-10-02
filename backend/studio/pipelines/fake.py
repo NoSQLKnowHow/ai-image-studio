@@ -10,6 +10,11 @@ the prompt, e.g. "a cat [fake:oom]" or "a cat [fake:crash@1]" (only on image ind
     [fake:noise]  write junk to stdout, to prove the protocol channel is protected
 
 A model load failure is simulated by setting STUDIO_FAKE_LOAD_FAIL=1 for the worker.
+
+Edits (DESIGN.md §21.8): the result follows the *last* input's shape when no size is given (at about
+RESOLUTION x RESOLUTION pixels, with the pipeline's own arithmetic), and a strip of numbered thumbnails of the
+inputs, in the order they were given, is drawn along the bottom edge. Tests read the strip back to check the
+order, the count and the shape rule without a GPU (see `strip_cells`).
 """
 
 from __future__ import annotations
@@ -24,7 +29,8 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-from .base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, StepCallback
+from .. import presets as P
+from .base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, StepCallback, load_inputs
 
 _DIRECTIVE = re.compile(r"\[fake:(error|oom|crash|noise)(?:@(\d+))?\]", re.IGNORECASE)
 
@@ -81,9 +87,34 @@ def render_fake_image(
     return img
 
 
+def strip_cells(width: int, height: int, count: int) -> list[tuple[int, int, int, int]]:
+    """Where the fake pipeline draws the numbered thumbnails of an edit's inputs: (left, top, right, bottom) of
+    each, in input order, along the bottom edge. Always inside the image and never overlapping, however small or
+    narrow it is and however many inputs there are. Public so tests can look at the right pixels."""
+    short = min(width, height)
+    pad = max(1, min(max(4, short // 40), width // (4 * max(count, 1))))
+    cell = max(1, min(short // 6, (width - pad * (count + 1)) // max(count, 1)))
+    top = max(0, height - pad - cell)
+    return [(pad + i * (cell + pad), top, pad + i * (cell + pad) + cell, top + cell) for i in range(count)]
+
+
+def draw_input_strip(image: Image.Image, inputs: list[Image.Image]) -> Image.Image:
+    draw = ImageDraw.Draw(image)
+    for i, (box, source) in enumerate(zip(strip_cells(image.width, image.height, len(inputs)), inputs)):
+        size = (box[2] - box[0], box[3] - box[1])
+        thumb = source.convert("RGBA").resize(size)
+        image.paste(thumb, box[:2], thumb)
+        if size[0] >= 24:  # room for the number in the corner; smaller thumbnails are left plain
+            label = box[0] + 2, box[1] + 2, box[0] + 2 + size[0] // 3, box[1] + 2 + size[1] // 3
+            draw.rectangle(label, fill=(0, 0, 0, 255) if image.mode == "RGBA" else (0, 0, 0))
+            draw.text((label[0] + 1, label[1]), str(i + 1), fill=(255, 255, 255), font=_font(max(8, size[1] // 4)))
+    return image
+
+
 class FakePipeline:
     name = "fake"
-    SUPPORTS = {"negative_prompt": True, "cfg_scale": True, "step_progress": True, "transparent": True, "edit": False}
+    SUPPORTS = {"negative_prompt": True, "cfg_scale": True, "step_progress": True, "transparent": True, "edit": True,
+                "resolution": True}
 
     def __init__(self, step_delay_ms: int = 30, load_delay_ms: int = 200):
         self.step_delay = step_delay_ms / 1000
@@ -104,18 +135,22 @@ class FakePipeline:
 
     def generate(self, job: ImageJob, index: int, seed: int, on_step: StepCallback) -> Image.Image:
         active = {kind for kind, at in parse_directives(job.prompt) if at is None or at == index}
+        inputs = load_inputs(job.input_paths) if job.input_paths else []
         for step in range(1, job.steps + 1):
             if self.step_delay:
                 time.sleep(self.step_delay)
             on_step(step, job.steps)
             if step == 1 and active:
                 self._inject(active)
-        width = job.width or 1024
-        height = job.height or 1024
-        return render_fake_image(
-            prompt=job.prompt, width=width, height=height, seed=seed, index=index,
+        width, height = job.width, job.height
+        if not (width and height) and inputs:  # Auto: the shape of the last image, as the real pipeline does it
+            resolution = job.resolution or P.DEFAULT_RESOLUTION
+            width, height = P.calculate_dimensions(resolution * resolution, inputs[-1].width / inputs[-1].height)
+        image = render_fake_image(
+            prompt=job.prompt, width=width or 1024, height=height or 1024, seed=seed, index=index,
             count=len(job.seeds), steps=job.steps, transparent=job.transparent,
         )
+        return draw_input_strip(image, inputs) if inputs else image
 
     @staticmethod
     def _inject(active: set[str]) -> None:

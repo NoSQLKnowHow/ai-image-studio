@@ -18,6 +18,7 @@ thread, which does the work.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import errno
 import json
 import logging
@@ -134,6 +135,22 @@ class Worker:
 
         return on_step
 
+    def _check_inputs(self, job: Any) -> list[str]:
+        """The absolute paths of an edit's inputs, each checked to be a file in this run's own input folder
+        (the same care as for the images the worker writes). Raises ValueError."""
+        if job.mode == "edit" and not job.input_paths:
+            raise ValueError("an edit needs at least one input image")
+        if job.mode != "edit" and job.input_paths:
+            raise ValueError("only an edit takes input images")
+        folder = (self.data_dir / "inputs" / job.run_id).resolve()
+        paths = []
+        for rel in job.input_paths:
+            path = (self.data_dir / rel).resolve()
+            if path.parent != folder or not path.is_file():
+                raise ValueError(f"input image {rel!r} is not a file in this run's input folder")
+            paths.append(str(path))
+        return paths
+
     def run(self, job_dict: Any) -> None:
         try:
             self._run(job_dict)
@@ -148,6 +165,7 @@ class Worker:
             job = ImageJob(**job_dict)
             if not _RUN_ID.match(job.run_id) or not job.seeds:
                 raise ValueError("bad run_id or empty seeds")
+            job = dataclasses.replace(job, input_paths=self._check_inputs(job))
         except (TypeError, ValueError) as exc:
             self.emit("run_failed", run_id=run_id, completed=0,
                       error={"kind": "error", "message": f"Malformed job: {exc}", "hint": None})
@@ -179,6 +197,8 @@ class Worker:
                     "seed": seed,
                     "steps": job.steps,
                     "cfg_scale": job.cfg_scale,
+                    "inputs": len(job.input_paths) or None,
+                    "resolution": job.resolution,
                     "size": f"{image.width}x{image.height}",
                 })
             except Canceled:

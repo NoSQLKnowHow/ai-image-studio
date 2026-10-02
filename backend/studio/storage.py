@@ -3,7 +3,10 @@
     <data>/studio.sqlite
     <data>/images/<run>/<idx>.png      written by the worker
     <data>/thumbs/<run>/<idx>.webp     made by the API process
-    <data>/inputs/<id>.png             uploaded reference images (M5)
+    <data>/inputs/staged/<id>.png      an uploaded image that no run has claimed yet (deleted after a day)
+    <data>/thumbs/staged/<id>.webp     its thumbnail
+    <data>/inputs/<run>/<position>.png the images an edit run was given: copies the run owns (position 1 = "image 1")
+    <data>/thumbs/<run>/in-<position>.webp   their thumbnails (in the run's own thumbs folder, so they go with it)
 
 All file access is by database id; paths reported by the worker are checked to be
 inside the run's own folder before they are trusted.
@@ -52,10 +55,12 @@ class Storage:
         self.images = self.root / "images"
         self.thumbs = self.root / "thumbs"
         self.inputs = self.root / "inputs"
+        self.staged = self.inputs / "staged"
+        self.staged_thumbs = self.thumbs / "staged"
 
     def ensure_layout(self) -> None:
         try:
-            for directory in (self.root, self.images, self.thumbs, self.inputs):
+            for directory in (self.root, self.images, self.thumbs, self.inputs, self.staged, self.staged_thumbs):
                 directory.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryFile(dir=self.root):
                 pass
@@ -96,7 +101,9 @@ class Storage:
             return ImageInfo(im.width, im.height, has_alpha(im), path.stat().st_size)
 
     def make_thumbnail(self, src: Path, run_id: str, idx: int) -> Path:
-        dst = self.thumbs / check_id(run_id) / f"{int(idx)}.webp"
+        return self.make_thumbnail_at(src, self.thumbs / check_id(run_id) / f"{int(idx)}.webp")
+
+    def make_thumbnail_at(self, src: Path, dst: Path) -> Path:
         dst.parent.mkdir(parents=True, exist_ok=True)
         partial = dst.with_name(dst.name + ".part")
         try:
@@ -110,10 +117,20 @@ class Storage:
             partial.unlink(missing_ok=True)
         return dst
 
+    def run_inputs_dir(self, run_id: str) -> Path:
+        return self.inputs / check_id(run_id)
+
     def delete_run_files(self, run_id: str) -> None:
+        """Everything on disk that belongs to a run: its images, its inputs and all their thumbnails."""
         check_id(run_id)
         shutil.rmtree(self.images / run_id, ignore_errors=True)
         shutil.rmtree(self.thumbs / run_id, ignore_errors=True)
+        shutil.rmtree(self.inputs / run_id, ignore_errors=True)
+
+    def delete_staged_files(self, upload_id: str) -> None:
+        check_id(upload_id)
+        (self.staged / f"{upload_id}.png").unlink(missing_ok=True)
+        (self.staged_thumbs / f"{upload_id}.webp").unlink(missing_ok=True)
 
     def cleanup_partials(self) -> int:
         """Remove half-written files left by a crash. Returns how many were removed."""

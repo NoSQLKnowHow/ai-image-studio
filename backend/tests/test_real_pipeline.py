@@ -161,7 +161,7 @@ def test_probe_reads_supported_features_from_the_real_signature(monkeypatch):
     Fakes(monkeypatch)
     result = probe()
     assert result["supports"] == {"negative_prompt": True, "cfg_scale": True, "step_progress": True,
-                                  "transparent": True, "edit": True}
+                                  "transparent": True, "edit": True, "resolution": True}
     assert result["device"]["name"] == "NVIDIA GB10" and result["device"]["capability"] == "12.1"
     assert result["diffusers"] == "0.41.0.dev0"
 
@@ -169,7 +169,7 @@ def test_probe_reads_supported_features_from_the_real_signature(monkeypatch):
 def test_probe_on_a_smaller_pipeline_build_disables_optional_features(monkeypatch):
     Fakes(monkeypatch, signature="minimal")
     assert probe()["supports"] == {"negative_prompt": False, "cfg_scale": False, "step_progress": False,
-                                   "transparent": True, "edit": False}
+                                   "transparent": True, "edit": False, "resolution": False}
 
 
 def test_missing_torch_is_reported_as_unavailable(monkeypatch):
@@ -322,6 +322,68 @@ def test_a_cancel_raised_from_the_step_callback_leaves_generate_untranslated_and
         pipe.generate(job(steps=5), 0, 1, on_step)
     assert steps == [1, 2, 3] and fakes.empty_cache_calls == 0  # stopped at once; not treated as out of memory
     assert pipe.generate(job(steps=5), 0, 2, lambda s, t: None).size == (1024, 768)  # next image is unaffected
+
+
+# ---------------------------------------------------------------- edit
+def edit_job(tmp_path, specs, **extra):
+    """An edit job whose inputs are files made from (mode, colour) pairs, in order."""
+    paths = []
+    for i, (mode, colour) in enumerate(specs, 1):
+        path = tmp_path / f"{i}.png"
+        Image.new(mode, (96 + i, 64), colour).save(path)
+        paths.append(str(path))
+    values = dict(mode="edit", input_paths=paths, width=None, height=None, resolution=1024)
+    values.update(extra)
+    return job(**values)
+
+
+def test_an_edit_passes_the_images_in_order_unflattened_and_leaves_the_size_to_the_pipeline(monkeypatch, tmp_path):
+    pipe, fakes = loaded(monkeypatch)
+    pipe.generate(edit_job(tmp_path, [("RGB", (255, 0, 0)), ("RGBA", (0, 255, 0, 0)), ("RGB", (0, 0, 255))],
+                           resolution=2048), 0, 5, lambda s, t: None)
+    call = fakes.calls[-1]
+    images = call["image"]
+    assert isinstance(images, list) and [im.width for im in images] == [97, 98, 99]  # the order they were given
+    assert [im.mode for im in images] == ["RGB", "RGBA", "RGB"]  # the alpha channel survived: nothing was flattened
+    assert images[1].getpixel((0, 0)) == (0, 255, 0, 0)  # and a fully transparent pixel is still transparent
+    assert call["output_resolution"] == 2048
+    assert "width" not in call and "height" not in call  # Auto: the pipeline follows the last image itself
+
+
+def test_an_edit_with_a_size_sends_it(monkeypatch, tmp_path):
+    pipe, fakes = loaded(monkeypatch)
+    pipe.generate(edit_job(tmp_path, [("RGB", (1, 2, 3))], width=1024, height=768), 0, 1, lambda s, t: None)
+    assert (fakes.calls[-1]["width"], fakes.calls[-1]["height"]) == (1024, 768)
+    assert fakes.calls[-1]["output_resolution"] == 1024
+
+
+def test_generate_never_sends_images_or_a_resolution(monkeypatch):
+    pipe, fakes = loaded(monkeypatch)
+    pipe.generate(job(resolution=2048), 0, 1, lambda s, t: None)  # a resolution on a Generate job must be ignored
+    assert "image" not in fakes.calls[-1]
+    assert fakes.calls[-1]["output_resolution"] == 1024  # the pipeline's own default: nothing was passed
+
+
+def test_a_build_that_cannot_edit_says_so(monkeypatch, tmp_path):
+    pipe, _ = loaded(monkeypatch, signature="minimal")
+    with pytest.raises(PipelineError, match="can't edit images") as info:
+        pipe.generate(edit_job(tmp_path, [("RGB", (1, 2, 3))]), 0, 1, lambda s, t: None)
+    assert "rebuild" in info.value.hint.lower()
+
+
+def test_an_unreadable_input_is_a_clear_error_not_a_crash(monkeypatch, tmp_path):
+    pipe, _ = loaded(monkeypatch)
+    bad = job(mode="edit", input_paths=[str(tmp_path / "gone.png")], width=None, height=None)
+    with pytest.raises(PipelineError, match="input image could not be read"):
+        pipe.generate(bad, 0, 1, lambda s, t: None)
+
+
+def test_out_of_memory_in_an_edit_advises_the_things_that_make_an_edit_heavy(monkeypatch, tmp_path):
+    pipe, fakes = loaded(monkeypatch, call_exc=FakeOOM("CUDA out of memory"))
+    with pytest.raises(OutOfMemory) as info:
+        pipe.generate(edit_job(tmp_path, [("RGB", (1, 2, 3))]), 0, 1, lambda s, t: None)
+    assert "1K instead of 2K" in info.value.hint and "fewer input images" in info.value.hint
+    assert fakes.empty_cache_calls == 1
 
 
 def test_generate_before_load_is_an_error():

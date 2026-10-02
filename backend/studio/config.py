@@ -34,6 +34,8 @@ class Settings:
     max_images_per_run: int = 8
     max_prompt_chars: int = 8000
     max_upload_mb: int = 20
+    max_input_images: int = 4  # per edit; Qwen allows up to 10, raised only after measuring on the Spark
+    upload_ttl_hours: int = 24  # how long an upload that no run has claimed is kept
     min_free_gb: Optional[float] = None  # None = memory pre-flight check off (set after measuring, M2)
     cpu_offload: bool = False
     local_files_only: bool = False
@@ -138,6 +140,8 @@ class Settings:
             max_images_per_run=integer("STUDIO_MAX_IMAGES_PER_RUN", cls.max_images_per_run, 1, 64),
             max_prompt_chars=integer("STUDIO_MAX_PROMPT_CHARS", cls.max_prompt_chars, 100, 100_000),
             max_upload_mb=integer("STUDIO_MAX_UPLOAD_MB", cls.max_upload_mb, 1, 200),
+            max_input_images=integer("STUDIO_MAX_INPUT_IMAGES", cls.max_input_images, 1, 10),
+            upload_ttl_hours=integer("STUDIO_UPLOAD_TTL_HOURS", cls.upload_ttl_hours, 1, 720),
             min_free_gb=optional_float("STUDIO_MIN_FREE_GB", 0.0),
             cpu_offload=boolean("STUDIO_CPU_OFFLOAD", cls.cpu_offload),
             local_files_only=boolean("STUDIO_LOCAL_FILES_ONLY", cls.local_files_only),
