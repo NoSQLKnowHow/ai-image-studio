@@ -278,6 +278,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 - **Port.** Container 8080, published as `8080:8080` for LAN access (decision #1). Hermes' vLLM uses 8000 and NVIDIA's ComfyUI playbook 8188, so there is no clash. For tunnel-only use, publish `127.0.0.1:8080:8080` and add a custom app in NVIDIA Sync. If the page isn't reachable from the LAN, check the Spark's firewall.
 - **Operations.** Healthcheck `GET /api/health`; logs to stdout; **build on the Spark itself** (arm64).
 - A `compose.yaml` and the equivalent `docker run` one-liner ship in the repo.
+- **Backups:** `scripts/backup.sh` and `scripts/restore.sh` (README "Backing up and restoring") save and restore the four things that live outside the container: `./data`, `.env`, the built image and, optionally, the model cache. The studio is stopped only while `./data` is packed (SQLite in WAL mode must be at rest), and a restore never deletes anything: what is in the way is moved aside. Their tests, `scripts/tests/backup_restore_test.sh`, run without Docker.
 - The unified-memory caveats are in §9a.
 
 ## 13. Configuration reference (PROPOSED; all environment variables)
@@ -323,6 +324,7 @@ ai-image-studio/   (repository root)
   compose.yaml, .env.example
   docs/DESIGN.md
   scripts/qwen_image.py   (the CLI; stays standalone for now)
+  scripts/backup.sh, restore.sh, tests/   (backup and restore, with their tests)
 ```
 
 The server re-implements the size presets, RGBA wrapper, filename scheme and error translations rather than importing the CLI script. Sharing a module is a later refactor, not a v1 task.

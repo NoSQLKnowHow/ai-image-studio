@@ -125,6 +125,111 @@ studio has been built and checked with `25.10-py3` only. The registry also has `
 `25.12-py3` and `26.08-py3`, but they are untested; if one fails the self-check, the message says why,
 and you can go back to `25.10-py3`.
 
+### 5. Backing up and restoring
+
+The container itself holds almost nothing worth saving, so "backing up the container" really means
+saving four things that live outside it:
+
+| What | Where it lives | If you lose it |
+|---|---|---|
+| **Your history and images** | `./data` in the repo folder | **Gone for good.** This is the part that matters |
+| Your settings | `.env` | Easy to recreate, unless it holds a token |
+| The built image | `ai-image-studio:local` in Docker | Rebuildable, but a rebuild is not identical: it downloads the packages again |
+| The model | `~/.cache/huggingface` (31 GiB) | Re-downloadable, but Qwen could have changed it in the meantime |
+
+**Back up:**
+
+```bash
+scripts/backup.sh ~/backups              # history, image and settings
+scripts/backup.sh --model ~/backups      # ... and the 31 GiB model too
+```
+
+It creates a dated folder such as `~/backups/ai-image-studio-backup-20261002-143015/`:
+
+| File | What it is |
+|---|---|
+| `data.tar.gz` | your history and images |
+| `image.tar.gz` | the Docker image, exactly as built (left out with `--no-image`) |
+| `env.backup` | your `.env`, readable only by you (left out with `--no-env`) |
+| `model-cache.tar` | the model's files, only with `--model` |
+| `MANIFEST.txt`, `SHA256SUMS` | what was backed up (including the git commit and image id), and checksums that prove nothing was damaged |
+
+- **Downtime is a few seconds.** The database must be at rest to be copied consistently, so the studio
+  is stopped while `./data` is packed and started again straight away. The image and the model are
+  copied while it runs.
+- **It won't cut off your work.** If a picture is being generated or jobs are waiting, the script says
+  so and stops (exit code 3). Try again later, or add `--interrupt` to go ahead anyway.
+- **It cleans up after itself.** If a backup fails part-way, the studio is started again and the
+  half-written folder is removed.
+- `--dry-run` shows what would happen and changes nothing, a good first run. `--keep N` deletes the
+  oldest backups afterwards, keeping the newest N. `--yes` stops it asking questions. `--help` lists
+  everything.
+
+**Restore:**
+
+```bash
+scripts/restore.sh ~/backups/ai-image-studio-backup-20261002-143015
+```
+
+- It first checks the backup's checksums, and inspects the archives before unpacking anything.
+- **It never deletes anything.** If `./data` already has files in it, the restore is refused. Add
+  `--force` and the current folder is moved aside to `data.before-restore-<time>` instead, and the same
+  goes for `.env` and the model folder. Delete those yourself when you are sure.
+- It loads the Docker image (the current `ai-image-studio:local` stays available as
+  `ai-image-studio:before-restore-<time>`), restores `.env`, and restores the model if the backup has it and
+  it isn't already in the cache.
+- The studio is stopped while this happens. If it was running, it is started again, from the restored
+  image; otherwise add `--start`, or run `docker compose up -d --no-build` yourself.
+- If the code on this machine is at a different commit from the backup, it tells you, and how to match
+  it (`git checkout <commit>`).
+- Only restore backups you made yourself: archives are unpacked into your folders.
+
+**Worth knowing**
+
+- **The backup folder can contain your Hugging Face token** (in `env.backup`). Keep it private, or leave
+  it out with `--no-env`.
+- **Copy it to another machine.** A backup on the same disk won't survive that disk failing:
+  `rsync -a ~/backups/ai-image-studio-backup-20261002-143015 user@other-host:backups/`
+- **Going back after an upgrade needs the data too.** Later versions change the database's layout
+  (version 2 does), and the studio refuses to open a database newer than it understands. To go back,
+  restore the image *and* the data from a backup made before the upgrade. Take one before every upgrade.
+- **A free safety net before a rebuild** (instant, no extra space): `docker tag ai-image-studio:local
+  ai-image-studio:previous` keeps the current image, which a rebuild would otherwise orphan.
+- **Scheduling** (optional). For example, every Sunday at 03:30, keeping the newest four:
+  `30 3 * * 0  cd ~/ai-image-studio && scripts/backup.sh --yes --keep 4 ~/backups >> ~/backups/backup.log 2>&1`
+  (add it with `crontab -e`). If the studio is busy then, it skips that week and says so in the log.
+  Run the command by hand first to be sure it works on your machine.
+
+<details>
+<summary>Doing it by hand, without the scripts</summary>
+
+Run these in the repo folder, as your normal user. `BK` is where the backup goes.
+
+```bash
+BK=~/backups/ai-image-studio-$(date +%Y%m%d); mkdir -p "$BK"
+git rev-parse HEAD > "$BK/git-commit.txt"
+cp .env "$BK/env.backup" && chmod 600 "$BK/env.backup"
+
+docker compose stop                                   # the database must be at rest
+tar -czf "$BK/data.tar.gz" data                       # your history and images
+docker compose start
+docker save ai-image-studio:local | gzip > "$BK/image.tar.gz"
+tar -cf "$BK/model-cache.tar" -C ~/.cache/huggingface hub/models--Qwen--Qwen-Image-2.1   # optional
+```
+
+To restore:
+
+```bash
+docker compose stop
+tar -xzf "$BK/data.tar.gz"                            # unpacks ./data (move any existing one away first)
+cp "$BK/env.backup" .env
+gunzip -c "$BK/image.tar.gz" | docker load
+tar -xf "$BK/model-cache.tar" -C ~/.cache/huggingface # only if you backed it up
+docker compose up -d --no-build
+```
+
+</details>
+
 ### If the build fails
 
 | You see | What it means, and what to do |
@@ -205,6 +310,15 @@ npm run e2e        # browser tests (Playwright) against the built page and a fak
 `npm run e2e` starts its own backend, using `backend/.venv/bin/python` (set `STUDIO_PYTHON` to use
 another) and a temporary data folder. It needs Chromium; if it isn't installed, run
 `npx playwright install chromium` once.
+
+### Backup scripts
+
+`scripts/backup.sh` and `scripts/restore.sh` have their own tests, which run anywhere without Docker or a
+GPU (a stand-in replaces `docker`; the archives, checksums and database are real):
+
+```bash
+bash scripts/tests/backup_restore_test.sh
+```
 
 ## Command-line tool
 
