@@ -66,6 +66,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 35 | Thumbnails (1.3) | Every image gets a small **thumbnail you can download** (WebP, 512 px on the long side, transparency kept), from the run card and from the viewer (§22.3) | DECIDED |
 | 36 | Regenerate larger (1.4) | A finished run made **smaller than the size you had selected** (a draft, or a 25 / 50 / 75% run) gets a **Regenerate larger** button: the same prompt, seed and image count sent again at the **full size you had selected, with the steps you had selected**. The run remembers that size, so it works from the history. It will look different from the small image (§23.1) | DECIDED |
 | 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needs the editing page (M5b) and a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
+| 38 | Regenerate larger in the viewer (1.5) | The single-image viewer has the **same Regenerate larger button**. It enlarges **that image only**: a new job at the full size and steps, with **that image's own seed** and **one** image (§24.1). Its confirmation, or an error, shows **inside the viewer** (§24.2) | DECIDED (the request); details PROPOSED |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -450,6 +451,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Round 8 (2026-10-02):** you asked for the next set of features and I built **M5a**, the server side of editing with several images, as version 1.2 (§21.11). One change from the spec, flagged there: uploads are a raw request body, not multipart (no new dependency in the container, the size cap enforced while streaming). The page for editing is next (M5b); it needs no further decision from you except R3 if you want the prompt rewriter.
 - **Round 9 (2026-10-02):** you asked to press on, and for two small additions first: an easier way to make the image 50% smaller, and a thumbnail button. I asked what each meant. Your answers: 50% smaller is **half the width and height**; the control is a **scale picker (100/75/50/25%)** on the prompt bar; the thumbnail is **both** a quick small draft and an extra thumbnail file with every image; and these get **their own small pull request before M5b**. Decisions #33–#35, specified in §22 (version 1.3).
 - **Round 10 (2026-10-02):** version 1.3 was reviewed and merged. You asked whether an image made at a lower resolution could have a button to regenerate it larger. I asked what that should produce; you chose **both**: a **Regenerate larger** button now (the same prompt and seed at the full size you had selected) and an **Upscale** button later (the same picture, bigger, once editing works), "back to the full size" as the step, and a **small v1.4 before M5b**. Decisions #36 and #37, specified in §23.
+- **Round 11 (2026-10-02):** version 1.4 (Regenerate larger on a run's card) was reviewed and merged. You asked for the same button in the viewer you get by clicking one image, starting a new job to enlarge that image. Decision #38, specified in §24 as version 1.5.
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
 ## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#32 DECIDED; details PROPOSED)
@@ -763,3 +765,23 @@ Draft time and quality at the defaults; a 100% / 50% / 25% run of the same promp
 - **Tests:** backend 360 (up from 329), front end 87 Vitest (up from 60) and 27 Playwright (up from 21). **Mutation checks: 63 deliberate breakages, 62 caught by a failing test and one equivalent.** Two first got through, both gaps in my tests and now closed: a full-queue message was only checked as a substring, so it passed with an unwanted prefix; and seven mutants did not compile (an unused variable stops the build) so they ran against the old page and were rewritten until they did. The survivor is the card re-checking `largerTarget` (status, mode, larger size) in its own copy of the rule: the server never stores a record that fails it, so no browser test can tell, and the Vitest tests pin the rule itself.
 - **Not verified:** whether a regenerated image resembles the small one on the real model (§23.1 says it will not), and how much time the small-then-large route saves. That is section 17 of the Spark checklist.
 - **Not built, on purpose:** Upscale (decision #37). The button is a placeholder and does nothing.
+
+## 24. Version 1.5: Regenerate larger in the image viewer (decision #38 DECIDED; details PROPOSED)
+
+### 24.1 What it does
+
+- **Where.** Clicking an image on a card opens the viewer (one image, with Download and Thumbnail). For a run that has **Regenerate larger** on its card (§23.1), the viewer has the same button in its top bar, with the same tooltip and accessible name ("Regenerate larger: 2048×2048, 40 steps").
+- **What it sends: this image only.** A new job with the run's prompt and options at the **full size and steps recorded with the run** (§23.1), the **seed this image used** (it is in the viewer's title), and **one image**. In a run of four, enlarging image 3 makes one new image, not four; for a run of one it is the same job as the card's button. It is an ordinary run in the history and joins the queue like any other.
+- **The viewer stays open**, so you can go on to the next image and enlarge that one too. The new run appears at the top of the history behind it.
+- **Same caveat as the card** (§23.1): the larger image will not be the same picture as the one you are looking at. *The same picture, bigger* is Upscale (§23.2), which is still not built, and the viewer does not get a placeholder for it.
+- **When it is offered.** Exactly when the card offers it: a **done** Generate run that remembers a full size larger than itself. A canceled run's finished images have no button in the viewer either, as on its card.
+
+### 24.2 Feedback inside the viewer
+
+The viewer is a modal dialog, and while one is open the page behind it is hidden from screen readers, including the toasts that confirm or report problems. So a request made from the viewer reports **inside it**, in a short note at the bottom: "Queued at 2048×2048 …", or the reason it could not be queued (a refusal, a full queue). The note is announced to screen readers, goes away when you move to another image or close the viewer, and is not also shown as a toast. A request made from a card still uses a toast.
+
+### 24.3 Acceptance criteria (continue §23.3)
+
+45. The viewer of a run that has Regenerate larger on its card has it too, naming the target; the viewer of any other run does not.
+46. Pressing it queues **one** image at the recorded full size and steps with the viewed image's own seed (for a run of several images, not the others), and says so inside the viewer; a refusal or a full queue is reported there as well, and nothing is queued.
+47. A double click queues one run. On a phone the viewer's buttons stay on screen with no sideways scroll, and the image still fits.
