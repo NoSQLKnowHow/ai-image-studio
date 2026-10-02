@@ -110,16 +110,95 @@ print(" and ".join(parts))
 '
 }
 
-# check_archive_paths ARCHIVE PREFIX: refuse an archive with any entry outside PREFIX/, with an
-# absolute path, or with a ".." in it. Backups made by backup.sh always pass; this is a safety net
-# for a damaged or tampered archive, checked before anything is extracted.
-check_archive_paths() {
-  local archive=$1 prefix=$2 flag="-tf" listing bad
-  [[ $archive == *.gz ]] && flag="-tzf"
-  listing=$(tar "$flag" "$archive") || die "Could not read $archive."
-  bad=$(printf '%s\n' "$listing" | grep -Ev "^${prefix}(/|$)" | head -n 3 || true)
-  [[ -z $bad ]] || die "Refusing to unpack $archive: it holds entries outside '$prefix/' (for example: $(printf '%s' "$bad" | head -n 1))."
+# check_listing PREFIX NAME LISTING: refuse an archive listing (the output of `tar -t`) with any entry
+# outside PREFIX/, with an absolute path, or with a ".." in it. Archives made by backup.sh always
+# pass; this is a safety net for a damaged or tampered one, checked before anything is unpacked.
+check_listing() {
+  local prefix=$1 name=$2 listing=$3 bad
+  bad=$(printf '%s\n' "$listing" | grep -Ev "^${prefix}(/|$)" | head -n 1 || true)
+  [[ -z $bad ]] || die "Refusing to unpack $name: it holds an entry outside '$prefix/' (for example: $bad)."
   if printf '%s\n' "$listing" | grep -Eq '(^|/)\.\.(/|$)'; then
-    die "Refusing to unpack $archive: it holds a path containing '..'."
+    die "Refusing to unpack $name: it holds a path containing '..'."
   fi
+}
+
+# ---------------------------------------------------------------------------------------------
+# Reading a backup. A backup is one .tar file (what backup.sh makes) or a folder holding the same
+# files (what you get by unpacking that .tar). Pieces are read straight out of the .tar with
+# `tar -xO`, so nothing needs unpacking first, which matters when the backup is tens of GB.
+#
+#   data.tar.gz      your history and images
+#   image.tar.gz     the Docker image (docker save, gzipped)
+#   env.backup       your .env
+#   model-cache.tar  the model's files from the Hugging Face cache
+#   MANIFEST.txt     what this is (key=value lines)
+#   SHA256SUMS       a checksum for every other file
+KNOWN_MEMBERS=(data.tar.gz image.tar.gz env.backup model-cache.tar MANIFEST.txt SHA256SUMS)
+BACKUP=""                          # the .tar file or folder, set by the caller before open_backup
+BACKUP_KIND=""                     # "tar" or "dir"
+declare -A MEMBER_NAME=()          # piece name -> the name it has inside the .tar
+MANIFEST_TEXT=""
+
+# open_backup: reads the list of pieces in $BACKUP, and refuses anything a backup made by
+# backup.sh never contains: an unknown piece, a piece that appears twice, or no manifest.
+open_backup() {
+  local listing entry name
+  MEMBER_NAME=()
+  if [[ -d $BACKUP ]]; then
+    BACKUP_KIND=dir
+    for name in "${KNOWN_MEMBERS[@]}"; do
+      if [[ -f $BACKUP/$name ]]; then MEMBER_NAME[$name]=$name; fi
+    done
+  elif [[ -f $BACKUP ]]; then
+    BACKUP_KIND=tar
+    listing=$(tar -tf "$BACKUP" 2>/dev/null) || die "$BACKUP isn't a readable .tar file (damaged, or not a tar at all)."
+    while IFS= read -r entry; do
+      [[ -n $entry && $entry != */ ]] || continue          # a folder entry such as ./
+      name=${entry#./}
+      [[ " ${KNOWN_MEMBERS[*]} " == *" $name "* ]] \
+        || die "$BACKUP holds '$entry', which a backup made by backup.sh never contains. Refusing to use it."
+      [[ -z ${MEMBER_NAME[$name]:-} ]] || die "$BACKUP holds '$name' twice. Refusing to use it."
+      MEMBER_NAME[$name]=$entry
+    done <<< "$listing"
+  else
+    die "$BACKUP isn't a file or a folder."
+  fi
+  if [[ -z ${MEMBER_NAME[MANIFEST.txt]:-} || -z ${MEMBER_NAME[SHA256SUMS]:-} ]]; then
+    die "$BACKUP has no MANIFEST.txt and SHA256SUMS, so it doesn't look like a backup made by backup.sh."
+  fi
+  MANIFEST_TEXT=$(member_cat MANIFEST.txt) || die "Could not read MANIFEST.txt from $BACKUP."
+}
+
+has_member() { [[ -n ${MEMBER_NAME[$1]:-} ]]; }
+
+# member_cat NAME: the piece's bytes on standard output.
+member_cat() {
+  if [[ $BACKUP_KIND == tar ]]; then tar -xOf "$BACKUP" -- "${MEMBER_NAME[$1]}"
+  else cat -- "$BACKUP/$1"; fi
+}
+
+# manifest KEY: a value from MANIFEST.txt (empty when missing).
+manifest() { printf '%s\n' "$MANIFEST_TEXT" | grep -m1 "^$1=" | cut -d= -f2- || true; }
+
+# verify_backup: re-reads every piece and compares it with SHA256SUMS. Returns 0 only if each piece
+# listed there is present and matches, and no piece is missing from the list.
+verify_backup() {
+  local sums want name got bad=0
+  sums=$(member_cat SHA256SUMS) || return 1
+  [[ -n $sums ]] || { warn "SHA256SUMS is empty."; return 1; }
+  while read -r want name; do
+    [[ -n $want && -n $name ]] || continue
+    name=${name#\*}
+    if ! has_member "$name"; then warn "$name is listed in SHA256SUMS but missing from the backup."; bad=1; continue; fi
+    got=$(member_cat "$name" | sha256sum | cut -d' ' -f1) || got=""
+    if [[ $got != "$want" ]]; then warn "$name is damaged: its checksum doesn't match."; bad=1; fi
+  done <<< "$sums"
+  for name in "${KNOWN_MEMBERS[@]}"; do
+    [[ $name == SHA256SUMS ]] && continue
+    has_member "$name" || continue
+    if ! printf '%s\n' "$sums" | grep -Eq "^[0-9a-f]{64} [ *]${name//./\\.}$"; then
+      warn "$name is in the backup but has no checksum in SHA256SUMS."; bad=1
+    fi
+  done
+  return "$bad"
 }

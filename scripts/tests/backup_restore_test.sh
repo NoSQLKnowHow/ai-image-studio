@@ -3,9 +3,9 @@
 #
 # Everything runs in a throw-away folder. `docker` is replaced by a stand-in that records every
 # call and pretends to be a container, an image and `docker save` / `docker load`; tar, gzip, the
-# checksums and the SQLite database are real. So this proves the scripts' logic (order of steps,
-# restarts after failures, refusals, integrity checks, round trips). It does not prove how real
-# Docker behaves: do a first real backup with --dry-run, then without, on the Spark.
+# checksums and the SQLite database are real. So this proves the scripts' logic (the single .tar
+# file, order of steps, restarts after failures, refusals, integrity checks, round trips). It does
+# not prove how real Docker behaves: do a first real backup with --dry-run, then without, on the Spark.
 # shellcheck disable=SC2012  # `ls` is used on folders this test made itself, with plain names
 set -uo pipefail
 
@@ -52,9 +52,15 @@ cat > "$T/bin/curl" <<'STUB'
 [[ -f ${STUB_STATE:?}/status.json ]] && { cat "$STUB_STATE/status.json"; exit 0; }
 exit 7
 STUB
+# a tar that can fail, or silently damage what it writes, on demand
 cat > "$T/bin/tar" <<'STUB'
 #!/usr/bin/env bash
 if [[ -n ${STUB_FAIL_TAR:-} && $* == *data.tar.gz* && $1 == -czf ]]; then echo "tar: stub failure" >&2; exit 2; fi
+if [[ -n ${STUB_CORRUPT_TAR:-} && $1 == -rf && $* == *MANIFEST.txt* ]]; then   # the last-but-one piece is being appended
+  /usr/bin/tar "$@"; rc=$?
+  printf 'X' | dd of="$2" bs=1 seek=2000 conv=notrunc 2>/dev/null
+  exit "$rc"
+fi
 exec /usr/bin/tar "$@"
 STUB
 cat > "$T/bin/df" <<'STUB'
@@ -77,6 +83,7 @@ section() { printf '\n%s\n' "$1"; }
 calls() { cat "$STUB_STATE/calls.log" 2>/dev/null || true; }
 line_of() { calls | grep -n -- "$1" | head -n 1 | cut -d: -f1; }
 tree_hash() { (cd "$1" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1); }
+count_in() { find "$1" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' '; }
 
 REPO="$T/my repo"              # a space in the path, on purpose
 DEST="$T/backups dir"
@@ -85,7 +92,9 @@ MODEL="$HFDIR/hub/models--Qwen--Qwen-Image-2.1"
 
 bk() { "$REPO/scripts/backup.sh" --allow-root "$@"; }
 rs() { "$REPO/scripts/restore.sh" --allow-root "$@"; }
-latest() { ls -d "$DEST"/ai-image-studio-backup-* 2>/dev/null | sort | tail -n 1; }
+latest() { ls "$DEST"/ai-image-studio-backup-*.tar 2>/dev/null | sort | tail -n 1; }
+member() { tar -xOf "$B" -- "$1"; }          # one piece of the backup in $B, on stdout
+unpack() { rm -rf "$2"; mkdir -p "$2"; tar -xf "$1" -C "$2"; }   # unpack TAR into DIR
 
 make_pristine() {
   rm -rf "$REPO" "$DEST" "$HFDIR"
@@ -116,15 +125,30 @@ reset_stub() {   # container exists and runs; the image exists
   rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"
   : > "$STUB_STATE/container"; echo true > "$STUB_STATE/running"
   echo "sha256:1111aaaa" > "$STUB_STATE/image_id"; : > "$STUB_STATE/calls.log"
-  unset STUB_FAIL_STOP STUB_FAIL_SAVE STUB_FAIL_TAR STUB_DF_LOW
+  unset STUB_FAIL_STOP STUB_FAIL_SAVE STUB_FAIL_TAR STUB_CORRUPT_TAR STUB_DF_LOW
 }
 fresh() { make_pristine; reset_stub; }
+
+# a backup .tar made by hand, to test what restore does with files that are NOT from backup.sh:
+#   mk_backup NAME INNER_DATA_ENTRY...  makes $T/NAME.tar with a valid manifest and checksums
+mk_backup() {
+  local d="$T/mk-$1"; shift; rm -rf "$d"; mkdir -p "$d"
+  python3 - "$d/data.tar.gz" "$@" <<'PY'
+import io, sys, tarfile
+with tarfile.open(sys.argv[1], "w:gz") as t:
+    for name in sys.argv[2:]:
+        data = b"x"; info = tarfile.TarInfo(name); info.size = len(data); t.addfile(info, io.BytesIO(data))
+PY
+  printf 'format=1\ncreated_utc=now\nhost=h\nuser=u\ngit_commit=none\ngit_uncommitted_files=0\nstudio_version=t\nimage_name=x\nimage_id=\nincluded=data\nmodel_dir=\n' > "$d/MANIFEST.txt"
+  (cd "$d" && sha256sum data.tar.gz MANIFEST.txt > SHA256SUMS && tar -cf "$d.tar" data.tar.gz MANIFEST.txt SHA256SUMS)
+}
 
 # ================================================================== backup
 section "usage and options"
 fresh
 out=$(bk --help 2>&1); rc=$?
 equals "--help exits 0" "$rc" 0
+contains "--help mentions the single .tar" "$out" ".tar"
 contains "--help lists --model" "$out" "--model"
 out=$(bk 2>&1); rc=$?
 equals "no destination exits 2" "$rc" 2
@@ -146,40 +170,46 @@ fresh
 out=$(bk --dry-run --model "$DEST" 2>&1); rc=$?
 equals "dry run exits 0" "$rc" 0
 contains "dry run says so" "$out" "Dry run"
-equals "dry run creates nothing in the destination" "$(ls -A "$DEST" | wc -l | tr -d ' ')" 0
+contains "dry run names the .tar it would make" "$out" "ai-image-studio-backup-"
+equals "dry run creates nothing in the destination" "$(count_in "$DEST")" 0
 check "dry run never stops the studio" bash -c "! grep -q 'compose stop' '$STUB_STATE/calls.log'"
 equals "studio still running" "$(cat "$STUB_STATE/running")" true
 
-section "a normal backup of a running studio"
+section "a normal backup of a running studio makes ONE .tar file"
 fresh
 out=$(bk "$DEST" 2>&1); rc=$?
 equals "exits 0" "$rc" 0
 B=$(latest)
-check "backup folder exists" test -d "$B"
-for f in data.tar.gz image.tar.gz env.backup MANIFEST.txt SHA256SUMS; do check "has $f" test -f "$B/$f"; done
-check "no model unless asked" test ! -e "$B/model-cache.tar"
-equals ".env copy is private (600)" "$(stat -c %a "$B/env.backup")" 600
-check "checksums verify" bash -c "cd '$B' && sha256sum -c --quiet SHA256SUMS"
-check "data archive is a valid gzip" gzip -t "$B/data.tar.gz"
-contains "manifest records the image id" "$(cat "$B/MANIFEST.txt")" "image_id=sha256:1111aaaa"
-contains "manifest records the commit" "$(cat "$B/MANIFEST.txt")" "git_commit=$(git -C "$REPO" rev-parse HEAD)"
-contains "manifest records what's included" "$(cat "$B/MANIFEST.txt")" "included=data,image,env"
-mkdir -p "$T/x" && tar -xzf "$B/data.tar.gz" -C "$T/x"
-equals "archived data is identical to the live data" "$(tree_hash "$T/x/data")" "$PRISTINE_DATA"
+check "the result is a regular file ending in .tar" test -f "$B" -a "${B##*.}" = tar
+equals "the destination holds that one file and nothing else (no folder, no leftovers)" "$(count_in "$DEST")" 1
+equals "it is a plain, uncompressed tar (ustar header)" "$(dd if="$B" bs=1 skip=257 count=5 2>/dev/null)" ustar
+equals "readable only by you (600)" "$(stat -c %a "$B")" 600
+equals "it holds exactly these pieces" "$(tar -tf "$B" | LC_ALL=C sort | tr '\n' ' ')" "MANIFEST.txt SHA256SUMS data.tar.gz env.backup image.tar.gz "
+unpack "$B" "$T/x"
+check "checksums verify after unpacking it by hand" bash -c "cd '$T/x' && sha256sum -c --quiet SHA256SUMS"
+check "the data piece is a valid gzip" bash -c "member() { tar -xOf '$B' -- \"\$1\"; }; member data.tar.gz | gzip -t"
+contains "manifest records the image id" "$(member MANIFEST.txt)" "image_id=sha256:1111aaaa"
+contains "manifest records the commit" "$(member MANIFEST.txt)" "git_commit=$(git -C "$REPO" rev-parse HEAD)"
+contains "manifest records what's included" "$(member MANIFEST.txt)" "included=data,image,env"
+rm -rf "$T/xd"; mkdir -p "$T/xd"; member data.tar.gz | tar -xz -C "$T/xd"
+equals "archived data is identical to the live data" "$(tree_hash "$T/xd/data")" "$PRISTINE_DATA"
+equals "the .env copy keeps mode 600 inside the tar" "$(tar -tvf "$B" env.backup | cut -c1-10)" "-rw-------"
 a=$(line_of "compose stop"); b=$(line_of "compose start"); c=$(line_of "docker save")
 check "order: stop, then start, then save the image" test "$a" -lt "$b" -a "$b" -lt "$c"
 equals "studio is running again afterwards" "$(cat "$STUB_STATE/running")" true
-check "no half-written folders left" bash -c "! ls -A '$DEST' | grep -q '^\.partial'"
 check "the live data was not modified" test "$(tree_hash "$REPO/data")" = "$PRISTINE_DATA"
+contains "the summary says how to copy it to a NAS" "$out" "NAS"
+contains "the summary says how to check the copy" "$out" "restore.sh --verify"
 
 section "--model and symlinks"
 fresh
 out=$(bk --model "$DEST" 2>&1); rc=$?
 equals "exits 0" "$rc" 0
 B=$(latest)
-check "model-cache.tar exists" test -f "$B/model-cache.tar"
-contains "manifest lists model" "$(cat "$B/MANIFEST.txt")" "included=data,image,env,model"
-contains "symlinks are kept as symlinks" "$(tar -tvf "$B/model-cache.tar")" "model.safetensors -> ../../../blobs/abc123"
+check "model-cache.tar is inside the .tar" bash -c "tar -tf '$B' | grep -qx model-cache.tar"
+contains "manifest lists model" "$(member MANIFEST.txt)" "included=data,image,env,model"
+contains "symlinks are kept as symlinks" "$(member model-cache.tar | tar -tvf -)" "model.safetensors -> ../../../blobs/abc123"
+equals "still just one file in the destination" "$(count_in "$DEST")" 1
 rm -rf "$MODEL"
 out=$(bk --model "$DEST" 2>&1); rc=$?
 equals "model missing from the cache: exits 1" "$rc" 1
@@ -197,12 +227,12 @@ fresh; export STUB_FAIL_SAVE=1
 out=$(bk "$DEST" 2>&1); rc=$?
 check "exits non-zero" test "$rc" -ne 0
 equals "studio is running again" "$(cat "$STUB_STATE/running")" true
-equals "no backup folder and no partial folder left" "$(ls -A "$DEST" | wc -l | tr -d ' ')" 0
-contains "says the half-written folder was removed" "$out" "half-written folder was removed"
+equals "nothing left in the destination: no .tar, no staging folder" "$(count_in "$DEST")" 0
+contains "says the backup did not finish, and that nothing was kept" "$out" "did not finish. Whatever had been written so far was removed"
 fresh; export STUB_FAIL_STOP=1
 out=$(bk "$DEST" 2>&1); rc=$?
 check "failing to stop it exits non-zero" test "$rc" -ne 0
-equals "nothing left behind" "$(ls -A "$DEST" | wc -l | tr -d ' ')" 0
+equals "nothing left behind" "$(count_in "$DEST")" 0
 
 section "a failure while the studio is stopped brings it back"
 fresh; export STUB_FAIL_TAR=1
@@ -211,8 +241,23 @@ check "exits non-zero" test "$rc" -ne 0
 check "the studio was stopped, then started again" bash -c "grep -q 'compose stop' '$STUB_STATE/calls.log' && grep -q 'compose start' '$STUB_STATE/calls.log'"
 equals "studio is running again" "$(cat "$STUB_STATE/running")" true
 contains "says it is starting it again" "$out" "Starting the studio again"
-equals "nothing left in the destination" "$(ls -A "$DEST" | wc -l | tr -d ' ')" 0
+equals "nothing left in the destination" "$(count_in "$DEST")" 0
 unset STUB_FAIL_TAR
+
+section "a .tar that is damaged as it is written is caught, and never kept"
+fresh; export STUB_CORRUPT_TAR=1
+out=$(bk "$DEST" 2>&1); rc=$?
+check "exits non-zero" test "$rc" -ne 0
+contains "says the checksum check failed" "$out" "failed its own checksum check"
+equals "nothing kept: no .tar and no staging folder" "$(count_in "$DEST")" 0
+equals "studio is running" "$(cat "$STUB_STATE/running")" true
+out=$(bk --no-verify "$DEST" 2>&1); rc=$?
+equals "--no-verify skips that check (so the damage is not noticed)" "$rc" 0
+B=$(latest)
+out=$(rs --verify "$B" 2>&1); rc=$?
+equals "but 'restore.sh --verify' notices it later" "$rc" 1
+contains "and names the damaged piece" "$out" "data.tar.gz is damaged"
+unset STUB_CORRUPT_TAR
 
 section "a busy studio is not interrupted"
 fresh
@@ -226,7 +271,7 @@ equals "--interrupt goes ahead" "$rc" 0
 echo '{"queue":{"running":null,"queued":0,"cap":10}}' > "$STUB_STATE/status.json"
 out=$(bk "$DEST" 2>&1); rc=$?
 equals "an idle studio is backed up normally (even straight after another backup)" "$rc" 0
-equals "both backups exist, with different names" "$(ls -d "$DEST"/ai-image-studio-backup-* | wc -l | tr -d ' ')" 2
+equals "both backups exist, with different names" "$(ls "$DEST"/ai-image-studio-backup-*.tar | wc -l | tr -d ' ')" 2
 
 section "problems found before anything is touched"
 fresh; rm -rf "$REPO/data"
@@ -239,7 +284,7 @@ equals "no image: exits 1" "$rc" 1
 contains "suggests --no-image" "$out" "--no-image"
 out=$(bk --no-image "$DEST" 2>&1); rc=$?
 equals "--no-image works" "$rc" 0
-check "and leaves the image out" test ! -e "$(latest)/image.tar.gz"
+check "and leaves the image out" bash -c "! tar -tf '$(latest)' | grep -q image.tar.gz"
 fresh; rm -f "$REPO/.env"
 out=$(bk "$DEST" 2>&1); rc=$?
 equals "no .env is only a warning" "$rc" 0
@@ -247,37 +292,114 @@ contains "warned" "$out" "no .env file"
 fresh; export STUB_DF_LOW=1
 out=$(bk "$DEST" 2>&1); rc=$?
 equals "too little space and no one to ask: exits 3" "$rc" 3
-contains "reports the shortage" "$out" "is free at the destination"
+contains "reports the shortage" "$out" "is free"
 equals "nothing was stopped" "$(grep -c 'compose stop' "$STUB_STATE/calls.log" || true)" 0
 out=$(bk --yes "$DEST" 2>&1); rc=$?
 equals "--yes goes ahead anyway" "$rc" 0
 
-section "relative destination, .env with quotes and comments, --keep"
+section "relative destination, .env with quotes and comments"
 fresh
 printf 'HF_CACHE_DIR="%s" # my cache\nSTUDIO_MODEL=Qwen/Qwen-Image-2.1\n' "$T/other cache" > "$REPO/.env"
 mkdir -p "$T/other cache/hub" && mv "$MODEL" "$T/other cache/hub/"
 (cd "$T" && "$REPO/scripts/backup.sh" --allow-root --model "rel dest" >/dev/null 2>&1); rc=$?
 equals "relative destination, custom cache folder: exits 0" "$rc" 0
-check "the backup landed in the relative folder" test -f "$(ls -d "$T/rel dest"/ai-image-studio-backup-* | head -n 1)/model-cache.tar"
+B=$(ls "$T/rel dest"/ai-image-studio-backup-*.tar | head -n 1)
+check "the model was found in the custom cache folder" bash -c "tar -tf '$B' | grep -qx model-cache.tar"
 rm -rf "$T/rel dest" "$T/other cache"
+
+section "--keep prunes old backups, and only ours"
 fresh
 for _ in 1 2 3 4; do bk --no-image "$DEST" >/dev/null 2>&1; sleep 1; done
-mkdir "$DEST/ai-image-studio-backup-20200101-000000"        # right name, but not ours (no MANIFEST)
-mkdir "$DEST/ai-image-studio-backup-notatimestamp"           # wrong name
+echo "not a backup" > "$DEST/ai-image-studio-backup-20200101-000000.tar"     # right name, but junk
+mkdir "$T/decoy" && echo hi > "$T/decoy/file" && tar -cf "$DEST/ai-image-studio-backup-20200102-000000.tar" -C "$T/decoy" file   # a tar, but not ours
+echo keep > "$DEST/ai-image-studio-backup-notatimestamp.tar"                  # wrong name
 out=$(bk --no-image --keep 2 "$DEST" 2>&1); rc=$?
 equals "--keep exits 0" "$rc" 0
-equals "only the newest 2 real backups remain" "$(for d in "$DEST"/ai-image-studio-backup-*; do [[ -f $d/MANIFEST.txt ]] && echo "$d"; done | wc -l | tr -d ' ')" 2
-check "a folder without a MANIFEST is left alone" test -d "$DEST/ai-image-studio-backup-20200101-000000"
-check "a folder with another name is left alone" test -d "$DEST/ai-image-studio-backup-notatimestamp"
-contains "said so" "$out" "isn't one of ours"
+real=0; for f in "$DEST"/*.tar; do
+  [[ $(basename "$f") =~ ^ai-image-studio-backup-[0-9]{8}-[0-9]{6}\.tar$ ]] || continue
+  tar -tf "$f" MANIFEST.txt >/dev/null 2>&1 && real=$((real + 1)); done
+equals "only the newest 2 real backups remain" "$real" 2
+check "a junk file with a backup's name is left alone" test -f "$DEST/ai-image-studio-backup-20200101-000000.tar"
+check "a tar that isn't ours is left alone" test -f "$DEST/ai-image-studio-backup-20200102-000000.tar"
+check "a file with another name is left alone" test -f "$DEST/ai-image-studio-backup-notatimestamp.tar"
+contains "said so" "$out" "doesn't look like one of ours"
+
+# ================================================================== verify (no restoring)
+section "restore.sh --verify checks a .tar without restoring, and without Docker"
+fresh; bk --model "$DEST" >/dev/null 2>&1; B=$(latest)
+: > "$STUB_STATE/calls.log"
+# a PATH with the basic tools and no docker at all (a real docker binary may exist on this machine)
+MINBIN="$T/minbin"; mkdir -p "$MINBIN"
+for tool in bash env dirname basename cat grep sed cut tr head tail sort wc date mktemp rm ls stat tar gzip gunzip sha256sum awk id hostname; do
+  p=$(PATH=/usr/bin:/bin command -v "$tool" 2>/dev/null) && ln -sf "$p" "$MINBIN/$tool"
+done
+check "(precondition) docker really is not on the PATH used below" env PATH="$MINBIN" bash -c '! command -v docker'
+out=$(env PATH="$MINBIN" "$REPO/scripts/restore.sh" --allow-root --verify "$B" 2>&1); rc=$?
+equals "an intact backup: exits 0, even with no docker on the PATH" "$rc" 0
+contains "says it is intact" "$out" "This backup is intact"
+contains "shows what it holds" "$out" "holds:  data,image,env,model"
+equals "it did not touch Docker" "$(calls)" ""
+equals "or the data" "$(tree_hash "$REPO/data")" "$PRISTINE_DATA"
+# a copy somewhere else (a NAS, say) is still verifiable
+mkdir -p "$T/nas share" && cp "$B" "$T/nas share/"
+out=$(rs --verify "$T/nas share/$(basename "$B")" 2>&1); rc=$?
+equals "a copy in another folder verifies too" "$rc" 0
+# damage inside the data piece
+cp "$B" "$T/damaged.tar"; printf 'X' | dd of="$T/damaged.tar" bs=1 seek=100000 conv=notrunc 2>/dev/null
+out=$(rs --verify "$T/damaged.tar" 2>&1); rc=$?
+equals "a damaged copy: exits 1" "$rc" 1
+contains "names the damaged piece" "$out" "data.tar.gz is damaged"
+# truncated (a copy that stopped half way)
+head -c 60000 "$B" > "$T/truncated.tar"
+out=$(rs --verify "$T/truncated.tar" 2>&1); rc=$?
+equals "a truncated copy: exits 1" "$rc" 1
+rm -f "$T/damaged.tar" "$T/truncated.tar"
+out=$(rs --verify "$T/not-there.tar" 2>&1); rc=$?
+equals "a file that doesn't exist: exits 1" "$rc" 1
+echo "just text" > "$T/notatar.tar"
+out=$(rs --verify "$T/notatar.tar" 2>&1); rc=$?
+equals "a file that isn't a tar: exits 1" "$rc" 1
+
+section "restore refuses a .tar that isn't what backup.sh makes"
+fresh; bk "$DEST" >/dev/null 2>&1; B=$(latest); unpack "$B" "$T/u"
+echo 'echo hi' > "$T/u/evil.sh"; tar -cf "$T/extra.tar" -C "$T/u" MANIFEST.txt SHA256SUMS data.tar.gz evil.sh
+out=$(rs --verify "$T/extra.tar" 2>&1); rc=$?
+equals "an unknown piece: exits 1" "$rc" 1
+contains "says so" "$out" "never contains"
+tar -cf "$T/dup.tar" -C "$T/u" MANIFEST.txt SHA256SUMS data.tar.gz && tar -rf "$T/dup.tar" -C "$T/u" data.tar.gz
+out=$(rs --verify "$T/dup.tar" 2>&1); rc=$?
+equals "a piece that appears twice: exits 1" "$rc" 1
+contains "says so" "$out" "twice"
+tar -cf "$T/nosums.tar" -C "$T/u" MANIFEST.txt data.tar.gz
+out=$(rs --verify "$T/nosums.tar" 2>&1); rc=$?
+equals "no SHA256SUMS: exits 1" "$rc" 1
+contains "says it isn't a backup" "$out" "doesn't look like a backup"
+grep -v '^.*env.backup' "$T/u/SHA256SUMS" > "$T/u/SHA256SUMS.new" && mv "$T/u/SHA256SUMS.new" "$T/u/SHA256SUMS"
+tar -cf "$T/unlisted.tar" -C "$T/u" MANIFEST.txt SHA256SUMS data.tar.gz env.backup image.tar.gz
+out=$(rs --verify "$T/unlisted.tar" 2>&1); rc=$?
+equals "a piece with no checksum: exits 1" "$rc" 1
+contains "says so" "$out" "has no checksum"
+unpack "$B" "$T/u"; rm -f "$T/u/image.tar.gz"
+tar -cf "$T/missing.tar" -C "$T/u" MANIFEST.txt SHA256SUMS data.tar.gz env.backup
+out=$(rs --verify "$T/missing.tar" 2>&1); rc=$?
+equals "a listed piece that is missing: exits 1" "$rc" 1
+contains "says so" "$out" "missing from the backup"
+# a .tar repacked by another tool, with ./ in front of every name, is fine
+unpack "$B" "$T/u"; tar -cf "$T/dotted.tar" -C "$T/u" .
+out=$(rs --verify "$T/dotted.tar" 2>&1); rc=$?
+equals "a .tar repacked with ./ names verifies" "$rc" 0
+# and an unpacked folder works too
+out=$(rs --verify "$T/u" 2>&1); rc=$?
+equals "so does the unpacked folder" "$rc" 0
+rm -rf "$T/u" "$T"/*.tar
 
 # ================================================================== restore
 section "restore: refusing and checking"
 fresh; bk --model "$DEST" >/dev/null 2>&1; B=$(latest)
 out=$(rs 2>&1); rc=$?
 equals "no argument exits 2" "$rc" 2
-out=$(rs "$T/nowhere" 2>&1); rc=$?
-equals "not a folder exits 1" "$rc" 1
+out=$(rs "$T/nowhere.tar" 2>&1); rc=$?
+equals "a path that doesn't exist exits 1" "$rc" 1
 mkdir "$T/empty"; out=$(rs "$T/empty" 2>&1); rc=$?
 equals "a folder that isn't a backup exits 1" "$rc" 1
 contains "explains" "$out" "doesn't look like a backup"
@@ -294,20 +416,20 @@ contains "dry run says so" "$out" "Dry run"
 equals "data untouched by a dry run" "$(tree_hash "$REPO/data")" "$PRISTINE_DATA"
 check "no stop call" bash -c "! grep -q 'compose stop' '$STUB_STATE/calls.log'"
 
-section "restore: tampered backup"
-cp -r "$B" "$T/tampered"
-printf 'X' | dd of="$T/tampered/data.tar.gz" bs=1 seek=100 conv=notrunc 2>/dev/null
+section "restore: a damaged backup is refused before anything changes"
+cp "$B" "$T/tampered.tar"
+printf 'X' | dd of="$T/tampered.tar" bs=1 seek=100000 conv=notrunc 2>/dev/null
 rm -rf "$REPO/data"
-out=$(rs "$T/tampered" 2>&1); rc=$?
+out=$(rs "$T/tampered.tar" 2>&1); rc=$?
 equals "damaged backup: exits 1" "$rc" 1
 contains "says it's damaged" "$out" "damaged"
 check "nothing was restored" test ! -e "$REPO/data"
-rm -rf "$T/tampered"
+rm -f "$T/tampered.tar"
 
-section "restore: the full round trip, on a 'new machine'"
-# data, .env, the model and the image are all gone
+section "restore: the full round trip, on a 'new machine', from a copy on a 'NAS'"
+mkdir -p "$T/nas share"; cp "$B" "$T/nas share/"; NASB="$T/nas share/$(basename "$B")"
 rm -rf "$REPO/data" "$MODEL"; rm -f "$REPO/.env" "$STUB_STATE/image_id"; echo false > "$STUB_STATE/running"; : > "$STUB_STATE/calls.log"
-out=$(rs "$B" 2>&1); rc=$?
+out=$(rs "$NASB" 2>&1); rc=$?
 equals "exits 0" "$rc" 0
 equals "data identical to the original" "$(tree_hash "$REPO/data")" "$PRISTINE_DATA"
 equals "SQLite database passes its integrity check" "$(python3 -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('PRAGMA integrity_check').fetchone()[0], c.execute('SELECT count(*) FROM runs').fetchone()[0])" "$REPO/data/studio.sqlite")" "ok 50"
@@ -320,6 +442,15 @@ contains "docker load was called" "$(calls)" "docker load"
 check "not started: it wasn't running before" bash -c "! grep -q 'compose up' '$STUB_STATE/calls.log'"
 contains "tells you how to start it" "$out" "docker compose up -d --no-build"
 check "no temp folder left behind" bash -c "! ls -A '$REPO' | grep -q '^\.restore-tmp'"
+check "the .tar itself was only read, never changed" test "$(sha256sum "$NASB" | cut -d' ' -f1)" = "$(sha256sum "$B" | cut -d' ' -f1)"
+
+section "restore: from an unpacked folder"
+fresh; bk "$DEST" >/dev/null 2>&1; B=$(latest); unpack "$B" "$T/unpacked"
+rm -rf "$REPO/data"
+out=$(rs "$T/unpacked" 2>&1); rc=$?
+equals "exits 0" "$rc" 0
+equals "data identical" "$(tree_hash "$REPO/data")" "$PRISTINE_DATA"
+rm -rf "$T/unpacked"
 
 section "restore: --start, and a studio that was running"
 fresh; bk "$DEST" >/dev/null 2>&1; B=$(latest)
@@ -384,47 +515,42 @@ contains "warns the code is at another commit" "$out" "was made at"
 contains "says how to match it" "$out" "git checkout"
 
 section "restore: archives that try to escape are refused"
-mk_evil() {   # mk_evil NAME ENTRY...
-  local d="$T/$1"; shift; rm -rf "$d"; mkdir -p "$d"
-  python3 - "$d/data.tar.gz" "$@" <<'PY'
-import io, sys, tarfile
-with tarfile.open(sys.argv[1], "w:gz") as t:
-    for name in sys.argv[2:]:
-        data = b"x"; info = tarfile.TarInfo(name); info.size = len(data); t.addfile(info, io.BytesIO(data))
-PY
-  printf 'format=1\ncreated_utc=now\nhost=h\nuser=u\ngit_commit=none\ngit_uncommitted_files=0\nstudio_version=t\nimage_name=x\nimage_id=\nincluded=data\nmodel_dir=\n' > "$d/MANIFEST.txt"
-  (cd "$d" && sha256sum data.tar.gz MANIFEST.txt > SHA256SUMS)
-}
 fresh; rm -rf "$REPO/data"
-mk_evil evil1 "data/ok.txt" "../evil.txt"
-out=$(rs "$T/evil1" 2>&1); rc=$?
+mk_backup evil1 "data/ok.txt" "../evil.txt"
+out=$(rs "$T/mk-evil1.tar" 2>&1); rc=$?
 equals "a '..' entry: exits 1" "$rc" 1
 contains "explained" "$out" "outside 'data/'"
 check "nothing was written outside" test ! -e "$REPO/evil.txt" -a ! -e "$T/evil.txt"
 check "no data folder was created" test ! -e "$REPO/data"
-mk_evil evil2 "data/ok.txt" "other/file.txt"
-out=$(rs "$T/evil2" 2>&1); rc=$?
+mk_backup evil2 "data/ok.txt" "other/file.txt"
+out=$(rs "$T/mk-evil2.tar" 2>&1); rc=$?
 equals "an entry outside data/: exits 1" "$rc" 1
-mk_evil evil3 "/tmp/stub-absolute-path-test.txt"
-out=$(rs "$T/evil3" 2>&1); rc=$?
+mk_backup evil3 "/tmp/stub-absolute-path-test.txt"
+out=$(rs "$T/mk-evil3.tar" 2>&1); rc=$?
 equals "an absolute path: exits 1" "$rc" 1
 check "the absolute path was not written" test ! -e /tmp/stub-absolute-path-test.txt
-mk_evil evil4 "data/../../evil.txt"
-out=$(rs "$T/evil4" 2>&1); rc=$?
+mk_backup evil4 "data/../../evil.txt"
+out=$(rs "$T/mk-evil4.tar" 2>&1); rc=$?
 equals "a path that starts in data/ but climbs out: exits 1" "$rc" 1
 check "nothing was written outside" test ! -e "$T/evil.txt" -a ! -e "$REPO/../evil.txt"
+mk_backup fine "data/ok.txt"
+out=$(rs "$T/mk-fine.tar" 2>&1); rc=$?
+equals "(control) a well-formed hand-made backup restores" "$rc" 0
+check "and its file arrived" test -f "$REPO/data/ok.txt"
 
 section "restore: a failure leaves the studio stopped and says so"
 fresh; bk "$DEST" >/dev/null 2>&1; B=$(latest)
 echo "sha256:other" > "$STUB_STATE/image_id"
-# make the image load fail by pointing at an unreadable image archive after verification is skipped
-rm -f "$B/image.tar.gz"; printf 'not gzip data' > "$B/image.tar.gz"
+unpack "$B" "$T/u"; printf 'not gzip data' > "$T/u/image.tar.gz"
+tar -cf "$T/brokenimage.tar" -C "$T/u" MANIFEST.txt SHA256SUMS data.tar.gz env.backup image.tar.gz
 rm -rf "$REPO/data"
-out=$(rs --no-verify "$B" 2>&1); rc=$?
+out=$(rs --no-verify "$T/brokenimage.tar" 2>&1); rc=$?
 check "exits non-zero" test "$rc" -ne 0
 contains "says the restore didn't finish" "$out" "did not finish"
 equals "studio left stopped" "$(cat "$STUB_STATE/running")" false
 check "no temp folder left behind" bash -c "! ls -A '$REPO' | grep -q '^\.restore-tmp'"
+out=$(rs "$T/brokenimage.tar" 2>&1); rc=$?
+equals "(and with checksums on, the same file is refused up front)" "$rc" 1
 
 # ================================================================== result
 printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
