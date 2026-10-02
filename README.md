@@ -9,8 +9,8 @@ can reuse and tweak prompts.
 | Part | State |
 |---|---|
 | Web studio: backend, real model, web page, container (milestones M1–M4, M7) | Built and tested with a fake test pipeline (backend, front-end and in-browser tests). **Not yet run on the Spark:** the image build and the real model need Docker and the GB10, which my sandbox doesn't have. [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) is the checklist for that first run. |
-| Version 2 (planned, not built) | **Editing with several images** for one prompt: numbered images you can reference in the prompt, reordering, a 1K/2K choice, and later local edits (marks and masks). Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §21. |
-| Still to come from the version 1 plan | Cancel, pin and auto-expiry (M6); the Spark smoke test together (M8). Plan and decisions: [`docs/DESIGN.md`](docs/DESIGN.md). |
+| Version 2 (planned, not built) | **Editing with several images** for one prompt: numbered images you can reference in the prompt, reordering, a 1K/2K choice, and later local edits (marks and masks); plus the housekeeping v1 left out: **cancel**, **Keep** and **auto-expiry** of old runs. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §21. |
+| Still to come | The Spark smoke test together (M8). |
 | `scripts/qwen_image.py`: command-line tool for text-to-image, image editing, transparent (RGBA) output | Written and exercised with mocks only. **Not yet run on a real GPU.** |
 
 ## Run it on the Spark

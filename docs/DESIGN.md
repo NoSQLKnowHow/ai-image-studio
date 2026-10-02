@@ -1,6 +1,6 @@
 # Qwen-Image Web Studio — Design Specification (round 6: version 2 planned)
 
-Living document. **Version 1 is built and running on your Spark** (Generate, history, Options, themes, container: milestones M1–M4 and M7). **§21 specifies version 2, editing with several images; nothing in §21 is built yet.** §1–§20 describe version 1 and the shared design; where §21 differs, §21 wins.
+Living document. **Version 1 is built and running on your Spark** (Generate, history, Options, themes, container: milestones M1–M4 and M7). **§21 specifies version 2, editing with several images plus the run housekeeping of M6 (cancel, keep, auto-expiry); nothing in §21 is built yet.** §1–§20 describe version 1 and the shared design; where §21 differs, §21 wins.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer.
 
@@ -57,6 +57,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 26 | Image cap (v2) | 4 by default, configurable up to 10 (`STUDIO_MAX_INPUT_IMAGES`); raised after measuring on the Spark | DECIDED |
 | 27 | Local edits (v2) | Specified in v2, built after multi-image editing works (§21.5, M5d) | DECIDED |
 | 28 | Edit output size (v2) | Auto (about 1 MP, shape from the last image) with a 1K / 2K choice, default 1K (§21.4) | DECIDED |
+| 29 | M6 is part of v2 | The housekeeping the v1 plan left for M6 (**cancel** a queued or running job, **Keep** a run, **auto-expiry** with a warning) is built as part of version 2, not as a separate release (§21.11) | DECIDED |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -371,7 +372,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | M3 | Front-end shell, theming, prompt bar, Options drawer, options persistence | Criteria 2, 3, 15, 16 pass in Playwright |
 | M4 | Timeline, run cards, SSE live updates, Reuse, download, delete | Criteria 4, 5, 6, 14 pass |
 | M5 | Edit mode: uploads, all four inputs. **Replaced by M5a–M5d for version 2 (§21.11)** | Criteria 13, 19–30 |
-| M6 | Queue cap, cancel, retention, pin, failure handling | Criteria 8, 9, 11, 12, 18 pass |
+| M6 | Queue cap, cancel, retention, pin, failure handling. **Now part of version 2 (decision #29); what remains is in §21.11** | Criteria 8, 9, 11, 12, 18 pass |
 | M7 | Containerfile, compose, docs | Image builds; criterion 17 on the Spark |
 | M8 | Spark smoke test with you | Criteria 1, 10, 17 and the real-hardware checklist |
 
@@ -433,15 +434,16 @@ These were opened and read in full, not taken from search results. The announcem
 - **2026-10-01:** you gave the go for M1 ("Go, start M1.").
 - **2026-10-02:** you asked for the next sections so you could test for real, chose **real model + container + web UI** as the next batch, and **one pull request per batch** (§17).
 - **Still pending from you (not blocking M1–M7):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9).
-- **Round 6 (2026-10-02):** version 1 was built (batch 2: real model, web page, container), built on the Spark and generating images. You asked for version 2 to add **editing with several uploaded images**, to be specified before any code. After a search of what Qwen announced and a read of the pinned pipeline source, you decided #24–#28: several images per edit, numbered badges with insert-into-prompt, a cap of 4 configurable to 10, local edits specified now and built second, and Auto size with a 1K/2K choice. Later the same day, with network access to the Qwen pages opened for the session, I read the announcement, the model card, the licence and the GitHub README directly; §21 and §18 were corrected from them (the prompt rewriter and the mask convention, which the search summaries had wrong or missing; the licence, now verified), and three refinements (R1–R3, §21.3) await your decision. Details are §21 and are PROPOSED until you review them.
+- **Round 6 (2026-10-02):** version 1 was built (batch 2: real model, web page, container), built on the Spark and generating images. You asked for version 2 to add **editing with several uploaded images**, to be specified before any code. After a search of what Qwen announced and a read of the pinned pipeline source, you decided #24–#28: several images per edit, numbered badges with insert-into-prompt, a cap of 4 configurable to 10, local edits specified now and built second, and Auto size with a 1K/2K choice. Later the same day, with network access to the Qwen pages opened for the session, I read the announcement, the model card, the licence and the GitHub README directly; §21 and §18 were corrected from them (the prompt rewriter and the mask convention, which the search summaries had wrong or missing; the licence, now verified), and three refinements (R1–R3, §21.3) await your decision. You then decided that **M6 is part of v2** (#29). Details are §21 and are PROPOSED until you review them.
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
-## 21. Version 2: editing with several images (decisions #24–#28 DECIDED; details PROPOSED)
+## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#29 DECIDED; details PROPOSED)
 
 ### 21.1 What v2 is, and what it replaces
 
 - **Version 1** is what is built and running on your Spark: Generate (text-to-image), history, the Options drawer, themes, the container (milestones M1–M4 and M7). **Edit mode is not part of v1 as delivered**: the mode switch shows "Edit — soon".
 - **Version 2 is editing**, with your addition: **upload several images for one prompt** (decision #24). It replaces the one-reference-image rule of §5.4, the "image editing from an uploaded image" line of §2 and milestone M5 (§17). Masks and local edits, listed as out of scope in §2, come in as the second half of v2 (§21.5).
+- **Version 2 also includes M6** (decision #29): the housekeeping v1 left unbuilt, namely cancel, Keep and auto-expiry. §21.11 says what is already built and what remains, and how it fits with the editing work.
 - Where §21 differs from §1–§20, **§21 wins** for v2. The other sections are not rewritten; they say "see §21" where it matters.
 - **How sure am I?** Three kinds of evidence are labelled throughout:
   - **[verified]**: read from the pinned `diffusers` source (commit `578c9b2`), the code the studio actually runs.
@@ -485,6 +487,7 @@ These were opened and read in full, not taken from search results. The announcem
 | 26 | Image cap | **4 by default, configurable up to 10** (`STUDIO_MAX_INPUT_IMAGES`). Raised only after memory and time are measured on the Spark next to Hermes | DECIDED |
 | 27 | Local edits | **Specified in v2, built after multi-image editing works** (§21.5, milestone M5d) | DECIDED |
 | 28 | Edit output size | **Auto (about 1 MP, shape from the last image) with a 1K / 2K resolution choice**; default 1K. Choosing a size in Options overrides Auto | DECIDED |
+| 29 | M6 is part of v2 | **Cancel** (queued and running jobs), **Keep** (pin) and **auto-expiry** with a warning, left unbuilt by the v1 plan, are built as part of version 2 (§21.11) | DECIDED |
 
 **Refinements proposed after reading Qwen's pages (not yet decided, so not in the table above):**
 
@@ -554,6 +557,7 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 - The v1 column `runs.input_image_id` was never written by any shipped feature. The migration (`schema_version` 1 → 2) is additive: it creates `run_inputs` and leaves that column alone.
 - `options_json` also records `resolution` and the ordered roles, so Reuse and Retry stay faithful.
 - **Staged uploads** live in their own folder and are deleted if no run claims them within **24 hours** (`STUDIO_UPLOAD_TTL_HOURS`), at start-up and hourly.
+- **Expiry and delete take a run's inputs with its outputs** (M6, §21.11): a pinned run keeps both; staged uploads follow the 24-hour rule above. Because a run owns copies of its inputs, an input copied into a newer run survives the expiry of its source.
 - Uploads are **re-encoded to PNG without flattening alpha** (§21.2 point 5). The other upload rules (§11) are unchanged: PNG/JPEG/WebP only, decoded and verified, 20 MB and 16 MP per image.
 
 ### 21.8 Worker and pipeline
@@ -584,18 +588,31 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 28. **On the Spark:** a 2-image and a 4-image edit complete at 1K, and one at 2K; memory and times are recorded; a prompt that refers to "image 1" and "image 2" is followed by the result; the cost-hint thresholds and the default cap are set from the measurements.
 29. *(M5d)* A circle or brush mark baked into an image changes only that region; the card shows original and marked.
 30. *(M5d)* A mask image works with the polarity found in M5c; a mask never sets the result's shape.
+31. *(M6)* Cancelling a running edit stops it promptly (between steps if the pipeline allows it, otherwise between images), keeps the images already finished, marks the run canceled, and leaves the worker ready for the next job. A queued job is canceled at once.
+32. *(M6)* Expiry removes a run's inputs together with its outputs; a pinned (Kept) run keeps both; an input copied into a newer run survives its source's expiry; queued and running runs are never expired.
 
 ### 21.11 Build order for v2 (replaces M5 in §17)
 
 | Milestone | Delivers | Done when |
 |---|---|---|
+| M6 | Cancel, Keep and auto-expiry (details below). The v1 plan's remaining housekeeping, now part of v2 (decision #29) | Criteria 9 and 12 of §16, and 31–32 |
 | M5a | Backend: multi-file uploads and staging, the cleanup job, `run_inputs` and the schema migration, `POST /api/runs` with `input_images`, worker and fake pipeline pass a list | API tests; fake edits show all sources in order |
 | M5b | The page: tray, the four inputs, badges and insert, reorder, cap, shape note, Resolution control with cost hint, run-card sources, Reuse, Retry, Edit this | Criteria 19–27 in Playwright |
 | M5c | The Spark test for edits (checklist supplied): 2- and 4-image edits at 1K, one at 2K, an alpha input; prompts that refer to "image 1" and "image 2"; a transparent edit and a subject extraction; **a mask, tried with both polarities and sizes**; memory and time recorded; cap and cost-hint thresholds set | Criterion 28, and the [unconfirmed] items of §21.2 settled |
 | M5d | Local edits: mark-up editor and mask (§21.5), after M5c has settled the mask convention | Criteria 29–30 |
 | M5e | *Only if R3 is accepted:* the "Improve prompt" step (§21.12 item 3) | Its own criteria, written when decided |
 
-Each is its own pull request into `main` (never stacked), and I stop after each for your review (decision #22). **M6 (cancel, pin, retention, failure handling) and M8 from the v1 plan are unchanged; whether they come before, between or after these is open** (§21.12 item 4).
+**Proposed order: M6, then M5a, M5b, M5c, M5d (and M5e if R3 is accepted).** Reasons: M6 is the smallest piece and independent of the editing design; it closes a gap you feel today (no way to stop a long run), and cancel will matter even more for multi-image edits and before the heavy edits M5c measures. Its one point of contact with editing, expiry removing a run's inputs, is handled in M5a, which has to extend delete to inputs anyway. Say so if you would rather have another order.
+
+Each is its own pull request into `main` (never stacked), and I stop after each for your review (decision #22). M8, the Spark smoke test together, comes last.
+
+**M6: what is built, and what remains**
+
+- **Already built:** the pending cap with a clear 429 message (M1), delete with confirmation, which refuses while a run is running (M1), and the failure handling: out of memory, load failures, crashes and the memory pre-flight, each with an actionable message (M1–M2).
+- **Cancel.** `POST /api/runs/{id}/cancel`. A queued job becomes canceled at once. A running job stops **between steps**: the pipeline has a per-step callback and an interrupt flag [verified], so the worker can stop mid-image; finished images of the batch are kept and the run shows "2 of 4 completed". The worker stays loaded for the next job. UI: a Cancel button on queued and running cards; stopping a running job asks first ("Finished images are kept").
+- **Keep.** `PATCH /api/runs/{id}` with `{pinned: bool}`, a **Keep** button and a small badge on kept cards. Kept runs are exempt from expiry. (The database column already exists.)
+- **Auto-expiry.** A janitor deletes runs older than `STUDIO_RETENTION_DAYS` (default 30; 0 turns it off) with all their files, at start-up and then daily; never queued, running or kept runs. A card shows **"expires in N days"** when fewer than 7 remain, so nothing you wanted vanishes silently (§5.6). The setting is read today but nothing acts on it; `.env.example` will lose its "not active yet" note.
+- **To check on the Spark:** how quickly a cancel takes effect mid-step at 2K.
 
 ### 21.12 Open items for v2, and ideas parked
 
@@ -605,7 +622,7 @@ Each is its own pull request into `main` (never stacked), and I stop after each 
 2. **Measure on the Spark** (M5c): time and memory for 1, 2 and 4 images at 1K and 2K, next to Hermes. This sets the cap's default, the cost-hint thresholds and any size limits for edits.
 3. **The prompt rewriter (R3).** It is official and recommended by Qwen, but it is a separate **9B vision-language model** (about 18 GB in bf16 by the usual arithmetic, not stated by Qwen) next to a main model whose footprint is still an estimate (the studio starts from 40 GB, to be measured, §9a), on a Spark that Hermes shares. Open questions: load it only when "Improve prompt" is clicked and unload it again, in its own worker process, as the main model is (decision #13)? Show the rewritten prompt for you to edit and approve, never apply it silently? Honour its `wh_ratio` and `ratio_follow` suggestions? What licence do the two rewriter checkpoints carry (not read yet)? Time to rewrite a prompt on the Spark?
 4. **Settle the [unconfirmed] items** (§21.2) on the Spark: referring to images by number, and the mask conventions.
-5. **Order of work:** M6 (cancel, pin, retention, failure handling) before v2, after it, or interleaved?
+5. **Confirm the order of work** (§21.11): M6 is part of v2 (decision #29); I propose it first, then M5a–M5d.
 6. **The licence** (§18 item 2) now has a definite answer to act on: non-commercial, research or evaluation only. Whether your use is covered is your call, or a question for Qwen.
 
 **Parked (not in v2, and not scheduled)**
