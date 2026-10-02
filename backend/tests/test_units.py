@@ -156,13 +156,12 @@ def test_prompt_length_limit_comes_from_settings():
     assert "limit is 100" in errors_of({"prompt": "x" * 101}, small)[("prompt",)]
 
 
-def test_edit_mode_is_not_available_until_m5():
-    errors = errors_of({"mode": "edit", "prompt": "make it blue", "options": {"transparent": True}})
-    assert "M5" in errors[("mode",)] and ("options", "transparent") in errors
-
-
-def test_reference_image_rejected_in_generate_mode():
-    assert ("input_image",) in errors_of({"prompt": "x", "input_image": {"upload_id": "abc"}})
+def test_an_edit_needs_images_and_generate_takes_none():
+    assert errors_of({"mode": "edit", "prompt": "make it blue"})[("input_images",)] == "Add at least one image to edit."
+    ref = {"upload_id": "a" * 32}
+    errors = errors_of({"prompt": "x", "input_images": [ref], "options": {"resolution": 2048, "shape_from": 1}})
+    assert errors[("input_images",)] == "Images are only used in Edit mode."
+    assert ("options", "resolution") in errors and ("options", "shape_from") in errors
 
 
 # ---------------------------------------------------------------- events / security / storage

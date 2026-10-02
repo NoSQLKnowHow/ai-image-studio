@@ -33,7 +33,7 @@ def test_capability_check_runs_at_startup(client):
     status = wait_status(client, lambda s: s["worker"]["probe"] == "done")
     assert status["worker"]["device"] == {"name": "fake (no GPU used)"}
     assert status["worker"]["state"] == "unloaded" and status["worker"]["pid"] is None  # nothing loaded yet
-    assert client.get("/api/capabilities").json()["supports"]["edit"] is False
+    assert client.get("/api/capabilities").json()["supports"]["edit"] is True
 
 
 def test_unavailable_pipeline_shows_before_any_job(client_factory):

@@ -30,7 +30,9 @@ def test_generate_end_to_end(client, tmp_path):
     assert run["status"] == "done" and run["error"] is None and run["finished_at"]
     assert [im["seed"] for im in run["images"]] == [42, 43]
     assert run["options"] == {"width": 256, "height": 256, "steps": 3, "seed": 42, "seed_was_random": False,
-                              "num_images": 2, "negative_prompt": "blurry", "cfg_scale": None, "transparent": False}
+                              "num_images": 2, "negative_prompt": "blurry", "cfg_scale": None, "transparent": False,
+                              "resolution": None, "shape_from": None, "roles": []}  # the last three: Edit only
+    assert run["inputs"] == []
 
     image = run["images"][1]
     full = client.get(image["url"])
@@ -68,7 +70,7 @@ def test_validation_errors_use_fastapi_shape(client):
     for body in ({"prompt": "x", "options": {"steps": "40"}}, {"prompt": "x", "colour": "red"}, {}):
         assert client.post("/api/runs", json=body).status_code == 422
     edit = client.post("/api/runs", json={"mode": "edit", "prompt": "x"})
-    assert edit.status_code == 422 and "M5" in edit.json()["detail"][0]["msg"]
+    assert edit.status_code == 422 and edit.json()["detail"][0]["loc"] == ["body", "input_images"]
 
 
 def test_listing_and_pagination(client):

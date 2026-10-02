@@ -19,9 +19,10 @@ from . import presets as P
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
-from .jobs import JobManager, QueueFull, RunConflict, RunNotFound
+from . import inputs as inputs_mod
+from .jobs import InputStorageError, JobManager, QueueFull, RunConflict, RunNotFound
 from .naming import content_disposition, download_filename
-from .runspec import AVAILABLE_MODES, RunCreate, RunRequestError, resolve_run
+from .runspec import OFFERED_MODES, RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
 from .serialize import parse_ts
 from .storage import Storage, StorageError, check_id
@@ -135,7 +136,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {
             "pipeline": settings.pipeline,
             "model": jobs.model_id,
-            "modes": list(AVAILABLE_MODES),
+            "modes": list(OFFERED_MODES),
             "supports": jobs.supports(),
             "aspect_ratios": {name: list(size) for name, size in P.ASPECT_RATIOS.items()},
             "defaults": {
@@ -144,6 +145,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             },
             "limits": {
                 "prompt_chars": settings.max_prompt_chars,
+                "input_images": {"min": 1, "max": settings.max_input_images},
+                "resolutions": list(P.RESOLUTIONS),
+                "upload_mb": settings.max_upload_mb,
                 "steps": {"min": P.STEPS_MIN, "max": P.STEPS_MAX},
                 "num_images": {"min": 1, "max": settings.max_images_per_run},
                 "seed": {"min": 0, "max": P.SEED_MAX},
@@ -158,12 +162,46 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def create_run(body: RunCreate, request: Request) -> Any:
         try:
             resolved = resolve_run(body, settings)
+            return await jobs_of(request).submit(resolved)  # an edit's inputs are checked here, against what is stored
         except RunRequestError as exc:
             return JSONResponse(status_code=422, content={"detail": exc.detail()})
-        try:
-            return await jobs_of(request).submit(resolved)
         except QueueFull as exc:
             return _error(429, str(exc), "queue_full")
+        except InputStorageError as exc:
+            return _error(507, str(exc), "storage_full")
+
+    @app.post("/api/uploads", status_code=201)
+    async def upload_image(request: Request) -> Any:
+        """Stage one image for an edit. The file itself is the request body (not multipart: one image per call, the
+        size can be capped while it streams in, and `curl --data-binary @photo.jpg` is all it takes). The type is
+        decided by decoding it, never by the Content-Type header."""
+        limit = settings.max_upload_mb * 1024 * 1024
+        too_big = _error(413, f"The file is larger than {settings.max_upload_mb} MB.", "too_large")
+        declared = request.headers.get("content-length", "")
+        if declared.isdigit() and int(declared) > limit:
+            return too_big
+        data = bytearray()
+        async for chunk in request.stream():
+            data += chunk
+            if len(data) > limit:
+                return too_big
+        try:
+            return await asyncio.to_thread(inputs_mod.store_upload, request.app.state.db, request.app.state.storage, bytes(data))
+        except inputs_mod.UploadError as exc:
+            return _error(exc.status, exc.message, {413: "too_large", 415: "unsupported_type"}.get(exc.status, "unreadable"))
+        except OSError as exc:
+            return _error(507, f"The image could not be stored: {exc.strerror or exc}", "storage_full")
+
+    @app.delete("/api/uploads/{upload_id}", status_code=204)
+    async def delete_upload(upload_id: str, request: Request) -> Response:
+        try:
+            removed = await asyncio.to_thread(
+                inputs_mod.delete_upload, request.app.state.db, request.app.state.storage, upload_id)
+        except StorageError:
+            removed = False
+        if not removed:
+            return _error(404, "No such upload (it may have been used by a run, or have expired).", "not_found")
+        return Response(status_code=204)
 
     @app.get("/api/runs")
     async def list_runs(

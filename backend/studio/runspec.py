@@ -7,6 +7,7 @@ every problem with its field location so the UI can show it next to the control.
 
 from __future__ import annotations
 
+import re
 import secrets
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
@@ -16,8 +17,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import presets as P
 from .config import Settings
 
-# Edit mode is enabled in milestone M5.
-AVAILABLE_MODES: tuple[str, ...] = ("generate",)
+_ID = re.compile(r"^[0-9a-f]{32}$")
+
+# What the page is told it can offer (GET /api/capabilities). The API already accepts Edit runs (M5a), but the
+# page has no way to make one until M5b, so Edit is not offered yet: the mode switch stays disabled.
+OFFERED_MODES: tuple[str, ...] = ("generate",)
 
 
 class RunOptions(BaseModel):
@@ -31,6 +35,19 @@ class RunOptions(BaseModel):
     negative_prompt: Optional[str] = None
     cfg_scale: Optional[float] = None
     transparent: bool = False
+    resolution: Optional[int] = None  # Edit only: 1024 or 2048, sizes every input and the result (DESIGN.md §21.4)
+    shape_from: Optional[int] = None  # Edit only: 1-based number of the image the result's shape follows (Size on Auto)
+
+
+class InputRef(BaseModel):
+    """One image of an edit: an upload that is waiting (`upload_id`), or an image from an earlier run
+    (`image_id`, a result or an input). `role` is display-only for now (DESIGN.md §21.5)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    upload_id: Optional[str] = None
+    image_id: Optional[str] = None
+    role: Literal["reference", "marked", "mask"] = "reference"
 
 
 class RunCreate(BaseModel):
@@ -39,13 +56,13 @@ class RunCreate(BaseModel):
     mode: Literal["generate", "edit"] = "generate"
     prompt: str
     options: RunOptions = Field(default_factory=RunOptions)
-    input_image: Optional[dict[str, Any]] = None  # used by Edit mode (M5)
+    input_images: Optional[list[InputRef]] = None  # Edit only, in the order the model sees them
 
 
 class RunRequestError(Exception):
     """One or more fields failed validation. Rendered like FastAPI's own 422 errors."""
 
-    def __init__(self, errors: list[tuple[tuple[str, ...], str]]):
+    def __init__(self, errors: list[tuple[tuple[Any, ...], str]]):
         super().__init__("; ".join(msg for _, msg in errors))
         self.errors = errors
 
@@ -67,7 +84,9 @@ class ResolvedRun:
     num_images: int
     cfg_scale: Optional[float]
     transparent: bool
-    input_image_id: Optional[str] = None
+    inputs: tuple[InputRef, ...] = ()
+    resolution: Optional[int] = None  # Edit: 1024 or 2048 (default 1024); None in Generate
+    shape_from: Optional[int] = None  # Edit with Size on Auto: the image the result follows, if one was chosen
 
     @property
     def seeds(self) -> list[int]:
@@ -85,15 +104,15 @@ class ResolvedRun:
             "negative_prompt": self.negative_prompt,
             "cfg_scale": self.cfg_scale,
             "transparent": self.transparent,
+            "resolution": self.resolution,
+            "shape_from": self.shape_from,
+            "roles": [ref.role for ref in self.inputs],
         }
 
 
 def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
-    errors: list[tuple[tuple[str, ...], str]] = []
+    errors: list[tuple[tuple[Any, ...], str]] = []
     opts = req.options
-
-    if req.mode not in AVAILABLE_MODES:
-        errors.append((("mode",), "Edit mode is not available yet; it arrives in milestone M5."))
 
     prompt = req.prompt.strip()
     if not prompt:
@@ -135,10 +154,40 @@ def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
         errors.append((("options", "seed"), f"Must be between 0 and {P.SEED_MAX}."))
     if opts.cfg_scale is not None and not P.CFG_MIN <= opts.cfg_scale <= P.CFG_MAX:
         errors.append((("options", "cfg_scale"), f"Must be between {P.CFG_MIN} and {P.CFG_MAX}."))
-    if opts.transparent and req.mode != "generate":
-        errors.append((("options", "transparent"), "Transparent output is only available in Generate mode."))
-    if req.input_image is not None and req.mode == "generate":
-        errors.append((("input_image",), "A reference image is only used in Edit mode."))
+
+    refs = tuple(req.input_images or ())
+    resolution: Optional[int] = None
+    if req.mode == "generate":
+        if refs:
+            errors.append((("input_images",), "Images are only used in Edit mode."))
+        if opts.resolution is not None:
+            errors.append((("options", "resolution"), "Resolution is only used in Edit mode."))
+        if opts.shape_from is not None:
+            errors.append((("options", "shape_from"), "Following an image's shape is only used in Edit mode."))
+    else:
+        cap = settings.max_input_images
+        if not refs:
+            errors.append((("input_images",), "Add at least one image to edit."))
+        elif len(refs) > cap:
+            errors.append((("input_images",), f"An edit takes at most {cap} images; this one has {len(refs)}."))
+        for i, ref in enumerate(refs):
+            given = [value for value in (ref.upload_id, ref.image_id) if value is not None]
+            if len(given) != 1:
+                errors.append((("input_images", i), f"Image {i + 1}: give either an upload_id or an image_id."))
+            elif not _ID.match(given[0]):
+                errors.append((("input_images", i), f"Image {i + 1}: that isn't a valid id."))
+        if refs and all(ref.role == "mask" for ref in refs):
+            errors.append((("input_images",), "At least one image must be a picture to edit, not only masks."))
+        resolution = opts.resolution if opts.resolution is not None else P.DEFAULT_RESOLUTION
+        if resolution not in P.RESOLUTIONS:
+            errors.append((("options", "resolution"), f"Must be one of {', '.join(str(r) for r in P.RESOLUTIONS)}."))
+        if opts.shape_from is not None:
+            if width is not None:
+                errors.append((("options", "shape_from"), "Following an image's shape only applies when Size is Auto."))
+            elif not 1 <= opts.shape_from <= max(len(refs), 1):
+                errors.append((("options", "shape_from"), f"Must be between 1 and the number of images ({len(refs)})."))
+            elif refs and refs[opts.shape_from - 1].role == "mask":
+                errors.append((("options", "shape_from"), "A mask can't set the result's shape; pick one of the pictures."))
 
     if errors:
         raise RunRequestError(errors)
@@ -159,4 +208,7 @@ def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
         num_images=opts.num_images,
         cfg_scale=opts.cfg_scale,
         transparent=opts.transparent,
+        inputs=refs,
+        resolution=resolution,
+        shape_from=opts.shape_from,
     )

@@ -36,6 +36,21 @@ def image_payload(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def input_payload(row: sqlite3.Row) -> dict[str, Any]:
+    """An image an edit was given: its place in the order the model sees them (1 = "image 1") and its role."""
+    base = f"/api/images/{row['id']}"
+    return {
+        "position": row["position"],
+        "role": row["role"],
+        "id": row["id"],
+        "width": row["width"],
+        "height": row["height"],
+        "has_alpha": bool(row["has_alpha"]),
+        "url": base,
+        "thumb_url": f"{base}/thumb" if row["thumb_path"] else None,
+    }
+
+
 def run_payload(
     row: sqlite3.Row,
     images: list[sqlite3.Row],
@@ -43,6 +58,7 @@ def run_payload(
     queue_position: Optional[int] = None,
     canceling: bool = False,
     expires_at: Optional[str] = None,
+    inputs: Optional[list[sqlite3.Row]] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -64,5 +80,6 @@ def run_payload(
         "queue_position": queue_position if row["status"] == "queued" else None,
         "progress": progress if row["status"] == "running" else None,
         "canceling": canceling and row["status"] == "running",
+        "inputs": [input_payload(item) for item in inputs or []],
         "images": [image_payload(img) for img in images],
     }

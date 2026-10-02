@@ -72,8 +72,7 @@ def talk(data_dir: Path, *commands: dict, pipeline: str = "fake", env_extra: dic
 
 def run_cmd(prompt: str = "a red barn", seeds=(7, 8), run_id: str = RUN_ID, **extra) -> dict:
     payload = dict(run_id=run_id, mode="generate", prompt=prompt, negative_prompt=None, width=256, height=192,
-                   steps=3, cfg_scale=None, seeds=list(seeds), transparent=False, model_id="fake-pipeline",
-                   input_path=None)
+                   steps=3, cfg_scale=None, seeds=list(seeds), transparent=False, model_id="fake-pipeline")
     payload.update(extra)
     return {"cmd": "run", "job": payload}
 
@@ -156,3 +155,89 @@ def test_probe_mode_reports_capabilities_and_exits(tmp_path):
                                     "supports": FakePipeline.SUPPORTS, "device": {"name": "fake (no GPU used)"}}]
     lines, code = probe(tmp_path, "real")
     assert code == 0 and lines[0]["ok"] is False and lines[0]["error"]["kind"] == "unavailable"
+
+
+# ---------------------------------------------------------------- edits: a list of inputs
+def write_inputs(data_dir: Path, run_id: str = RUN_ID, colours=((255, 0, 0), (0, 255, 0)), size=(120, 80)) -> list[str]:
+    """Input files where the API process puts them: inputs/<run>/<position>.png. Returns the relative paths."""
+    folder = data_dir / "inputs" / run_id
+    folder.mkdir(parents=True, exist_ok=True)
+    rel = []
+    for position, colour in enumerate(colours, 1):
+        Image.new("RGB", size, colour).save(folder / f"{position}.png")
+        rel.append(f"inputs/{run_id}/{position}.png")
+    return rel
+
+
+def edit_cmd(paths: list, **extra) -> dict:
+    return run_cmd("edit it", seeds=(3,), mode="edit", input_paths=paths, width=None, height=None, resolution=1024, **extra)
+
+
+def test_the_worker_gives_the_pipeline_every_input_in_order_and_records_it(tmp_path):
+    from studio.pipelines.fake import strip_cells
+
+    events, _, code = talk(tmp_path, edit_cmd(write_inputs(tmp_path)))
+    assert code == 0 and "run_finished" in kinds(events)
+    done = next(e for e in events if e["event"] == "image_done")
+    assert (done["width"], done["height"]) == (1248, 832)  # 120x80 follows the last image's shape at 1K
+    with Image.open(tmp_path / "images" / RUN_ID / "0.png") as im:
+        assert im.text["inputs"] == "2" and im.text["resolution"] == "1024" and im.text["mode"] == "edit"
+        boxes = strip_cells(im.width, im.height, 2)
+        centres = [im.convert("RGB").getpixel(((b[0] + b[2]) // 2, (b[1] + b[3]) // 2)) for b in boxes]
+        assert centres == [(255, 0, 0), (0, 255, 0)]
+
+
+@pytest.mark.parametrize("make_paths,mode", [
+    (lambda d: ["../../etc/passwd"], "edit"),                              # climbs out of the data folder
+    (lambda d: [str(Path(__file__))], "edit"),                             # a real file, but not in this run's folder
+    (lambda d: [f"inputs/{'e' * 32}/1.png"], "edit"),                      # another run's folder
+    (lambda d: [f"inputs/{RUN_ID}/missing.png"], "edit"),                  # nothing there
+    (lambda d: [f"inputs/{RUN_ID}/1.png", 7], "edit"),                     # not a path at all
+    (lambda d: [], "edit"),                                                # an edit with nothing to edit
+    (lambda d: [f"inputs/{RUN_ID}/1.png"], "generate"),                    # inputs on a text-to-image run
+])
+def test_the_worker_refuses_input_paths_that_are_not_this_runs_own_files_and_keeps_serving(tmp_path, make_paths, mode):
+    write_inputs(tmp_path)
+    other = "f" * 32
+    bad = run_cmd("x", seeds=(1,), mode=mode, input_paths=make_paths(tmp_path), width=None if mode == "edit" else 64, height=None if mode == "edit" else 64)
+    events, _, code = talk(tmp_path, bad, run_cmd(run_id=other, seeds=(1,)))
+    failed = next(e for e in events if e["event"] == "run_failed" and e["run_id"] == RUN_ID)
+    assert failed["error"]["message"].startswith("Malformed job") and failed["completed"] == 0
+    assert any(e["event"] == "run_finished" and e["run_id"] == other for e in events) and code == 0
+    assert not (tmp_path / "images" / RUN_ID).exists()  # nothing was generated
+
+
+def test_an_input_that_vanishes_after_the_check_is_a_clear_failure_not_a_crash(tmp_path, monkeypatch):
+    from studio.pipelines.base import PipelineError, load_inputs
+
+    rel = write_inputs(tmp_path)
+    (tmp_path / rel[1]).unlink()
+    with pytest.raises(PipelineError, match="input image could not be read"):
+        load_inputs([str(tmp_path / rel[0]), str(tmp_path / rel[1])])
+
+
+def test_the_fake_pipeline_follows_the_last_image_unless_given_a_size(tmp_path):
+    paths = [str(tmp_path / p) for p in write_inputs(tmp_path, size=(120, 80))]
+    Image.new("RGB", (80, 120), (0, 0, 255)).save(paths[1])  # the last image is a portrait
+    pipe = FakePipeline(step_delay_ms=0, load_delay_ms=0)
+    auto = pipe.generate(job(mode="edit", input_paths=paths, width=None, height=None, resolution=1024), 0, 1, lambda s, t: None)
+    assert auto.size == (832, 1248)
+    big = pipe.generate(job(mode="edit", input_paths=paths, width=None, height=None, resolution=2048), 0, 1, lambda s, t: None)
+    assert big.size == (1664, 2496)
+    sized = pipe.generate(job(mode="edit", input_paths=paths, width=512, height=384, resolution=2048), 0, 1, lambda s, t: None)
+    assert sized.size == (512, 384)
+    transparent = pipe.generate(job(mode="edit", input_paths=paths, width=None, height=None, transparent=True), 0, 1, lambda s, t: None)
+    assert transparent.mode == "RGBA"
+
+
+@pytest.mark.parametrize("size", [(64, 64), (512, 384), (1024, 1024), (2368, 1760), (1760, 2368), (96, 2000)])
+@pytest.mark.parametrize("count", [1, 2, 4, 10])
+def test_the_numbered_strip_always_fits_inside_the_image_without_overlap_and_in_order(size, count):
+    from studio.pipelines.fake import strip_cells
+
+    cells = strip_cells(*size, count)
+    assert len(cells) == count
+    for (l, t, r, b), nxt in zip(cells, cells[1:] + [None]):
+        assert 0 <= l < r <= size[0] and 0 <= t < b <= size[1] and r - l == b - t  # inside, and square
+        if nxt:
+            assert r <= nxt[0]  # left to right, no overlap

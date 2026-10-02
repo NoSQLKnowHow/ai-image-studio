@@ -18,7 +18,7 @@ from typing import Any
 from PIL import Image
 
 from ..sysinfo import MEMORY_HINT
-from .base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, PipelineUnavailable, StepCallback
+from .base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, PipelineUnavailable, StepCallback, load_inputs
 
 log = logging.getLogger("studio.pipelines.real")
 
@@ -122,7 +122,8 @@ def describe_supports(pipeline_cls: Any) -> dict[str, bool]:
         params = inspect.signature(pipeline_cls.__call__).parameters
     except (TypeError, ValueError):
         log.warning("could not inspect %s.__call__; optional features disabled", PIPELINE_CLASS)
-        return {"negative_prompt": False, "cfg_scale": False, "step_progress": False, "transparent": True, "edit": False}
+        return {"negative_prompt": False, "cfg_scale": False, "step_progress": False, "transparent": True, "edit": False,
+                "resolution": False}
     var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values())
 
     def has(name: str) -> bool:
@@ -134,6 +135,7 @@ def describe_supports(pipeline_cls: Any) -> dict[str, bool]:
         "step_progress": has("callback_on_step_end"),
         "transparent": True,  # model card: RGBA output via the prompt format
         "edit": has("image"),
+        "resolution": has("output_resolution"),  # sizes every input and, on Auto, the result
     }
 
 
@@ -209,16 +211,16 @@ def translate_load_error(exc: Exception, torch: Any, local_files_only: bool) -> 
     return PipelineLoadError(f"Loading the model failed: {type(exc).__name__}: {exc}")
 
 
-def translate_generation_error(exc: Exception, torch: Any) -> PipelineError:
+def translate_generation_error(exc: Exception, torch: Any, edit: bool = False) -> PipelineError:
     if _is_oom(exc, torch):
         try:
             torch.cuda.empty_cache()
         except Exception:
             pass
-        return OutOfMemory(
-            "Ran out of memory while generating.",
-            hint="Use a smaller size or fewer images per click. " + MEMORY_HINT,
-        )
+        # An edit costs about (number of images) x (resolution)^2, so the first things to reduce are those.
+        advice = ("Use 1K instead of 2K, fewer input images, or fewer images per click. " if edit
+                  else "Use a smaller size or fewer images per click. ")
+        return OutOfMemory("Ran out of memory while generating.", hint=advice + MEMORY_HINT)
     if _arch_mismatch(exc):
         return PipelineError(f"CUDA cannot run on this GPU: {exc}", hint=ARCH_HINT)
     if isinstance(exc, ValueError):
@@ -268,7 +270,13 @@ class RealPipeline:
             "num_inference_steps": job.steps,
             "generator": torch.Generator("cuda").manual_seed(seed),
         }
-        if job.width and job.height:
+        if job.mode == "edit":
+            if not self._supports.get("edit"):
+                raise PipelineError("This build of the image pipeline can't edit images.", hint=REBUILD_HINT)
+            kwargs["image"] = load_inputs(job.input_paths)  # as stored, in order, never flattened: the VAE reads the alpha
+            if job.resolution and self._supports.get("resolution"):
+                kwargs["output_resolution"] = job.resolution
+        if job.width and job.height:  # Auto leaves it to the pipeline: about resolution^2 pixels, shaped like the last image
             kwargs["width"], kwargs["height"] = job.width, job.height
         if job.negative_prompt and self._supports.get("negative_prompt"):
             kwargs["negative_prompt"] = job.negative_prompt
@@ -283,7 +291,7 @@ class RealPipeline:
         try:
             image = self._pipe(**kwargs).images[0]
         except Exception as exc:
-            raise translate_generation_error(exc, torch) from exc
+            raise translate_generation_error(exc, torch, edit=job.mode == "edit") from exc
         if not self._supports.get("step_progress"):
             on_step(job.steps, job.steps)
         return normalize_alpha(image)

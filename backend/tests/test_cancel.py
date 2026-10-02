@@ -27,8 +27,7 @@ OTHER_ID = "f" * 32
 
 def job_dict(run_id: str = RUN_ID, seeds=(1, 2, 3), steps: int = 4, **extra) -> dict:
     job = dict(run_id=run_id, mode="generate", prompt="a red barn", negative_prompt=None, width=64, height=64,
-               steps=steps, cfg_scale=None, seeds=list(seeds), transparent=False, model_id="fake-pipeline",
-               input_path=None)
+               steps=steps, cfg_scale=None, seeds=list(seeds), transparent=False, model_id="fake-pipeline")
     job.update(extra)
     return job
 

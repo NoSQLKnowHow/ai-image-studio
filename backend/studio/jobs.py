@@ -18,10 +18,11 @@ from contextlib import suppress
 from typing import Any, Optional
 
 from . import __version__, sysinfo
+from . import inputs as inputs_mod
 from .config import Settings
 from .db import Database
 from .events import EventBus
-from .runspec import ResolvedRun
+from .runspec import ResolvedRun, RunRequestError
 from .serialize import format_ts, parse_ts, run_payload, utcnow
 from .storage import Storage
 from .worker_client import WorkerClient, WorkerGone, worker_env
@@ -34,6 +35,7 @@ SHUTDOWN_MESSAGE = "Interrupted because the server was stopped."
 PROBE_TIMEOUT_SECONDS = 300  # importing torch + diffusers can be slow on a cold start
 SWEEP_INTERVAL_SECONDS = 24 * 3600  # how often old runs are expired (once at start-up, then daily)
 SWEEP_BATCH = 200  # runs removed per database transaction, so a first sweep of thousands never stalls the server
+UPLOAD_SWEEP_SECONDS = 3600  # how often staged uploads nobody claimed are removed (and once at start-up)
 FINISHED = frozenset({"done", "failed", "canceled"})
 WORKER_RESTART_HINT = "The worker is restarted automatically for the next job; the server log has details."
 
@@ -48,6 +50,10 @@ class RunNotFound(Exception):
 
 class RunConflict(Exception):
     pass
+
+
+class InputStorageError(Exception):
+    """The inputs of a new run could not be copied (usually: the disk is full)."""
 
 
 class JobManager:
@@ -67,6 +73,7 @@ class JobManager:
         self._task: Optional[asyncio.Task] = None
         self._probe_task: Optional[asyncio.Task] = None
         self._janitor_task: Optional[asyncio.Task] = None
+        self._uploads_task: Optional[asyncio.Task] = None
         self._probe: dict[str, Any] = {"state": "pending"}
         self._unload_at: Optional[float] = None
 
@@ -77,6 +84,7 @@ class JobManager:
             log.warning("marked %d run(s) interrupted by a previous shutdown as failed", len(recovered))
         self._probe_task = asyncio.create_task(self._run_probe(), name="capability-probe")
         self._task = asyncio.create_task(self._loop(), name="job-loop")
+        self._uploads_task = asyncio.create_task(self._upload_janitor(), name="upload-janitor")
         if self.settings.retention_days > 0:
             self._janitor_task = asyncio.create_task(self._janitor(), name="expiry-janitor")
         else:
@@ -88,11 +96,13 @@ class JobManager:
             self._probe_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._probe_task
-        if self._janitor_task is not None:
-            self._janitor_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._janitor_task
-            self._janitor_task = None
+        for name in ("_uploads_task", "_janitor_task"):
+            task = getattr(self, name)
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+                setattr(self, name, None)
         if self._task is not None:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
@@ -131,6 +141,12 @@ class JobManager:
         return {**mem, "min_free_gb": self.settings.min_free_gb, "worker_rss_gb": sysinfo.process_rss_gb(self._worker.pid)}
 
     def supports(self) -> dict[str, bool]:
+        found = self._supports_found()
+        if "edit" in found:  # a list of images can go wherever one can; the Spark test confirms it (DESIGN.md §21.6)
+            found["multi_image"] = bool(found["edit"])
+        return found
+
+    def _supports_found(self) -> dict[str, bool]:
         if self._worker_info and isinstance(self._worker_info.get("supports"), dict):
             return dict(self._worker_info["supports"])
         if isinstance(self._probe.get("supports"), dict):
@@ -145,11 +161,12 @@ class JobManager:
         return {run_id: i + 1 for i, run_id in enumerate(self.db.queued_ids())}
 
     def payloads(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
-        images = self.db.images_for_runs([r["id"] for r in rows])
+        ids = [r["id"] for r in rows]
+        images, inputs = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
-                        r["id"] in self._cancel_requested, self.expires_at(r))
+                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]])
             for r in rows
         ]
 
@@ -166,7 +183,26 @@ class JobManager:
 
     # ------------------------------------------------------------ commands
     async def submit(self, run: ResolvedRun) -> dict[str, Any]:
+        """Queue a run. An edit first claims its inputs: each is *copied* into a folder the run owns (so the
+        original can be deleted without breaking it), and staged uploads are consumed. All of it happens in one
+        database transaction; if the queue is full or an upload was taken meanwhile, nothing is left behind."""
         run_id = secrets.token_hex(16)
+        width, height = run.width, run.height
+        owned: list[dict[str, Any]] = []
+        claims: list[str] = []
+        if run.mode == "edit":
+            sources, problems = inputs_mod.resolve_refs(self.db, self.storage, list(run.inputs))
+            if problems:
+                raise RunRequestError(problems)
+            width, height = self._shape_for(run, sources)
+            try:
+                owned = await asyncio.to_thread(inputs_mod.copy_inputs, self.storage, run_id, sources)
+            except inputs_mod.InputFileMissing as gone:
+                raise RunRequestError([(("input_images", gone.position - 1),
+                                        f"Image {gone.position}: the image file is missing on the server. Add it again.")])
+            except OSError as exc:
+                raise InputStorageError(f"The images could not be copied for this run: {exc.strerror or exc}") from exc
+            claims = [src.row["id"] for src in sources if src.staged]
         row = {
             "id": run_id,
             "created_at": utcnow(),
@@ -176,24 +212,59 @@ class JobManager:
             "effective_prompt": run.effective_prompt,
             "negative_prompt": run.negative_prompt,
             "transparent": int(run.transparent),
-            "width": run.width,
-            "height": run.height,
+            "width": width,
+            "height": height,
             "steps": run.steps,
             "cfg_scale": run.cfg_scale,
             "seed": run.seed,
             "num_images": run.num_images,
             "model_id": self.model_id,
-            "input_image_id": run.input_image_id,
             "options_json": json.dumps(run.options_snapshot()),
         }
-        if not self.db.insert_run_if_capacity(row, self.settings.queue_cap):
-            raise QueueFull(f"The queue is full ({self.settings.queue_cap} jobs waiting). Try again when one finishes.")
+        try:
+            outcome = self.db.insert_run(row, self.settings.queue_cap, owned, claims)
+        except BaseException:
+            if owned:
+                await asyncio.to_thread(self.storage.delete_run_files, run_id)
+            raise
+        if outcome != "ok":
+            if owned:
+                await asyncio.to_thread(self.storage.delete_run_files, run_id)  # the staged uploads stay, for another try
+            if outcome == "full":
+                raise QueueFull(f"The queue is full ({self.settings.queue_cap} jobs waiting). Try again when one finishes.")
+            taken = outcome.split(":", 1)[1]
+            raise RunRequestError([
+                (("input_images", src.position - 1),
+                 f"Image {src.position}: that upload was already used, or has expired. Add the image again.")
+                for src in sources if src.row["id"] == taken
+            ])
+        for upload_id in dict.fromkeys(claims):  # the run has its own copies now
+            try:
+                await asyncio.to_thread(self.storage.delete_staged_files, upload_id)
+            except OSError:  # the run exists and is queued; a file that can't be removed now is swept up later
+                log.warning("could not remove the staged file of upload %s", upload_id, exc_info=True)
         payload = self.payload(run_id)
         assert payload is not None
         self.bus.publish("run.created", payload)
         self._publish_queue()
         self._wakeup.set()
         return payload
+
+    @staticmethod
+    def _shape_for(run: ResolvedRun, sources: list[inputs_mod.SourceImage]) -> tuple[Optional[int], Optional[int]]:
+        """The explicit size for an edit whose Size is Auto but whose result should follow a particular image:
+        the one chosen, or, when the last image is a mask (which must never set the shape), the last picture.
+        Otherwise None: the pipeline sizes the result from the last image by itself."""
+        if run.width is not None:
+            return run.width, run.height
+        follow = run.shape_from
+        if follow is None and sources[-1].role == "mask":
+            follow = max(src.position for src in sources if src.role != "mask")
+        if follow is None:
+            return None, None
+        chosen = sources[follow - 1].row
+        assert run.resolution is not None
+        return inputs_mod.shape_dimensions(run.resolution, chosen["width"], chosen["height"])
 
     async def cancel(self, run_id: str) -> str:
         """Stop a run. Returns "canceled" (a queued run, stopped at once) or "canceling" (a running run,
@@ -267,6 +338,20 @@ class JobManager:
             except Exception:
                 log.exception("the expiry sweep failed; it will be tried again at the next interval")
             await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
+
+    async def sweep_uploads(self) -> int:
+        """Remove staged uploads that no run claimed within STUDIO_UPLOAD_TTL_HOURS, and stray files."""
+        return await asyncio.to_thread(inputs_mod.sweep_staged, self.db, self.storage, self.settings.upload_ttl_hours)
+
+    async def _upload_janitor(self) -> None:
+        while True:
+            try:
+                await self.sweep_uploads()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("the upload clean-up failed; it will be tried again at the next interval")
+            await asyncio.sleep(UPLOAD_SWEEP_SECONDS)
 
     # ------------------------------------------------------------ the loop
     async def _loop(self) -> None:
@@ -484,8 +569,8 @@ class JobManager:
         self._publish_run(run_id)
         self._publish_queue()
 
-    @staticmethod
-    def _job_for(row: sqlite3.Row) -> dict[str, Any]:
+    def _job_for(self, row: sqlite3.Row) -> dict[str, Any]:
+        inputs = self.db.inputs_for_runs([row["id"]])[row["id"]]
         return {
             "run_id": row["id"],
             "mode": row["mode"],
@@ -498,7 +583,8 @@ class JobManager:
             "seeds": [row["seed"] + i for i in range(row["num_images"])],
             "transparent": bool(row["transparent"]),
             "model_id": row["model_id"],
-            "input_path": None,
+            "input_paths": [item["path"] for item in inputs],  # relative to the data folder, in the model's order
+            "resolution": json.loads(row["options_json"]).get("resolution"),
         }
 
     # ------------------------------------------------------------ events
