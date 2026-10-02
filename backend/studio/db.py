@@ -157,6 +157,14 @@ class Database:
             )
             return cur.rowcount == 1
 
+    def cancel_queued(self, run_id: str, now: str) -> bool:
+        """queued -> canceled. False if the run is gone or has already started."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE runs SET status='canceled', finished_at=? WHERE id=? AND status='queued'", (now, run_id)
+            )
+            return cur.rowcount == 1
+
     def finish_run(
         self, run_id: str, status: str, now: str, error: Optional[str] = None, hint: Optional[str] = None
     ) -> None:

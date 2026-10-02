@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import ImageJob, OutOfMemory, Pipeline, PipelineError, PipelineLoadError, PipelineUnavailable
+from .base import Canceled, ImageJob, OutOfMemory, Pipeline, PipelineError, PipelineLoadError, PipelineUnavailable
 
 __all__ = [
-    "ImageJob", "OutOfMemory", "Pipeline", "PipelineError", "PipelineLoadError", "PipelineUnavailable",
+    "Canceled", "ImageJob", "OutOfMemory", "Pipeline", "PipelineError", "PipelineLoadError", "PipelineUnavailable",
     "make_pipeline", "probe_pipeline",
 ]
 

@@ -36,6 +36,7 @@ def run_payload(
     images: list[sqlite3.Row],
     progress: Optional[dict[str, Any]] = None,
     queue_position: Optional[int] = None,
+    canceling: bool = False,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -55,5 +56,6 @@ def run_payload(
         "pinned": bool(row["pinned"]),
         "queue_position": queue_position if row["status"] == "queued" else None,
         "progress": progress if row["status"] == "running" else None,
+        "canceling": canceling and row["status"] == "running",
         "images": [image_payload(img) for img in images],
     }

@@ -28,7 +28,7 @@ from .worker_client import WorkerClient, WorkerGone, worker_env
 
 log = logging.getLogger("studio.jobs")
 
-RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "run_finished", "run_failed"})
+RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "run_finished", "run_failed", "run_canceled"})
 FAKE_MODEL_ID = "fake-pipeline"
 SHUTDOWN_MESSAGE = "Interrupted because the server was stopped."
 PROBE_TIMEOUT_SECONDS = 300  # importing torch + diffusers can be slow on a cold start
@@ -58,6 +58,7 @@ class JobManager:
         self._run_events: asyncio.Queue = asyncio.Queue()
         self._current: Optional[str] = None
         self._progress: dict[str, dict[str, Any]] = {}
+        self._cancel_requested: set[str] = set()  # running runs the user has asked to stop
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
@@ -133,7 +134,10 @@ class JobManager:
     def payloads(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         images = self.db.images_for_runs([r["id"] for r in rows])
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
-        return [run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"])) for r in rows]
+        return [
+            run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]), r["id"] in self._cancel_requested)
+            for r in rows
+        ]
 
     def payload(self, run_id: str) -> Optional[dict[str, Any]]:
         row = self.db.get_run(run_id)
@@ -169,6 +173,31 @@ class JobManager:
         self._publish_queue()
         self._wakeup.set()
         return payload
+
+    async def cancel(self, run_id: str) -> str:
+        """Stop a run. Returns "canceled" (a queued run, stopped at once) or "canceling" (a running run,
+        which stops at its next step; the worker confirms and the run becomes canceled then)."""
+        row = self.db.get_run(run_id)
+        if row is None:
+            raise RunNotFound(run_id)
+        if row["status"] == "queued" and self.db.cancel_queued(run_id, utcnow()):
+            self._publish_run(run_id)
+            self._publish_queue()
+            return "canceled"
+        row = self.db.get_run(run_id)  # re-read: it may have started in the meantime
+        if row is None:
+            raise RunNotFound(run_id)
+        if row["status"] != "running" or self._current != run_id:
+            raise RunConflict("This run has already finished.")
+        newly = run_id not in self._cancel_requested
+        self._cancel_requested.add(run_id)
+        if newly:
+            log.info("cancel requested for %s", run_id)
+            self._publish_run(run_id)
+        # A worker that has gone away is handled by its exit event, which fails the run.
+        with suppress(WorkerGone, OSError):
+            await self._worker.send({"cmd": "cancel", "run_id": run_id})
+        return "canceling"
 
     async def delete(self, run_id: str) -> None:
         result = self.db.delete_run(run_id)
@@ -211,6 +240,7 @@ class JobManager:
         self._publish_queue()
         try:
             try:
+                started_worker = False
                 if not self._worker.alive():
                     shortfall = self._memory_shortfall()
                     if shortfall:
@@ -219,6 +249,12 @@ class JobManager:
                         return
                     self._set_worker_state("loading")
                     await self._worker.start()
+                    started_worker = True
+                if run_id in self._cancel_requested:  # cancelled while the worker was starting
+                    if started_worker:
+                        self._set_worker_state("unloaded")
+                    self._finish(run_id, "canceled")
+                    return
                 await self._worker.send({"cmd": "run", "job": self._job_for(row)})
             except (WorkerGone, OSError) as exc:
                 self._set_worker_state("error", f"Could not start the image worker: {exc}", "See the server log for details.")
@@ -252,6 +288,12 @@ class JobManager:
                     self._finish(run_id, "failed", storage_error, "Check free disk space and the server log.")
                 else:
                     self._finish(run_id, "done")
+                self._set_worker_state("ready")
+                return
+            elif kind == "run_canceled":
+                if storage_error:
+                    log.warning("run %s was canceled after a storage problem: %s", run_id, storage_error)
+                self._finish(run_id, "canceled")
                 self._set_worker_state("ready")
                 return
             elif kind == "run_failed":
@@ -378,6 +420,7 @@ class JobManager:
         if status == "failed":
             log.warning("run %s failed: %s", run_id, error)
         self._progress.pop(run_id, None)
+        self._cancel_requested.discard(run_id)
         if self._current == run_id:
             self._current = None
         self._publish_run(run_id)

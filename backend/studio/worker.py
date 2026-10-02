@@ -4,9 +4,15 @@ Protocol: JSON lines. Commands arrive on stdin; events leave on the *original* s
 Before anything else runs, file descriptor 1 is redirected to stderr, so print(),
 progress bars and C libraries can never corrupt the protocol channel.
 
-Commands: {"cmd": "load"} | {"cmd": "run", "job": {...}} | {"cmd": "shutdown"}
+Commands: {"cmd": "load"} | {"cmd": "run", "job": {...}} | {"cmd": "cancel", "run_id": "..."}
+          | {"cmd": "shutdown"}
 Events:   hello, state, load_failed, run_started, progress, image_done,
-          run_finished, run_failed, protocol_error, bye
+          run_finished, run_failed, run_canceled, protocol_error, bye
+
+Commands are read by a thread of their own, so a cancel is seen while a run is under way. It
+stops the run at the next step (or before the next image, or once a model load in progress has
+finished); images already finished stay on disk. Everything else waits in a queue for the main
+thread, which does the work.
 """
 
 from __future__ import annotations
@@ -16,12 +22,14 @@ import errno
 import json
 import logging
 import os
+import queue
 import re
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
-from typing import Any, Callable, Optional, TextIO
+from typing import Any, Callable, Iterable, Iterator, Optional, TextIO
 
 PROTOCOL_VERSION = 1
 PROGRESS_INTERVAL = 0.25  # seconds between progress events (first and last step always sent)
@@ -40,12 +48,18 @@ def claim_stdout() -> TextIO:
 
 
 class Emitter:
+    """Writes one JSON line per event. Two threads emit (the worker and the command reader), so
+    each line is written under a lock and can never be interleaved with another."""
+
     def __init__(self, stream: TextIO):
         self._stream = stream
+        self._lock = threading.Lock()
 
     def __call__(self, event: str, **fields: Any) -> None:
-        self._stream.write(json.dumps({"event": event, **fields}, separators=(",", ":"), ensure_ascii=False) + "\n")
-        self._stream.flush()
+        line = json.dumps({"event": event, **fields}, separators=(",", ":"), ensure_ascii=False) + "\n"
+        with self._lock:
+            self._stream.write(line)
+            self._stream.flush()
 
 
 def save_png(image: Any, path: Path, meta: dict[str, Any]) -> None:
@@ -72,6 +86,12 @@ class Worker:
         self.emit = emit
         self.loaded = False
         self.last_load_error: Optional[dict[str, Any]] = None
+        # Run ids the API asked to cancel. Filled by the command-reader thread, read by the thread
+        # that is generating; adding to and testing a set are atomic, so no lock is needed.
+        self._canceled: set[str] = set()
+
+    def request_cancel(self, run_id: str) -> None:
+        self._canceled.add(run_id)
 
     def load(self) -> bool:
         from .pipelines import PipelineError
@@ -99,6 +119,8 @@ class Worker:
         return False
 
     def _progress_callback(self, run_id: str, index: int, count: int) -> Callable[[int, int], None]:
+        from .pipelines import Canceled
+
         last = 0.0
 
         def on_step(step: int, total: int) -> None:
@@ -107,11 +129,19 @@ class Worker:
             if step in (1, total) or now - last >= PROGRESS_INTERVAL:
                 last = now
                 self.emit("progress", run_id=run_id, image=index + 1, of=count, step=step, steps=total)
+            if run_id in self._canceled:  # checked on every step, however rarely progress is reported
+                raise Canceled()
 
         return on_step
 
     def run(self, job_dict: Any) -> None:
-        from .pipelines import ImageJob, PipelineError
+        try:
+            self._run(job_dict)
+        finally:
+            self._canceled.clear()  # a cancel only ever concerns the run that was current
+
+    def _run(self, job_dict: Any) -> None:
+        from .pipelines import Canceled, ImageJob, PipelineError
 
         run_id = job_dict.get("run_id") if isinstance(job_dict, dict) else None
         try:
@@ -127,9 +157,15 @@ class Worker:
             self.emit("run_failed", run_id=job.run_id, completed=0, error=self.last_load_error)
             return
 
+        if job.run_id in self._canceled:  # cancelled while the model was loading
+            self.emit("run_canceled", run_id=job.run_id, completed=0)
+            return
         self.emit("run_started", run_id=job.run_id)
         completed = 0
         for index, seed in enumerate(job.seeds):
+            if job.run_id in self._canceled:
+                self.emit("run_canceled", run_id=job.run_id, completed=completed)
+                return
             started = time.monotonic()
             try:
                 image = self.pipeline.generate(job, index, seed, self._progress_callback(job.run_id, index, len(job.seeds)))
@@ -145,6 +181,10 @@ class Worker:
                     "cfg_scale": job.cfg_scale,
                     "size": f"{image.width}x{image.height}",
                 })
+            except Canceled:
+                log.info("run %s canceled during image %d/%d", job.run_id, index + 1, len(job.seeds))
+                self.emit("run_canceled", run_id=job.run_id, completed=completed)
+                return
             except PipelineError as exc:
                 self.emit("run_failed", run_id=job.run_id, completed=completed, error=exc.as_dict())
                 return
@@ -183,6 +223,54 @@ def run_probe(pipeline: str, emit: Emitter) -> int:
     return 0
 
 
+def stdin_lines(fd: int = 0) -> Iterator[str]:
+    """Lines from a file descriptor, read with os.read rather than through sys.stdin.
+
+    The command-reader thread sits in a blocking read for the life of the process. Blocked inside
+    sys.stdin's buffered reader, it holds that object's lock, and Python can abort at exit ("could
+    not acquire lock for <_io.BufferedReader name='<stdin>'> at interpreter shutdown"). A raw
+    read holds no Python lock, so the process can exit while the thread is still waiting."""
+    pending = b""
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            if pending:
+                yield pending.decode("utf-8", "replace")
+            return
+        pending += chunk
+        while (newline := pending.find(b"\n")) >= 0:
+            line, pending = pending[:newline], pending[newline + 1:]
+            yield line.decode("utf-8", "replace")
+
+
+def read_commands(lines: Iterable[str], commands: "queue.Queue[Optional[dict[str, Any]]]", worker: Worker, emit: Emitter) -> None:
+    """Runs in its own thread. Passes every command to `commands` for the main thread, except
+    `cancel`, which is acted on at once (the main thread may be busy generating). None marks the
+    end of input."""
+    try:
+        for raw in lines:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                message = json.loads(line)
+                if not isinstance(message, dict):
+                    raise ValueError("not an object")
+            except ValueError as exc:
+                emit("protocol_error", message=f"Unreadable command ({exc}).")
+                continue
+            if message.get("cmd") == "cancel":
+                run_id = message.get("run_id")
+                if isinstance(run_id, str) and _RUN_ID.match(run_id):
+                    worker.request_cancel(run_id)
+                else:
+                    emit("protocol_error", message="A cancel command needs the run_id of the run to cancel.")
+                continue
+            commands.put(message)
+    finally:
+        commands.put(None)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m studio.worker")
     parser.add_argument("--pipeline", choices=["fake", "real"], required=True)
@@ -211,17 +299,12 @@ def main(argv: Optional[list[str]] = None) -> int:
     worker = Worker(pipeline, Path(args.data_dir), emit)
     emit("hello", pid=os.getpid(), pipeline=args.pipeline, protocol=PROTOCOL_VERSION)
 
-    for raw in sys.stdin:
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            message = json.loads(line)
-            if not isinstance(message, dict):
-                raise ValueError("not an object")
-        except ValueError as exc:
-            emit("protocol_error", message=f"Unreadable command ({exc}).")
-            continue
+    commands: "queue.Queue[Optional[dict[str, Any]]]" = queue.Queue()
+    threading.Thread(target=read_commands, args=(stdin_lines(), commands, worker, emit), name="commands", daemon=True).start()
+    while True:
+        message = commands.get()
+        if message is None:  # stdin closed: the API process has gone away
+            return 0
         command = message.get("cmd")
         if command == "shutdown":
             emit("bye")
@@ -233,7 +316,6 @@ def main(argv: Optional[list[str]] = None) -> int:
             worker.run(message.get("job"))
         else:
             emit("protocol_error", message=f"Unknown command {command!r}.")
-    return 0  # stdin closed: the API process has gone away
 
 
 if __name__ == "__main__":

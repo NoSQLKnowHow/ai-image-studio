@@ -160,6 +160,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         payload = jobs_of(request).payload(run_id)
         return payload if payload is not None else _error(404, "Run not found.", "not_found")
 
+    @app.post("/api/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str, request: Request) -> Any:
+        try:
+            check_id(run_id)
+            outcome = await jobs_of(request).cancel(run_id)
+        except (StorageError, RunNotFound):
+            return _error(404, "Run not found.", "not_found")
+        except RunConflict as exc:
+            return _error(409, str(exc), "run_finished")
+        payload = jobs_of(request).payload(run_id)
+        return JSONResponse(status_code=200 if outcome == "canceled" else 202, content=payload)
+
     @app.delete("/api/runs/{run_id}", status_code=204)
     async def delete_run(run_id: str, request: Request) -> Response:
         try:
