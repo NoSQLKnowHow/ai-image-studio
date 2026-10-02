@@ -664,3 +664,187 @@ test("a double click on Regenerate larger queues one run, not two", async ({ pag
   expect(posts).toBe(1);
   await expect(card(page, prompt)).toHaveCount(2);
 });
+
+// ------------------------------------------------------------------ regenerate larger in the viewer (DESIGN.md §24)
+const viewerButton = (page: Page): Locator => page.getByRole("dialog").getByRole("button", { name: /^Regenerate larger/ });
+const viewerNote = (page: Page): Locator => page.getByRole("dialog").getByRole("status");
+const THREE_AT_HALF = { aspect: "custom", customWidth: 1024, customHeight: 1024, steps: 8, scale: 50, seedLocked: true, seed: 1000, numImages: 3 };
+
+test("the viewer's Regenerate larger enlarges the image being viewed: one image, with its own seed", async ({ page }) => {
+  await useOptions(page, THREE_AT_HALF);
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("three lighthouses");
+  await generate(page, prompt);
+  const small = card(page, prompt).last();
+  await expect(small.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await small.getByRole("button", { name: /Open image 1 of 3/ }).click();
+  await page.keyboard.press("ArrowRight");
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Image 2 of 3 · seed 1001");
+  await expect(viewerButton(page)).toHaveAccessibleName("Regenerate larger: 1024×1024, 8 steps");
+  await expect(viewerButton(page)).toHaveAttribute("title", /different picture/);
+
+  await viewerButton(page).click();
+  await expect(viewerNote(page)).toContainText("Queued this image at 1024×1024");
+  await expect(viewerNote(page).locator(".lightbox-notice")).not.toHaveClass(/error/);
+  await expect(page.locator(".toast")).toHaveCount(0); // the answer is in the viewer, not a toast behind it
+  await expect(dialog).toBeVisible(); // and the viewer stays open, for the next image
+  await page.keyboard.press("ArrowRight");
+  await expect(dialog).toContainText("Image 3 of 3");
+  await expect(dialog.locator(".lightbox-notice")).toHaveCount(0); // the note belonged to image 2
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  await expect(card(page, prompt)).toHaveCount(2);
+  const big = card(page, prompt).first();
+  await expect(big.locator(".run-meta")).toContainText("1024×1024 · 8 steps");
+  await expect(big.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(big.locator(".thumb")).toHaveCount(1); // image 2 only, not all three
+  const [newest, older] = await newestRuns(page);
+  expect(newest.options).toMatchObject({ seed: 1001, num_images: 1, width: 1024, height: 1024, steps: 8, draft: false, full: null });
+  expect(older.options).toMatchObject({ seed: 1000, num_images: 3 });
+});
+
+test("the viewer has no Regenerate larger for a run that has none on its card", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 100 });
+  await page.goto("/");
+  await clearHistory(page);
+  const plain = unique("full size in the viewer");
+  await generate(page, plain);
+  const older = unique("older client in the viewer");
+  expect((await page.request.post("/api/runs", { headers: { "X-Studio-Client": "1" }, data: { prompt: older, options: { width: 256, height: 256, steps: 3 } } })).ok()).toBe(true);
+  for (const text of [plain, older]) {
+    await expect(card(page, text).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+    await card(page, text).locator(".thumb").first().click();
+    await expect(page.getByRole("dialog").getByRole("link", { name: "Download" })).toBeVisible();
+    await expect(viewerButton(page)).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toBeHidden();
+  }
+});
+
+test("when the server refuses or the queue is full, the viewer says so inside itself and queues nothing", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 50 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("refused in the viewer");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  const answers = [
+    { status: 422, body: { detail: [{ loc: ["body", "options", "full"], msg: "The full size must be larger than the run.", type: "value_error" }] } },
+    { status: 429, body: { detail: "The queue is full (3 jobs waiting). Try again in a moment.", code: "queue_full" } },
+  ];
+  await page.route("**/api/runs", (route) => {
+    const answer = route.request().method() === "POST" ? answers.shift() : undefined;
+    return answer ? route.fulfill({ status: answer.status, json: answer.body }) : route.continue();
+  });
+  await card(page, prompt).locator(".thumb").first().click();
+  await viewerButton(page).click();
+  await expect(viewerNote(page)).toContainText("Couldn't regenerate: The full size must be larger than the run.");
+  await expect(viewerNote(page).locator(".lightbox-notice")).toHaveClass(/error/);
+  await viewerButton(page).click();
+  await expect(viewerNote(page)).toContainText("The queue is full (3 jobs waiting)");
+  await expect(viewerNote(page)).not.toContainText("Couldn't regenerate");
+  await expect(page.locator(".toast")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(card(page, prompt)).toHaveCount(1);
+});
+
+test("a double click on the viewer's Regenerate larger queues one run, not two", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 50 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("double click in the viewer");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await card(page, prompt).locator(".thumb").first().click();
+  let posts = 0;
+  await page.route("**/api/runs", async (route) => {
+    if (route.request().method() === "POST") {
+      posts += 1;
+      await new Promise((resolve) => setTimeout(resolve, 400)); // the second click lands while the first is still being answered
+    }
+    await route.continue();
+  });
+  await viewerButton(page).dblclick();
+  await expect(viewerNote(page)).toContainText("Queued this image");
+  await page.waitForTimeout(600);
+  expect(posts).toBe(1);
+  await page.keyboard.press("Escape");
+  await expect(card(page, prompt)).toHaveCount(2);
+});
+
+test("phone width: the viewer's buttons and its note stay on screen, and the image still fits", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await useOptions(page, { ...THREE_AT_HALF, aspect: "9:16" });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("phone viewer");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await card(page, prompt).getByRole("button", { name: /Open image 1 of 3/ }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(viewerButton(page)).toBeVisible();
+  await viewerButton(page).click();
+  await expect(viewerNote(page)).toContainText("Queued this image");
+  const onScreen = async (locator: Locator) => {
+    const box = (await locator.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(360);
+    expect(box.y + box.height).toBeLessThanOrEqual(740);
+  };
+  for (const control of [viewerButton(page), dialog.getByRole("link", { name: "Download" }), dialog.getByRole("link", { name: "Thumbnail" }),
+    dialog.getByRole("button", { name: "Close" }), dialog.locator(".lightbox-notice"), dialog.locator(".lightbox-stage img")]) await onScreen(control);
+  const bar = (await dialog.locator(".lightbox-bar").boundingBox())!;
+  const image = (await dialog.locator(".lightbox-stage img").boundingBox())!;
+  expect(image.y).toBeGreaterThanOrEqual(bar.y + bar.height - 1); // the wrapped bar does not cover the picture
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
+});
+
+test("enlarging two images in a row queues both, each with its own seed", async ({ page }) => {
+  await useOptions(page, THREE_AT_HALF);
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("two of three");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await card(page, prompt).getByRole("button", { name: /Open image 1 of 3/ }).click();
+  let posts = 0;
+  await page.route("**/api/runs", async (route) => {
+    if (route.request().method() === "POST") {
+      posts += 1;
+      await new Promise((resolve) => setTimeout(resolve, 400)); // the first is still being answered when the second is pressed
+    }
+    await route.continue();
+  });
+  await viewerButton(page).click();
+  await page.keyboard.press("ArrowRight");
+  await viewerButton(page).click();
+  await expect(viewerNote(page)).toContainText("Queued this image");
+  await expect(async () => expect(posts).toBe(2)).toPass();
+  await page.keyboard.press("Escape");
+  await expect(card(page, prompt)).toHaveCount(3);
+  const [second, first] = await newestRuns(page);
+  expect([first.options.seed, second.options.seed]).toEqual([1000, 1001]);
+  expect([first.options.num_images, second.options.num_images]).toEqual([1, 1]);
+});
+
+test("if the viewer is closed before the answer comes, the answer is a toast instead of being lost", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 50 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("closed too soon");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await card(page, prompt).locator(".thumb").first().click();
+  await page.route("**/api/runs", async (route) => {
+    if (route.request().method() === "POST") await new Promise((resolve) => setTimeout(resolve, 500));
+    await route.continue();
+  });
+  await viewerButton(page).click();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(page.locator(".toast")).toContainText("Queued this image at 512×512");
+  await expect(card(page, prompt)).toHaveCount(2);
+});
