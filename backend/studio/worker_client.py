@@ -78,19 +78,27 @@ class WorkerClient:
         except (BrokenPipeError, ConnectionResetError) as exc:
             raise WorkerGone(f"The image worker went away ({exc}).") from exc
 
-    async def stop(self, timeout: float = 10.0) -> None:
+    async def stop(self, timeout: float = 10.0, busy: bool = False) -> None:
+        """Stop the worker. An idle worker is asked to exit; a busy one only reads commands
+        between jobs, so it is terminated instead (its run is being abandoned anyway)."""
         proc = self._proc
         if proc is None:
             return
         self._stopping = True
         if proc.returncode is None:
-            with suppress(WorkerGone):
-                await self.send({"cmd": "shutdown"})
+            if busy:
+                with suppress(ProcessLookupError):
+                    proc.terminate()
+                timeout = min(timeout, 3.0)
+            else:
+                with suppress(WorkerGone):
+                    await self.send({"cmd": "shutdown"})
             try:
                 await asyncio.wait_for(proc.wait(), timeout)
             except asyncio.TimeoutError:
                 log.warning("image worker did not exit within %.0fs; killing it", timeout)
-                proc.kill()
+                with suppress(ProcessLookupError):
+                    proc.kill()
                 await proc.wait()
         if self._reader is not None:
             with suppress(Exception):

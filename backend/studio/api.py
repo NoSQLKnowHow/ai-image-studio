@@ -24,8 +24,15 @@ from .storage import Storage, StorageError, check_id
 
 log = logging.getLogger("studio.api")
 
-HEARTBEAT_SECONDS = 15.0
+HEARTBEAT_SECONDS = 15.0  # keep-alive comment on idle event streams (stops proxies closing them)
+POLL_SECONDS = 1.0  # how quickly an idle event stream notices that the server is shutting down
 IMMUTABLE = "private, max-age=31536000, immutable"
+
+
+def server_stopping(app: FastAPI) -> bool:
+    """True once uvicorn has been asked to exit. `build_server` puts the server on app.state."""
+    server = getattr(app.state, "server", None)
+    return bool(server is not None and server.should_exit)
 
 PLACEHOLDER_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -202,14 +209,22 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         sub = bus.subscribe()
 
         async def stream() -> AsyncIterator[str]:
+            loop = asyncio.get_running_loop()
             try:
                 yield "retry: 3000\n\n"
                 yield format_sse("hello", jobs.status())
+                last_ping = loop.time()
                 while True:
+                    if server_stopping(request.app):
+                        # End the stream ourselves so shutdown doesn't have to cancel it.
+                        yield format_sse("shutdown", {"detail": "The server is shutting down."})
+                        return
                     try:
-                        event, data = await asyncio.wait_for(sub.queue.get(), HEARTBEAT_SECONDS)
+                        event, data = await asyncio.wait_for(sub.queue.get(), POLL_SECONDS)
                     except asyncio.TimeoutError:
-                        yield ": ping\n\n"
+                        if loop.time() - last_ping >= HEARTBEAT_SECONDS:
+                            last_ping = loop.time()
+                            yield ": ping\n\n"
                         continue
                     if event is OVERFLOW:
                         yield format_sse("overflow", {"detail": "Too many events at once; reconnect and refetch."})

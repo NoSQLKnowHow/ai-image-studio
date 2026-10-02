@@ -177,7 +177,7 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `DELETE /api/runs/{id}` | Delete run and files | 409 if running (cancel first) |
 | `GET /api/images/{id}` | Full PNG | `?download=1` sets a meaningful filename (below) |
 | `GET /api/images/{id}/thumb` | WebP thumbnail | |
-| `GET /api/events` | Server-sent events | `hello` (initial status), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`. A `: ping` comment every 15 s keeps proxies from closing the stream. On reconnect the client refetches list + status |
+| `GET /api/events` | Server-sent events | `hello` (initial status), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`, `shutdown` (the server is stopping; the stream then ends). A `: ping` comment every 15 s keeps proxies from closing the stream. On reconnect the client refetches list + status |
 
 **Capabilities without a loaded model:** the API process can't inspect a pipeline that isn't loaded, so at start-up it runs a short GPU-free probe subprocess that imports `diffusers` and inspects `QwenImage21Pipeline.__call__` (the same idea as the CLI's early signature check). The result is cached. If the import fails the state is `unavailable` with the reason.
 
@@ -360,7 +360,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 
 Each milestone is committed separately. **After each milestone I stop, report what works and what the tests showed, and wait for your go-ahead (decision #22).** Each milestone is pushed to `ai-image-studio` so you can review the diff on GitHub.
 
-**Progress:** M1 is complete on branch `m1-backend` (2026-10-01) and awaiting your review: backend, database, API, queue, worker process and fake pipeline, with 77 automated tests passing. Deliberately left for later milestones: the real model, idle unload and memory pre-flight (M2), uploads and Edit mode (M5), cancel, pin and retention (M6).
+**Progress:** M1 is complete on branch `m1-backend` (2026-10-01) and awaiting your review: backend, database, API, queue, worker process and fake pipeline, with 82 automated tests passing. Deliberately left for later milestones: the real model, idle unload and memory pre-flight (M2), uploads and Edit mode (M5), cancel, pin and retention (M6).
 
 ## 18. Open items and facts to verify
 

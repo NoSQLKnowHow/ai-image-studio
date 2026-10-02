@@ -67,12 +67,13 @@ class JobManager:
         self._task = asyncio.create_task(self._loop(), name="job-loop")
 
     async def stop(self) -> None:
+        busy = self._current is not None  # read before cancelling: the loop clears it on the way out
         if self._task is not None:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
-        await self._worker.stop()
+        await self._worker.stop(busy=busy)
 
     # ------------------------------------------------------------ queries
     @property
