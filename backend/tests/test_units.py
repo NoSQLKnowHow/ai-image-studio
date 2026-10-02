@@ -222,3 +222,28 @@ def test_thumbnail_keeps_alpha_and_bounds_size(tmp_path):
     with Image.open(thumb) as im:
         assert im.format == "WEBP" and im.size == (512, 256) and im.mode == "RGBA"
     assert not list(tmp_path.rglob("*.part"))
+
+
+# ---------------------------------------------------------------- version
+def test_the_version_is_one_number_everywhere(client_factory):
+    import json
+    import re
+
+    from studio import __version__
+
+    assert re.fullmatch(r"\d+\.\d+(\.\d+)?", __version__), __version__
+    client = client_factory()
+    assert client.get("/api/health").json()["version"] == __version__
+    assert client.get("/api/status").json()["version"] == __version__
+    assert client.get("/api/openapi.json").json()["info"]["version"] == __version__
+
+
+def test_the_front_end_package_carries_the_same_version():
+    """frontend/package.json must agree with studio.__version__ (1.1 and 1.1.0): bump them together."""
+    import json
+
+    from studio import __version__
+
+    package = json.loads((Path(__file__).resolve().parents[2] / "frontend" / "package.json").read_text())["version"]
+    assert package == __version__ or package.startswith(__version__ + "."), (
+        f"frontend/package.json says {package} but studio/__init__.py says {__version__}: bump both")

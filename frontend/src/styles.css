@@ -156,6 +156,8 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .header-inner { max-width: 920px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand h1 { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
+.brand-version { margin-left: 2px; font-size: 12px; font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; }
+@media (max-width: 520px) { .brand { flex: none; } .brand h1 { line-height: 1.05; } .brand-version { display: block; margin: 1px 0 0; font-size: 11px; line-height: 1; } }
 .brand-mark { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: 17px; flex: none; }
 .header-right { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .theme-toggle svg { font-size: 17px; }
@@ -170,6 +172,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   font-size: 13px; font-weight: 550; cursor: pointer; white-space: nowrap; overflow: hidden;
 }
 .pill .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-3); flex: none; }
+.pill-label { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .pill-sub { color: var(--text-3); font-weight: 450; overflow: hidden; text-overflow: ellipsis; }
 .pill-ready .dot { background: var(--success); }
 .pill-busy .dot, .pill-loading .dot { background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }

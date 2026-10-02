@@ -121,6 +121,13 @@ force a long rebuild: `--no-cache`, which re-downloads the Python packages (use 
 and changing `NGC_TAG`, which pulls another multi-GB base image. A rebuild never touches the model
 cache or your history.
 
+**Which build am I running?** The page title and the browser tab show the version, for example
+`AI Image Studio v1.1`. The same number comes from `curl -s localhost:8080/api/health`. If the page
+shows no version, or an older one than `git log` suggests, the page is stale: reload it with
+Ctrl+Shift+R (Cmd+Shift+R on a Mac) and check that `docker compose up -d --build` ran to the end.
+(Since v1.1 the server tells the browser to revalidate the page on every load, so a plain reload is
+enough after an update.)
+
 **A different NVIDIA PyTorch release:** set `NGC_TAG` in `.env` (default `25.10-py3`) and rebuild. The
 studio has been built and checked with `25.10-py3` only. The registry also has `25.11-py3`,
 `25.12-py3` and `26.08-py3`, but they are untested; if one fails the self-check, the message says why,
@@ -331,6 +338,11 @@ Mutating API requests need the header `X-Studio-Client: 1`, for example:
 curl -X POST http://127.0.0.1:8080/api/runs -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' \
      -d '{"prompt": "a lighthouse at dusk", "options": {"width": 1024, "height": 1024, "steps": 20}}'
 ```
+
+**The version number** lives in `backend/studio/__init__.py` (`__version__`). The page shows it, the API
+reports it, and `frontend/package.json` carries the same number (as `1.1.0`); a test fails if they
+disagree, so bump them together. 1.0 was the first build on the Spark; each release since bumps the minor
+(1.1, 1.2, 1.3, ...). "Version 2" in the design document names a set of features, not a version number.
 
 `requirements-server.txt` holds the web server's pins and is shared by `requirements.txt`
 (development) and `requirements-container.txt` (the image, which adds diffusers, transformers and
