@@ -43,8 +43,13 @@ step should show and what to do when it doesn't.
 
 ## Before you use the output
 
-Check the Qwen-Image-2.1 model license. Third-party summaries say it may be non-commercial or
-research-only; this has **not** been verified against the official license.
+Qwen-Image-2.1 is released under the **Qwen Research License Agreement**: use is allowed
+**for research or evaluation purposes only**, and commercial use needs a separate licence from
+Qwen. Read it before using the images for anything else:
+[LICENSE](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE). The agreement says nothing
+explicit about generated images, so if you're unsure whether a use counts as commercial, ask Qwen.
+This repository does not contain the model; it is downloaded from Hugging Face when the studio first
+runs. Details: `docs/DESIGN.md` §18 item 2.
 
 ## Development
 
