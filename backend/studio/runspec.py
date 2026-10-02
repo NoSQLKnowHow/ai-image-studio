@@ -24,6 +24,17 @@ _ID = re.compile(r"^[0-9a-f]{32}$")
 OFFERED_MODES: tuple[str, ...] = ("generate",)
 
 
+class FullSize(BaseModel):
+    """What a run that was made smaller than intended should be at full size (DESIGN.md §23.1). The page records it
+    so Regenerate larger works from the history; the server checks it and keeps it, and uses it for nothing else."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    width: int
+    height: int
+    steps: int
+
+
 class RunOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True, allow_inf_nan=False)
 
@@ -38,6 +49,7 @@ class RunOptions(BaseModel):
     resolution: Optional[int] = None  # Edit only: 1024 or 2048, sizes every input and the result (DESIGN.md §21.4)
     shape_from: Optional[int] = None  # Edit only: 1-based number of the image the result's shape follows (Size on Auto)
     draft: bool = False  # a small, quick try of the prompt (DESIGN.md §22.2): limited by the server, runs ahead of the queue
+    full: Optional[FullSize] = None  # Generate only: the size and steps this run stands in for (DESIGN.md §23.1)
 
 
 class InputRef(BaseModel):
@@ -89,6 +101,7 @@ class ResolvedRun:
     resolution: Optional[int] = None  # Edit: 1024 or 2048 (default 1024); None in Generate
     shape_from: Optional[int] = None  # Edit with Size on Auto: the image the result follows, if one was chosen
     draft: bool = False
+    full: Optional[FullSize] = None
 
     @property
     def seeds(self) -> list[int]:
@@ -110,6 +123,7 @@ class ResolvedRun:
             "shape_from": self.shape_from,
             "roles": [ref.role for ref in self.inputs],
             "draft": self.draft,
+            "full": self.full.model_dump() if self.full else None,
         }
 
 
@@ -171,6 +185,31 @@ def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
             if opts.num_images != 1:
                 errors.append((("options", "num_images"), "A draft makes one image."))
 
+    if opts.full is not None:  # the bigger version this run stands in for (DESIGN.md §23.1)
+        full = opts.full
+        if req.mode != "generate":
+            errors.append((("options", "full"), "A full size is only recorded for Generate."))
+        else:
+            full_ok = True
+            for name, value in (("width", full.width), ("height", full.height)):
+                if not P.SIZE_MIN <= value <= P.SIZE_MAX:
+                    errors.append((("options", "full", name), f"Must be between {P.SIZE_MIN} and {P.SIZE_MAX} pixels."))
+                    full_ok = False
+                elif value % P.SIZE_MULTIPLE:
+                    errors.append((("options", "full", name), f"Must be a multiple of {P.SIZE_MULTIPLE}."))
+                    full_ok = False
+            if full_ok and full.width * full.height > P.MAX_PIXELS:
+                errors.append((
+                    ("options", "full", "width"),
+                    f"{full.width}x{full.height} is {full.width * full.height / 1e6:.2f} MP; the limit is {P.MAX_PIXELS / 1e6:.1f} MP.",
+                ))
+            if not P.STEPS_MIN <= full.steps <= P.STEPS_MAX:
+                errors.append((("options", "full", "steps"), f"Must be between {P.STEPS_MIN} and {P.STEPS_MAX}."))
+            if full_ok and width is not None and height is not None and not (
+                full.width >= width and full.height >= height and (full.width, full.height) != (width, height)
+            ):
+                errors.append((("options", "full"), f"The full size must be larger than the run ({width}x{height}) and smaller in neither side."))
+
     refs = tuple(req.input_images or ())
     resolution: Optional[int] = None
     if req.mode == "generate":
@@ -228,4 +267,5 @@ def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
         resolution=resolution,
         shape_from=opts.shape_from,
         draft=opts.draft,
+        full=opts.full,
     )
