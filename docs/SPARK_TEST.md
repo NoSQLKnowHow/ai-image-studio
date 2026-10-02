@@ -298,6 +298,34 @@ history, plus `staged` for uploads that no run has used yet (those are removed a
 `STUDIO_MAX_INPUT_IMAGES` in `.env` and `docker compose up -d` to change it, up to 10). **If you have time,
 raise it and try more images at 1K while watching the memory: that number sets the default cap.**
 
+## 16. Scale, Draft and thumbnails (new in 1.3)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.3** (reload with
+Ctrl+Shift+R). There is no database change this time.
+
+**a) The scale picker, and what it saves.** Keep one prompt and **Lock seed** on (Options). Generate the
+same prompt at **100%**, **50%** and **25%** and **write down the three times**. Good: 50% takes roughly a
+quarter of the time of 100% (a quarter of the pixels) and 25% roughly a sixteenth, plus the same model
+load if it had to load. Look at the three pictures side by side: they will **not** be the same picture
+with different sizes, even with the seed locked. That is expected (§22.1), and it is worth knowing how
+different they are.
+
+**b) Draft.** Type a prompt and click **Draft** (or Ctrl+Shift+Enter). Good: a card with a **Draft**
+badge, one image, 512 px on the long side, 12 steps. **Write down** the time, and whether the picture is
+good enough to tell whether the prompt works. If 12 steps looks too rough or too slow, say so: both
+numbers are settings (`STUDIO_DRAFT_SIZE`, `STUDIO_DRAFT_STEPS` in `.env`, then `docker compose up -d`).
+
+**c) A draft jumps the queue.** Click Generate twice (two full-size runs), then **Draft**. Good: the draft
+card says `Queued · #1`, the second full run `Queued · #2`, and the draft finishes before it starts.
+The run already in progress is never interrupted.
+
+**d) Reuse on a draft.** Click **Reuse** on the draft's card. Good: the prompt comes back, and your own size,
+steps and seed stay as they were, so **Generate** makes the full-size image.
+
+**e) Thumbnails.** On a card with one image, click **Thumbnail**; for several images, open the viewer and
+use **Thumbnail** there. Good: you get a `..._thumb.webp` file, 512 px on its long side. With a transparent
+image, check that the thumbnail kept its transparency.
+
 ---
 
 ## Troubleshooting
@@ -329,3 +357,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 5. Whether transparent output really had transparency (step 10).
 6. The numbers from step 14: seconds from clicking **Stop generating** to the card saying **Canceled**, and the memory before and after.
 7. The numbers and observations from step 15 (edits through the API).
+8. The numbers from step 16: the time of a draft and of a run at each scale, and how the draft looks.

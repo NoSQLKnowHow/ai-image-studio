@@ -99,6 +99,7 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onCancel, onT
         <div className="run-head">
           <span className={`badge badge-${run.status}`}>{label}</span>
           {run.pinned && <span className="badge badge-kept"><PinIcon /> Kept</span>}
+          {run.options.draft && <span className="badge badge-draft" title="A small, quick try. The full-size image will look different.">Draft</span>}
           {run.mode === "edit" && <span className="badge">Edit</span>}
           {run.options.transparent && <span className="badge">Transparent</span>}
           <time dateTime={run.created_at} title={new Date(run.created_at).toLocaleString()}>{timeAgo(run.created_at, now)}</time>
@@ -144,6 +145,12 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onCancel, onT
           {run.images.length === 1 && (
             <a className="button small ghost" href={run.images[0].download_url} download>
               <DownloadIcon /> Download
+            </a>
+          )}
+          {run.images.length === 1 && run.images[0].thumb_url && (
+            <a className="button small ghost" href={`${run.images[0].thumb_url}?download=1`} download
+              title="A small copy of this image (WebP, 512 px on the long side)">
+              <DownloadIcon /> Thumbnail
             </a>
           )}
           {run.images.length > 1 && (

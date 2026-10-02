@@ -18,6 +18,7 @@ export const CAPS: Capabilities = {
     seed: { min: 0, max: 4294967295 },
     cfg_scale: { min: 0.1, max: 20 },
     size: { min: 256, max: 4096, multiple: 32, max_pixels: 4_500_000 },
+    draft: { long_side: 512, steps: 12 },
   },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },
@@ -49,7 +50,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
 }
 
 export const STATUS: Status = {
-  version: "1.2",
+  version: "1.3",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", pid: 1, unload_at: null, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10 },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, worker_rss_gb: null },

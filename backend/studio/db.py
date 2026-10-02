@@ -111,10 +111,22 @@ class Database:
                 self._copy_before_migration(path, previous)
             self._conn.executescript(_SCHEMA)  # every step so far only adds tables and indexes, so this is the migration
             self._record_version(previous)
+            self._queue_order = self._choose_queue_order()
 
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def _choose_queue_order(self) -> str:
+        """Drafts run ahead of waiting full-size runs (DESIGN.md §22.2), then in order of arrival. The flag lives in
+        options_json, which SQLite's JSON functions can read; if this SQLite was built without them, fall back to
+        plain arrival order rather than fail."""
+        try:
+            self._conn.execute("SELECT json_extract('{\"draft\": true}', '$.draft')").fetchone()
+        except sqlite3.OperationalError:
+            log.warning("this SQLite has no JSON functions: drafts will not jump the queue")
+            return "seq"
+        return "COALESCE(json_extract(options_json, '$.draft'), 0) DESC, seq"
 
     def _stored_version(self) -> Optional[int]:
         has_meta = self._conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
@@ -218,10 +230,10 @@ class Database:
         return rows[:limit], len(rows) > limit
 
     def queued_ids(self) -> list[str]:
-        return [r["id"] for r in self._all("SELECT id FROM runs WHERE status='queued' ORDER BY seq")]
+        return [r["id"] for r in self._all(f"SELECT id FROM runs WHERE status='queued' ORDER BY {self._queue_order}")]
 
     def next_queued(self) -> Optional[sqlite3.Row]:
-        return self._one("SELECT * FROM runs WHERE status='queued' ORDER BY seq LIMIT 1")
+        return self._one(f"SELECT * FROM runs WHERE status='queued' ORDER BY {self._queue_order} LIMIT 1")
 
     def mark_running(self, run_id: str, now: str) -> bool:
         """queued -> running. False if the run is gone or no longer queued."""

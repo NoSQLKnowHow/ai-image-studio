@@ -54,9 +54,17 @@ def download_filename(
     return "_".join(parts) + ".png"
 
 
-def content_disposition(filename: str) -> str:
+def thumbnail_filename(image_filename: str) -> str:
+    """The name of an image's thumbnail download: `<name>_thumb.webp` for `<name>.png`."""
+    stem = image_filename[:-4] if image_filename.lower().endswith(".png") else image_filename
+    return f"{stem}_thumb.webp"
+
+
+def content_disposition(filename: str, default: str = "image.png") -> str:
     """`attachment` header with an ASCII fallback plus the exact UTF-8 name (RFC 6266 / 5987)."""
     fallback = unicodedata.normalize("NFKD", filename).encode("ascii", "ignore").decode("ascii")
     fallback = re.sub(r"[^A-Za-z0-9._-]+", "_", fallback)
-    fallback = re.sub(r"-*_[-_]*", "_", fallback).strip("_-") or "image.png"  # no dangling "-_" from dropped characters
+    fallback = re.sub(r"-*_[-_]*", "_", fallback).strip("_-")  # no dangling "-_" from dropped characters
+    if not fallback or fallback.startswith("."):  # nothing but an extension was left (a name in another script)
+        fallback = default
     return f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quote(filename, safe='')}"

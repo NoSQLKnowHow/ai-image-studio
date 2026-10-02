@@ -12,15 +12,17 @@ import {
   browserStore,
   buildRequest,
   defaultOptions,
+  draftRequest,
   loadOptions,
   optionsFromRun,
   optionsProblem,
   retryRequest,
   saveOptions,
   type Options,
+  type Scale,
 } from "./options";
 import { initialState, reducer } from "./store";
-import type { Run } from "./types";
+import type { CreateRunBody, Run } from "./types";
 import { useEventStream } from "./useEvents";
 
 function prefersReducedMotion(): boolean {
@@ -81,7 +83,7 @@ export default function App() {
     store.set(PROMPT_KEY, prompt);
   }, [prompt, store]);
 
-  const submit = useCallback(async () => {
+  const send = useCallback(async (build: (prompt: string, options: Options, caps: NonNullable<typeof state.caps>) => CreateRunBody) => {
     if (!caps || !options || !prompt.trim() || submitting) return;
     const problem = optionsProblem(options, caps);
     if (problem) {
@@ -92,7 +94,7 @@ export default function App() {
     setSubmitting(true);
     setFormProblem(null);
     try {
-      dispatch({ type: "runUpsert", run: await api.createRun(buildRequest(prompt, options, caps)) });
+      dispatch({ type: "runUpsert", run: await api.createRun(build(prompt, options, caps)) });
     } catch (error) {
       const err = error as ApiError;
       if (err.status === 422) setFormProblem(err.message);
@@ -101,6 +103,9 @@ export default function App() {
       setSubmitting(false);
     }
   }, [caps, options, prompt, submitting, push]);
+
+  const submit = useCallback(() => send(buildRequest), [send]);
+  const submitDraft = useCallback(() => send(draftRequest), [send]);
 
   // A "check the options" message is stale as soon as the options change.
   const changeOptions = (next: Options) => {
@@ -113,7 +118,9 @@ export default function App() {
     setPrompt(run.prompt);
     setOptions(optionsFromRun(run, caps, options));
     setFormProblem(null);
-    push("info", `Loaded the prompt and options. Seed locked to ${run.options.seed}.`);
+    push("info", run.options.draft
+      ? "Loaded the prompt. Your size, steps and seed are unchanged, so Generate makes the full-size image."
+      : `Loaded the prompt and options. Seed locked to ${run.options.seed}.`);
     window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
     promptRef.current?.focus({ preventScroll: true });
   };
@@ -239,8 +246,10 @@ export default function App() {
                 if (formProblem) setFormProblem(null);
               }}
               onMode={(mode) => setOptions({ ...options, mode })}
+              onScale={(scale: Scale) => changeOptions({ ...options, scale })}
               onOpenOptions={() => setOptionsOpen(true)}
               onSubmit={() => void submit()}
+              onDraft={() => void submitDraft()}
             />
             <QueueBar status={status} />
             <section className="timeline" aria-label="Your runs">

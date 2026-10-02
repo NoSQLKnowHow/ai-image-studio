@@ -37,6 +37,7 @@ class RunOptions(BaseModel):
     transparent: bool = False
     resolution: Optional[int] = None  # Edit only: 1024 or 2048, sizes every input and the result (DESIGN.md §21.4)
     shape_from: Optional[int] = None  # Edit only: 1-based number of the image the result's shape follows (Size on Auto)
+    draft: bool = False  # a small, quick try of the prompt (DESIGN.md §22.2): limited by the server, runs ahead of the queue
 
 
 class InputRef(BaseModel):
@@ -87,6 +88,7 @@ class ResolvedRun:
     inputs: tuple[InputRef, ...] = ()
     resolution: Optional[int] = None  # Edit: 1024 or 2048 (default 1024); None in Generate
     shape_from: Optional[int] = None  # Edit with Size on Auto: the image the result follows, if one was chosen
+    draft: bool = False
 
     @property
     def seeds(self) -> list[int]:
@@ -107,6 +109,7 @@ class ResolvedRun:
             "resolution": self.resolution,
             "shape_from": self.shape_from,
             "roles": [ref.role for ref in self.inputs],
+            "draft": self.draft,
         }
 
 
@@ -154,6 +157,19 @@ def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
         errors.append((("options", "seed"), f"Must be between 0 and {P.SEED_MAX}."))
     if opts.cfg_scale is not None and not P.CFG_MIN <= opts.cfg_scale <= P.CFG_MAX:
         errors.append((("options", "cfg_scale"), f"Must be between {P.CFG_MIN} and {P.CFG_MAX}."))
+
+    if opts.draft:  # small by rule, because it is allowed to jump the queue (DESIGN.md §22.2)
+        if req.mode != "generate":
+            errors.append((("options", "draft"), "Drafts are only for Generate."))
+        elif opts.width is None or opts.height is None:
+            errors.append((("options", "draft"), "A draft needs an explicit size."))
+        else:
+            if max(opts.width, opts.height) > settings.draft_size:
+                errors.append((("options", "width"), f"A draft is at most {settings.draft_size} pixels on its long side."))
+            if opts.steps > settings.draft_steps:
+                errors.append((("options", "steps"), f"A draft uses at most {settings.draft_steps} steps."))
+            if opts.num_images != 1:
+                errors.append((("options", "num_images"), "A draft makes one image."))
 
     refs = tuple(req.input_images or ())
     resolution: Optional[int] = None
@@ -211,4 +227,5 @@ def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
         inputs=refs,
         resolution=resolution,
         shape_from=opts.shape_from,
+        draft=opts.draft,
     )

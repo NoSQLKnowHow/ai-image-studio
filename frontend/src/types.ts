@@ -14,6 +14,7 @@ export interface RunOptionsSnapshot {
   negative_prompt: string | null;
   cfg_scale: number | null;
   transparent: boolean;
+  draft?: boolean; // a small, quick try (DESIGN.md §22.2); absent on runs made before version 1.3
 }
 
 export interface ImageInfo {
@@ -101,6 +102,7 @@ export interface Capabilities {
     seed: Range;
     cfg_scale: Range;
     size: Range & { multiple: number; max_pixels: number };
+    draft: { long_side: number; steps: number }; // what a draft may be: its long side in pixels, and its most steps
   };
   queue_cap: number;
   device: WorkerStatus["device"];
@@ -118,6 +120,7 @@ export interface CreateRunBody {
     negative_prompt: string | null;
     cfg_scale: number | null;
     transparent: boolean;
+    draft?: boolean;
   };
 }
 

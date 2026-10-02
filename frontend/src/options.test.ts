@@ -2,18 +2,30 @@ import { describe, expect, it } from "vitest";
 import {
   CUSTOM,
   OPTIONS_KEY,
+  SCALES,
+  baseSize,
   buildRequest,
   defaultOptions,
+  draftRequest,
+  draftSize,
+  effectiveScale,
   loadOptions,
   optionsFromRun,
   optionsProblem,
+  resolveSize,
   retryRequest,
   sanitizeOptions,
+  scaleProblem,
+  scaledSide,
+  scaledSize,
   saveOptions,
   summarize,
+  usableScale,
   type KeyValueStore,
+  type Scale,
 } from "./options";
 import { CAPS, makeRun } from "./testdata";
+import type { Capabilities } from "./types";
 
 function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
   const data = { ...initial };
@@ -120,7 +132,159 @@ describe("reuse and retry", () => {
     expect(retryRequest(run)).toEqual({
       mode: "generate",
       prompt: run.prompt,
-      options: { width: 1024, height: 768, steps: 25, seed: 777, num_images: 2, negative_prompt: "blurry", cfg_scale: 4, transparent: false },
+      options: { width: 1024, height: 768, steps: 25, seed: 777, num_images: 2, negative_prompt: "blurry", cfg_scale: 4, transparent: false, draft: false },
     });
+  });
+});
+
+
+describe("the scale picker (DESIGN.md §22.1)", () => {
+  const at = (aspect: string, scale: Scale, extra = {}) => ({ ...defaultOptions(CAPS), aspect, scale, ...extra });
+
+  it("offers 100, 75, 50 and 25 percent, and starts at 100", () => {
+    expect([...SCALES]).toEqual([100, 75, 50, 25]);
+    expect(defaultOptions(CAPS).scale).toBe(100);
+  });
+
+  it("scales each side to the nearest multiple of 32, halves upward", () => {
+    expect([100, 75, 50, 25].map((s) => scaledSide(2048, s, 32))).toEqual([2048, 1536, 1024, 512]);
+    expect(scaledSide(2400, 50, 32)).toBe(1216); // 1200 is not a multiple of 32 (37.5 rounds up to 38)
+    expect(scaledSide(1792, 50, 32)).toBe(896);
+    expect(scaledSide(2752, 50, 32)).toBe(1376);
+    expect(scaledSide(2528, 50, 32)).toBe(1280); // 39.5 rounds up
+    expect(scaledSide(1696, 50, 32)).toBe(864); // 26.5 rounds up
+  });
+
+  it("every preset at every scale is a legal size close to the preset's shape", () => {
+    for (const [name, [w, h]] of Object.entries(CAPS.aspect_ratios)) {
+      for (const scale of SCALES) {
+        const size = scaledSize({ width: w, height: h }, scale, CAPS);
+        expect(size.width % 32, `${name} ${scale}%`).toBe(0);
+        expect(size.height % 32, `${name} ${scale}%`).toBe(0);
+        expect(size.width).toBeGreaterThanOrEqual(CAPS.limits.size.min);
+        expect(size.height).toBeGreaterThanOrEqual(CAPS.limits.size.min);
+        expect(size.width).toBeLessThanOrEqual(w);
+        expect(Math.abs(size.width / size.height / (w / h) - 1), `${name} ${scale}%`).toBeLessThan(0.05);
+        expect(scaleProblem({ width: w, height: h }, scale, CAPS)).toBeNull();
+      }
+    }
+  });
+
+  it("100% is the chosen size exactly, even a custom one that is not a multiple of 32", () => {
+    expect(scaledSize({ width: 1000, height: 700 }, 100, CAPS)).toEqual({ width: 1000, height: 700 });
+  });
+
+  it("sends the scaled size and shows it", () => {
+    const half = at("1:1", 50, { steps: 20 });
+    expect(resolveSize(half, CAPS)).toEqual({ width: 1024, height: 1024 });
+    expect(buildRequest("x", half, CAPS).options).toMatchObject({ width: 1024, height: 1024, steps: 20 });
+    expect(summarize(half, CAPS)).toBe("1024×1024 (50%) · 20 steps · random seed");
+    expect(summarize(at("1:1", 100), CAPS)).toBe("2048×2048 · 40 steps · random seed");
+    expect(buildRequest("x", at("4:3", 50), CAPS).options).toMatchObject({ width: 1216, height: 896 });
+  });
+
+  it("applies to a custom size too", () => {
+    const custom = at(CUSTOM, 50, { customWidth: 1536, customHeight: 1024 });
+    expect(resolveSize(custom, CAPS)).toEqual({ width: 768, height: 512 });
+    expect(baseSize(custom, CAPS)).toEqual({ width: 1536, height: 1024 });
+  });
+
+  it("does not offer a scale that would take a side under the minimum, and falls back to the nearest larger", () => {
+    const small = { width: 512, height: 512 };
+    expect(scaleProblem(small, 25, CAPS)).toMatch(/would be 128×128; each side must be at least 256/);
+    expect(scaleProblem(small, 50, CAPS)).toBeNull(); // exactly 256
+    expect(usableScale(25, small, CAPS)).toBe(50);
+    const tiny = { width: 256, height: 256 };
+    expect([75, 50, 25].map((s) => usableScale(s as Scale, tiny, CAPS))).toEqual([100, 100, 100]);
+    const custom = at(CUSTOM, 25, { customWidth: 512, customHeight: 512 });
+    expect(effectiveScale(custom, CAPS)).toBe(50);
+    expect(resolveSize(custom, CAPS)).toEqual({ width: 256, height: 256 });
+    expect(summarize(custom, CAPS)).toContain("256×256 (50%)");
+    expect(custom.scale).toBe(25); // the saved choice is untouched: it comes back when the size allows it
+    expect(effectiveScale({ ...custom, aspect: "1:1" }, CAPS)).toBe(25);
+  });
+
+  it("is remembered with the other options, and options saved before it existed read as 100%", () => {
+    const store = memoryStore();
+    saveOptions(at("16:9", 50), store);
+    expect(loadOptions(CAPS, store).options.scale).toBe(50);
+    expect(sanitizeOptions({ aspect: "16:9", steps: 30 }, CAPS)).toEqual({
+      options: { ...defaultOptions(CAPS), aspect: "16:9", steps: 30 },
+      repaired: false, // an option added later is not "repaired"
+    });
+    const bad = sanitizeOptions({ scale: 60, steps: 30 }, CAPS);
+    expect(bad.options).toMatchObject({ scale: 100, steps: 30 });
+    expect(bad.repaired).toBe(true);
+    expect(sanitizeOptions({ scale: "50" }, CAPS).options.scale).toBe(100);
+  });
+
+  it("Reuse brings back a preset at a scale when the size is exactly that, preferring 100%", () => {
+    const reuse = (width: number, height: number, current = defaultOptions(CAPS)) =>
+      optionsFromRun(makeRun({ options: { ...makeRun().options, width, height } }), CAPS, current);
+    expect(reuse(1024, 1024)).toMatchObject({ aspect: "1:1", scale: 50 });
+    expect(reuse(2048, 2048)).toMatchObject({ aspect: "1:1", scale: 100 });
+    expect(reuse(1376, 768)).toMatchObject({ aspect: "16:9", scale: 50 });
+    expect(reuse(1216, 896)).toMatchObject({ aspect: "4:3", scale: 50 });
+    expect(reuse(512, 512)).toMatchObject({ aspect: "1:1", scale: 25 });
+    const custom = reuse(640, 576, { ...defaultOptions(CAPS), scale: 50 });
+    expect(custom).toMatchObject({ aspect: CUSTOM, customWidth: 640, customHeight: 576, scale: 100 }); // no stale 50% on top
+    expect(resolveSize(custom, CAPS)).toEqual({ width: 640, height: 576 });
+  });
+
+  it("Reuse prefers the larger scale when two presets could explain the same size", () => {
+    // 4096x4096 at 50% and 2048x2048 at 100% are both 2048x2048: the plain one wins.
+    const tie = { ...CAPS, aspect_ratios: { big: [4096, 4096], small: [2048, 2048] } as Capabilities["aspect_ratios"] };
+    const run = makeRun({ options: { ...makeRun().options, width: 2048, height: 2048 } });
+    expect(optionsFromRun(run, tie, { ...defaultOptions(tie), aspect: "big" })).toMatchObject({ aspect: "small", scale: 100 });
+  });
+});
+
+describe("drafts (DESIGN.md §22.2)", () => {
+  it("keep the chosen shape with the long side at the draft size", () => {
+    const sizes = Object.fromEntries(
+      Object.entries(CAPS.aspect_ratios).map(([name, [width, height]]) => [name, draftSize({ width, height }, CAPS)]),
+    );
+    expect(sizes).toEqual({
+      "1:1": { width: 512, height: 512 }, "4:3": { width: 512, height: 384 }, "3:4": { width: 384, height: 512 },
+      "3:2": { width: 512, height: 352 }, "2:3": { width: 352, height: 512 }, "16:9": { width: 512, height: 288 },
+      "9:16": { width: 288, height: 512 },
+    });
+  });
+
+  it("never take a side under the minimum, or over the draft size", () => {
+    expect(draftSize({ width: 4096, height: 256 }, CAPS)).toEqual({ width: 512, height: 256 }); // 32 would be too small
+    expect(draftSize({ width: 256, height: 256 }, CAPS)).toEqual({ width: 256, height: 256 }); // never bigger than what you chose
+    expect(draftSize({ width: 384, height: 256 }, CAPS)).toEqual({ width: 384, height: 256 });
+    const tiny = { ...CAPS, limits: { ...CAPS.limits, draft: { long_side: 256, steps: 12 } } };
+    expect(draftSize({ width: 2752, height: 1536 }, tiny)).toEqual({ width: 256, height: 256 }); // only a square fits
+  });
+
+  it("are one small image, at most the draft steps, flagged, whatever the scale", () => {
+    const options = { ...defaultOptions(CAPS), aspect: "16:9", scale: 50 as Scale, steps: 40, numImages: 4 };
+    expect(draftRequest("  a lighthouse ", options, CAPS)).toEqual({
+      mode: "generate", prompt: "a lighthouse",
+      options: { width: 512, height: 288, steps: 12, seed: null, num_images: 1, negative_prompt: null, cfg_scale: null, transparent: false, draft: true },
+    });
+    expect(draftRequest("x", { ...options, steps: 5 }, CAPS).options.steps).toBe(5); // never more steps than you chose
+  });
+
+  it("carry the locked seed, the negative prompt, guidance and Transparent", () => {
+    const options = { ...defaultOptions(CAPS), seedLocked: true, seed: 99, negativePrompt: " blurry ", guidance: 4, transparent: true };
+    expect(draftRequest("x", options, CAPS).options).toMatchObject({ seed: 99, negative_prompt: "blurry", cfg_scale: 4, transparent: true });
+  });
+
+  it("are sent again as drafts on Retry, and ordinary runs never are", () => {
+    const draft = makeRun({ options: { ...makeRun().options, width: 512, height: 288, steps: 12, draft: true } });
+    expect(retryRequest(draft).options).toMatchObject({ width: 512, height: 288, steps: 12, draft: true });
+    expect(retryRequest(makeRun()).options.draft).toBe(false);
+  });
+
+  it("Reuse on a draft brings back the prompt-side options but not its size, steps or seed", () => {
+    const draft = makeRun({
+      options: { width: 512, height: 288, steps: 12, seed: 7, seed_was_random: true, num_images: 1, negative_prompt: "blurry",
+                 cfg_scale: 4, transparent: true, draft: true },
+    });
+    const mine = { ...defaultOptions(CAPS), aspect: "4:3", scale: 50 as Scale, steps: 40, seedLocked: false, numImages: 3 };
+    expect(optionsFromRun(draft, CAPS, mine)).toEqual({ ...mine, negativePrompt: "blurry", guidance: 4, transparent: true });
   });
 });

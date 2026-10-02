@@ -38,6 +38,10 @@ export function Lightbox({ run, index, onIndex, onClose }: {
                 </Dialog.Title>
                 <div className="lightbox-actions">
                   <a className="button small" href={image.download_url} download><DownloadIcon /> Download</a>
+                  {image.thumb_url && (
+                    <a className="button small" href={`${image.thumb_url}?download=1`} download
+                      title="A small copy of this image (WebP, 512 px on the long side)"><DownloadIcon /> Thumbnail</a>
+                  )}
                   <Dialog.Close className="button small ghost icon-only" aria-label="Close"><CloseIcon /></Dialog.Close>
                 </div>
               </div>

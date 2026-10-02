@@ -229,7 +229,7 @@ def age_upload(client, upload_id: str, hours: float) -> None:
 
 
 def test_an_unclaimed_upload_is_removed_after_the_ttl_and_a_newer_one_is_kept(client_factory):
-    client = client_factory(upload_ttl_hours=24)
+    client = client_factory(quiet=True, upload_ttl_hours=24)
     old, new = stage(client, image_bytes((1, 1, 1))), stage(client, image_bytes((2, 2, 2)))
     age_upload(client, old["upload_id"], 25)
     age_upload(client, new["upload_id"], 23)
@@ -240,7 +240,7 @@ def test_an_unclaimed_upload_is_removed_after_the_ttl_and_a_newer_one_is_kept(cl
 
 
 def test_the_ttl_is_configurable(client_factory):
-    client = client_factory(upload_ttl_hours=2)
+    client = client_factory(quiet=True, upload_ttl_hours=2)
     up = stage(client, image_bytes())
     age_upload(client, up["upload_id"], 3)
     assert sweep(client) == 1
@@ -257,7 +257,8 @@ def test_uploads_are_swept_at_start_up_and_then_on_an_interval(client_factory, m
         time.sleep(0.05)
 
 
-def test_files_nothing_owns_are_removed_once_they_are_old_enough_and_not_before(client):
+def test_files_nothing_owns_are_removed_once_they_are_old_enough_and_not_before(quiet_client):
+    client = quiet_client
     storage = client.app.state.storage
     stray = storage.staged / ("c" * 32 + ".png")
     stray_thumb = storage.staged_thumbs / ("c" * 32 + ".webp")
@@ -278,7 +279,8 @@ def test_files_nothing_owns_are_removed_once_they_are_old_enough_and_not_before(
     assert fresh.exists() and young_run.exists() and storage.staged.is_dir()
 
 
-def test_a_real_staged_upload_is_never_mistaken_for_a_stray_file(client):
+def test_a_real_staged_upload_is_never_mistaken_for_a_stray_file(quiet_client):
+    client = quiet_client
     up = stage(client, image_bytes())
     storage = client.app.state.storage
     long_ago = time.time() - 7200
