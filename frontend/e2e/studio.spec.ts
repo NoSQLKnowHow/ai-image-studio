@@ -498,6 +498,7 @@ test("phone width: the scale buttons and the size they give fit, and Draft and G
   await useOptions(page, { aspect: "1:1", scale: 50 });
   await page.goto("/");
   for (const percent of [100, 75, 50, 25]) await expect(scaleRadio(page, percent)).toBeVisible();
+  await expect(page.locator(".scale-size")).toBeVisible(); // (toHaveText alone passes on a hidden element)
   await expect(page.locator(".scale-size")).toHaveText("1024×1024"); // the Options summary is hidden on a phone
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
   const draft = await page.getByRole("button", { name: "Draft", exact: true }).boundingBox();

@@ -25,6 +25,7 @@ import {
   type Scale,
 } from "./options";
 import { CAPS, makeRun } from "./testdata";
+import type { Capabilities } from "./types";
 
 function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
   const data = { ...initial };
@@ -228,6 +229,13 @@ describe("the scale picker (DESIGN.md §22.1)", () => {
     const custom = reuse(640, 576, { ...defaultOptions(CAPS), scale: 50 });
     expect(custom).toMatchObject({ aspect: CUSTOM, customWidth: 640, customHeight: 576, scale: 100 }); // no stale 50% on top
     expect(resolveSize(custom, CAPS)).toEqual({ width: 640, height: 576 });
+  });
+
+  it("Reuse prefers the larger scale when two presets could explain the same size", () => {
+    // 4096x4096 at 50% and 2048x2048 at 100% are both 2048x2048: the plain one wins.
+    const tie = { ...CAPS, aspect_ratios: { big: [4096, 4096], small: [2048, 2048] } as Capabilities["aspect_ratios"] };
+    const run = makeRun({ options: { ...makeRun().options, width: 2048, height: 2048 } });
+    expect(optionsFromRun(run, tie, { ...defaultOptions(tie), aspect: "big" })).toMatchObject({ aspect: "small", scale: 100 });
   });
 });
 
