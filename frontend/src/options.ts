@@ -2,7 +2,7 @@
 // (DESIGN.md §6). Every saved field is validated on its own, so a corrupt or outdated value can
 // only ever reset that one field to its default, never break the page.
 
-import type { Capabilities, CreateRunBody, Mode, Range, Run } from "./types";
+import type { Capabilities, CreateRunBody, FullSize, Mode, Range, Run } from "./types";
 
 export const OPTIONS_KEY = "studio.options.v1";
 export const PROMPT_KEY = "studio.prompt.v1";
@@ -211,6 +211,19 @@ export function optionsProblem(options: Options, caps: Capabilities): string | n
   return options.aspect === CUSTOM ? sizeProblem(options.customWidth, options.customHeight, caps) : null;
 }
 
+/** True when `full` is bigger than `size` in at least one side and smaller in neither: the only case the server
+ *  accepts as "the full size of this run" and the only one Regenerate larger is offered for (DESIGN.md §23.1). */
+export function isLarger(full: Size, size: Size): boolean {
+  return full.width >= size.width && full.height >= size.height && (full.width > size.width || full.height > size.height);
+}
+
+/** What a run made smaller than selected remembers about the size it stands in for: the chosen size at 100%, with
+ *  the chosen steps. Nothing when this run is already the full size. */
+function fullSizeFor(size: Size, options: Options, caps: Capabilities): { full?: FullSize } {
+  const base = baseSize(options, caps);
+  return isLarger(base, size) ? { full: { width: base.width, height: base.height, steps: options.steps } } : {};
+}
+
 export function buildRequest(prompt: string, options: Options, caps: Capabilities): CreateRunBody {
   const { width, height } = resolveSize(options, caps);
   const supports = caps.supports;
@@ -226,6 +239,7 @@ export function buildRequest(prompt: string, options: Options, caps: Capabilitie
       negative_prompt: supports.negative_prompt && options.negativePrompt.trim() ? options.negativePrompt.trim() : null,
       cfg_scale: supports.cfg_scale ? options.guidance : null,
       transparent: options.mode === "generate" && !!supports.transparent && options.transparent,
+      ...(options.mode === "generate" ? fullSizeFor({ width, height }, options, caps) : {}),
     },
   };
 }
@@ -248,6 +262,39 @@ export function draftRequest(prompt: string, options: Options, caps: Capabilitie
       cfg_scale: supports.cfg_scale ? options.guidance : null,
       transparent: !!supports.transparent && options.transparent,
       draft: true,
+      ...fullSizeFor({ width, height }, options, caps),
+    },
+  };
+}
+
+/** The size and steps Regenerate larger would use for this run, or null when it isn't offered: only a finished
+ *  Generate run that remembers a full size bigger than itself (so not a full-size run, a failed or canceled one, or one
+ *  made before version 1.4). */
+export function largerTarget(run: Run): FullSize | null {
+  const { width, height, full } = run.options;
+  if (run.status !== "done" || run.mode !== "generate" || !full || !width || !height) return null;
+  return isLarger(full, { width, height }) ? full : null;
+}
+
+/** Regenerate larger: the same prompt, options and seeds at the full size and steps, as an ordinary run (no draft, and
+ *  no `full` of its own, so it has no button in turn). The picture will differ from the small one (DESIGN.md §23.1). */
+export function largerRequest(run: Run): CreateRunBody | null {
+  const target = largerTarget(run);
+  if (!target) return null;
+  const o = run.options;
+  return {
+    mode: "generate",
+    prompt: run.prompt,
+    options: {
+      width: target.width,
+      height: target.height,
+      steps: target.steps,
+      seed: o.seed,
+      num_images: o.num_images,
+      negative_prompt: o.negative_prompt,
+      cfg_scale: o.cfg_scale,
+      transparent: o.transparent,
+      draft: false,
     },
   };
 }
@@ -307,6 +354,7 @@ export function retryRequest(run: Run): CreateRunBody {
       cfg_scale: o.cfg_scale,
       transparent: o.transparent,
       draft: o.draft === true,
+      ...(o.full ? { full: o.full } : {}), // so the retried run gets its Regenerate larger button too
     },
   };
 }
