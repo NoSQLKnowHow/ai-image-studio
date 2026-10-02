@@ -17,7 +17,7 @@ import pytest
 from PIL import Image
 
 from studio.pipelines.base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, PipelineUnavailable
-from studio.pipelines.real import RealPipeline, probe
+from studio.pipelines.real import RealPipeline, describe_error, probe
 
 
 class FakeOOM(RuntimeError):
@@ -119,6 +119,16 @@ class Fakes:
             diffusers.QwenImage21Pipeline = FullPipeline
         elif signature == "minimal":
             diffusers.QwenImage21Pipeline = MinimalPipeline
+        elif signature == "broken":  # how diffusers' lazy import reports a module that fails to import
+            def lazy_getattr(name):
+                try:
+                    raise ImportError("cannot import name 'Qwen3VLProcessor' from 'transformers'")
+                except ImportError as inner:
+                    raise RuntimeError(
+                        "Failed to import diffusers.pipelines.qwenimage21.pipeline_qwenimage21 because of the "
+                        "following error (look up to see its traceback):\n" + str(inner)) from inner
+
+            diffusers.__getattr__ = lazy_getattr
         elif signature == "dummy":  # what diffusers exports when transformers won't import
             class DummyObject(type):
                 pass
@@ -174,6 +184,29 @@ def test_old_diffusers_without_the_pipeline(monkeypatch):
         probe()
     assert "0.41.0.dev0 does not provide QwenImage21Pipeline" in info.value.message
     assert "docker compose build" in info.value.hint
+
+
+def test_a_failed_lazy_import_reports_its_root_cause(monkeypatch):
+    Fakes(monkeypatch, signature="broken")
+    with pytest.raises(PipelineUnavailable) as info:
+        probe()
+    message = info.value.message
+    assert message == ("Loading QwenImage21Pipeline failed: "
+                       "ImportError: cannot import name 'Qwen3VLProcessor' from 'transformers'")
+    assert isinstance(info.value.__cause__, RuntimeError)  # the full chain is kept for the log
+
+
+def test_root_cause_walks_the_whole_chain():
+    try:
+        try:
+            try:
+                raise OSError("disk")
+            except OSError:
+                raise ValueError("middle")  # implicit context
+        except ValueError as exc:
+            raise RuntimeError("outer") from exc
+    except RuntimeError as outer:
+        assert describe_error(outer) == "OSError: disk"
 
 
 def test_diffusers_placeholder_class_is_caught_at_start_up(monkeypatch):

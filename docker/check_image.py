@@ -14,15 +14,33 @@ from __future__ import annotations
 
 import importlib.metadata as md
 import os
+import subprocess
 import sys
+import traceback
 from pathlib import Path
 
 PINS = Path("/app/ngc-pins.txt")
+# Printed up front, so a failed build log says what was installed. The second half are optional
+# extras that NVIDIA's image may bundle and that diffusers/transformers use automatically if present.
+REPORTED = ("torch", "torchvision", "triton", "numpy", "transformers", "diffusers", "accelerate",
+            "huggingface_hub", "tokenizers", "safetensors", "pillow",
+            "flash_attn", "flash_attn_3", "transformer_engine", "torchao", "xformers", "apex", "kernels")
+
+
+def installed_versions() -> str:
+    found = []
+    for name in REPORTED:
+        try:
+            found.append(f"{name}=={md.version(name)}")
+        except md.PackageNotFoundError:
+            pass
+    return ", ".join(found)
 
 
 def main() -> int:
     problems: list[str] = []
     notes: list[str] = []
+    print(f"check_image: Python {sys.version.split()[0]}; installed: {installed_versions()}", flush=True)
 
     if PINS.exists():
         for line in PINS.read_text().split():
@@ -41,6 +59,12 @@ def main() -> int:
         torch, pipeline_cls = import_runtime()
     except PipelineUnavailable as exc:
         problems.append(f"{exc.message} ({exc.hint})" if exc.hint else exc.message)
+        if exc.__cause__ is not None:  # the whole chain, so a failed build explains itself
+            print("check_image: traceback of the import failure:", file=sys.stderr, flush=True)
+            traceback.print_exception(exc.__cause__, file=sys.stderr)
+        pip_check = subprocess.run([sys.executable, "-m", "pip", "check"], capture_output=True, text=True)
+        print("check_image: pip check says:\n" + (pip_check.stdout + pip_check.stderr).strip()[:4000],
+              file=sys.stderr, flush=True)
     else:
         import diffusers
         import transformers
