@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, Query, Request
+from pydantic import BaseModel, ConfigDict
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -47,6 +48,13 @@ PLACEHOLDER_HTML = """<!doctype html>
 <p>The backend is running, but the web interface has not been built. Build it with <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code> (the container image does this for you).</p>
 <p>API: <code>/api/health</code>, <code>/api/status</code>, <code>/api/capabilities</code>, <code>/api/runs</code>,
 <code>/api/events</code>.</p></body></html>"""
+
+
+class RunPatch(BaseModel):
+    """The one thing about a run that can be changed after it is made: whether it is kept."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    pinned: bool
 
 
 def _error(status: int, detail: str, code: str) -> JSONResponse:
@@ -159,6 +167,15 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def get_run(run_id: str, request: Request) -> Any:
         payload = jobs_of(request).payload(run_id)
         return payload if payload is not None else _error(404, "Run not found.", "not_found")
+
+    @app.patch("/api/runs/{run_id}")
+    async def patch_run(run_id: str, body: RunPatch, request: Request) -> Any:
+        try:
+            check_id(run_id)
+            await jobs_of(request).set_pinned(run_id, body.pinned)
+        except (StorageError, RunNotFound):
+            return _error(404, "Run not found.", "not_found")
+        return jobs_of(request).payload(run_id)
 
     @app.post("/api/runs/{run_id}/cancel")
     async def cancel_run(run_id: str, request: Request) -> Any:

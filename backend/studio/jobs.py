@@ -13,7 +13,7 @@ import logging
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import suppress
 from typing import Any, Optional
 
@@ -22,7 +22,7 @@ from .config import Settings
 from .db import Database
 from .events import EventBus
 from .runspec import ResolvedRun
-from .serialize import run_payload, utcnow
+from .serialize import format_ts, parse_ts, run_payload, utcnow
 from .storage import Storage
 from .worker_client import WorkerClient, WorkerGone, worker_env
 
@@ -32,6 +32,9 @@ RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "run_finished",
 FAKE_MODEL_ID = "fake-pipeline"
 SHUTDOWN_MESSAGE = "Interrupted because the server was stopped."
 PROBE_TIMEOUT_SECONDS = 300  # importing torch + diffusers can be slow on a cold start
+SWEEP_INTERVAL_SECONDS = 24 * 3600  # how often old runs are expired (once at start-up, then daily)
+SWEEP_BATCH = 200  # runs removed per database transaction, so a first sweep of thousands never stalls the server
+FINISHED = frozenset({"done", "failed", "canceled"})
 WORKER_RESTART_HINT = "The worker is restarted automatically for the next job; the server log has details."
 
 
@@ -63,6 +66,7 @@ class JobManager:
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
         self._probe_task: Optional[asyncio.Task] = None
+        self._janitor_task: Optional[asyncio.Task] = None
         self._probe: dict[str, Any] = {"state": "pending"}
         self._unload_at: Optional[float] = None
 
@@ -73,6 +77,10 @@ class JobManager:
             log.warning("marked %d run(s) interrupted by a previous shutdown as failed", len(recovered))
         self._probe_task = asyncio.create_task(self._run_probe(), name="capability-probe")
         self._task = asyncio.create_task(self._loop(), name="job-loop")
+        if self.settings.retention_days > 0:
+            self._janitor_task = asyncio.create_task(self._janitor(), name="expiry-janitor")
+        else:
+            log.info("auto-expiry is off (STUDIO_RETENTION_DAYS=0): runs are kept until you delete them")
 
     async def stop(self) -> None:
         busy = self._current is not None  # read before cancelling: the loop clears it on the way out
@@ -80,6 +88,11 @@ class JobManager:
             self._probe_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._probe_task
+        if self._janitor_task is not None:
+            self._janitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._janitor_task
+            self._janitor_task = None
         if self._task is not None:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
@@ -135,9 +148,17 @@ class JobManager:
         images = self.db.images_for_runs([r["id"] for r in rows])
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         return [
-            run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]), r["id"] in self._cancel_requested)
+            run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
+                        r["id"] in self._cancel_requested, self.expires_at(r))
             for r in rows
         ]
+
+    def expires_at(self, row: sqlite3.Row) -> Optional[str]:
+        """When the run will be deleted, or None if it never will be (kept, still pending, or expiry off)."""
+        days = self.settings.retention_days
+        if days <= 0 or row["pinned"] or row["status"] not in FINISHED:
+            return None
+        return format_ts(parse_ts(row["created_at"]) + timedelta(days=days))
 
     def payload(self, run_id: str) -> Optional[dict[str, Any]]:
         row = self.db.get_run(run_id)
@@ -199,6 +220,11 @@ class JobManager:
             await self._worker.send({"cmd": "cancel", "run_id": run_id})
         return "canceling"
 
+    async def set_pinned(self, run_id: str, pinned: bool) -> None:
+        if not self.db.set_pinned(run_id, pinned):
+            raise RunNotFound(run_id)
+        self._publish_run(run_id)
+
     async def delete(self, run_id: str) -> None:
         result = self.db.delete_run(run_id)
         if result == "not_found":
@@ -209,6 +235,38 @@ class JobManager:
         self._progress.pop(run_id, None)
         self.bus.publish("run.deleted", {"id": run_id})
         self._publish_queue()
+
+    # ------------------------------------------------------------ expiry
+    async def sweep_expired(self) -> int:
+        """Delete finished runs older than the retention period, with their files. Kept runs, and runs
+        that are queued or running, are never touched. Returns how many runs were removed."""
+        days = self.settings.retention_days
+        if days <= 0:
+            return 0
+        cutoff = format_ts(datetime.now(timezone.utc) - timedelta(days=days))
+        removed = 0
+        while True:
+            ids = self.db.delete_expired(cutoff, SWEEP_BATCH)
+            if not ids:
+                break
+            await asyncio.to_thread(lambda: [self.storage.delete_run_files(run_id) for run_id in ids])
+            for run_id in ids:
+                self._progress.pop(run_id, None)
+                self.bus.publish("run.deleted", {"id": run_id})
+            removed += len(ids)
+        if removed:
+            log.info("expired %d run(s) older than %d day(s) (STUDIO_RETENTION_DAYS)", removed, days)
+        return removed
+
+    async def _janitor(self) -> None:
+        while True:
+            try:
+                await self.sweep_expired()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("the expiry sweep failed; it will be tried again at the next interval")
+            await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------ the loop
     async def _loop(self) -> None:
