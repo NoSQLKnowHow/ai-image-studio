@@ -60,7 +60,12 @@ class Storage:
             with tempfile.TemporaryFile(dir=self.root):
                 pass
         except OSError as exc:
-            raise StorageError(f"The data directory {self.root} is not writable: {exc.strerror or exc}") from exc
+            uid, gid = os.getuid(), os.getgid()
+            raise StorageError(
+                f"The data directory {self.root} is not writable by this process (uid {uid}, gid {gid}): "
+                f"{exc.strerror or exc}. If it's a folder mounted into the container, give it to that user "
+                f"on the host: sudo chown -R {uid}:{gid} <the folder>"
+            ) from exc
 
     def run_dir(self, run_id: str) -> Path:
         return self.images / check_id(run_id)

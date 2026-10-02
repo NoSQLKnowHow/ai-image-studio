@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -131,7 +132,7 @@ def test_blank_negative_prompt_becomes_none():
 
 @pytest.mark.parametrize("options,field,fragment", [
     ({"width": 1024}, "height", "together"),
-    ({"width": 1000, "height": 1024}, "width", "multiple of 16"),
+    ({"width": 1040, "height": 1024}, "width", "multiple of 32"),  # fine for 16, not for the pipeline's 32
     ({"width": 128, "height": 1024}, "width", "between 256"),
     ({"width": 4096, "height": 2048}, "width", "MP"),
     ({"steps": 0}, "steps", "between 1"),
@@ -207,8 +208,9 @@ def test_storage_rejects_paths_outside_the_run_folder(tmp_path):
 def test_storage_layout_fails_clearly_when_not_writable(tmp_path):
     blocker = tmp_path / "file"
     blocker.write_text("x")
-    with pytest.raises(StorageError, match="not writable"):
+    with pytest.raises(StorageError, match="not writable") as caught:
         Storage(blocker / "data").ensure_layout()
+    assert f"sudo chown -R {os.getuid()}:{os.getgid()}" in str(caught.value)  # says how to fix a mount
 
 
 def test_thumbnail_keeps_alpha_and_bounds_size(tmp_path):

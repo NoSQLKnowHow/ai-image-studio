@@ -166,6 +166,21 @@ class Worker:
         self.emit("run_finished", run_id=job.run_id, completed=completed)
 
 
+def run_probe(pipeline: str, emit: Emitter) -> int:
+    from .pipelines import PipelineError, probe_pipeline
+
+    try:
+        result = probe_pipeline(pipeline)
+    except PipelineError as exc:
+        emit("probe", ok=False, error=exc.as_dict())
+    except Exception as exc:
+        log.exception("capability probe crashed")
+        emit("probe", ok=False, error={"kind": "error", "message": f"{type(exc).__name__}: {exc}", "hint": None})
+    else:
+        emit("probe", ok=True, **result)
+    return 0
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m studio.worker")
     parser.add_argument("--pipeline", choices=["fake", "real"], required=True)
@@ -174,6 +189,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--cpu-offload", action="store_true")
     parser.add_argument("--local-files-only", action="store_true")
     parser.add_argument("--fake-step-delay-ms", type=int, default=30)
+    parser.add_argument("--probe", action="store_true", help="report capabilities without loading weights, then exit")
     args = parser.parse_args(argv)
 
     # The API process owns the lifecycle (it sends "shutdown" or closes stdin); Ctrl-C in a
@@ -182,6 +198,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     protocol = claim_stdout()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s worker %(levelname)s %(message)s", stream=sys.stderr)
     emit = Emitter(protocol)
+
+    if args.probe:
+        return run_probe(args.pipeline, emit)
 
     from .pipelines import make_pipeline
 

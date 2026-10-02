@@ -1,0 +1,72 @@
+# AI Image Studio for the NVIDIA DGX Spark (arm64, GB10 "Blackwell", sm_121).
+#
+# Build it on the Spark itself:   docker compose build
+# (or: docker build -t ai-image-studio:local .). See README "Run it on the Spark".
+#
+# NGC_TAG picks NVIDIA's PyTorch release. 25.10 is the first one reported to support GB10;
+# a newer YY.MM-py3 tag should work too and is worth trying if 25.10 gives trouble.
+ARG NGC_TAG=25.10-py3
+
+# ---- 1. The web page, built once and copied into the final image as static files -------------
+FROM node:22-bookworm-slim AS ui
+WORKDIR /ui
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+# ---- 2. The server, on NVIDIA's PyTorch ------------------------------------------------------
+FROM nvcr.io/nvidia/pytorch:${NGC_TAG}
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1
+
+# diffusers comes from a pinned GitHub commit, which needs git (NGC images normally have it).
+# hadolint ignore=DL3008
+RUN command -v git >/dev/null \
+    || (apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*)
+
+WORKDIR /app
+
+# Keep NVIDIA's builds. Pin the packages NVIDIA compiled for this GPU to the versions the image
+# ships, so a dependency that wants to replace them fails the build instead of quietly swapping
+# in a generic wheel. (NGC images may set PIP_CONSTRAINT too; pip applies both.)
+COPY docker/ngc_pins.py /app/docker/
+RUN python /app/docker/ngc_pins.py > /app/ngc-pins.txt
+COPY backend/requirements-server.txt backend/requirements-container.txt /app/backend/
+RUN cat /app/ngc-pins.txt \
+    && pip install -c /app/ngc-pins.txt -r /app/backend/requirements-container.txt \
+    && pip freeze > /app/pip-freeze.txt
+
+COPY backend/studio /app/backend/studio
+COPY docker/ /app/docker/
+COPY --from=ui /ui/dist /app/static
+
+# Fail the build now, not at the first Generate, if the stack doesn't fit together.
+RUN python /app/docker/check_image.py
+
+# Mount points (compose mounts host folders here). World-writable so that the container still
+# works if it is started without the mounts, as any user; the data is then lost with it.
+RUN mkdir -p /data /models && chmod 1777 /data /models
+
+ENV PYTHONPATH=/app/backend \
+    STUDIO_DATA_DIR=/data \
+    STUDIO_STATIC_DIR=/app/static \
+    STUDIO_HOST=0.0.0.0 \
+    STUDIO_PORT=8080 \
+    HF_HOME=/models \
+    HOME=/tmp \
+    USER=studio
+
+# Not root. compose.yaml runs it as your own UID:GID instead, so ./data stays yours on the host.
+USER 1000:1000
+WORKDIR /app/backend
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD ["python", "/app/docker/healthcheck.py"]
+
+# NVIDIA's entrypoint (kept from the base image) prints the CUDA banner, then runs this.
+CMD ["python", "-m", "studio"]

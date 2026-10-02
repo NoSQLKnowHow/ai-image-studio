@@ -83,11 +83,15 @@ def render_fake_image(
 
 class FakePipeline:
     name = "fake"
-    SUPPORTS = {"negative_prompt": True, "cfg_scale": True, "step_progress": True, "transparent": True}
+    SUPPORTS = {"negative_prompt": True, "cfg_scale": True, "step_progress": True, "transparent": True, "edit": False}
 
     def __init__(self, step_delay_ms: int = 30, load_delay_ms: int = 200):
         self.step_delay = step_delay_ms / 1000
         self.load_delay = load_delay_ms / 1000
+
+    @classmethod
+    def probe(cls) -> dict[str, Any]:
+        return {"pipeline": cls.name, "supports": dict(cls.SUPPORTS), "device": {"name": "fake (no GPU used)"}}
 
     def load(self) -> dict[str, Any]:
         if os.environ.get("STUDIO_FAKE_LOAD_FAIL", "").strip().lower() in ("1", "true", "yes", "on"):

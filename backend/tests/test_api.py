@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 
 from PIL import Image
@@ -12,7 +13,8 @@ from conftest import close, create_run, wait_for, wait_for_worker_state
 
 def test_health_index_and_capabilities(client):
     assert client.get("/api/health").json()["ok"] is True
-    assert "web interface arrives in milestone M3" in client.get("/").text
+    page = client.get("/").text  # no UI build in this test's settings -> placeholder
+    assert "AI Image Studio" in page and "/api/health" in page
     caps = client.get("/api/capabilities").json()
     assert caps["pipeline"] == "fake" and caps["modes"] == ["generate"] and caps["model"] == "fake-pipeline"
     assert caps["defaults"]["width"] == 2048 and caps["defaults"]["steps"] == 40 and caps["queue_cap"] == 10
@@ -96,6 +98,18 @@ def test_delete_removes_run_and_files(client, tmp_path):
     assert client.get(run["images"][0]["url"]).status_code == 404
 
 
+def test_image_whose_file_vanished_is_a_404_not_a_500(client, tmp_path):
+    """A delete can land between the database lookup and reading the file (the UI fetches
+    thumbnails while a run is deleted from another tab): that's just a missing image."""
+    run = wait_for(client, create_run(client)["id"])
+    image = run["images"][0]
+    for folder in ("images", "thumbs"):
+        shutil.rmtree(tmp_path / "data" / folder / run["id"])  # the rows are still there
+    for url in (image["url"], image["thumb_url"], image["download_url"]):
+        response = client.get(url)
+        assert response.status_code == 404 and response.json()["code"] == "not_found", url
+
+
 def test_queue_order_positions_cap_and_conflicts(client_factory):
     client = client_factory(queue_cap=2, fake_step_delay_ms=40)
     slow = create_run(client, "slow", steps=25)  # ~1 s
@@ -142,12 +156,12 @@ def test_model_load_failure_is_reported(client_factory, monkeypatch):
     assert "Simulated model load failure" in worker["detail"] and worker["hint"]
 
 
-def test_real_pipeline_reports_unavailable_until_m2(client_factory):
-    client = client_factory(pipeline="real")
+def test_real_pipeline_without_pytorch_fails_runs_with_a_clear_reason(client_factory):
+    client = client_factory(pipeline="real")  # this test environment has no PyTorch
     assert client.get("/api/capabilities").json()["model"] == "Qwen/Qwen-Image-2.1"
     run = wait_for(client, create_run(client)["id"])
-    assert run["status"] == "failed" and "M2" in run["error"]["message"]
-    assert "STUDIO_PIPELINE=fake" in run["error"]["hint"]
+    assert run["status"] == "failed" and run["error"]["message"] == "PyTorch is not installed in this environment."
+    assert "container image" in run["error"]["hint"]
     assert wait_for_worker_state(client, "unavailable")["worker"]["detail"]
 
 

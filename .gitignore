@@ -7,6 +7,9 @@ venv/
 # Node / front end
 node_modules/
 frontend/dist/
+frontend/test-results/
+frontend/playwright-report/
+*.tsbuildinfo
 
 # Runtime data and secrets
 data/

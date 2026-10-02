@@ -1,0 +1,65 @@
+# AI Image Studio on the NVIDIA DGX Spark.
+#
+#   cp .env.example .env        # then set STUDIO_UID/STUDIO_GID (run: id -u; id -g)
+#   mkdir -p data               # before the first start, so it's yours and not root's
+#   docker compose up -d --build
+#   open http://<spark-address>:8080
+#
+# Run docker compose as yourself, not with sudo: sudo changes $HOME, and with it the model cache
+# folder below. README "Run it on the Spark" and docs/SPARK_TEST.md have the details.
+name: ai-image-studio
+
+services:
+  studio:
+    build:
+      context: .
+      args:
+        NGC_TAG: ${NGC_TAG:-25.10-py3}
+    image: ai-image-studio:local
+    container_name: ai-image-studio
+    restart: unless-stopped
+    init: true  # reaps the image worker process if the server ever dies first
+
+    # The GPU, the way NVIDIA's Spark instructions do it (docker run --runtime=nvidia --gpus=all).
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # NVIDIA's recommended settings for its PyTorch containers.
+    shm_size: 2gb
+    ulimits:
+      memlock: -1
+      stack: 67108864
+
+    user: "${STUDIO_UID:-1000}:${STUDIO_GID:-1000}"
+    ports:
+      # STUDIO_BIND=127.0.0.1 keeps it off the LAN (for an SSH tunnel / NVIDIA Sync only).
+      - "${STUDIO_BIND:-0.0.0.0}:${STUDIO_PORT:-8080}:8080"
+    volumes:
+      - ./data:/data  # database, images, thumbnails
+      # The Hugging Face cache, shared with anything else on the Spark that uses the default one
+      # (Hermes' vLLM, the qwen_image.py script), so a model already downloaded isn't fetched again.
+      - ${HF_CACHE_DIR:-${HOME}/.cache/huggingface}:/models
+    environment:
+      STUDIO_MODEL: ${STUDIO_MODEL:-Qwen/Qwen-Image-2.1}
+      STUDIO_MIN_FREE_GB: ${STUDIO_MIN_FREE_GB:-40}
+      STUDIO_IDLE_TIMEOUT_MIN: ${STUDIO_IDLE_TIMEOUT_MIN:-15}
+      STUDIO_CPU_OFFLOAD: ${STUDIO_CPU_OFFLOAD:-false}
+      STUDIO_LOCAL_FILES_ONLY: ${STUDIO_LOCAL_FILES_ONLY:-false}
+      STUDIO_ALLOWED_HOSTS: ${STUDIO_ALLOWED_HOSTS:-}
+      STUDIO_QUEUE_CAP: ${STUDIO_QUEUE_CAP:-10}
+      STUDIO_RETENTION_DAYS: ${STUDIO_RETENTION_DAYS:-30}
+      HF_TOKEN: ${HF_TOKEN:-}
+    # The server finishes or fails the current image and stops the worker cleanly on SIGTERM.
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    # Deliberately absent: privileged mode, host networking and the Docker socket. The studio
+    # cannot start, stop or reconfigure any other container (Hermes included).
