@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { duration, seedText, sizeText, timeAgo } from "../format";
+import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
 import type { Run, WorkerState } from "../types";
-import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, ReuseIcon, TrashIcon } from "./icons";
+import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 
 interface Props {
   run: Run;
@@ -9,6 +9,8 @@ interface Props {
   workerState: WorkerState | null;
   onReuse: () => void;
   onRetry: () => void;
+  onCancel: () => void;
+  onToggleKeep: () => void;
   onDelete: () => void;
   onCopy: () => void;
   onOpenImage: (index: number) => void;
@@ -21,7 +23,7 @@ function statusLabel(run: Run): string {
     case "queued":
       return run.queue_position ? `Queued · #${run.queue_position}` : "Queued";
     case "running":
-      return "Generating";
+      return run.canceling ? "Stopping" : "Generating";
     case "done":
       return "Done";
     case "failed":
@@ -34,7 +36,9 @@ function statusLabel(run: Run): string {
 function ProgressBlock({ run, workerState }: { run: Run; workerState: WorkerState | null }) {
   const p = run.progress;
   if (!p) {
-    const text = workerState === "loading" ? "Loading the model… (the first load takes a while)" : "Starting…";
+    const text = run.canceling
+      ? "Stopping… (a model that is still loading finishes loading first)"
+      : workerState === "loading" ? "Loading the model… (the first load takes a while)" : "Starting…";
     return (
       <div className="progress" role="status">
         <div className="progress-track indeterminate"><span /></div>
@@ -49,7 +53,7 @@ function ProgressBlock({ run, workerState }: { run: Run; workerState: WorkerStat
         aria-valuenow={Math.round(fraction * 100)} aria-label="Generation progress">
         <span style={{ width: `${(fraction * 100).toFixed(1)}%` }} />
       </div>
-      <p>{p.of > 1 ? `Image ${p.image} of ${p.of} · ` : ""}step {p.step} of {p.steps}</p>
+      <p>{p.of > 1 ? `Image ${p.image} of ${p.of} · ` : ""}step {p.step} of {p.steps}{run.canceling ? " · stopping after this step…" : ""}</p>
     </div>
   );
 }
@@ -59,7 +63,7 @@ function Media({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) =>
   if (!images.length) {
     return (
       <div className={`run-media empty status-${run.status}`} aria-hidden="true">
-        {run.status === "failed" ? <AlertIcon /> : <span className="shimmer" />}
+        {run.status === "failed" ? <AlertIcon /> : run.status === "canceled" ? <StopIcon /> : <span className="shimmer" />}
       </div>
     );
   }
@@ -77,7 +81,7 @@ function Media({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) =>
   );
 }
 
-export function RunCard({ run, now, workerState, onReuse, onRetry, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const meta = [sizeText(run), `${run.options.steps} steps`, seedText(run)];
@@ -85,6 +89,8 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onDelete, onC
   const took = run.status === "done" ? duration(run.started_at, run.finished_at) : null;
   if (took) meta.push(took);
   const label = statusLabel(run);
+  const active = run.status === "queued" || run.status === "running";
+  const expiry = run.pinned ? null : expiryText(run.expires_at, now);
 
   return (
     <article className={`run-card status-${run.status}`} data-run-id={run.id} aria-label={`${label}: ${run.prompt.slice(0, 80)}`}>
@@ -92,6 +98,7 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onDelete, onC
       <div className="run-body">
         <div className="run-head">
           <span className={`badge badge-${run.status}`}>{label}</span>
+          {run.pinned && <span className="badge badge-kept"><PinIcon /> Kept</span>}
           {run.mode === "edit" && <span className="badge">Edit</span>}
           {run.options.transparent && <span className="badge">Transparent</span>}
           <time dateTime={run.created_at} title={new Date(run.created_at).toLocaleString()}>{timeAgo(run.created_at, now)}</time>
@@ -110,6 +117,10 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onDelete, onC
 
         {run.status === "running" && <ProgressBlock run={run} workerState={workerState} />}
 
+        {run.status === "canceled" && <p className="run-note">{canceledText(run)}</p>}
+
+        {expiry && <p className="run-expiry">{expiry}. Press <strong>Keep</strong> to save it.</p>}
+
         {run.status === "failed" && run.error && (
           <div className="run-error" role="alert">
             <p>{run.error.message}</p>
@@ -119,7 +130,14 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onDelete, onC
         )}
 
         <div className="run-actions">
-          <button type="button" className="button small ghost" onClick={onReuse}
+          {active && (
+            <button type="button" className="button small ghost danger" data-action="cancel"
+              aria-disabled={run.canceling || undefined} onClick={() => !run.canceling && onCancel()}
+              title={run.status === "queued" ? "Take this job out of the queue" : run.canceling ? "Stopping after the current step" : "Stop generating (finished images are kept)"}>
+              <StopIcon /> {run.canceling ? "Stopping…" : "Cancel"}
+            </button>
+          )}
+          <button type="button" className="button small ghost" data-action="reuse" onClick={onReuse}
             title="Load this prompt and its options, with the seed locked">
             <ReuseIcon /> Reuse
           </button>
@@ -134,6 +152,13 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onDelete, onC
             </button>
           )}
           <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy prompt</button>
+          {!active && (
+            <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
+              aria-pressed={run.pinned} onClick={onToggleKeep}
+              title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
+              <PinIcon /> Keep
+            </button>
+          )}
           <button type="button" className="button small ghost" disabled title="Edit mode arrives in a later update">
             <EditIcon /> Edit this
           </button>

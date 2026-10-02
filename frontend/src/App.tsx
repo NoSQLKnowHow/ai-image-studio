@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { ApiError, api } from "./api";
 import { Header } from "./components/Header";
-import { ConfirmDelete, Lightbox } from "./components/Dialogs";
+import { ConfirmCancel, ConfirmDelete, Lightbox, cardReuseButton } from "./components/Dialogs";
 import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { OptionsDrawer } from "./components/OptionsDrawer";
 import { PromptBar } from "./components/PromptBar";
@@ -38,6 +38,8 @@ export default function App() {
   const [formProblem, setFormProblem] = useState<string | null>(null);
   const [lightbox, setLightbox] = useState<{ runId: string; index: number } | null>(null);
   const [pendingDelete, setPendingDelete] = useState<Run | null>(null);
+  const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
+  const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
   const [loadingOlder, setLoadingOlder] = useState(false);
   const { toasts, push, dismiss } = useToasts();
   const now = useNow(30_000);
@@ -123,6 +125,56 @@ export default function App() {
     push(ok ? "success" : "error", ok ? "Prompt copied." : "Couldn't copy. Select the prompt text instead.");
   };
 
+  /** Run `task` unless the same one is already under way for this run (a double click, or Enter held down). */
+  const once = async (key: string, task: () => Promise<void>) => {
+    if (inFlight.current.has(key)) return;
+    inFlight.current.add(key);
+    try {
+      await task();
+    } finally {
+      inFlight.current.delete(key);
+    }
+  };
+
+  // A queued run is taken out of the queue at once; a running one asks first, because it stops the work.
+  const requestCancel = (run: Run) => {
+    if (run.status === "running") {
+      setPendingCancel(run);
+      return;
+    }
+    // The Cancel button is about to disappear; keep a keyboard user's place on the same card.
+    cardReuseButton(run.id)?.focus({ preventScroll: true });
+    void cancel(run);
+  };
+
+  const cancel = (run: Run) =>
+    once(`cancel:${run.id}`, async () => {
+      try {
+        dispatch({ type: "runUpsert", run: await api.cancelRun(run.id) });
+      } catch (error) {
+        const err = error as ApiError;
+        if (err.status === 409) push("info", "That run had already finished.");
+        else if (err.status === 404) push("info", "That run no longer exists.");
+        else push("error", `Couldn't cancel: ${err.message}`);
+      }
+    });
+
+  const confirmCancel = () => {
+    const run = pendingCancel;
+    setPendingCancel(null);
+    if (run) void cancel(run);
+  };
+
+  const toggleKeep = (run: Run) =>
+    once(`keep:${run.id}`, async () => {
+      try {
+        dispatch({ type: "runUpsert", run: await api.keepRun(run.id, !run.pinned) });
+      } catch (error) {
+        const err = error as ApiError;
+        push("error", err.status === 404 ? "That run no longer exists." : `Couldn't ${run.pinned ? "stop keeping" : "keep"} it: ${err.message}`);
+      }
+    });
+
   const confirmDelete = async () => {
     const run = pendingDelete;
     setPendingDelete(null);
@@ -204,6 +256,8 @@ export default function App() {
                       workerState={status?.worker.state ?? null}
                       onReuse={() => reuse(run)}
                       onRetry={() => void retry(run)}
+                      onCancel={() => requestCancel(run)}
+                      onToggleKeep={() => void toggleKeep(run)}
                       onDelete={() => setPendingDelete(run)}
                       onCopy={() => void copy(run)}
                       onOpenImage={(index) => setLightbox({ runId: id, index })}
@@ -234,6 +288,7 @@ export default function App() {
         onIndex={(index) => setLightbox((current) => (current ? { ...current, index } : current))}
         onClose={() => setLightbox(null)}
       />
+      <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />
       <ConfirmDelete run={pendingDelete} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
       <Toasts toasts={toasts} onDismiss={dismiss} />
     </>

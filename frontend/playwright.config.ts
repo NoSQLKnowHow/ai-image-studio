@@ -7,7 +7,11 @@ import { defineConfig, devices } from "@playwright/test";
 // Run `npm run build` first. STUDIO_PYTHON points at a Python with the backend's requirements.
 const port = Number(process.env.STUDIO_E2E_PORT ?? 8099);
 const python = process.env.STUDIO_PYTHON ?? resolve("../backend/.venv/bin/python");
-const dataDir = mkdtempSync(join(tmpdir(), "studio-e2e-"));
+// This file is evaluated again in every worker process. The first evaluation (the runner, which also starts the
+// server) makes the directory and records it in the environment; workers inherit that and must reuse it, so the
+// tests that age a run behind the server's back open the server's own database.
+const dataDir = process.env.STUDIO_E2E_DATA_DIR ?? mkdtempSync(join(tmpdir(), "studio-e2e-"));
+process.env.STUDIO_E2E_DATA_DIR = dataDir;
 
 export default defineConfig({
   testDir: "e2e",

@@ -39,8 +39,10 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     finished_at: null,
     error: null,
     pinned: false,
+    expires_at: null,
     queue_position: null,
     progress: null,
+    canceling: false,
     images: [],
     ...overrides,
   };

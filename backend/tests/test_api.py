@@ -9,6 +9,7 @@ import sqlite3
 from PIL import Image
 
 from conftest import close, create_run, wait_for, wait_for_worker_state
+from studio.serialize import utcnow
 
 
 def test_health_index_and_capabilities(client):
@@ -174,11 +175,11 @@ def test_shutdown_and_restart_recovery(client_factory, tmp_path):
     close(first)  # graceful shutdown in the middle of a run
 
     # simulate a hard crash too: a run left 'running' in the database
+    now = utcnow()  # recent: a run older than STUDIO_RETENTION_DAYS would be expired the moment the server starts
     with sqlite3.connect(tmp_path / "data" / "studio.sqlite") as conn:
         conn.execute("INSERT INTO runs (id, created_at, started_at, status, mode, prompt, effective_prompt, steps, "
-                     "seed, num_images, model_id, options_json) VALUES (?, '2026-01-01T00:00:00Z', "
-                     "'2026-01-01T00:00:01Z', 'running', 'generate', 'p', 'p', 1, 1, 1, 'fake-pipeline', ?)",
-                     ("d" * 32, json.dumps({})))
+                     "seed, num_images, model_id, options_json) VALUES (?, ?, ?, 'running', 'generate', 'p', 'p', "
+                     "1, 1, 1, 'fake-pipeline', ?)", ("d" * 32, now, now, json.dumps({})))
 
     second = client_factory()
     interrupted = second.get(f"/api/runs/{running['id']}").json()

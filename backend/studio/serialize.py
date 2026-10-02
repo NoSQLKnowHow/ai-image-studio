@@ -9,11 +9,16 @@ from typing import Any, Optional
 
 
 def utcnow() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return format_ts(datetime.now(timezone.utc))
 
 
 def parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def format_ts(moment: datetime) -> str:
+    """The same shape as utcnow(), so timestamps compare correctly as text (the sweep relies on it)."""
+    return moment.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 def image_payload(row: sqlite3.Row) -> dict[str, Any]:
@@ -36,6 +41,8 @@ def run_payload(
     images: list[sqlite3.Row],
     progress: Optional[dict[str, Any]] = None,
     queue_position: Optional[int] = None,
+    canceling: bool = False,
+    expires_at: Optional[str] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -53,7 +60,9 @@ def run_payload(
         "finished_at": row["finished_at"],
         "error": error,
         "pinned": bool(row["pinned"]),
+        "expires_at": expires_at,
         "queue_position": queue_position if row["status"] == "queued" else None,
         "progress": progress if row["status"] == "running" else None,
+        "canceling": canceling and row["status"] == "running",
         "images": [image_payload(img) for img in images],
     }

@@ -13,7 +13,7 @@ import logging
 import secrets
 import sqlite3
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import suppress
 from typing import Any, Optional
 
@@ -22,16 +22,19 @@ from .config import Settings
 from .db import Database
 from .events import EventBus
 from .runspec import ResolvedRun
-from .serialize import run_payload, utcnow
+from .serialize import format_ts, parse_ts, run_payload, utcnow
 from .storage import Storage
 from .worker_client import WorkerClient, WorkerGone, worker_env
 
 log = logging.getLogger("studio.jobs")
 
-RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "run_finished", "run_failed"})
+RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "run_finished", "run_failed", "run_canceled"})
 FAKE_MODEL_ID = "fake-pipeline"
 SHUTDOWN_MESSAGE = "Interrupted because the server was stopped."
 PROBE_TIMEOUT_SECONDS = 300  # importing torch + diffusers can be slow on a cold start
+SWEEP_INTERVAL_SECONDS = 24 * 3600  # how often old runs are expired (once at start-up, then daily)
+SWEEP_BATCH = 200  # runs removed per database transaction, so a first sweep of thousands never stalls the server
+FINISHED = frozenset({"done", "failed", "canceled"})
 WORKER_RESTART_HINT = "The worker is restarted automatically for the next job; the server log has details."
 
 
@@ -58,10 +61,12 @@ class JobManager:
         self._run_events: asyncio.Queue = asyncio.Queue()
         self._current: Optional[str] = None
         self._progress: dict[str, dict[str, Any]] = {}
+        self._cancel_requested: set[str] = set()  # running runs the user has asked to stop
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
         self._probe_task: Optional[asyncio.Task] = None
+        self._janitor_task: Optional[asyncio.Task] = None
         self._probe: dict[str, Any] = {"state": "pending"}
         self._unload_at: Optional[float] = None
 
@@ -72,6 +77,10 @@ class JobManager:
             log.warning("marked %d run(s) interrupted by a previous shutdown as failed", len(recovered))
         self._probe_task = asyncio.create_task(self._run_probe(), name="capability-probe")
         self._task = asyncio.create_task(self._loop(), name="job-loop")
+        if self.settings.retention_days > 0:
+            self._janitor_task = asyncio.create_task(self._janitor(), name="expiry-janitor")
+        else:
+            log.info("auto-expiry is off (STUDIO_RETENTION_DAYS=0): runs are kept until you delete them")
 
     async def stop(self) -> None:
         busy = self._current is not None  # read before cancelling: the loop clears it on the way out
@@ -79,6 +88,11 @@ class JobManager:
             self._probe_task.cancel()
             with suppress(asyncio.CancelledError):
                 await self._probe_task
+        if self._janitor_task is not None:
+            self._janitor_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._janitor_task
+            self._janitor_task = None
         if self._task is not None:
             self._task.cancel()
             with suppress(asyncio.CancelledError):
@@ -133,7 +147,18 @@ class JobManager:
     def payloads(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         images = self.db.images_for_runs([r["id"] for r in rows])
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
-        return [run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"])) for r in rows]
+        return [
+            run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
+                        r["id"] in self._cancel_requested, self.expires_at(r))
+            for r in rows
+        ]
+
+    def expires_at(self, row: sqlite3.Row) -> Optional[str]:
+        """When the run will be deleted, or None if it never will be (kept, still pending, or expiry off)."""
+        days = self.settings.retention_days
+        if days <= 0 or row["pinned"] or row["status"] not in FINISHED:
+            return None
+        return format_ts(parse_ts(row["created_at"]) + timedelta(days=days))
 
     def payload(self, run_id: str) -> Optional[dict[str, Any]]:
         row = self.db.get_run(run_id)
@@ -170,6 +195,36 @@ class JobManager:
         self._wakeup.set()
         return payload
 
+    async def cancel(self, run_id: str) -> str:
+        """Stop a run. Returns "canceled" (a queued run, stopped at once) or "canceling" (a running run,
+        which stops at its next step; the worker confirms and the run becomes canceled then)."""
+        row = self.db.get_run(run_id)
+        if row is None:
+            raise RunNotFound(run_id)
+        if row["status"] == "queued" and self.db.cancel_queued(run_id, utcnow()):
+            self._publish_run(run_id)
+            self._publish_queue()
+            return "canceled"
+        row = self.db.get_run(run_id)  # re-read: it may have started in the meantime
+        if row is None:
+            raise RunNotFound(run_id)
+        if row["status"] != "running" or self._current != run_id:
+            raise RunConflict("This run has already finished.")
+        newly = run_id not in self._cancel_requested
+        self._cancel_requested.add(run_id)
+        if newly:
+            log.info("cancel requested for %s", run_id)
+            self._publish_run(run_id)
+        # A worker that has gone away is handled by its exit event, which fails the run.
+        with suppress(WorkerGone, OSError):
+            await self._worker.send({"cmd": "cancel", "run_id": run_id})
+        return "canceling"
+
+    async def set_pinned(self, run_id: str, pinned: bool) -> None:
+        if not self.db.set_pinned(run_id, pinned):
+            raise RunNotFound(run_id)
+        self._publish_run(run_id)
+
     async def delete(self, run_id: str) -> None:
         result = self.db.delete_run(run_id)
         if result == "not_found":
@@ -180,6 +235,38 @@ class JobManager:
         self._progress.pop(run_id, None)
         self.bus.publish("run.deleted", {"id": run_id})
         self._publish_queue()
+
+    # ------------------------------------------------------------ expiry
+    async def sweep_expired(self) -> int:
+        """Delete finished runs older than the retention period, with their files. Kept runs, and runs
+        that are queued or running, are never touched. Returns how many runs were removed."""
+        days = self.settings.retention_days
+        if days <= 0:
+            return 0
+        cutoff = format_ts(datetime.now(timezone.utc) - timedelta(days=days))
+        removed = 0
+        while True:
+            ids = self.db.delete_expired(cutoff, SWEEP_BATCH)
+            if not ids:
+                break
+            await asyncio.to_thread(lambda: [self.storage.delete_run_files(run_id) for run_id in ids])
+            for run_id in ids:
+                self._progress.pop(run_id, None)
+                self.bus.publish("run.deleted", {"id": run_id})
+            removed += len(ids)
+        if removed:
+            log.info("expired %d run(s) older than %d day(s) (STUDIO_RETENTION_DAYS)", removed, days)
+        return removed
+
+    async def _janitor(self) -> None:
+        while True:
+            try:
+                await self.sweep_expired()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("the expiry sweep failed; it will be tried again at the next interval")
+            await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
     # ------------------------------------------------------------ the loop
     async def _loop(self) -> None:
@@ -211,6 +298,7 @@ class JobManager:
         self._publish_queue()
         try:
             try:
+                started_worker = False
                 if not self._worker.alive():
                     shortfall = self._memory_shortfall()
                     if shortfall:
@@ -219,6 +307,12 @@ class JobManager:
                         return
                     self._set_worker_state("loading")
                     await self._worker.start()
+                    started_worker = True
+                if run_id in self._cancel_requested:  # cancelled while the worker was starting
+                    if started_worker:
+                        self._set_worker_state("unloaded")
+                    self._finish(run_id, "canceled")
+                    return
                 await self._worker.send({"cmd": "run", "job": self._job_for(row)})
             except (WorkerGone, OSError) as exc:
                 self._set_worker_state("error", f"Could not start the image worker: {exc}", "See the server log for details.")
@@ -252,6 +346,12 @@ class JobManager:
                     self._finish(run_id, "failed", storage_error, "Check free disk space and the server log.")
                 else:
                     self._finish(run_id, "done")
+                self._set_worker_state("ready")
+                return
+            elif kind == "run_canceled":
+                if storage_error:
+                    log.warning("run %s was canceled after a storage problem: %s", run_id, storage_error)
+                self._finish(run_id, "canceled")
                 self._set_worker_state("ready")
                 return
             elif kind == "run_failed":
@@ -378,6 +478,7 @@ class JobManager:
         if status == "failed":
             log.warning("run %s failed: %s", run_id, error)
         self._progress.pop(run_id, None)
+        self._cancel_requested.discard(run_id)
         if self._current == run_id:
             self._current = None
         self._publish_run(run_id)

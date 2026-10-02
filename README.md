@@ -9,7 +9,8 @@ can reuse and tweak prompts.
 | Part | State |
 |---|---|
 | Web studio: backend, real model, web page, container (milestones M1–M4, M7) | Built and tested with a fake test pipeline (backend, front-end and in-browser tests). **Not yet run on the Spark:** the image build and the real model need Docker and the GB10, which my sandbox doesn't have. [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) is the checklist for that first run. |
-| Version 2 (planned, not built) | **Editing with several images** for one prompt: numbered images you can reference in the prompt, reordering, a 1K/2K choice, and later local edits (marks and masks); plus the housekeeping v1 left out: **cancel**, **Keep** and **auto-expiry** of old runs. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §21. |
+| Version 2, part 1: run housekeeping (built, tested with the fake pipeline; **not yet run on the Spark**) | **Cancel** a queued or running job (finished images are kept), **Keep** a run so it never expires, and **auto-expiry** of runs older than `STUDIO_RETENTION_DAYS` (default 30) with a warning in a card's last week. [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 14 is the checklist. |
+| Version 2, part 2: editing (planned, not built) | **Editing with several images** for one prompt: numbered images you can reference in the prompt, a "result follows image N" selector, a 1K/2K choice, and later local edits (marks and masks). Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §21. |
 | Still to come | The Spark smoke test together (M8). |
 | `scripts/qwen_image.py`: command-line tool for text-to-image, image editing, transparent (RGBA) output | Written and exercised with mocks only. **Not yet run on a real GPU.** |
 
@@ -288,7 +289,11 @@ first run step by step and says what each step should show.
   `~/.cache/huggingface`, shared with anything else on the Spark that uses it, and is downloaded once.
 - **Memory:** the Spark's 128 GB is shared with everything else, Hermes' LLM server included. The
   studio refuses to load the model when less than `STUDIO_MIN_FREE_GB` is free (40 GB to start
-  with, until measured), and unloads it after 15 idle minutes.
+  with, until measured), and unloads it after 30 idle minutes (`STUDIO_IDLE_TIMEOUT_MIN`).
+- **Cancel, Keep and clean-up:** **Cancel** on a card stops a queued job at once, or a running one
+  within a step (images already finished stay). Runs are deleted automatically 30 days after they
+  were made (`STUDIO_RETENTION_DAYS`; `0` = never) unless you press **Keep** on them, and a card
+  warns you in its last week.
 - **No login:** anyone who can reach the port can use it. Keep it on a trusted network, or set
   `STUDIO_BIND=127.0.0.1` and use an SSH tunnel or NVIDIA Sync.
 

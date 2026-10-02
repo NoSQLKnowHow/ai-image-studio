@@ -157,6 +157,14 @@ class Database:
             )
             return cur.rowcount == 1
 
+    def cancel_queued(self, run_id: str, now: str) -> bool:
+        """queued -> canceled. False if the run is gone or has already started."""
+        with self._lock:
+            cur = self._conn.execute(
+                "UPDATE runs SET status='canceled', finished_at=? WHERE id=? AND status='queued'", (now, run_id)
+            )
+            return cur.rowcount == 1
+
     def finish_run(
         self, run_id: str, status: str, now: str, error: Optional[str] = None, hint: Optional[str] = None
     ) -> None:
@@ -166,6 +174,27 @@ class Database:
                 "WHERE id=? AND status='running'",
                 (status, now, error, hint, run_id),
             )
+
+    def set_pinned(self, run_id: str, pinned: bool) -> bool:
+        """Keep (or stop keeping) a run. False if there is no such run."""
+        with self._lock:
+            cur = self._conn.execute("UPDATE runs SET pinned=? WHERE id=?", (int(pinned), run_id))
+            return cur.rowcount == 1
+
+    def delete_expired(self, cutoff: str, limit: int) -> list[str]:
+        """Delete up to `limit` finished runs created before `cutoff` that are not kept, and return their
+        ids. Selecting and deleting happen in one transaction, so a run kept at the same moment is never
+        caught by a sweep that has already chosen it."""
+        with self.tx() as c:
+            ids = [
+                r["id"] for r in c.execute(
+                    "SELECT id FROM runs WHERE pinned=0 AND status IN ('done','failed','canceled') "
+                    "AND created_at < ? ORDER BY seq LIMIT ?", (cutoff, limit)).fetchall()
+            ]
+            for run_id in ids:
+                c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
+                c.execute("DELETE FROM runs WHERE id=?", (run_id,))
+            return ids
 
     def delete_run(self, run_id: str) -> str:
         """Returns 'deleted', 'not_found' or 'running' (refused)."""

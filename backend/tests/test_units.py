@@ -25,7 +25,7 @@ SETTINGS = Settings(data_dir=Path("/tmp/unused"), pipeline="fake")
 def test_config_defaults_match_the_spec():
     s = Settings.from_env({})
     assert (s.model, s.pipeline, s.port, s.queue_cap, s.idle_timeout_min, s.retention_days) == (
-        "Qwen/Qwen-Image-2.1", "real", 8080, 10, 15, 30)
+        "Qwen/Qwen-Image-2.1", "real", 8080, 10, 30, 30)
     assert (s.max_images_per_run, s.max_prompt_chars, s.max_upload_mb) == (8, 8000, 20)
     assert s.min_free_gb is None and s.allowed_hosts == () and s.db_path == Path("/data/studio.sqlite")
 

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image
 
-from studio.pipelines.base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, PipelineUnavailable
+from studio.pipelines.base import Canceled, ImageJob, OutOfMemory, PipelineError, PipelineLoadError, PipelineUnavailable
 from studio.pipelines.real import RealPipeline, describe_error, probe
 
 
@@ -307,6 +307,21 @@ def test_generate_errors(monkeypatch, exc, kind, fragment):
     assert fragment in (info.value.hint or "") + info.value.message
     if kind is OutOfMemory:
         assert fakes.empty_cache_calls == 1
+
+
+def test_a_cancel_raised_from_the_step_callback_leaves_generate_untranslated_and_the_pipeline_usable(monkeypatch):
+    pipe, fakes = loaded(monkeypatch)
+    steps = []
+
+    def on_step(step, total):
+        steps.append(step)
+        if step == 3:
+            raise Canceled()
+
+    with pytest.raises(Canceled):  # not turned into a PipelineError by the error translation
+        pipe.generate(job(steps=5), 0, 1, on_step)
+    assert steps == [1, 2, 3] and fakes.empty_cache_calls == 0  # stopped at once; not treated as out of memory
+    assert pipe.generate(job(steps=5), 0, 2, lambda s, t: None).size == (1024, 768)  # next image is unaffected
 
 
 def test_generate_before_load_is_an_error():

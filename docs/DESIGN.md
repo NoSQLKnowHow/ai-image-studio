@@ -1,6 +1,6 @@
 # Qwen-Image Web Studio — Design Specification (round 6: version 2 planned)
 
-Living document. **Version 1 is built and running on your Spark** (Generate, history, Options, themes, container: milestones M1–M4 and M7). **§21 specifies version 2, editing with several images plus the run housekeeping of M6 (cancel, keep, auto-expiry); nothing in §21 is built yet.** §1–§20 describe version 1 and the shared design; where §21 differs, §21 wins.
+Living document. **Version 1 is built and running on your Spark** (Generate, history, Options, themes, container: milestones M1–M4 and M7). **§21 specifies version 2, editing with several images plus the run housekeeping of M6 (cancel, keep, auto-expiry). M6 is built (§21.11); the editing work in §21 is not yet.** §1–§20 describe version 1 and the shared design; where §21 differs, §21 wins.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer.
 
@@ -43,12 +43,12 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 12 | Edit input methods | Choose-file button, drag-and-drop, paste from clipboard, "Edit this" button on past results | DECIDED |
 | 13 | Backend | Python (FastAPI + uvicorn), because `diffusers` is Python. **The model runs in a separate GPU worker process** that the API starts on demand and that exits when idle (§4, §9) | DECIDED |
 | 14 | History format | SQLite + image files on a mounted volume | PROPOSED |
-| 15 | Idle timeout | 15 minutes, env var | DECIDED |
+| 15 | Idle timeout | **30 minutes**, env var (was 15; you raised it on 2026-10-02 because 15 was too short) | DECIDED |
 | 16 | Container runtime and orchestration | **Docker + Compose.** You delegated this to NVIDIA's documented approach: Docker with the NVIDIA Container Toolkit is preinstalled on the Spark (§12) | DECIDED (delegated) |
 | 17 | Model weights source | Downloaded on first use into a mounted Hugging Face cache volume | DECIDED |
 | 18 | Uploaded source images | Kept with the run; deleted when the run expires or is deleted | DECIDED |
 | 19 | Behaviour when too little memory is free (e.g. Hermes' LLM server is holding most of it) | Pre-flight memory check before loading the model (§9a). If short, **fail fast** with clear instructions; you fix it and click Retry. No waiting in the queue, and the studio never controls the LLM container | DECIDED |
-| 20 | Starting defaults and limits | Size 2048×2048 (1:1), 40 steps, 1 image per click (max 8), queue cap 10, idle unload 15 min, runs expire after 30 days (§6, §13) | DECIDED |
+| 20 | Starting defaults and limits | Size 2048×2048 (1:1), 40 steps, 1 image per click (max 8), queue cap 10, idle unload 30 min, runs expire after 30 days (§6, §13) | DECIDED |
 | 21 | Security for v1 | As §11: no login; required custom header plus no CORS; upload validation; strict CSP; non-root container; no Docker socket; `STUDIO_TOKEN` reserved but off (setting it stops the server from starting, so it can't give a false sense of protection) | DECIDED |
 | 22 | Review cadence | I stop after **every milestone** (M1–M8), report what works and what the tests showed, and wait for your go-ahead | DECIDED |
 | 23 | Repository | A dedicated **private** GitHub repository, `NoSQLKnowHow/ai-image-studio` (renamed from the working name `dgx-spark-image-studio`), separate from `LiveLabs-Image-Dev`. Nothing for this project is written to `LiveLabs-Image-Dev` | DECIDED |
@@ -58,6 +58,8 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 27 | Local edits (v2) | Specified in v2, built after multi-image editing works (§21.5, M5d) | DECIDED |
 | 28 | Edit output size (v2) | Auto (about 1 MP, shape from the last image) with a 1K / 2K choice, default 1K (§21.4) | DECIDED |
 | 29 | M6 is part of v2 | The housekeeping the v1 plan left for M6 (**cancel** a queued or running job, **Keep** a run, **auto-expiry** with a warning) is built as part of version 2, not as a separate release (§21.11) | DECIDED |
+| 30 | Result shape (v2) | With Size on Auto, a **"Result follows image [N]"** selector names the image the result's shape follows (default: the last one that is not a mask). Nothing is reordered (§21.4) | DECIDED |
+| 31 | Transparent in Edit (v2) | **Offered in Edit as well as Generate**, wrapping the prompt in the recommended format (§21.4) | DECIDED |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -142,10 +144,10 @@ Consequences of the decisions:
 ### 5.5a Queue — DECIDED, details PROPOSED
 - One GPU worker, one job at a time; a job = one click (its N images run one after another).
 - Pending cap 10 (env var). Beyond that, Generate is refused with a clear message (HTTP 429, shown inline).
-- Queued jobs show position and can be canceled. Cancelling a running job takes effect between images, and between steps only if the pipeline exposes a per-step callback (to verify).
+- Queued jobs show position and can be canceled. Cancelling a running job stops it at its next step (built in M6: the worker stops from the pipeline's per-step callback), keeps the images already finished and leaves the model loaded.
 
 ### 5.6 Retention — DECIDED, details PROPOSED
-- Runs older than N days (default 30, env var) are deleted with their image files, at startup and once a day. Pending and running runs are never expired.
+- Runs older than N days (default 30, env var) are deleted with their image files, at startup and once a day. Pending and running runs are never expired, and neither is a run you pressed **Keep** on. "Older" counts from when the run was created, the date shown on its card. A card warns when fewer than 7 days remain (built in M6, §21.11).
 - Because auto-expiry can silently discard something you wanted: **Keep** exempts a run, and the card shows "expires in X days" when fewer than 7 remain. Confirm or drop this mitigation.
 
 ## 6. Options panel contents
@@ -181,8 +183,8 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `POST /api/runs` | Create a run | Body: mode, prompt, options, `input_image` (`{upload_id}` or `{image_id}`). 201 with the run; 422 field errors; 429 queue full |
 | `GET /api/runs?limit=&before=` | List runs, newest first | Cursor pagination; "load more" in the UI |
 | `GET /api/runs/{id}` | One run with its images | |
-| `POST /api/runs/{id}/cancel` | Cancel queued or running | 409 if already finished |
-| `PATCH /api/runs/{id}` | `{pinned: bool}` | The only mutable field |
+| `POST /api/runs/{id}/cancel` | Cancel queued or running | `200` with the run for a queued run (canceled at once); `202` for a running one (it carries `canceling: true` and becomes `canceled` at the next step); `409` `run_finished` if it already finished; `404` |
+| `PATCH /api/runs/{id}` | `{pinned: bool}` | The only mutable field; strict (a real boolean, nothing else, or `422`). Returns the run |
 | `DELETE /api/runs/{id}` | Delete run and files | 409 if running (cancel first) |
 | `GET /api/images/{id}` | Full PNG | `?download=1` sets a meaningful filename (below) |
 | `GET /api/images/{id}/thumb` | WebP thumbnail | |
@@ -292,7 +294,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_LOCAL_FILES_ONLY` | `false` | Never touch the network |
 | `STUDIO_CPU_OFFLOAD` | `false` | Use model CPU offload |
 | `STUDIO_MIN_FREE_GB` | unset = off; `compose.yaml` sets `40` | Minimum `MemAvailable` required before loading the model (§9a). 40 is a starting estimate (about 14 GB transformer plus text encoder, VAE and activations, with headroom), to be replaced by the figure measured on the Spark. `0` turns it off |
-| `STUDIO_IDLE_TIMEOUT_MIN` | `15` | Unload the model after this idle time |
+| `STUDIO_IDLE_TIMEOUT_MIN` | `30` | Unload the model after this idle time |
 | `STUDIO_QUEUE_CAP` | `10` | Max pending jobs |
 | `STUDIO_RETENTION_DAYS` | `30` | Auto-expire age; `0` disables |
 | `STUDIO_MAX_IMAGES_PER_RUN` | `8` | Batch cap |
@@ -374,7 +376,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | M3 | Front-end shell, theming, prompt bar, Options drawer, options persistence | Criteria 2, 3, 15, 16 pass in Playwright |
 | M4 | Timeline, run cards, SSE live updates, Reuse, download, delete | Criteria 4, 5, 6, 14 pass |
 | M5 | Edit mode: uploads, all four inputs. **Replaced by M5a–M5d for version 2 (§21.11)** | Criteria 13, 19–30 |
-| M6 | Queue cap, cancel, retention, pin, failure handling. **Now part of version 2 (decision #29); what remains is in §21.11** | Criteria 8, 9, 11, 12, 18 pass |
+| M6 | Queue cap, cancel, retention, pin, failure handling. **Now part of version 2 (decision #29) and built: see §21.11** | Criteria 8, 9, 11, 12, 18 pass |
 | M7 | Containerfile, compose, docs | Image builds; criterion 17 on the Spark |
 | M8 | Spark smoke test with you | Criteria 1, 10, 17 and the real-hardware checklist |
 
@@ -391,7 +393,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
   - **M7:** `Dockerfile`, `compose.yaml`, `.env.example`, `docs/SPARK_TEST.md`.
   - Tests: backend 120 (pytest), front end 34 (Vitest) and 10 in the browser (Playwright; 50/50 over five repeats).
   - **Not verified, and not verifiable from my sandbox:** the image build (no Docker daemon) and anything on the real GPU. Checked instead: hadolint, `docker compose config`, dependency resolution for linux/arm64 + Python 3.12 with NVIDIA's torch held fixed, and the build-time check script in every branch. The Spark checklist covers the rest.
-- Left for later: uploads and Edit mode (M5); cancel, pin and retention (M6; `STUDIO_RETENTION_DAYS` is read but nothing expires yet); the Spark smoke test with you (M8).
+- Left for later: uploads and Edit mode (M5); the Spark smoke test with you (M8). Cancel, Keep and auto-expiry (M6) were built afterwards, as the first part of version 2 (§21.11).
 
 ## 18. Open items and facts to verify
 
@@ -437,9 +439,10 @@ These were opened and read in full, not taken from search results. The announcem
 - **2026-10-02:** you asked for the next sections so you could test for real, chose **real model + container + web UI** as the next batch, and **one pull request per batch** (§17).
 - **Still pending from you (not blocking M1–M7):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9).
 - **Round 6 (2026-10-02):** version 1 was built (batch 2: real model, web page, container), built on the Spark and generating images. You asked for version 2 to add **editing with several uploaded images**, to be specified before any code. After a search of what Qwen announced and a read of the pinned pipeline source, you decided #24–#28: several images per edit, numbered badges with insert-into-prompt, a cap of 4 configurable to 10, local edits specified now and built second, and Auto size with a 1K/2K choice. Later the same day, with network access to the Qwen pages opened for the session, I read the announcement, the model card, the licence and the GitHub README directly; §21 and §18 were corrected from them (the prompt rewriter and the mask convention, which the search summaries had wrong or missing; the licence, now verified), and three refinements (R1–R3, §21.3) await your decision. You then decided that **M6 is part of v2** (#29). Details are §21 and are PROPOSED until you review them.
+- **Round 7 (2026-10-02):** you asked for version 2 to be built and I started with M6 (cancel, Keep, auto-expiry), the smallest piece and independent of the editing design. You also accepted refinements **R1** (the "Result follows image N" selector) and **R2** (Transparent in Edit), now decisions #30 and #31. You also raised the **idle unload from 15 to 30 minutes** (decision #15). **R3** (the optional prompt rewriter) is still open; only M5e depends on it. M6 was then built in one pull request (backend, page, tests, docs; §21.11 says what it does and where it differs from the plan).
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
-## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#29 DECIDED; details PROPOSED)
+## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#31 DECIDED; details PROPOSED)
 
 ### 21.1 What v2 is, and what it replaces
 
@@ -490,12 +493,14 @@ These were opened and read in full, not taken from search results. The announcem
 | 27 | Local edits | **Specified in v2, built after multi-image editing works** (§21.5, milestone M5d) | DECIDED |
 | 28 | Edit output size | **Auto (about 1 MP, shape from the last image) with a 1K / 2K resolution choice**; default 1K. Choosing a size in Options overrides Auto | DECIDED |
 | 29 | M6 is part of v2 | **Cancel** (queued and running jobs), **Keep** (pin) and **auto-expiry** with a warning, left unbuilt by the v1 plan, are built as part of version 2 (§21.11) | DECIDED |
+| 30 | Result shape | With Size on Auto, a **"Result follows image [N ▾]"** selector names the image the result's shape follows. It defaults to the pipeline's own choice (the last image that is not a mask) and reorders nothing; the studio computes an explicit width and height from the chosen image | DECIDED |
+| 31 | Transparent in Edit | The **Transparent toggle is offered in Edit mode** too, wrapping the prompt in the recommended format, as in Generate | DECIDED |
 
-**Refinements proposed after reading Qwen's pages (not yet decided, so not in the table above):**
+**Refinements proposed after reading Qwen's pages.** R1 and R2 were accepted on 2026-10-02 (decisions #30 and #31, in the table above); R3 is still open:
 
-- **R1, a "follows image N" selector instead of reordering for shape.** The pipeline gives the result the last image's shape. Reordering just to change the shape is awkward, and it makes a mask placed last set the shape by accident. Instead, Size on Auto shows **"Result follows image [N ▾]"**, defaulting to the pipeline's own choice (the last image that is not a mask), and the studio computes an explicit width and height from the chosen image with the pipeline's own arithmetic. Qwen's rewriter does the same thing with `ratio_follow`.
-- **R2, Transparent is offered in Edit mode.** v1 hid it because the model card only showed it for text-to-image; the post now documents editing transparent images and extracting subjects as RGBA layers. The toggle wraps the prompt in the recommended format, as in Generate.
-- **R3, an optional "Improve prompt" step** using Qwen's official rewriter (§21.2). It is a separate 9B model with real costs (§21.12 item 3), so it is a question for you, not a default.
+- **R1 (accepted, #30), a "follows image N" selector instead of reordering for shape.** The pipeline gives the result the last image's shape. Reordering just to change the shape is awkward, and it makes a mask placed last set the shape by accident. Instead, Size on Auto shows **"Result follows image [N ▾]"**, defaulting to the pipeline's own choice (the last image that is not a mask), and the studio computes an explicit width and height from the chosen image with the pipeline's own arithmetic. Qwen's rewriter does the same thing with `ratio_follow`.
+- **R2 (accepted, #31), Transparent is offered in Edit mode.** v1 hid it because the model card only showed it for text-to-image; the post now documents editing transparent images and extracting subjects as RGBA layers. The toggle wraps the prompt in the recommended format, as in Generate.
+- **R3 (still open), an optional "Improve prompt" step** using Qwen's official rewriter (§21.2). It is a separate 9B model with real costs (§21.12 item 3), so it is a question for you, not a default.
 
 ### 21.4 Edit mode on the page (supersedes §5.4)
 
@@ -509,7 +514,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Each thumbnail** shows its **number badge**, a ✕ to remove it, and a drag handle. Upload progress shows on the thumbnail itself.
 - **Order matters, so reordering is first-class:** drag a thumbnail to a new place, or use its **Move earlier / Move later** buttons (the keyboard route; focus stays on the moved thumbnail). The numbers update at once. A live region announces each change ("Image 3 added", "Moved to position 1").
 - **Inserting a reference:** clicking a badge inserts `image N` at the caret of the prompt (replacing any selected text, adding a space where needed) and returns focus to the prompt. With an empty prompt, the placeholder suggests: *"Refer to images by number, e.g. put the dog from image 1 into the scene from image 2."*
-- **The shape control** (refinement R1): with Size on Auto, a selector under the tray reads **"Result follows image [3 ▾]"**. It defaults to the last image that is not a mask (the pipeline's own rule) and can be set to any image. Choosing another image reorders nothing: the studio computes an explicit width and height from that image's aspect ratio at the chosen resolution (side lengths rounded to multiples of 32). If R1 is not accepted, this becomes the original always-visible note, "The result takes its shape from image N (the last one)", and only reordering changes it.
+- **The shape control** (decision #30): with Size on Auto, a selector under the tray reads **"Result follows image [3 ▾]"**. It defaults to the last image that is not a mask (the pipeline's own rule) and can be set to any image. Choosing another image reorders nothing: the studio computes an explicit width and height from that image's aspect ratio at the chosen resolution (side lengths rounded to multiples of 32).
 - **The cap:** the Add tile reads "3 of 4" and is disabled at the cap. Dropping more files than fit adds the first ones that fit and says how many were skipped. A file that fails validation is rejected **on its own**, with the reason; the others are kept.
 - **Uploading starts as soon as a file is added** (staged on the server), so Generate is quick. Generate is disabled while uploads are running and while the tray is empty ("Add at least one image to edit.").
 - **Not persisted:** the tray is kept while the page is open, including when you switch modes, but not across a reload (uploads are cheap to redo, and this avoids pointing at files the server has since cleaned up). The prompt draft is still kept, as in v1.
@@ -520,7 +525,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Resolution: 1K | 2K** (new, Edit only, default 1K; decision #28). It sets `output_resolution`, which sizes the output *and every input* (§21.2 point 3). Help text: "1K is about 1 megapixel and quicker. 2K is about 4 and costs far more with several images."
 - **Cost hint:** next to the Resolution control, a short line grows with `images × (resolution ÷ 1024)²` ("1 unit", "4 units", "16 units") and turns into a warning above a threshold ("This edit is heavy: expect a long run, or running out of memory"). The thresholds are set from Spark measurements (M5c, §21.11), not guessed now.
 - Steps, seed, guidance, negative prompt and images per click behave as in Generate.
-- **Transparent** (refinement R2): offered in Edit as well, wrapping the prompt in the recommended format. An input with an alpha channel is always kept as is, and the result card reports whether the output has alpha, as it does today. Whether the wrapper is needed when the input is already transparent is [unconfirmed]: the toggle is off by default, a transparent input shows a hint, and the Spark test (§21.11, M5c) settles it. A prompt starter, **"Extract the subject"**, covers the post's photo-to-RGBA example.
+- **Transparent** (decision #31): offered in Edit as well, wrapping the prompt in the recommended format. An input with an alpha channel is always kept as is, and the result card reports whether the output has alpha, as it does today. Whether the wrapper is needed when the input is already transparent is [unconfirmed]: the toggle is off by default, a transparent input shows a hint, and the Spark test (§21.11, M5c) settles it. A prompt starter, **"Extract the subject"**, covers the post's photo-to-RGBA example.
 
 **Run card for an Edit run**
 
@@ -537,7 +542,7 @@ Qwen documents three ways to mark where an edit goes ([Qwen], §21.2), and the p
 - **Painted annotation:** the same brush in white ("the area marked in white").
 - **Mask:** the original image plus a separate black-and-white mask, as **two inputs**. The studio flags the mask as a mask for display only (the model just sees one more numbered image). **The polarity is [unconfirmed]**: Qwen does not say which colour means "edit here". White is the working assumption (it is how the painted-annotation example marks the place); M5c tests both ways on the Spark *before* M5d is built. The editor can paint a mask directly (white where you brush, black elsewhere) and export it at the original image's size.
 - **Both count towards the cap** and are stored with the run (the original and the marked or mask version), so the card shows exactly what was sent.
-- **The shape trap goes away with R1:** the shape selector never offers a mask as the source and its default skips masks. Without R1, a mask placed last would set the shape, and the UI would warn and offer **Move mask earlier**.
+- **The shape trap goes away (decision #30):** the shape selector never offers a mask as the source and its default skips masks, so a mask placed last cannot set the result's shape by accident.
 - **Out of scope:** layers, selection tools, non-destructive history.
 - **To confirm on the Spark:** mask polarity, whether the mask must match the original's size, and the best prompt wording for each of the three ways.
 
@@ -547,7 +552,7 @@ Qwen documents three ways to mark where an edit goes ([Qwen], §21.2), and the p
 |---|---|
 | `POST /api/uploads` | Unchanged per file (multipart), called once per image, in parallel. Returns `upload_id`, `width`, `height`, `has_alpha` and a thumbnail URL. 413 / 415 / 422 per file as in §10 |
 | `DELETE /api/uploads/{id}` | **New.** Removes a staged upload (the ✕ before submitting) |
-| `POST /api/runs` | `input_image` is replaced by **`input_images`: an ordered list, 1 … cap, of `{upload_id}` or `{image_id}`** (a past result or input). Edit-mode options add **`resolution`** (1024 or 2048, default 1024); `width`/`height` null = Auto, plus **`shape_from`** (1-based index of the image the result follows, refinement R1; default the last non-mask image) and **`transparent`**, which is now allowed in Edit (R2). Each list item is validated on its own and errors name the position: `input_images[2]` |
+| `POST /api/runs` | `input_image` is replaced by **`input_images`: an ordered list, 1 … cap, of `{upload_id}` or `{image_id}`** (a past result or input). Edit-mode options add **`resolution`** (1024 or 2048, default 1024); `width`/`height` null = Auto, plus **`shape_from`** (1-based index of the image the result follows, decision #30; default the last non-mask image) and **`transparent`**, which is now allowed in Edit (decision #31). Each list item is validated on its own and errors name the position: `input_images[2]` |
 | `GET /api/capabilities` | Adds `limits.input_images {min, max}`, `limits.resolutions [1024, 2048]`, and `supports.multi_image`. The start-up check cannot see inside a loaded pipeline, so `multi_image` is assumed wherever `edit` is, and confirmed by the real-hardware test (§21.10). If the pipeline rejects a list, the run fails with a clear message |
 
 The singular `input_image` of §7 was never implemented, so nothing breaks by replacing it.
@@ -580,11 +585,11 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 
 19. Up to the cap, images can be added by all four methods (several files in one pick, several in one drop, paste, Edit this), each gets its number badge, and at the cap further adds are refused with a message, never dropped silently.
 20. Reordering renumbers the badges, and the order submitted is the order shown (checked in the stored `run_inputs`).
-21. With Size on Auto the result's shape follows the chosen image (by default the last one that is not a mask; selectable, with no reordering, if R1 is accepted), the page says which, and an explicit size overrides it.
+21. With Size on Auto the result's shape follows the chosen image (by default the last one that is not a mask; selectable, with no reordering: decision #30), the page says which, and an explicit size overrides it.
 22. Clicking a badge inserts "image N" at the caret.
 23. An Edit card shows every source in order. Reuse restores prompt, options and all inputs in order; Retry resubmits the same inputs; a missing input is named.
 24. Deleting the run an input came from does not break another run that used it.
-25. A PNG input with transparency is stored and sent with its alpha intact. With Transparent on (R2) the prompt is wrapped in the recommended format and the card says whether alpha came back.
+25. A PNG input with transparency is stored and sent with its alpha intact. With Transparent on (decision #31) the prompt is wrapped in the recommended format and the card says whether alpha came back.
 26. A bad file in a multi-file add is rejected alone; an expired or missing upload at submit gives a 422 naming its position; over-cap is refused by the page and by the server.
 27. 1K and 2K set `output_resolution`; Auto at 1K gives about 1 MP, rounded to multiples of 32.
 28. **On the Spark:** a 2-image and a 4-image edit complete at 1K, and one at 2K; memory and times are recorded; a prompt that refers to "image 1" and "image 2" is followed by the result; the cost-hint thresholds and the default cap are set from the measurements.
@@ -597,7 +602,7 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 
 | Milestone | Delivers | Done when |
 |---|---|---|
-| M6 | Cancel, Keep and auto-expiry (details below). The v1 plan's remaining housekeeping, now part of v2 (decision #29) | Criteria 9 and 12 of §16, and 31–32 |
+| M6 | Cancel, Keep and auto-expiry (details below). The v1 plan's remaining housekeeping, now part of v2 (decision #29). **BUILT, awaiting your review and the Spark checks below** | Criteria 9 and 12 of §16, and 31–32 (the parts that don't involve editing, which isn't built yet) |
 | M5a | Backend: multi-file uploads and staging, the cleanup job, `run_inputs` and the schema migration, `POST /api/runs` with `input_images`, worker and fake pipeline pass a list | API tests; fake edits show all sources in order |
 | M5b | The page: tray, the four inputs, badges and insert, reorder, cap, shape note, Resolution control with cost hint, run-card sources, Reuse, Retry, Edit this | Criteria 19–27 in Playwright |
 | M5c | The Spark test for edits (checklist supplied): 2- and 4-image edits at 1K, one at 2K, an alpha input; prompts that refer to "image 1" and "image 2"; a transparent edit and a subject extraction; **a mask, tried with both polarities and sizes**; memory and time recorded; cap and cost-hint thresholds set | Criterion 28, and the [unconfirmed] items of §21.2 settled |
@@ -608,19 +613,27 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 
 Each is its own pull request into `main` (never stacked), and I stop after each for your review (decision #22). M8, the Spark smoke test together, comes last.
 
-**M6: what is built, and what remains**
+**M6: built (2026-10-02), awaiting your review**
 
-- **Already built:** the pending cap with a clear 429 message (M1), delete with confirmation, which refuses while a run is running (M1), and the failure handling: out of memory, load failures, crashes and the memory pre-flight, each with an actionable message (M1–M2).
-- **Cancel.** `POST /api/runs/{id}/cancel`. A queued job becomes canceled at once. A running job stops **between steps**: the pipeline has a per-step callback and an interrupt flag [verified], so the worker can stop mid-image; finished images of the batch are kept and the run shows "2 of 4 completed". The worker stays loaded for the next job. UI: a Cancel button on queued and running cards; stopping a running job asks first ("Finished images are kept").
-- **Keep.** `PATCH /api/runs/{id}` with `{pinned: bool}`, a **Keep** button and a small badge on kept cards. Kept runs are exempt from expiry. (The database column already exists.)
-- **Auto-expiry.** A janitor deletes runs older than `STUDIO_RETENTION_DAYS` (default 30; 0 turns it off) with all their files, at start-up and then daily; never queued, running or kept runs. A card shows **"expires in N days"** when fewer than 7 remain, so nothing you wanted vanishes silently (§5.6). The setting is read today but nothing acts on it; `.env.example` will lose its "not active yet" note.
-- **To check on the Spark:** how quickly a cancel takes effect mid-step at 2K.
+- **Already there from v1:** the pending cap with a clear 429 message (M1), delete with confirmation, which refuses while a run is running (M1), and the failure handling: out of memory, load failures, crashes and the memory pre-flight, each with an actionable message (M1–M2).
+- **Cancel.** `POST /api/runs/{id}/cancel`. A queued job becomes canceled at once (no confirmation: nothing is lost). A running job stops **at its next step**: the worker raises a private signal (`Canceled`, deliberately not an `Exception`, so nothing between the callback and the worker can swallow it or turn it into a failure) from the pipeline's per-step callback, which is checked on every step. Finished images of the batch are kept; the image under way is discarded, and the card says "Canceled. 2 of 4 images finished and kept." The worker stays loaded (its process id does not change). The page asks first for a running job, shows "Stopping" until the worker confirms, and every open page sees the same state (`canceling` in the run).
+  - **How the worker hears it.** The worker used to read its commands one at a time, so a cancel could not be seen during a run. It now reads them in a thread of its own (with `os.read`, because a thread blocked in `sys.stdin` can make Python abort at exit; this was tested by starting and stopping the worker 80 times). That thread acts on `cancel` at once and queues everything else.
+  - **Where it deviates from the plan above:** the plan said "the pipeline has an interrupt flag, so the worker can stop mid-image". The studio does not use that flag: after it, the pipeline would still decode the half-finished latents into an image that is then thrown away, and with the 2K size that decode is not free. Raising from the callback skips it. (Stopping mid-loop leaves nothing stale behind, checked in the pinned diffusers source: the callback runs after the step's transformer calls, outside its `cache_context` blocks, and the key/value caches are local variables of the call.)
+  - **Edges, all tested:** a cancel that arrives while the model is still loading waits for the load to finish (a load can't be interrupted), then stops before the first image and leaves the model loaded; a cancel that arrives between two images stops before the next one starts, so its prompt encoding is not wasted; one that arrives while the worker process is still starting is honoured before the job is sent; a stale cancel can never hit a later run.
+  - **Not covered:** if the worker were wedged inside one step, a cancel would wait for that step. There is no kill timeout, because killing the worker means reloading the model (minutes). Whether any step on the Spark is long enough to matter is one of the checks below.
+- **Keep.** `PATCH /api/runs/{id}` with `{"pinned": true|false}` (strict), a **Keep** toggle on finished cards (a real toggle button: `aria-pressed`, the same visible label either way) and a **Kept** badge. Kept runs are exempt from expiry. Deleting a kept run by hand still works, and its confirmation says "You marked it Keep."
+- **Auto-expiry.** A janitor deletes finished runs older than `STUDIO_RETENTION_DAYS` (default 30; 0 turns it off) with their files (images and thumbnails), once at start-up (in the background, so a first sweep of thousands of runs never delays the page) and then every 24 hours. Never queued, running or kept runs. "Older" counts from creation, the date on the card. Choosing and deleting happen in one database transaction, so a run you keep at the same moment is never caught; sweeps go in batches of 200; a failed sweep is logged and tried again at the next interval; open pages remove the cards (`run.deleted`). Each run carries `expires_at`; a card shows **"Will be deleted in N days. Press Keep to save it."** when fewer than 7 remain (rounded down, so it never promises more time than there is, and "within a day" in the last 24 hours).
+  - **One thing to know:** a run that waited in the queue for longer than the retention period (the server stopped for a month with jobs waiting) would run and then be expired at the next sweep, because it counts from when it was created. This needs the studio to be down for 30 days with work queued; if you would rather the clock start when a run finishes, it is a one-line change. Say so.
+  - `.env.example` no longer says "not active yet".
+- **Also in this batch:** the idle unload is now **30 minutes** (you asked; decision #15), and R1 and R2 are recorded as decisions #30 and #31.
+- **Tests:** backend 166 (44 new, covering the worker protocol over a real process, the API, expiry and Keep); front end 44 Vitest (10 new) and 13 Playwright (3 new; three consecutive full runs passed). Mutation checks: I broke 29 specific things on purpose (no raise in the step callback, a stale cancel never cleared, no check between images, the sweep ignoring Keep, the sweep touching running runs, an inverted age comparison, files left behind, a janitor that never repeats, a missing `aria-pressed`, a cancel without the dialog, and so on). 27 were caught by a failing test, and two of those first survived (a cancel between two images, and the worker's state right after a cancel), which exposed gaps in my tests that I then closed. Of the other two, removing the explicit image-row delete from the sweep changes nothing because the database cascades it anyway (an equivalent change), and a mutant that kills the janitor task hangs the test run instead of failing it. Neither reflects a gap in the shipped code.
+- **To check on the Spark** (`docs/SPARK_TEST.md`, section 14): how quickly a cancel takes effect mid-step at 2K; that GPU memory after a cancel is the same as after a normal finish; that Keep and the warning behave on your real history.
 
 ### 21.12 Open items for v2, and ideas parked
 
 **Open**
 
-1. **Decide the three refinements of §21.3:** R1 (the "follows image N" selector), R2 (Transparent in Edit) and R3 (the optional prompt rewriter). R1 and R2 are small and I recommend both.
+1. **Decide R3** (the optional prompt rewriter, §21.3 and item 3 below). R1 and R2 were accepted on 2026-10-02 (decisions #30 and #31). Only M5e depends on R3.
 2. **Measure on the Spark** (M5c): time and memory for 1, 2 and 4 images at 1K and 2K, next to Hermes. This sets the cap's default, the cost-hint thresholds and any size limits for edits.
 3. **The prompt rewriter (R3).** It is official and recommended by Qwen, but it is a separate **9B vision-language model** (about 18 GB in bf16 by the usual arithmetic, not stated by Qwen) next to a main model whose footprint is still an estimate (the studio starts from 40 GB, to be measured, §9a), on a Spark that Hermes shares. Open questions: load it only when "Improve prompt" is clicked and unload it again, in its own worker process, as the main model is (decision #13)? Show the rewritten prompt for you to edit and approve, never apply it silently? Honour its `wh_ratio` and `ratio_follow` suggestions? What licence do the two rewriter checkpoints carry (not read yet)? Time to rewrite a prompt on the Spark?
 4. **Settle the [unconfirmed] items** (§21.2) on the Spark: referring to images by number, and the mask conventions.

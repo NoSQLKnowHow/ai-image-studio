@@ -27,6 +27,8 @@ export const DownloadIcon = () => <Icon><path d="M12 4v11M7 10l5 5 5-5M5 20h14" 
 export const CopyIcon = () => <Icon><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h8" /></Icon>;
 export const TrashIcon = () => <Icon><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></Icon>;
 export const EditIcon = () => <Icon><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M14 6l4 4" /></Icon>;
+export const StopIcon = () => <Icon><rect x="6" y="6" width="12" height="12" rx="2" /></Icon>;
+export const PinIcon = () => <Icon><path d="M7 4h10v17l-5-4-5 4z" /></Icon>;
 export const ChevronLeft = () => <Icon><path d="M15 6l-6 6 6 6" /></Icon>;
 export const ChevronRight = () => <Icon><path d="M9 6l6 6-6 6" /></Icon>;
 export const DiceIcon = () => <Icon><rect x="4" y="4" width="16" height="16" rx="3" /><circle cx="9" cy="9" r="1" fill="currentColor" /><circle cx="15" cy="15" r="1" fill="currentColor" /><circle cx="15" cy="9" r="1" fill="currentColor" /><circle cx="9" cy="15" r="1" fill="currentColor" /></Icon>;

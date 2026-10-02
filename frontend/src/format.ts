@@ -19,6 +19,30 @@ export function duration(fromIso: string | null, toIso: string | null): string |
   return m ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`;
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+/** A card warns about automatic deletion once fewer than this many days remain (DESIGN.md §5.6). */
+export const EXPIRY_WARNING_DAYS = 7;
+
+/** "Will be deleted in 3 days" once less than a week remains, else null. Rounds down, so it never
+ *  promises more time than there is. */
+export function expiryText(iso: string | null, now: number = Date.now()): string | null {
+  if (!iso) return null;
+  const left = Date.parse(iso) - now;
+  if (!Number.isFinite(left) || left >= EXPIRY_WARNING_DAYS * DAY_MS) return null;
+  if (left <= 0) return "Due to be deleted at the next daily clean-up";
+  if (left < DAY_MS) return "Will be deleted within a day";
+  const days = Math.floor(left / DAY_MS);
+  return `Will be deleted in ${days} ${days === 1 ? "day" : "days"}`;
+}
+
+/** The note on a canceled card: what was kept. */
+export function canceledText(run: Run): string {
+  const done = run.images.length;
+  if (!done) return "Canceled before any image was finished.";
+  const total = run.options.num_images;
+  return `Canceled. ${done} of ${total} ${total === 1 ? "image" : "images"} finished and kept.`;
+}
+
 export function untilText(iso: string | null, now: number = Date.now()): string | null {
   if (!iso) return null;
   const seconds = Math.max(0, Math.round((Date.parse(iso) - now) / 1000));

@@ -26,6 +26,14 @@ class ImageJob:
     input_path: Optional[str] = None
 
 
+class Canceled(BaseException):
+    """Raised from the step callback to stop an image the user cancelled.
+
+    Deliberately not an `Exception`: it must pass through every `except Exception` between the
+    callback and the worker (the pipeline's own, translate-this-error handlers included) and
+    never be mistaken for a failure. The worker catches it and reports `run_canceled`."""
+
+
 class PipelineError(Exception):
     """A failure reported to the API with a kind, a message and an optional hint."""
 
