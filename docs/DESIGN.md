@@ -1,6 +1,6 @@
-# Qwen-Image Web Studio — Design Specification (round 5 — design approved, awaiting your go to build)
+# Qwen-Image Web Studio — Design Specification (round 6: version 2 planned)
 
-Living document. **Nothing here is built yet.**
+Living document. **Version 1 is built and running on your Spark** (Generate, history, Options, themes, container: milestones M1–M4 and M7). **§21 specifies version 2, editing with several images plus the run housekeeping of M6 (cancel, keep, auto-expiry); nothing in §21 is built yet.** §1–§20 describe version 1 and the shared design; where §21 differs, §21 wins.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer.
 
@@ -12,7 +12,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 
 **DECIDED — in scope**
 - Text-to-image
-- Image editing from an uploaded image
+- Image editing from an uploaded image (**not in v1 as delivered; re-planned as version 2 with several images, §21**)
 - Transparent (RGBA) toggle
 - Batches: N images per click
 - History of past runs with "reuse this prompt and settings"
@@ -22,7 +22,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 **PROPOSED — out of scope for v1**
 - User accounts / login (an optional shared-token hook is reserved, §11)
 - Choosing between multiple models
-- Masks / inpainting, upscaling, LoRAs
+- Masks / inpainting (**now planned for version 2, §21.5**), upscaling, LoRAs
 - LLM-based prompt rewriting
 
 ## 3. Decision log
@@ -52,6 +52,12 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 21 | Security for v1 | As §11: no login; required custom header plus no CORS; upload validation; strict CSP; non-root container; no Docker socket; `STUDIO_TOKEN` reserved but off (setting it stops the server from starting, so it can't give a false sense of protection) | DECIDED |
 | 22 | Review cadence | I stop after **every milestone** (M1–M8), report what works and what the tests showed, and wait for your go-ahead | DECIDED |
 | 23 | Repository | A dedicated **private** GitHub repository, `NoSQLKnowHow/ai-image-studio` (renamed from the working name `dgx-spark-image-studio`), separate from `LiveLabs-Image-Dev`. Nothing for this project is written to `LiveLabs-Image-Dev` | DECIDED |
+| 24 | Multi-image editing (v2) | One edit can use **several uploaded images with one prompt**, up to the cap (#26). Replaces the one-reference rule of §5.4 (§21) | DECIDED |
+| 25 | Referring to images (v2) | Number badges (1, 2, 3 …) on the tray's images, matching the order the model sees; clicking a badge inserts "image N" at the prompt's cursor (§21.4) | DECIDED |
+| 26 | Image cap (v2) | 4 by default, configurable up to 10 (`STUDIO_MAX_INPUT_IMAGES`); raised after measuring on the Spark | DECIDED |
+| 27 | Local edits (v2) | Specified in v2, built after multi-image editing works (§21.5, M5d) | DECIDED |
+| 28 | Edit output size (v2) | Auto (about 1 MP, shape from the last image) with a 1K / 2K choice, default 1K (§21.4) | DECIDED |
+| 29 | M6 is part of v2 | The housekeeping the v1 plan left for M6 (**cancel** a queued or running job, **Keep** a run, **auto-expiry** with a warning) is built as part of version 2, not as a separate release (§21.11) | DECIDED |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -116,6 +122,9 @@ Consequences of the decisions:
 - Controls the loaded pipeline does not support are hidden, not disabled (see §7 `GET /api/capabilities`). Their stored values are kept in case support appears later.
 
 ### 5.4 Edit mode — DECIDED inputs, PROPOSED details
+
+> **Version 1 text; superseded by §21.4**, which allows several reference images (decision #24). The four input methods and the rest of the behaviour carry over as described there.
+
 - A reference image can arrive four ways: choose-file button, drag-and-drop onto the prompt area, paste from the clipboard, or **Edit this** on any past result.
 - Shows a thumbnail of the reference with a remove (✕) button. One reference image in v1 (see open item 3).
 - In Edit mode, size defaults to **Auto — from input** (the pipeline sizes the result), matching the CLI behaviour. Choosing a size overrides it.
@@ -179,6 +188,8 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `GET /api/images/{id}/thumb` | WebP thumbnail | |
 | `GET /api/events` | Server-sent events | `hello` (`{status, runs}`: the status plus the newest page of runs, read after the stream subscribed, so it is a consistent starting point), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`, `shutdown` (the server is stopping; the stream then ends). A `: ping` comment every 15 s keeps proxies from closing the stream. Every connection, first or reconnect, starts from its `hello`; the client never lets an older copy of a run (a late POST response, a stale page) replace a newer one, since runs only move forward (queued → running → finished) |
 
+**Version 2 changes the upload and run-creation calls** (several inputs per run, `DELETE /api/uploads/{id}`, `resolution`): see §21.6.
+
 **Capabilities without a loaded model:** the API process can't inspect a pipeline that isn't loaded, so at start-up it runs a short GPU-free probe subprocess that imports `diffusers` and inspects `QwenImage21Pipeline.__call__` (the same idea as the CLI's early signature check). The result is cached. If the import fails the state is `unavailable` with the reason.
 
 **Download filenames:** `generate_halloween-town-dawn_2048x2048_s42_20260930-141502.png`, using the same scheme as the CLI (`edit_` runs include the source's name). PNG text metadata carries prompt, seed, steps, model.
@@ -192,6 +203,8 @@ SQLite in WAL mode; the API process is the only writer.
 **`images`**: `id`, `run_id`, `idx`, `seed`, `width`, `height`, `has_alpha`, `bytes`, `path`, `thumb_path`, `created_at`. Uploaded reference images are rows here too, flagged `kind = input` (this is what lets "Edit this" and uploads share one code path).
 
 **Files** under the data volume: `images/<run>/<idx>.png`, `thumbs/<run>/<idx>.webp`, `inputs/<id>.png` (uploads are re-encoded to PNG), `studio.sqlite`. All file access is by database id; client-supplied filenames are never used in paths.
+
+**Version 2** adds a `run_inputs` table (ordered inputs per run) and a schema migration: §21.7.
 
 **Restart behaviour:** queued runs persist and resume; a run that was `running` when the server stopped is marked failed ("interrupted by restart") and keeps any images already finished.
 
@@ -284,6 +297,8 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_MAX_IMAGES_PER_RUN` | `8` | Batch cap |
 | `STUDIO_MAX_PROMPT_CHARS` | `8000` | Prompt length cap |
 | `STUDIO_MAX_UPLOAD_MB` | `20` | Upload size cap |
+| `STUDIO_MAX_INPUT_IMAGES` | `4` | **v2:** images per edit, 1–10 (§21.9) |
+| `STUDIO_UPLOAD_TTL_HOURS` | `24` | **v2:** how long an unclaimed staged upload is kept (§21.9) |
 | `STUDIO_STATIC_DIR` | `<repo>/frontend/dist` if built; `/app/static` in the image | The built web page (added in M2) |
 | `STUDIO_HOST` | `0.0.0.0` | Listen address inside the container (added in M1) |
 | `STUDIO_PORT` | `8080` | Listen port |
@@ -346,6 +361,8 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 17. On the Spark, `docker compose up` from a clean checkout starts the server with a green healthcheck, and data persists across recreating the container.
 18. With too little free memory, the pre-flight check fails the job immediately with an actionable message (Retry works once memory is free), and the machine is not pushed into swap.
 
+**Version 2 adds criteria 19–30** (§21.10). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
+
 ## 17. Build order (PROPOSED)
 
 | Milestone | Delivers | Done when |
@@ -354,8 +371,8 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | M2 | Real worker process + pipeline, idle unload, capability probe | Fake path still green; real path only checkable on the Spark |
 | M3 | Front-end shell, theming, prompt bar, Options drawer, options persistence | Criteria 2, 3, 15, 16 pass in Playwright |
 | M4 | Timeline, run cards, SSE live updates, Reuse, download, delete | Criteria 4, 5, 6, 14 pass |
-| M5 | Edit mode: uploads, all four inputs | Criteria 7, 13 pass |
-| M6 | Queue cap, cancel, retention, pin, failure handling | Criteria 8, 9, 11, 12, 18 pass |
+| M5 | Edit mode: uploads, all four inputs. **Replaced by M5a–M5d for version 2 (§21.11)** | Criteria 13, 19–30 |
+| M6 | Queue cap, cancel, retention, pin, failure handling. **Now part of version 2 (decision #29); what remains is in §21.11** | Criteria 8, 9, 11, 12, 18 pass |
 | M7 | Containerfile, compose, docs | Image builds; criterion 17 on the Spark |
 | M8 | Spark smoke test with you | Criteria 1, 10, 17 and the real-hardware checklist |
 
@@ -377,8 +394,8 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 ## 18. Open items and facts to verify
 
 1. **Hermes and memory** — per NVIDIA's playbook, Hermes Agent uses a local LLM served by vLLM in a Docker container. Whether yours does, which model, and how much of the 128 GB it claims is unknown. This sets the memory budget (§9a). *Please run the commands in my message.*
-2. **Model license** — third-party summaries say Qwen-Image-2.1 is non-commercial or research-only. Not verified against the official license. Check before other people use this for workshop material.
-3. **Multiple reference images for editing** — third-party pages say up to 10; the model card snippet shows one. Verify on the model card; it changes the Edit UI (several thumbnails, ordering).
+2. **Model license** — verified 2026-10-02 against the licence file on Hugging Face (§19): the **Qwen Research License Agreement**, released 2026-09-20, grants use "FOR NON-COMMERCIAL PURPOSES ONLY", where "Non-Commercial" means "for research or evaluation purposes only". Commercial use needs a separate licence from Qwen (the agreement names a contact address). Other conditions: passing the Materials on needs a copy of the agreement and a notice; using the Materials or their outputs to create, train or improve a distributed AI model needs "Built with Qwen" or "Improved using Qwen"; disputes fall under the laws of China, with the Hangzhou courts. **The text says nothing explicit about who may use generated images**, so whether a given use counts as commercial is for you, or Qwen, to decide; I am not a lawyer. The studio does not contain or redistribute the weights; they are downloaded from Hugging Face at run time.
+3. **Multiple reference images for editing** — resolved for the pipeline in round 6: the pinned source takes a list, numbers the images and uses the last one's shape (§21.2). The **ten-image maximum is confirmed by Qwen's post, model card and README** (§21.2); what the Spark can handle is still to be measured (§21.12 item 2).
 4. **Pipeline arguments** — resolved in M2 from the source at the pinned commit: `negative_prompt`, `true_cfg_scale` (default 1.0, i.e. no guidance; the negative prompt only matters above 1), `callback_on_step_end` and `_interrupt` exist. The start-up check reads the signature anyway, and the UI hides what isn't supported.
 5. **`diffusers` commit to pin** — resolved: `578c9b2c6636ab2424a0e56186268b83623656b2` (2026-10-01), in `backend/requirements-container.txt`.
 6. **Base image / PyTorch build** — NGC `nvcr.io/nvidia/pytorch` 25.10 or later is reported to support the GB10 (`sm_121`). The Dockerfile defaults to `25.10-py3` (`NGC_TAG` changes it); confirm or move to a newer tag after the first build on the Spark. **First build on the Spark (2026-10-02):** 25.10 ships PyTorch `2.9.0a0+145a3a7bda.nv25.10`, numpy 2.1.0, flash_attn 2.7.4, Transformer Engine 2.8.0, apex and **torchao 0.14.0**. diffusers imports torchao whenever it is installed and needs `FqnToConfig` (torchao 0.15+), so the pipeline could not be imported; the image now removes torchao, which the studio doesn't use.
@@ -386,6 +403,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 8. **GitHub repository** — resolved. `NoSQLKnowHow/ai-image-studio` (private) was created by you and attached to my session with push access. Earlier, the GitHub integration was refused (HTTP 403) when creating repositories and when pushing to `LiveLabs-Image-Dev`; that repository is deliberately not used for this project.
 9. **Memory budget** — the model's real footprint (transformer, text encoder, VAE, activations at 2K) next to Hermes' LLM server; sets `STUDIO_MIN_FREE_GB` and the size and batch caps.
 10. **NVIDIA's pages were unreachable** — docs.nvidia.com and build.nvidia.com are blocked from my sandbox, so §9a and §12 rest on search summaries and community posts. Before building, compare them with the current Container Runtime, NGC and Hermes playbook pages.
+11. **Two quirks of the CLI script** (`scripts/qwen_image.py`, deliberately left as is): its size warning uses a multiple-of-16 rule, but the pipeline requires 32; and it flattens an RGBA input to RGB, while the pipeline's image encoder reads all four channels (§21.2 point 5). The studio does neither.
 
 ## 19. References (as returned by search; not independently opened)
 
@@ -400,10 +418,215 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 
 Note: NVIDIA publishes a ComfyUI playbook for the Spark, and ComfyUI reportedly supports Qwen-Image-2.1. It is node-based rather than the simple prompt page specified here, so it is noted only for completeness.
 
+### Read directly (2026-10-02)
+
+These were opened and read in full, not taken from search results. The announcement is a JavaScript page, so it was read by rendering it in a headless browser.
+
+- Announcement: Qwen-Image-2.1: Compact, Efficient, and Unified Image Creation (2026-09-20) — https://qwen.ai/blog?id=qwen-image-2.1
+- Model card — https://huggingface.co/Qwen/Qwen-Image-2.1
+- Licence (Qwen Research License Agreement) — https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE
+- GitHub README (editing, transparency, prompt rewriting, architecture) — https://github.com/QwenLM/Qwen-Image-2.1
+- `diffusers` source at the pinned commit — https://github.com/huggingface/diffusers/tree/578c9b2c6636ab2424a0e56186268b83623656b2
+
 ## 20. Approval record
 
 - **Round 5 (2026-09-30):** you reviewed the key proposals and confirmed: separate worker process (#13), starting defaults and limits (#20), security approach (#21), and review after every milestone (#22). All other PROPOSED items are implementation details left to my judgement (see the status labels at the top).
 - **2026-10-01:** you gave the go for M1 ("Go, start M1.").
 - **2026-10-02:** you asked for the next sections so you could test for real, chose **real model + container + web UI** as the next batch, and **one pull request per batch** (§17).
 - **Still pending from you (not blocking M1–M7):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9).
+- **Round 6 (2026-10-02):** version 1 was built (batch 2: real model, web page, container), built on the Spark and generating images. You asked for version 2 to add **editing with several uploaded images**, to be specified before any code. After a search of what Qwen announced and a read of the pinned pipeline source, you decided #24–#28: several images per edit, numbered badges with insert-into-prompt, a cap of 4 configurable to 10, local edits specified now and built second, and Auto size with a 1K/2K choice. Later the same day, with network access to the Qwen pages opened for the session, I read the announcement, the model card, the licence and the GitHub README directly; §21 and §18 were corrected from them (the prompt rewriter and the mask convention, which the search summaries had wrong or missing; the licence, now verified), and three refinements (R1–R3, §21.3) await your decision. You then decided that **M6 is part of v2** (#29). Details are §21 and are PROPOSED until you review them.
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
+
+## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#29 DECIDED; details PROPOSED)
+
+### 21.1 What v2 is, and what it replaces
+
+- **Version 1** is what is built and running on your Spark: Generate (text-to-image), history, the Options drawer, themes, the container (milestones M1–M4 and M7). **Edit mode is not part of v1 as delivered**: the mode switch shows "Edit — soon".
+- **Version 2 is editing**, with your addition: **upload several images for one prompt** (decision #24). It replaces the one-reference-image rule of §5.4, the "image editing from an uploaded image" line of §2 and milestone M5 (§17). Masks and local edits, listed as out of scope in §2, come in as the second half of v2 (§21.5).
+- **Version 2 also includes M6** (decision #29): the housekeeping v1 left unbuilt, namely cancel, Keep and auto-expiry. §21.11 says what is already built and what remains, and how it fits with the editing work.
+- Where §21 differs from §1–§20, **§21 wins** for v2. The other sections are not rewritten; they say "see §21" where it matters.
+- **How sure am I?** Three kinds of evidence are labelled throughout:
+  - **[verified]**: read from the pinned `diffusers` source (commit `578c9b2`), the code the studio actually runs.
+  - **[Qwen]**: read directly on 2026-10-02 from Qwen's announcement post, the model card and licence on Hugging Face, and the model's GitHub README (§19). Earlier in this round I only had search summaries; they were right about the ten-image limit and the licence caveat, but two things needed correcting (the prompt rewriter, and the mask colour convention). §21.2 has the corrected versions.
+  - **[unconfirmed]**: not stated by any source I could read. To be tested on the Spark (§21.12).
+
+### 21.2 What the model does with several images
+
+**[verified]**
+
+1. `image` is a **flat list**, applied to the one prompt of the run (the studio sends one prompt per run).
+2. The text encoder receives the images **in list order, numbered** `<image1>`, `<image2>`, … So "the first image" or "image 2" in a prompt means list position, and the studio's numbering must be exactly the submit order.
+3. **Every input is resized to about `output_resolution`² pixels**, each keeping its own aspect ratio (sides rounded to multiples of 32), and goes through **both** the text encoder and the VAE. With `output_resolution` 1024 that is about 1 MP per image; at 2048 about 4 MP. So **the cost of an edit grows with (number of images) × (resolution)²**, at least in proportion; the real curve is to be measured on the Spark.
+4. With no explicit height and width, the **output shape follows the last image's aspect ratio**, at about `output_resolution`² pixels (default 1024, so about **1 MP**, not the 2048×2048 that Generate uses). An explicit size sets the output only; the inputs are still resized by `output_resolution`.
+5. **Transparent (RGBA) inputs:** the alpha is composited over white only for the text encoder's copy; the VAE still reads all four channels. So the studio must **never flatten an upload**. (The CLI does; see §18 item 11.)
+6. There is **no mask parameter** and no per-image weight. `use_kv_cache` (default on) computes the condition images' keys and values once and reuses them, so extra images should cost mostly once rather than per step (to be measured).
+
+**[Qwen]** (announcement post, model card, GitHub README)
+
+- **Up to 10 reference images** in one edit, combined into one composition. The post's examples: six portraits into one group photograph, five items (a model, clothes, shoes, a bag, a hat) into an outfit, ten pieces of furniture into a room. The README's own example prompt uses no numbers: *"These three characters are sitting around a campfire in a forest."*
+- **Local edits, three ways:**
+  1. **Circles in different colours**, with the colours named in the prompt: *"Remove the metal watch in the blue circle, change the hair in the red circle to black, and replace the area in the green circle with gray short-sleeved linen pajamas."*
+  2. **Painted annotations**, for example an area **marked in white**, where the model then adds a diver.
+  3. **A separate mask: "the original image and a separate mask as two inputs"**, which keeps the whole original visible (circles and paint cover part of it).
+- **Transparency is chosen by the prompt.** The recommended format: *"This is an RGBA image with transparency. <your description>. The image has alpha channel and the background is transparent."* The studio's existing wrapper produces exactly this. The post also shows **editing a transparent image while keeping its transparent background**, **editing text inside a transparent layer**, and **extracting a subject from an ordinary RGB photograph as an RGBA layer**.
+- **Prompt rewriting is official and recommended.** Qwen publishes two fine-tuned checkpoints, `Qwen/Qwen-Image-2.1-PE-T2I` and `Qwen/Qwen-Image-2.1-PE-I2I` (Qwen3.5-VL 9B, per the README), that expand a short prompt into a detailed one. The editing one **sees the input images** and returns the rewritten prompt plus either a new aspect ratio (`wh_ratio`) or an instruction that the output **follows the shape of a named input** (`ratio_follow`, for example `<image1>`). It is a separate model, not part of the pipeline.
+- **Architecture:** text encoder Qwen3-VL 8B; a 64-channel RGBA autoencoder with 16× spatial compression; a 7B-parameter, 32-layer transformer; **prefix KV cache reuse**, so the input images and the instruction are computed once and reused, which is why extra images cost less than they look. Native 2K; the recommended sizes are the seven presets of §6.
+- **Licence: the Qwen Research License Agreement** (released 2026-09-20). **"Non-Commercial" is defined as "for research or evaluation purposes only"**, and commercial use needs a separate licence from Qwen. Passing the Materials on requires a copy of the agreement and a notice. Using the Materials or their outputs to create, train or improve an AI model that is distributed requires showing "Built with Qwen" or "Improved using Qwen". The text says nothing explicit about who owns or may use *generated images*. See §18 item 2.
+
+**[unconfirmed]**: not stated by any source I could read
+
+- **That a prompt can refer to images by number** ("image 2"). The pipeline numbers them `<image1>` … in the text encoder's input and Qwen's own rewriter writes `<image1>`, so it is plausible, but the model card never says it, and its example avoids numbers. Test on the Spark.
+- **The mask convention:** which colour means "edit here", whether the mask must be the same size as the original, and how to refer to it in the prompt. Only the painted-annotation example (white marks the place) hints at it.
+
+### 21.3 Decisions
+
+| # | Topic | Decision | Status |
+|---|---|---|---|
+| 24 | Multi-image editing | One edit can use **several uploaded images with one prompt**, up to the cap (#26). Replaces the one-reference rule of §5.4 | DECIDED |
+| 25 | Referring to images | Every image in the tray shows a **number badge** (1, 2, 3 …) that matches the order the model sees. **Clicking a badge inserts "image N" at the prompt's cursor** | DECIDED |
+| 26 | Image cap | **4 by default, configurable up to 10** (`STUDIO_MAX_INPUT_IMAGES`). Raised only after memory and time are measured on the Spark next to Hermes | DECIDED |
+| 27 | Local edits | **Specified in v2, built after multi-image editing works** (§21.5, milestone M5d) | DECIDED |
+| 28 | Edit output size | **Auto (about 1 MP, shape from the last image) with a 1K / 2K resolution choice**; default 1K. Choosing a size in Options overrides Auto | DECIDED |
+| 29 | M6 is part of v2 | **Cancel** (queued and running jobs), **Keep** (pin) and **auto-expiry** with a warning, left unbuilt by the v1 plan, are built as part of version 2 (§21.11) | DECIDED |
+
+**Refinements proposed after reading Qwen's pages (not yet decided, so not in the table above):**
+
+- **R1, a "follows image N" selector instead of reordering for shape.** The pipeline gives the result the last image's shape. Reordering just to change the shape is awkward, and it makes a mask placed last set the shape by accident. Instead, Size on Auto shows **"Result follows image [N ▾]"**, defaulting to the pipeline's own choice (the last image that is not a mask), and the studio computes an explicit width and height from the chosen image with the pipeline's own arithmetic. Qwen's rewriter does the same thing with `ratio_follow`.
+- **R2, Transparent is offered in Edit mode.** v1 hid it because the model card only showed it for text-to-image; the post now documents editing transparent images and extracting subjects as RGBA layers. The toggle wraps the prompt in the recommended format, as in Generate.
+- **R3, an optional "Improve prompt" step** using Qwen's official rewriter (§21.2). It is a separate 9B model with real costs (§21.12 item 3), so it is a question for you, not a default.
+
+### 21.4 Edit mode on the page (supersedes §5.4)
+
+**The reference tray** sits above the prompt in Edit mode: a wrapping grid of thumbnails (3 across on a phone, so the page never scrolls sideways) plus an **Add images** tile.
+
+- **Four ways in** (decision #12), all of which *add* to the tray:
+  1. the **Add images** tile / choose-file button, with multiple selection;
+  2. **drag-and-drop** of one or several files onto the prompt area;
+  3. **paste** an image from the clipboard (appended);
+  4. **Edit this** on any past result (the result is appended and the mode switches to Edit).
+- **Each thumbnail** shows its **number badge**, a ✕ to remove it, and a drag handle. Upload progress shows on the thumbnail itself.
+- **Order matters, so reordering is first-class:** drag a thumbnail to a new place, or use its **Move earlier / Move later** buttons (the keyboard route; focus stays on the moved thumbnail). The numbers update at once. A live region announces each change ("Image 3 added", "Moved to position 1").
+- **Inserting a reference:** clicking a badge inserts `image N` at the caret of the prompt (replacing any selected text, adding a space where needed) and returns focus to the prompt. With an empty prompt, the placeholder suggests: *"Refer to images by number, e.g. put the dog from image 1 into the scene from image 2."*
+- **The shape control** (refinement R1): with Size on Auto, a selector under the tray reads **"Result follows image [3 ▾]"**. It defaults to the last image that is not a mask (the pipeline's own rule) and can be set to any image. Choosing another image reorders nothing: the studio computes an explicit width and height from that image's aspect ratio at the chosen resolution (side lengths rounded to multiples of 32). If R1 is not accepted, this becomes the original always-visible note, "The result takes its shape from image N (the last one)", and only reordering changes it.
+- **The cap:** the Add tile reads "3 of 4" and is disabled at the cap. Dropping more files than fit adds the first ones that fit and says how many were skipped. A file that fails validation is rejected **on its own**, with the reason; the others are kept.
+- **Uploading starts as soon as a file is added** (staged on the server), so Generate is quick. Generate is disabled while uploads are running and while the tray is empty ("Add at least one image to edit.").
+- **Not persisted:** the tray is kept while the page is open, including when you switch modes, but not across a reload (uploads are cheap to redo, and this avoids pointing at files the server has since cleaned up). The prompt draft is still kept, as in v1.
+
+**Options in Edit mode**
+
+- **Size:** Auto (default; shows "follows image N") or any preset or custom size (§6). A fixed size overrides the shape only.
+- **Resolution: 1K | 2K** (new, Edit only, default 1K; decision #28). It sets `output_resolution`, which sizes the output *and every input* (§21.2 point 3). Help text: "1K is about 1 megapixel and quicker. 2K is about 4 and costs far more with several images."
+- **Cost hint:** next to the Resolution control, a short line grows with `images × (resolution ÷ 1024)²` ("1 unit", "4 units", "16 units") and turns into a warning above a threshold ("This edit is heavy: expect a long run, or running out of memory"). The thresholds are set from Spark measurements (M5c, §21.11), not guessed now.
+- Steps, seed, guidance, negative prompt and images per click behave as in Generate.
+- **Transparent** (refinement R2): offered in Edit as well, wrapping the prompt in the recommended format. An input with an alpha channel is always kept as is, and the result card reports whether the output has alpha, as it does today. Whether the wrapper is needed when the input is already transparent is [unconfirmed]: the toggle is off by default, a transparent input shows a hint, and the Spark test (§21.11, M5c) settles it. A prompt starter, **"Extract the subject"**, covers the post's photo-to-RGBA example.
+
+**Run card for an Edit run**
+
+- A strip of the **numbered source thumbnails** (1 … N, in order) before the result images; each opens in the lightbox, which pages through the sources and then the results. The prompt's "image 2" can thus be matched to a picture.
+- The meta line reads like "Edit · 3 images · 2048×1152 · 1K · 40 steps · seed 42".
+- **Reuse** restores the prompt, the options **and all the inputs in order**, copied into a fresh tray. If an input file is gone, the slot is named instead of silently dropped. **Retry** resubmits the same inputs.
+- **Edit this** on a result adds it to the tray (it becomes the last image unless you reorder, and the shape note says so).
+
+### 21.5 Local edits (milestone M5d)
+
+Qwen documents three ways to mark where an edit goes ([Qwen], §21.2), and the pipeline has no mask parameter [verified], so each is done **to the pixels, in the browser, before upload**:
+
+- **Circles and marks:** an editor opened from a tray thumbnail, with an ellipse tool, a freehand brush, undo and clear, and **named colours: red, blue, green and white first** (Qwen's own examples), then yellow and black. The legend shows each colour's name, so the prompt can say what Qwen's example says: *"change the hair in the red circle to black"*. **Done** bakes the marks into a **derived PNG** that takes the thumbnail's place (same number); the original is kept so the marks can be removed.
+- **Painted annotation:** the same brush in white ("the area marked in white").
+- **Mask:** the original image plus a separate black-and-white mask, as **two inputs**. The studio flags the mask as a mask for display only (the model just sees one more numbered image). **The polarity is [unconfirmed]**: Qwen does not say which colour means "edit here". White is the working assumption (it is how the painted-annotation example marks the place); M5c tests both ways on the Spark *before* M5d is built. The editor can paint a mask directly (white where you brush, black elsewhere) and export it at the original image's size.
+- **Both count towards the cap** and are stored with the run (the original and the marked or mask version), so the card shows exactly what was sent.
+- **The shape trap goes away with R1:** the shape selector never offers a mask as the source and its default skips masks. Without R1, a mask placed last would set the shape, and the UI would warn and offer **Move mask earlier**.
+- **Out of scope:** layers, selection tools, non-destructive history.
+- **To confirm on the Spark:** mask polarity, whether the mask must match the original's size, and the best prompt wording for each of the three ways.
+
+### 21.6 API changes (supersede the rows in §7)
+
+| Method & path | Change |
+|---|---|
+| `POST /api/uploads` | Unchanged per file (multipart), called once per image, in parallel. Returns `upload_id`, `width`, `height`, `has_alpha` and a thumbnail URL. 413 / 415 / 422 per file as in §10 |
+| `DELETE /api/uploads/{id}` | **New.** Removes a staged upload (the ✕ before submitting) |
+| `POST /api/runs` | `input_image` is replaced by **`input_images`: an ordered list, 1 … cap, of `{upload_id}` or `{image_id}`** (a past result or input). Edit-mode options add **`resolution`** (1024 or 2048, default 1024); `width`/`height` null = Auto, plus **`shape_from`** (1-based index of the image the result follows, refinement R1; default the last non-mask image) and **`transparent`**, which is now allowed in Edit (R2). Each list item is validated on its own and errors name the position: `input_images[2]` |
+| `GET /api/capabilities` | Adds `limits.input_images {min, max}`, `limits.resolutions [1024, 2048]`, and `supports.multi_image`. The start-up check cannot see inside a loaded pipeline, so `multi_image` is assumed wherever `edit` is, and confirmed by the real-hardware test (§21.10). If the pipeline rejects a list, the run fails with a clear message |
+
+The singular `input_image` of §7 was never implemented, so nothing breaks by replacing it.
+
+### 21.7 Data model (schema version 2)
+
+- **New table `run_inputs(run_id, position, image_id, role)`**, primary key `(run_id, position)`; `role` is `reference`, `marked` or `mask` (display only, §21.5).
+- **A run owns its inputs** (decision #18: kept with the run, deleted with it). When an input is a past result or a past input (*Edit this*, Reuse), the file is **copied** into the new run's own input rows, never shared. Deleting or expiring the original run therefore cannot break another run. The cost is disk: up to cap × 20 MB per run at worst, typically a few MB per image.
+- The v1 column `runs.input_image_id` was never written by any shipped feature. The migration (`schema_version` 1 → 2) is additive: it creates `run_inputs` and leaves that column alone.
+- `options_json` also records `resolution` and the ordered roles, so Reuse and Retry stay faithful.
+- **Staged uploads** live in their own folder and are deleted if no run claims them within **24 hours** (`STUDIO_UPLOAD_TTL_HOURS`), at start-up and hourly.
+- **Expiry and delete take a run's inputs with its outputs** (M6, §21.11): a pinned run keeps both; staged uploads follow the 24-hour rule above. Because a run owns copies of its inputs, an input copied into a newer run survives the expiry of its source.
+- Uploads are **re-encoded to PNG without flattening alpha** (§21.2 point 5). The other upload rules (§11) are unchanged: PNG/JPEG/WebP only, decoded and verified, 20 MB and 16 MP per image.
+
+### 21.8 Worker and pipeline
+
+- `ImageJob.input_path` (one) becomes **`input_paths` (a list, in order)**, plus `resolution`.
+- The worker loads each file **without flattening**, calls the pipeline with `image=[…]` in order and `output_resolution=resolution`, and passes `height`/`width` only when Size is a preset or custom size, or when `shape_from` names an image other than the pipeline's default (the studio then computes them from that image with the pipeline's own arithmetic); plain Auto leaves them unset. Seeds, batches, progress and cancellation behave exactly as in Generate.
+- **Memory:** `STUDIO_MIN_FREE_GB` still guards only the model load. A big edit (many images at 2K) can still run out of memory *during* the run. The existing out-of-memory message gains an Edit-specific hint: "use 1K or fewer images".
+- **The fake pipeline** (§15) learns the same list: it draws a small numbered strip of the inputs onto the result, so the tests can check order, count and the rule that the last image sets the shape, without a GPU.
+
+### 21.9 Configuration (additions to §13)
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `STUDIO_MAX_INPUT_IMAGES` | `4` | Images per edit; 1–10 (decision #26) |
+| `STUDIO_UPLOAD_TTL_HOURS` | `24` | How long an unclaimed staged upload is kept |
+
+### 21.10 Acceptance criteria for v2 (continue §16)
+
+19. Up to the cap, images can be added by all four methods (several files in one pick, several in one drop, paste, Edit this), each gets its number badge, and at the cap further adds are refused with a message, never dropped silently.
+20. Reordering renumbers the badges, and the order submitted is the order shown (checked in the stored `run_inputs`).
+21. With Size on Auto the result's shape follows the chosen image (by default the last one that is not a mask; selectable, with no reordering, if R1 is accepted), the page says which, and an explicit size overrides it.
+22. Clicking a badge inserts "image N" at the caret.
+23. An Edit card shows every source in order. Reuse restores prompt, options and all inputs in order; Retry resubmits the same inputs; a missing input is named.
+24. Deleting the run an input came from does not break another run that used it.
+25. A PNG input with transparency is stored and sent with its alpha intact. With Transparent on (R2) the prompt is wrapped in the recommended format and the card says whether alpha came back.
+26. A bad file in a multi-file add is rejected alone; an expired or missing upload at submit gives a 422 naming its position; over-cap is refused by the page and by the server.
+27. 1K and 2K set `output_resolution`; Auto at 1K gives about 1 MP, rounded to multiples of 32.
+28. **On the Spark:** a 2-image and a 4-image edit complete at 1K, and one at 2K; memory and times are recorded; a prompt that refers to "image 1" and "image 2" is followed by the result; the cost-hint thresholds and the default cap are set from the measurements.
+29. *(M5d)* A circle or brush mark baked into an image changes only that region; the card shows original and marked.
+30. *(M5d)* A mask image works with the polarity found in M5c; a mask never sets the result's shape.
+31. *(M6)* Cancelling a running edit stops it promptly (between steps if the pipeline allows it, otherwise between images), keeps the images already finished, marks the run canceled, and leaves the worker ready for the next job. A queued job is canceled at once.
+32. *(M6)* Expiry removes a run's inputs together with its outputs; a pinned (Kept) run keeps both; an input copied into a newer run survives its source's expiry; queued and running runs are never expired.
+
+### 21.11 Build order for v2 (replaces M5 in §17)
+
+| Milestone | Delivers | Done when |
+|---|---|---|
+| M6 | Cancel, Keep and auto-expiry (details below). The v1 plan's remaining housekeeping, now part of v2 (decision #29) | Criteria 9 and 12 of §16, and 31–32 |
+| M5a | Backend: multi-file uploads and staging, the cleanup job, `run_inputs` and the schema migration, `POST /api/runs` with `input_images`, worker and fake pipeline pass a list | API tests; fake edits show all sources in order |
+| M5b | The page: tray, the four inputs, badges and insert, reorder, cap, shape note, Resolution control with cost hint, run-card sources, Reuse, Retry, Edit this | Criteria 19–27 in Playwright |
+| M5c | The Spark test for edits (checklist supplied): 2- and 4-image edits at 1K, one at 2K, an alpha input; prompts that refer to "image 1" and "image 2"; a transparent edit and a subject extraction; **a mask, tried with both polarities and sizes**; memory and time recorded; cap and cost-hint thresholds set | Criterion 28, and the [unconfirmed] items of §21.2 settled |
+| M5d | Local edits: mark-up editor and mask (§21.5), after M5c has settled the mask convention | Criteria 29–30 |
+| M5e | *Only if R3 is accepted:* the "Improve prompt" step (§21.12 item 3) | Its own criteria, written when decided |
+
+**Proposed order: M6, then M5a, M5b, M5c, M5d (and M5e if R3 is accepted).** Reasons: M6 is the smallest piece and independent of the editing design; it closes a gap you feel today (no way to stop a long run), and cancel will matter even more for multi-image edits and before the heavy edits M5c measures. Its one point of contact with editing, expiry removing a run's inputs, is handled in M5a, which has to extend delete to inputs anyway. Say so if you would rather have another order.
+
+Each is its own pull request into `main` (never stacked), and I stop after each for your review (decision #22). M8, the Spark smoke test together, comes last.
+
+**M6: what is built, and what remains**
+
+- **Already built:** the pending cap with a clear 429 message (M1), delete with confirmation, which refuses while a run is running (M1), and the failure handling: out of memory, load failures, crashes and the memory pre-flight, each with an actionable message (M1–M2).
+- **Cancel.** `POST /api/runs/{id}/cancel`. A queued job becomes canceled at once. A running job stops **between steps**: the pipeline has a per-step callback and an interrupt flag [verified], so the worker can stop mid-image; finished images of the batch are kept and the run shows "2 of 4 completed". The worker stays loaded for the next job. UI: a Cancel button on queued and running cards; stopping a running job asks first ("Finished images are kept").
+- **Keep.** `PATCH /api/runs/{id}` with `{pinned: bool}`, a **Keep** button and a small badge on kept cards. Kept runs are exempt from expiry. (The database column already exists.)
+- **Auto-expiry.** A janitor deletes runs older than `STUDIO_RETENTION_DAYS` (default 30; 0 turns it off) with all their files, at start-up and then daily; never queued, running or kept runs. A card shows **"expires in N days"** when fewer than 7 remain, so nothing you wanted vanishes silently (§5.6). The setting is read today but nothing acts on it; `.env.example` will lose its "not active yet" note.
+- **To check on the Spark:** how quickly a cancel takes effect mid-step at 2K.
+
+### 21.12 Open items for v2, and ideas parked
+
+**Open**
+
+1. **Decide the three refinements of §21.3:** R1 (the "follows image N" selector), R2 (Transparent in Edit) and R3 (the optional prompt rewriter). R1 and R2 are small and I recommend both.
+2. **Measure on the Spark** (M5c): time and memory for 1, 2 and 4 images at 1K and 2K, next to Hermes. This sets the cap's default, the cost-hint thresholds and any size limits for edits.
+3. **The prompt rewriter (R3).** It is official and recommended by Qwen, but it is a separate **9B vision-language model** (about 18 GB in bf16 by the usual arithmetic, not stated by Qwen) next to a main model whose footprint is still an estimate (the studio starts from 40 GB, to be measured, §9a), on a Spark that Hermes shares. Open questions: load it only when "Improve prompt" is clicked and unload it again, in its own worker process, as the main model is (decision #13)? Show the rewritten prompt for you to edit and approve, never apply it silently? Honour its `wh_ratio` and `ratio_follow` suggestions? What licence do the two rewriter checkpoints carry (not read yet)? Time to rewrite a prompt on the Spark?
+4. **Settle the [unconfirmed] items** (§21.2) on the Spark: referring to images by number, and the mask conventions.
+5. **Confirm the order of work** (§21.11): M6 is part of v2 (decision #29); I propose it first, then M5a–M5d.
+6. **The licence** (§18 item 2) now has a definite answer to act on: non-commercial, research or evaluation only. Whether your use is covered is your call, or a question for Qwen.
+
+**Parked (not in v2, and not scheduled)**
+
+- **Prompt starters** for the jobs Qwen itself shows: virtual try-on (a person, clothes, shoes, a bag, a hat), a group portrait from separate portraits, a room from furniture images, subject extraction to a transparent layer, a panorama from a selfie, an infographic from a photograph, a storyboard from a three-view character sheet. A small menu in Edit mode; cheap and now well grounded; not scheduled.
+- **Sequential editing** (successive local edits assembled into an animation, as in Qwen's capybara example) is already served by "Edit this" chaining; no extra feature.
+- Upscaling, LoRAs (the pipeline has a LoRA loader) and choosing between models stay out, as in §2.

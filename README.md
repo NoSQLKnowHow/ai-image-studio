@@ -9,7 +9,8 @@ can reuse and tweak prompts.
 | Part | State |
 |---|---|
 | Web studio: backend, real model, web page, container (milestones M1–M4, M7) | Built and tested with a fake test pipeline (backend, front-end and in-browser tests). **Not yet run on the Spark:** the image build and the real model need Docker and the GB10, which my sandbox doesn't have. [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) is the checklist for that first run. |
-| Still to come | Edit mode with uploads (M5); cancel, pin and auto-expiry (M6); the Spark smoke test together (M8). Plan and decisions: [`docs/DESIGN.md`](docs/DESIGN.md). |
+| Version 2 (planned, not built) | **Editing with several images** for one prompt: numbered images you can reference in the prompt, reordering, a 1K/2K choice, and later local edits (marks and masks); plus the housekeeping v1 left out: **cancel**, **Keep** and **auto-expiry** of old runs. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §21. |
+| Still to come | The Spark smoke test together (M8). |
 | `scripts/qwen_image.py`: command-line tool for text-to-image, image editing, transparent (RGBA) output | Written and exercised with mocks only. **Not yet run on a real GPU.** |
 
 ## Run it on the Spark
@@ -42,8 +43,13 @@ step should show and what to do when it doesn't.
 
 ## Before you use the output
 
-Check the Qwen-Image-2.1 model license. Third-party summaries say it may be non-commercial or
-research-only; this has **not** been verified against the official license.
+Qwen-Image-2.1 is released under the **Qwen Research License Agreement**: use is allowed
+**for research or evaluation purposes only**, and commercial use needs a separate licence from
+Qwen. Read it before using the images for anything else:
+[LICENSE](https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE). The agreement says nothing
+explicit about generated images, so if you're unsure whether a use counts as commercial, ask Qwen.
+This repository does not contain the model; it is downloaded from Hugging Face when the studio first
+runs. Details: `docs/DESIGN.md` §18 item 2.
 
 ## Development
 
