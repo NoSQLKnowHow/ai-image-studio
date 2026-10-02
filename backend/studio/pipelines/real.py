@@ -83,6 +83,15 @@ def import_runtime() -> tuple[Any, Any]:
             f"Loading {PIPELINE_CLASS} failed: {type(exc).__name__}: {exc}",
             hint="transformers may be too old for the Qwen3-VL text encoder. " + REBUILD_HINT,
         ) from exc
+    # When torch or transformers fail to import, diffusers doesn't raise: it hands out a placeholder
+    # class (from diffusers.utils.dummy_*_objects) that only errors once you try to load a model.
+    if type(pipeline_cls).__name__ == "DummyObject" or ".dummy_" in getattr(pipeline_cls, "__module__", ""):
+        raise PipelineUnavailable(
+            f"diffusers is installed, but {PIPELINE_CLASS} is only a placeholder: its PyTorch or transformers "
+            "side failed to import.",
+            hint="Usually transformers is missing or doesn't match; "
+                 "`python -c 'import transformers'` in the container shows why. " + REBUILD_HINT,
+        )
     return torch, pipeline_cls
 
 

@@ -119,6 +119,15 @@ class Fakes:
             diffusers.QwenImage21Pipeline = FullPipeline
         elif signature == "minimal":
             diffusers.QwenImage21Pipeline = MinimalPipeline
+        elif signature == "dummy":  # what diffusers exports when transformers won't import
+            class DummyObject(type):
+                pass
+
+            class Placeholder(metaclass=DummyObject):
+                _backends = ["torch", "transformers"]
+
+            Placeholder.__module__ = "diffusers.utils.dummy_torch_and_transformers_objects"
+            diffusers.QwenImage21Pipeline = Placeholder
         monkeypatch.setitem(sys.modules, "torch", torch)
         monkeypatch.setitem(sys.modules, "diffusers", diffusers)
 
@@ -165,6 +174,13 @@ def test_old_diffusers_without_the_pipeline(monkeypatch):
         probe()
     assert "0.41.0.dev0 does not provide QwenImage21Pipeline" in info.value.message
     assert "docker compose build" in info.value.hint
+
+
+def test_diffusers_placeholder_class_is_caught_at_start_up(monkeypatch):
+    Fakes(monkeypatch, signature="dummy")
+    with pytest.raises(PipelineUnavailable) as info:
+        probe()
+    assert "only a placeholder" in info.value.message and "import transformers" in info.value.hint
 
 
 def test_no_gpu_in_the_container(monkeypatch):

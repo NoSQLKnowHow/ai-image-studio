@@ -35,3 +35,9 @@ def test_host_allow_list(client_factory):
     rejected = client.get("/api/health")  # TestClient sends Host: testserver
     assert rejected.status_code == 400 and rejected.json()["code"] == "host_not_allowed"
     assert client.get("/api/health", headers={"Host": "spark.lan:8080"}).status_code == 200
+    # the machine itself (container healthcheck, curl on the Spark) always gets in...
+    for host in ("localhost", "127.0.0.1:8080", "[::1]:8080"):
+        assert client.get("/api/health", headers={"Host": host}).status_code == 200, host
+    # ...but only the exact loopback names
+    for host in ("localhost.evil.example", "127.0.0.1.nip.io", "evil.example"):
+        assert client.get("/api/health", headers={"Host": host}).status_code == 400, host

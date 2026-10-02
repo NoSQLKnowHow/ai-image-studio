@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -207,8 +208,9 @@ def test_storage_rejects_paths_outside_the_run_folder(tmp_path):
 def test_storage_layout_fails_clearly_when_not_writable(tmp_path):
     blocker = tmp_path / "file"
     blocker.write_text("x")
-    with pytest.raises(StorageError, match="not writable"):
+    with pytest.raises(StorageError, match="not writable") as caught:
         Storage(blocker / "data").ensure_layout()
+    assert f"sudo chown -R {os.getuid()}:{os.getgid()}" in str(caught.value)  # says how to fix a mount
 
 
 def test_thumbnail_keeps_alpha_and_bounds_size(tmp_path):

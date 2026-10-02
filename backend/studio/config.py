@@ -72,7 +72,7 @@ class Settings:
 
         def boolean(name: str, default: bool) -> bool:
             raw = env.get(name)
-            if raw is None:
+            if raw is None or raw.strip() == "":  # like the others: `KEY=` in a .env file means "default"
                 return default
             value = raw.strip().lower()
             if value in _TRUE:

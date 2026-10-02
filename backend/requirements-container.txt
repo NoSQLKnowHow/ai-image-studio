@@ -1,0 +1,21 @@
+# Installed on top of NVIDIA's PyTorch container by the Dockerfile.
+#
+# Not listed on purpose: torch, torchvision, triton, numpy and Pillow come from the NGC image,
+# built by NVIDIA for the Spark's GB10. The Dockerfile pins them to whatever the image ships, so
+# a dependency that wanted to replace them fails the build instead of quietly swapping in a
+# generic wheel.
+#
+# Checked to resolve for linux/aarch64 + Python 3.12 (binary wheels for every compiled package)
+# with torch held at an NGC-style version, which is what the build does.
+
+-r requirements-server.txt
+
+# Qwen-Image-2.1 support landed in diffusers after its last release; this is the commit the
+# backend was written against (QwenImage21Pipeline, see studio/pipelines/real.py).
+diffusers @ git+https://github.com/huggingface/diffusers@578c9b2c6636ab2424a0e56186268b83623656b2
+transformers==5.18.0     # Qwen3-VL text encoder
+accelerate==1.15.0       # STUDIO_CPU_OFFLOAD (enable_model_cpu_offload)
+huggingface_hub==1.33.0  # diffusers wants >=1.32,<2; transformers >=1.31,<3
+hf-xet==1.6.0
+tokenizers==0.23.2
+safetensors==0.8.0
