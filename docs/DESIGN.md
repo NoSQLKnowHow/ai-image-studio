@@ -766,7 +766,7 @@ Draft time and quality at the defaults; a 100% / 50% / 25% run of the same promp
 - **Not verified:** whether a regenerated image resembles the small one on the real model (§23.1 says it will not), and how much time the small-then-large route saves. That is section 17 of the Spark checklist.
 - **Not built, on purpose:** Upscale (decision #37). The button is a placeholder and does nothing.
 
-## 24. Version 1.5: Regenerate larger in the image viewer (decision #38 DECIDED; details PROPOSED)
+## 24. Version 1.5: Regenerate larger in the image viewer (decision #38 DECIDED; details PROPOSED; BUILT, awaiting your review)
 
 ### 24.1 What it does
 
@@ -785,3 +785,18 @@ The viewer is a modal dialog, and while one is open the page behind it is hidden
 45. The viewer of a run that has Regenerate larger on its card has it too, naming the target; the viewer of any other run does not.
 46. Pressing it queues **one** image at the recorded full size and steps with the viewed image's own seed (for a run of several images, not the others), and says so inside the viewer; a refusal or a full queue is reported there as well, and nothing is queued.
 47. A double click queues one run. On a phone the viewer's buttons stay on screen with no sideways scroll, and the image still fits.
+
+### 24.4 What was built, and what differs from the plan above
+
+- **As specified:** the button in the viewer's top bar (same rule, tooltip and accessible name as the card's); a request for the image being viewed only (its own seed, one image, everything else as the card's); the viewer stays open; the answer is shown inside the viewer, in a live region, and clears when you move to another image or close it.
+- **Small decisions made while building** (tell me if you want any changed):
+  - **The note is not dismissible and does not time out**: it stays while you look at the same image, so you can see what you did. Pressing the button again on the same image queues another job, as on the card.
+  - **If the viewer is closed before the answer arrives, the answer becomes a toast**, so it is never lost.
+  - **On a phone the viewer's top bar wraps onto a second row** (title above the buttons) so the new button, Download, Thumbnail and Close all stay on screen; the image still fits below.
+  - **No Upscale placeholder in the viewer**: you asked for Regenerate larger, and Upscale is still only a promise (§23.2).
+  - **Only done runs**, as on the card: the finished images of a canceled run have no button in the viewer.
+  - The message in the viewer says "Queued this image at …", and the card's says "Queued at …".
+  - No server change at all: the one-image request is an ordinary run with `num_images: 1` and the image's own seed.
+- **Tests:** backend 360 (unchanged), front end 90 Vitest (up from 87) and 34 Playwright (up from 27). **Mutation checks: 33 deliberate breakages, 32 caught by a failing test and one equivalent** (the card's request using the run's first image's seed instead of the run's seed: they are the same number for a real run, though not for the unit tests' image-less fixtures). Two mutants first did not compile (an unused variable and a possibly-null value stop the build) and were rewritten until they did, as in §23.4. Before the mutants I added two tests for behaviour I had written but not tested (enlarging two images in a row, and closing the viewer before the answer arrives).
+- **A flaky test of mine, found and fixed.** In the final full run one older test (`test_files_nothing_owns_are_removed_…`) failed once, though nothing it covers had changed. It passed 9 of 9 alone, so I reproduced it rather than calling it a fluke: under CPU stress it failed **9 times in 60**. The cause was in my test set-up: the start-up clean-up sweep runs in a worker thread, stopping its loop does not stop a thread already running, and on a busy machine that thread could delete the files the test had just made. Quiet test clients now never start those loops (a change to `tests/conftest.py` only; the server is unchanged, since only one sweep runs at a time there). With the fix the same stress runs gave **0 failures in 60**, and 0 in 12 for the whole housekeeping file; the full suite then passed.
+- **Not verified:** the same as §23.4: whether a regenerated image resembles the one you opened, on the real model. Part (e) of section 17 of the Spark checklist covers the viewer.
