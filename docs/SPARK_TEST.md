@@ -75,8 +75,13 @@ The first build downloads NVIDIA's PyTorch image (well over 10 GB), so give it t
 Good: the `grep` shows lines ending in `check_image: OK`, including the torch, CUDA, diffusers and
 transformers versions. Note them.
 
-If the build stops at `check_image: PROBLEM: ...`, that line says what doesn't fit together. Send me
-the last 40 lines of `build.log`.
+If the build stops at `check_image: PROBLEM: ...`, that line names the root cause, and the lines
+above it hold the installed versions and the full traceback. Send me all of it, from the first
+`check_image:` line to the end of the file:
+
+```bash
+sed -n '/check_image: Python/,$p' build.log
+```
 
 ## 6. Start it
 

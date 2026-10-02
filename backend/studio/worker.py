@@ -172,6 +172,8 @@ def run_probe(pipeline: str, emit: Emitter) -> int:
     try:
         result = probe_pipeline(pipeline)
     except PipelineError as exc:
+        if exc.__cause__ is not None:  # the full story, for `docker compose logs`
+            log.error("capability check failed: %s", exc.message, exc_info=exc.__cause__)
         emit("probe", ok=False, error=exc.as_dict())
     except Exception as exc:
         log.exception("capability probe crashed")

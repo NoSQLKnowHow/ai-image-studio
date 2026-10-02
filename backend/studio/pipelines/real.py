@@ -43,6 +43,26 @@ def _names(exc: BaseException) -> set[str]:
     return {cls.__name__ for cls in type(exc).__mro__}
 
 
+def root_cause(exc: BaseException) -> BaseException:
+    """The innermost exception of a chain. diffusers wraps a failed lazy import in a RuntimeError
+    whose text is little more than "look up to see its traceback"; the reason is what it came from."""
+    seen: set[int] = set()
+    while id(exc) not in seen:
+        seen.add(id(exc))
+        inner = exc.__cause__ or (None if exc.__suppress_context__ else exc.__context__)
+        if inner is None:
+            break
+        exc = inner
+    return exc
+
+
+def describe_error(exc: BaseException, limit: int = 500) -> str:
+    """'ImportError: cannot import name ...' for the root cause, on one line."""
+    root = root_cause(exc)
+    text = " ".join(str(root).split()) or "(no message)"
+    return f"{type(root).__name__}: {text[:limit]}{'…' if len(text) > limit else ''}"
+
+
 def _is_oom(exc: BaseException, torch: Any) -> bool:
     oom_type = getattr(getattr(torch, "cuda", None), "OutOfMemoryError", None)
     return (isinstance(oom_type, type) and isinstance(exc, oom_type)) or "out of memory" in str(exc).lower()
@@ -68,7 +88,7 @@ def import_runtime() -> tuple[Any, Any]:
         raise PipelineUnavailable("The diffusers package is not installed.", hint=REBUILD_HINT) from exc
     except Exception as exc:
         raise PipelineUnavailable(
-            f"Importing diffusers failed: {type(exc).__name__}: {exc}",
+            f"Importing diffusers failed: {describe_error(exc)}",
             hint="Usually a version clash between torch, transformers and diffusers. " + REBUILD_HINT,
         ) from exc
     try:
@@ -80,7 +100,7 @@ def import_runtime() -> tuple[Any, Any]:
         ) from exc
     except Exception as exc:  # e.g. transformers too old for the Qwen3-VL text encoder
         raise PipelineUnavailable(
-            f"Loading {PIPELINE_CLASS} failed: {type(exc).__name__}: {exc}",
+            f"Loading {PIPELINE_CLASS} failed: {describe_error(exc)}",
             hint="transformers may be too old for the Qwen3-VL text encoder. " + REBUILD_HINT,
         ) from exc
     # When torch or transformers fail to import, diffusers doesn't raise: it hands out a placeholder
