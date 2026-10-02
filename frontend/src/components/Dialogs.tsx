@@ -72,6 +72,39 @@ function focusAfterDelete(runId: string): HTMLElement | null {
   return document.getElementById("prompt");
 }
 
+/** The Reuse button of a run's card: where focus goes when a control that had it disappears. */
+export function cardReuseButton(runId: string): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`article.run-card[data-run-id="${runId}"] button[data-action="reuse"]`);
+}
+
+export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onBack: () => void; onConfirm: () => void }) {
+  const done = run?.images.length ?? 0;
+  const { props: returnFocus, redirectTo } = useReturnFocus();
+  const confirm = () => {
+    if (run) redirectTo(cardReuseButton(run.id)); // the Cancel button turns into "Stopping…" and then goes away
+    onConfirm();
+  };
+  return (
+    <Dialog.Root open={!!run} onOpenChange={(open) => !open && onBack()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="overlay" />
+        <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
+          <Dialog.Title>Stop this run?</Dialog.Title>
+          <Dialog.Description>
+            {done
+              ? `The ${done === 1 ? "image" : `${done} images`} already finished ${done === 1 ? "is" : "are"} kept. The one being made now is discarded.`
+              : "Nothing has been finished yet, so nothing is kept. The image being made now is discarded."}
+          </Dialog.Description>
+          <div className="confirm-actions">
+            <Dialog.Close className="button">Keep going</Dialog.Close>
+            <button type="button" className="button danger-solid" onClick={confirm}>Stop generating</button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 export function ConfirmDelete({ run, onCancel, onConfirm }: { run: Run | null; onCancel: () => void; onConfirm: () => void }) {
   const n = run?.images.length ?? 0;
   const { props: returnFocus, redirectTo } = useReturnFocus();
@@ -86,7 +119,8 @@ export function ConfirmDelete({ run, onCancel, onConfirm }: { run: Run | null; o
         <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
           <Dialog.Title>Delete this run?</Dialog.Title>
           <Dialog.Description>
-            {n ? `Its ${n === 1 ? "image is" : `${n} images are`} removed from the Spark.` : "It is removed from the history."} This can't be undone.
+            {n ? `Its ${n === 1 ? "image is" : `${n} images are`} removed from the Spark.` : "It is removed from the history."}
+            {run?.pinned ? " You marked it Keep." : ""} This can't be undone.
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Cancel</Dialog.Close>

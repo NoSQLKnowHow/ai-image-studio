@@ -1,4 +1,6 @@
 // End-to-end: the built UI against the real backend (fake pipeline). See playwright.config.ts.
+import { execFileSync } from "node:child_process";
+import { resolve } from "node:path";
 import { expect, test as base, type Locator, type Page } from "@playwright/test";
 
 // Every test fails on browser console errors: CSP violations and runtime errors surface there.
@@ -241,4 +243,104 @@ test("a full queue gets a clear message", async ({ page }) => {
   for (const run of runs.filter((r: { status: string }) => r.status === "queued")) {
     await page.request.delete(`/api/runs/${run.id}`, { headers: { "X-Studio-Client": "1" } });
   }
+});
+
+test("a queued job is canceled at once, never runs, and focus stays on its card", async ({ page }) => {
+  await useOptions(page, { steps: 100, numImages: 4 }); // ~4 s, so the next job has to wait behind it
+  await page.goto("/");
+  await clearHistory(page);
+  const first = await generate(page, unique("the long one"));
+  const waiting = await generate(page, unique("waits in the queue"));
+  await expect(waiting.locator(".badge").first()).toHaveText(/^Queued/);
+
+  await waiting.getByRole("button", { name: "Cancel" }).click(); // nothing is lost, so it doesn't ask
+  await expect(waiting.locator(".badge").first()).toHaveText("Canceled");
+  await expect(waiting.getByText("Canceled before any image was finished.")).toBeVisible();
+  await expect(waiting.getByRole("button", { name: "Reuse" })).toBeFocused(); // the Cancel button went away
+  await expect(waiting.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+  await expect(waiting.getByRole("button", { name: "Keep" })).toBeVisible(); // a finished card can be kept
+
+  await expect(first.locator(".badge").first()).toHaveText("Done", { timeout: 30_000 }); // the one ahead is unaffected
+  await expect(waiting.locator(".badge").first()).toHaveText("Canceled"); // and the canceled one never started
+  await expect(waiting.locator(".thumb")).toHaveCount(0);
+});
+
+test("canceling a running job asks first, keeps what was finished, and the worker carries on", async ({ page }) => {
+  await useOptions(page, { steps: 100, numImages: 8 }); // ~8 s: time to stop it part way
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await generate(page, unique("stop me part way"));
+  await expect(c.getByRole("status")).toContainText(/Image [2-8] of 8/, { timeout: 20_000 }); // at least one image is done
+  const pid = ((await (await page.request.get("/api/status")).json()) as { worker: { pid: number } }).worker.pid;
+
+  const cancel = c.getByRole("button", { name: "Cancel" });
+  await cancel.click();
+  const confirm = page.getByRole("alertdialog", { name: "Stop this run?" });
+  await expect(confirm).toContainText(/already finished (is|are) kept/);
+  await expect(confirm.getByRole("button", { name: "Keep going" })).toBeFocused(); // the safe choice has focus
+  await confirm.getByRole("button", { name: "Keep going" }).click();
+  await expect(cancel).toBeFocused(); // back where you were, and nothing changed
+  await expect(c.locator(".badge").first()).toHaveText("Generating");
+
+  await cancel.click();
+  await confirm.getByRole("button", { name: "Stop generating" }).click();
+  await expect(c.locator(".badge").first()).toHaveText(/^(Stopping|Canceled)$/);
+  await expect(c.locator(".badge").first()).toHaveText("Canceled", { timeout: 15_000 });
+  await expect(c.locator(".run-note")).toHaveText(/^Canceled\. [1-7] of 8 images finished and kept\.$/);
+  await expect(c.locator(".thumb").first()).toBeVisible(); // what was finished is there to open
+  await expect(c.getByRole("progressbar")).toHaveCount(0);
+  await expect(c.getByRole("button", { name: "Reuse" })).toBeFocused(); // focus was moved off the vanishing Cancel button
+
+  const next = await generate(page, unique("after the stop"));
+  await expect(next.locator(".badge").first()).toHaveText("Done", { timeout: 40_000 });
+  const after = ((await (await page.request.get("/api/status")).json()) as { worker: { pid: number } }).worker.pid;
+  expect(after, "canceling must not restart the worker, which would reload the model").toBe(pid);
+});
+
+/** Make a run look `days` old, behind the server's back (it computes expiry from the stored time). */
+function ageRun(runId: string, days: number) {
+  const python = process.env.STUDIO_PYTHON ?? resolve("../backend/.venv/bin/python");
+  const script = [
+    "import sqlite3, sys, datetime as d",
+    "t = (d.datetime.now(d.timezone.utc) - d.timedelta(days=float(sys.argv[3]))).isoformat(timespec='milliseconds').replace('+00:00', 'Z')",
+    "c = sqlite3.connect(sys.argv[1], timeout=10); c.execute('UPDATE runs SET created_at=? WHERE id=?', (t, sys.argv[2])); c.commit()",
+  ].join("\n");
+  execFileSync(python, ["-c", script, `${process.env.STUDIO_E2E_DATA_DIR}/studio.sqlite`, runId, String(days)]);
+}
+
+test("a run close to expiring says so, and Keep removes the warning and survives a reload", async ({ page }) => {
+  await useOptions(page);
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("a paper boat");
+  const c = await generate(page, prompt);
+  await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(c.locator(".run-expiry")).toHaveCount(0); // brand new: 30 days left, no nagging
+  const runId = (await c.getAttribute("data-run-id"))!;
+
+  ageRun(runId, 27); // 3 days left of the default 30
+  await page.reload();
+  const aged = card(page, prompt);
+  await expect(aged.locator(".run-expiry")).toHaveText(/^Will be deleted in [23] days\. Press Keep to save it\.$/);
+
+  const keep = aged.getByRole("button", { name: "Keep" });
+  await expect(keep).toHaveAttribute("aria-pressed", "false");
+  await keep.click();
+  await expect(keep).toHaveAttribute("aria-pressed", "true");
+  await expect(aged.locator(".badge-kept")).toHaveText("Kept");
+  await expect(aged.locator(".run-expiry")).toHaveCount(0);
+  await expect(keep).toBeFocused(); // the button stayed put, so did focus
+
+  await page.reload();
+  await expect(card(page, prompt).locator(".badge-kept")).toBeVisible(); // stored on the server, not just on screen
+  await expect(card(page, prompt).locator(".run-expiry")).toHaveCount(0);
+
+  // the delete confirmation mentions it, since that is the one way a kept run goes
+  await card(page, prompt).getByRole("button", { name: "Delete" }).click();
+  await expect(page.getByRole("alertdialog", { name: "Delete this run?" })).toContainText("You marked it Keep.");
+  await page.keyboard.press("Escape");
+
+  await card(page, prompt).getByRole("button", { name: "Keep" }).click(); // un-keep: the warning is back
+  await expect(card(page, prompt).locator(".run-expiry")).toBeVisible();
+  await expect(card(page, prompt).locator(".badge-kept")).toHaveCount(0);
 });

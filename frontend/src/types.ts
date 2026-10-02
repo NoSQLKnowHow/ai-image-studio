@@ -47,9 +47,11 @@ export interface Run {
   started_at: string | null;
   finished_at: string | null;
   error: { message: string; hint: string | null } | null;
-  pinned: boolean;
+  pinned: boolean; // "Keep": never expires
+  expires_at: string | null; // when it will be deleted automatically; null if kept, pending, or expiry is off
   queue_position: number | null;
   progress: Progress | null;
+  canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
   images: ImageInfo[];
 }
 

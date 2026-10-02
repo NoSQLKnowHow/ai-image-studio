@@ -64,5 +64,8 @@ export const api = {
   listRuns: (before?: string | null, limit = 20) =>
     request<RunsPage>(`/api/runs?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
   createRun: (body: CreateRunBody) => request<Run>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
+  cancelRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
+  keepRun: (id: string, pinned: boolean) =>
+    request<Run>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ pinned }) }),
   deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

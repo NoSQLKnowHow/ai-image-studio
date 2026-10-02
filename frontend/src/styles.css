@@ -272,6 +272,9 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .badge-failed { background: var(--danger-soft); color: var(--danger); }
 .badge-running { background: var(--accent-soft); color: var(--accent-text); }
 .badge-queued { background: var(--warning-soft); color: var(--warning); }
+.badge-canceled { background: var(--surface-3); color: var(--text-2); }
+.badge-kept { background: var(--accent-soft); color: var(--accent-text); gap: 4px; }
+.badge-kept svg { font-size: 12px; fill: currentColor; }
 .run-prompt { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 .run-prompt.clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .run-negative { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
@@ -279,6 +282,11 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .run-meta { color: var(--text-3); font-size: 13px; font-variant-numeric: tabular-nums; }
 .run-error { background: var(--danger-soft); border-radius: var(--radius); padding: 10px 12px; display: grid; gap: 6px; justify-items: start; color: var(--danger); font-size: 14px; font-weight: 550; }
 .run-error .hint { color: var(--text-2); font-weight: 450; overflow-wrap: anywhere; }
+.run-note { background: var(--surface-2); border-radius: var(--radius); padding: 8px 12px; color: var(--text-2); font-size: 14px; }
+.run-expiry { background: var(--warning-soft); border-radius: var(--radius); padding: 8px 12px; color: var(--warning); font-size: 14px; font-weight: 550; }
+.button[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+.button.keep.active { background: var(--accent-soft); color: var(--accent-text); }
+.button.keep.active svg { fill: currentColor; }
 .run-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -8px; }
 
 .progress { display: grid; gap: 6px; font-size: 13px; color: var(--text-2); }

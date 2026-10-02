@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toApiError } from "./api";
-import { duration, seedText, timeAgo } from "./format";
+import { EXPIRY_WARNING_DAYS, canceledText, duration, expiryText, seedText, timeAgo } from "./format";
 import { initialState, reducer, type State } from "./store";
 import { STATUS, makeRun } from "./testdata";
 
@@ -140,5 +140,87 @@ describe("out-of-order arrivals (snapshots, POST responses and events use differ
     state = reducer(state, { type: "runsLoaded", page: { runs: [queued], next_before: null }, append: true });
     expect(state.runs.r).toBeUndefined();
     expect(state.order).toEqual([]);
+  });
+});
+
+describe("cancel and Keep", () => {
+  const running = makeRun({ id: "r", status: "running", options: { ...makeRun().options, num_images: 4 } });
+
+  it("a queued run canceled by the server stays canceled when a late queued copy turns up", () => {
+    const queued = makeRun({ id: "q", status: "queued", queue_position: 1 });
+    let state = reducer(withRuns(), { type: "runUpsert", run: { ...queued, status: "canceled", queue_position: null } });
+    state = reducer(state, { type: "runUpsert", run: queued });
+    expect(state.runs.q.status).toBe("canceled");
+  });
+
+  it("'stopping' survives progress steps that are still arriving, and ends when the run does", () => {
+    let state = reducer(withRuns(running), { type: "runUpsert", run: { ...running, canceling: true } });
+    state = reducer(state, { type: "runProgress", id: "r", progress: { image: 2, of: 4, step: 9, steps: 40 } });
+    expect(state.runs.r).toMatchObject({ status: "running", canceling: true, progress: { step: 9 } });
+    state = reducer(state, { type: "runUpsert", run: { ...running, status: "canceled", canceling: false } });
+    expect(state.runs.r).toMatchObject({ status: "canceled", canceling: false });
+  });
+
+  it("the answer to the cancel request can arrive after the run has already stopped", () => {
+    let state = reducer(withRuns(running), { type: "runUpsert", run: { ...running, status: "canceled" } });
+    state = reducer(state, { type: "runUpsert", run: { ...running, canceling: true } }); // the 202 response, late
+    expect(state.runs.r).toMatchObject({ status: "canceled", canceling: false });
+  });
+
+  it("a progress step that was in flight doesn't bring a canceled run back to life", () => {
+    let state = reducer(withRuns(running), { type: "runUpsert", run: { ...running, status: "canceled" } });
+    state = reducer(state, { type: "runProgress", id: "r", progress: { image: 2, of: 4, step: 20, steps: 40 } });
+    expect(state.runs.r.status).toBe("canceled");
+    expect(state.runs.r.progress).toBeNull();
+  });
+
+  it("keeping and un-keeping replace the run in place without reordering the list", () => {
+    const a = makeRun({ id: "a", created_at: "2026-10-02T10:00:00.000Z" });
+    const b = makeRun({ id: "b", created_at: "2026-10-02T11:00:00.000Z" });
+    let state = withRuns(a, b);
+    state = reducer(state, { type: "runUpsert", run: { ...a, pinned: true, expires_at: null } });
+    expect(state.runs.a.pinned).toBe(true);
+    expect(state.order).toEqual(["b", "a"]);
+    state = reducer(state, { type: "runUpsert", run: { ...a, pinned: false, expires_at: "2026-11-01T00:00:00.000Z" } });
+    expect(state.runs.a).toMatchObject({ pinned: false, expires_at: "2026-11-01T00:00:00.000Z" });
+  });
+
+  it("a run expired on the server disappears, and a late copy doesn't bring it back", () => {
+    const a = makeRun({ id: "a" });
+    let state = reducer(withRuns(a), { type: "runDeleted", id: "a" });
+    state = reducer(state, { type: "runUpsert", run: a });
+    expect(state.order).toEqual([]);
+  });
+});
+
+describe("expiry and cancel wording", () => {
+  const now = Date.parse("2026-10-02T12:00:00Z");
+  const inDays = (days: number) => new Date(now + days * 86_400_000).toISOString();
+
+  it("says nothing until fewer than a week remains", () => {
+    expect(EXPIRY_WARNING_DAYS).toBe(7);
+    expect(expiryText(null, now)).toBeNull();
+    expect(expiryText(inDays(30), now)).toBeNull();
+    expect(expiryText(inDays(7), now)).toBeNull();
+    expect(expiryText(new Date(now + 7 * 86_400_000 - 1000).toISOString(), now)).toBe("Will be deleted in 6 days"); // just under a week
+  });
+
+  it("counts whole days down, never promising more than there is", () => {
+    expect(expiryText(inDays(5.9), now)).toBe("Will be deleted in 5 days");
+    expect(expiryText(inDays(2.1), now)).toBe("Will be deleted in 2 days");
+    expect(expiryText(inDays(1.5), now)).toBe("Will be deleted in 1 day");
+  });
+
+  it("gets more urgent in the last day, and still makes sense once it is overdue", () => {
+    expect(expiryText(inDays(0.5), now)).toBe("Will be deleted within a day");
+    expect(expiryText(inDays(-0.2), now)).toBe("Due to be deleted at the next daily clean-up");
+    expect(expiryText("not a date", now)).toBeNull();
+  });
+
+  it("says what a canceled run kept", () => {
+    const base = makeRun({ status: "canceled", options: { ...makeRun().options, num_images: 4 } });
+    expect(canceledText(base)).toBe("Canceled before any image was finished.");
+    const image = { id: "i", idx: 0, seed: 1, width: 8, height: 8, has_alpha: false, url: "/u", thumb_url: null, download_url: "/d" };
+    expect(canceledText({ ...base, images: [image, { ...image, id: "j", idx: 1 }] })).toBe("Canceled. 2 of 4 images finished and kept.");
   });
 });
