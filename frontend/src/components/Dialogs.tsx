@@ -1,15 +1,26 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect } from "react";
 import { useReturnFocus } from "../hooks";
-import type { Run } from "../types";
-import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon } from "./icons";
+import { largerTarget } from "../options";
+import type { ImageInfo, Run } from "../types";
+import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EnlargeIcon } from "./icons";
 
-export function Lightbox({ run, index, onIndex, onClose }: {
+/** What the viewer says about a request made from it. The page behind a modal, toasts included, is hidden from
+ *  screen readers, so the answer is shown inside the viewer instead (DESIGN.md §24.2). */
+export interface ViewerNotice {
+  kind: "info" | "error";
+  text: string;
+}
+
+export function Lightbox({ run, index, notice, onIndex, onRegenerateLarger, onClose }: {
   run: Run | null;
   index: number;
+  notice: ViewerNotice | null;
   onIndex: (index: number) => void;
+  onRegenerateLarger: (image: ImageInfo) => void;
   onClose: () => void;
 }) {
+  const target = run ? largerTarget(run) : null; // the same rule as the run's card
   const images = run?.images ?? [];
   const image = images[index];
   const count = images.length;
@@ -37,6 +48,13 @@ export function Lightbox({ run, index, onIndex, onClose }: {
                   {count > 1 ? `Image ${index + 1} of ${count} · ` : ""}seed {image.seed} · {image.width}×{image.height}
                 </Dialog.Title>
                 <div className="lightbox-actions">
+                  {target && (
+                    <button type="button" className="button small" data-action="regenerate-larger" onClick={() => onRegenerateLarger(image)}
+                      aria-label={`Regenerate larger: ${target.width}×${target.height}, ${target.steps} steps`}
+                      title={`Regenerate this image at ${target.width}×${target.height}, ${target.steps} steps. The same seed at a bigger size makes a different picture.`}>
+                      <EnlargeIcon /> Regenerate larger
+                    </button>
+                  )}
                   <a className="button small" href={image.download_url} download><DownloadIcon /> Download</a>
                   {image.thumb_url && (
                     <a className="button small" href={`${image.thumb_url}?download=1`} download
@@ -47,6 +65,9 @@ export function Lightbox({ run, index, onIndex, onClose }: {
               </div>
               <div className={`lightbox-stage${image.has_alpha ? " checker" : ""}`}>
                 <img src={image.url} alt={run.prompt} />
+              </div>
+              <div className="lightbox-notice-region" role="status">
+                {notice && <p className={`lightbox-notice${notice.kind === "error" ? " error" : ""}`}>{notice.text}</p>}
               </div>
               {count > 1 && (
                 <>

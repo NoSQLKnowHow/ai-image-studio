@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import io
 import time
-from contextlib import suppress
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from typing import Any, Callable
+from unittest import mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -15,6 +16,7 @@ from PIL import Image
 
 from studio.api import create_app
 from studio.config import Settings
+from studio.jobs import JobManager
 
 TERMINAL = frozenset({"done", "failed", "canceled"})
 
@@ -34,8 +36,12 @@ def client_factory(tmp_path: Path) -> Callable[..., TestClient]:
     open_clients: list[TestClient] = []
 
     def factory(quiet: bool = False, **overrides: Any) -> TestClient:
-        client = TestClient(create_app(make_settings(tmp_path, **overrides)))
-        client.__enter__()
+        with ExitStack() as stack:
+            if quiet:  # the clean-up loops never start, so no sweep thread can already be running (see `_never_sweeps`)
+                stack.enter_context(mock.patch.object(JobManager, "_upload_janitor", _never_sweeps))
+                stack.enter_context(mock.patch.object(JobManager, "_janitor", _never_sweeps))
+            client = TestClient(create_app(make_settings(tmp_path, **overrides)))
+            client.__enter__()
         client.headers.update({"X-Studio-Client": "1"})
         open_clients.append(client)
         if quiet:
@@ -45,6 +51,13 @@ def client_factory(tmp_path: Path) -> Callable[..., TestClient]:
     yield factory
     for client in reversed(open_clients):
         close(client)
+
+
+async def _never_sweeps(self: JobManager) -> None:
+    """Stands in for a clean-up loop. Stopping a real one after start-up is not enough: its first sweep runs in a
+    worker thread that cancelling the task does not stop, so on a loaded machine it could still be running, and
+    delete the files a test had just made, after the test began (seen about 15% of the time under CPU stress)."""
+    await asyncio.Event().wait()
 
 
 def quiet_janitors(client: TestClient) -> None:

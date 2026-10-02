@@ -414,4 +414,26 @@ describe("regenerate larger (DESIGN.md §23)", () => {
       expect(largerRequest(smallRun({}, { status: "failed" }))).toBeNull();
     });
   });
+
+  describe("from the viewer: one image (DESIGN.md §24.1)", () => {
+    const several = () => smallRun({ seed: 1000, num_images: 3, negative_prompt: "blurry", cfg_scale: 4, transparent: true });
+
+    it("uses the seed of the image being viewed and a single image; nothing else differs from the run's request", () => {
+      const run = several();
+      const all = largerRequest(run)!;
+      const one = largerRequest(run, { seed: 1002 })!;
+      expect(one.options).toEqual({ ...all.options, seed: 1002, num_images: 1 });
+      expect([all.options.seed, all.options.num_images]).toEqual([1000, 3]); // the card's request is unchanged
+    });
+
+    it("for a run of one image is the card's request", () => {
+      const run = smallRun({ seed: 42, num_images: 1 });
+      expect(largerRequest(run, { seed: 42 })).toEqual(largerRequest(run));
+    });
+
+    it("is nothing when the button isn't offered", () => {
+      expect(largerRequest(makeRun(), { seed: 1 })).toBeNull();
+      expect(largerRequest(smallRun({}, { status: "canceled" }), { seed: 1 })).toBeNull();
+    });
+  });
 });

@@ -330,8 +330,8 @@ image, check that the thumbnail kept its transparency.
 
 ## 17. Regenerate larger (new in 1.4)
 
-Update first: `git pull && docker compose up -d --build`; the title should read **v1.4** (reload with
-Ctrl+Shift+R). There is no database change. Only runs made with 1.4 can have the button.
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.5** (reload with
+Ctrl+Shift+R). There is no database change. Only runs made with 1.4 or later can have the button.
 
 **a) From a smaller scale.** Turn **Lock seed** on (Options) and set the prompt bar's **Scale** to **50%**.
 Generate. Good: when the card says Done it has **Regenerate larger** (hover it: it names the size and steps,
@@ -359,6 +359,13 @@ curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H '
 curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
   -d '{"prompt": "a lighthouse", "options": {"width": 1024, "height": 1024, "steps": 20, "full": {"width": 512, "height": 512, "steps": 40}}}'
 ```
+
+**e) In the viewer (new in 1.5).** Generate three images at 50% (Lock seed on, **3 images** in Options). When
+it is Done, click the second image to open the viewer. Good: the top bar has **Regenerate larger** (same
+tooltip as the card). Click it. Good: a note inside the viewer says "Queued this image at …" (no toast), the
+viewer stays open, and a **new card at the top of the history makes one image** at the full size, with the
+second image's seed (the viewer's title shows it, one more than the run's first). **Write down** that it is
+one image and not three, and, as in (a), how it compares with the small one.
 
 ---
 
