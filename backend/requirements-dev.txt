@@ -1,0 +1,10 @@
+# Test-only dependencies (pinned).
+-r requirements.txt
+pytest==9.1.1
+iniconfig==2.3.0
+pluggy==1.6.0
+packaging==26.3
+pygments==2.21.0
+httpx2==2.13.1
+httpcore2==2.13.1
+truststore==0.10.4
