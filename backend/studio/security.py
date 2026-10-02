@@ -3,7 +3,8 @@
 - Mutating /api requests must carry `X-Studio-Client: 1`. Browsers cannot send that
   header cross-site without a CORS preflight, and this server answers no preflight,
   so a web page you happen to visit cannot queue jobs or delete history here.
-- Optional Host allow-list (STUDIO_ALLOWED_HOSTS) against DNS-rebinding tricks.
+- Optional Host allow-list (STUDIO_ALLOWED_HOSTS) against DNS-rebinding tricks; loopback
+  names always pass.
 - Security headers on every response (strict CSP, nosniff, no framing).
 
 Written as plain ASGI middleware so streaming responses (server-sent events) pass
@@ -16,6 +17,9 @@ import json
 from typing import Any, Awaitable, Callable, Iterable
 
 CLIENT_HEADER = "x-studio-client"
+# Always accepted by the Host check: DNS rebinding works through the attacker's own host name, so a
+# loopback name only arrives from the machine itself (the container healthcheck, curl on the Spark).
+LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})  # as hostname() returns them
 SAFE_METHODS = frozenset({"GET", "HEAD"})
 
 CSP = "; ".join([
@@ -76,7 +80,8 @@ class SecurityMiddleware:
             return
 
         headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
-        if self.allowed_hosts and hostname(headers.get("host", "")) not in self.allowed_hosts:
+        host = hostname(headers.get("host", ""))
+        if self.allowed_hosts and host not in self.allowed_hosts and host not in LOOPBACK:
             await _reject(send, 400, "This host name is not allowed (STUDIO_ALLOWED_HOSTS).", "host_not_allowed")
             return
         if (scope["path"].startswith("/api/") and scope["method"] not in SAFE_METHODS

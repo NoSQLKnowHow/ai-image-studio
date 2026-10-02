@@ -136,7 +136,23 @@ def test_load_failure_is_reported_then_the_run_fails(tmp_path):
     assert next(e for e in events if e["event"] == "run_failed")["error"]["kind"] == "load_failed" and code == 0
 
 
-def test_real_pipeline_is_unavailable_until_m2(tmp_path):
-    events, _, _ = talk(tmp_path, run_cmd(), pipeline="real")
+def test_real_pipeline_without_pytorch_is_unavailable(tmp_path):
+    events, _, _ = talk(tmp_path, run_cmd(), pipeline="real")  # no PyTorch in the test environment
     error = next(e for e in events if e["event"] == "load_failed")["error"]
-    assert error["kind"] == "unavailable" and "M2" in error["message"] and "STUDIO_PIPELINE=fake" in error["hint"]
+    assert error["kind"] == "unavailable" and "PyTorch is not installed" in error["message"] and error["hint"]
+
+
+def probe(tmp_path, pipeline):
+    env = dict(os.environ, PYTHONPATH=str(BACKEND))
+    proc = subprocess.run([sys.executable, "-m", "studio.worker", "--pipeline", pipeline, "--data-dir", str(tmp_path),
+                           "--model", "m", "--probe"], capture_output=True, text=True, timeout=60, env=env, stdin=subprocess.DEVNULL)
+    lines = [json.loads(line) for line in proc.stdout.splitlines() if line.strip()]
+    return lines, proc.returncode
+
+
+def test_probe_mode_reports_capabilities_and_exits(tmp_path):
+    lines, code = probe(tmp_path, "fake")
+    assert code == 0 and lines == [{"event": "probe", "ok": True, "pipeline": "fake",
+                                    "supports": FakePipeline.SUPPORTS, "device": {"name": "fake (no GPU used)"}}]
+    lines, code = probe(tmp_path, "real")
+    assert code == 0 and lines[0]["ok"] is False and lines[0]["error"]["kind"] == "unavailable"

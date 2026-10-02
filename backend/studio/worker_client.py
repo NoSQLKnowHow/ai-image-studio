@@ -21,6 +21,13 @@ class WorkerGone(Exception):
     pass
 
 
+def worker_env() -> dict[str, str]:
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(BACKEND_ROOT), env.get("PYTHONPATH", "")) if p)
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
 class WorkerClient:
     def __init__(self, settings: Settings, on_event: Callable[[dict[str, Any]], None]):
         self._settings = settings
@@ -29,7 +36,7 @@ class WorkerClient:
         self._reader: Optional[asyncio.Task] = None
         self._stopping = False
 
-    def command(self) -> list[str]:
+    def command(self, probe: bool = False) -> list[str]:
         s = self._settings
         cmd = [
             sys.executable, "-m", "studio.worker",
@@ -42,6 +49,8 @@ class WorkerClient:
             cmd.append("--cpu-offload")
         if s.local_files_only:
             cmd.append("--local-files-only")
+        if probe:
+            cmd.append("--probe")
         return cmd
 
     def alive(self) -> bool:
@@ -54,9 +63,7 @@ class WorkerClient:
     async def start(self) -> None:
         if self.alive():
             return
-        env = dict(os.environ)
-        env["PYTHONPATH"] = os.pathsep.join(p for p in (str(BACKEND_ROOT), env.get("PYTHONPATH", "")) if p)
-        env["PYTHONUNBUFFERED"] = "1"
+        env = worker_env()
         self._stopping = False
         self._proc = await asyncio.create_subprocess_exec(
             *self.command(),

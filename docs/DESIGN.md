@@ -145,7 +145,7 @@ Every value is saved in `localStorage` and restored on the next visit. Server-si
 
 | Option | Applies to | Default | Limits / notes |
 |---|---|---|---|
-| Size | both | 1:1 = 2048×2048 (Edit: Auto — from input) | 7 model-card presets: 1:1 2048×2048, 4:3 2400×1792, 3:4 1792×2400, 3:2 2528×1696, 2:3 1696×2528, 16:9 2752×1536, 9:16 1536×2752; or Custom W×H: each side 256–4096, multiple of 16, total ≤ 4.5 MP (limits PROPOSED, to be tested on the Spark) |
+| Size | both | 1:1 = 2048×2048 (Edit: Auto — from input) | 7 model-card presets: 1:1 2048×2048, 4:3 2400×1792, 3:4 1792×2400, 3:2 2528×1696, 2:3 1696×2528, 16:9 2752×1536, 9:16 1536×2752; or Custom W×H: each side 256–4096, multiple of 32 (the pipeline's `check_inputs` requires it; found in M2), total ≤ 4.5 MP (limits PROPOSED, to be tested on the Spark) |
 | Steps | both | 40 | 1–100 |
 | Seed | both | Random each run; Lock seed off | 0–4294967295 |
 | Images per click | both | 1 | 1–8 |
@@ -177,7 +177,7 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `DELETE /api/runs/{id}` | Delete run and files | 409 if running (cancel first) |
 | `GET /api/images/{id}` | Full PNG | `?download=1` sets a meaningful filename (below) |
 | `GET /api/images/{id}/thumb` | WebP thumbnail | |
-| `GET /api/events` | Server-sent events | `hello` (initial status), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`, `shutdown` (the server is stopping; the stream then ends). A `: ping` comment every 15 s keeps proxies from closing the stream. On reconnect the client refetches list + status |
+| `GET /api/events` | Server-sent events | `hello` (`{status, runs}`: the status plus the newest page of runs, read after the stream subscribed, so it is a consistent starting point), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`, `shutdown` (the server is stopping; the stream then ends). A `: ping` comment every 15 s keeps proxies from closing the stream. Every connection, first or reconnect, starts from its `hello`; the client never lets an older copy of a run (a late POST response, a stale page) replace a newer one, since runs only move forward (queued → running → finished) |
 
 **Capabilities without a loaded model:** the API process can't inspect a pipeline that isn't loaded, so at start-up it runs a short GPU-free probe subprocess that imports `diffusers` and inspects `QwenImage21Pipeline.__call__` (the same idea as the CLI's early signature check). The result is cached. If the import fails the state is `unavailable` with the reason.
 
@@ -277,13 +277,14 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `HF_TOKEN` | unset | Only if the repo is gated |
 | `STUDIO_LOCAL_FILES_ONLY` | `false` | Never touch the network |
 | `STUDIO_CPU_OFFLOAD` | `false` | Use model CPU offload |
-| `STUDIO_MIN_FREE_GB` | measure on the Spark | Minimum `MemAvailable` required before loading the model (§9a) |
+| `STUDIO_MIN_FREE_GB` | unset = off; `compose.yaml` sets `40` | Minimum `MemAvailable` required before loading the model (§9a). 40 is a starting estimate (about 14 GB transformer plus text encoder, VAE and activations, with headroom), to be replaced by the figure measured on the Spark. `0` turns it off |
 | `STUDIO_IDLE_TIMEOUT_MIN` | `15` | Unload the model after this idle time |
 | `STUDIO_QUEUE_CAP` | `10` | Max pending jobs |
 | `STUDIO_RETENTION_DAYS` | `30` | Auto-expire age; `0` disables |
 | `STUDIO_MAX_IMAGES_PER_RUN` | `8` | Batch cap |
 | `STUDIO_MAX_PROMPT_CHARS` | `8000` | Prompt length cap |
 | `STUDIO_MAX_UPLOAD_MB` | `20` | Upload size cap |
+| `STUDIO_STATIC_DIR` | `<repo>/frontend/dist` if built; `/app/static` in the image | The built web page (added in M2) |
 | `STUDIO_HOST` | `0.0.0.0` | Listen address inside the container (added in M1) |
 | `STUDIO_PORT` | `8080` | Listen port |
 | `STUDIO_ALLOWED_HOSTS` | empty (any) | Comma-separated host names to accept (§11; added in M1) |
@@ -295,16 +296,16 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 ## 14. Tech stack and repo layout (PROPOSED)
 
 - **Backend:** Python 3.11+, FastAPI, uvicorn, pydantic (request validation), Pillow, SQLite via the standard library.
-- **Front end:** React 18+ with TypeScript (strict), Vite, accessible primitives (Radix UI or equivalent) for the drawer, dialog and toggle group, plain CSS with variables for theming.
+- **Front end:** React 19 with TypeScript (strict), Vite, Radix UI Dialog for the drawer and dialogs, plain CSS with variables for theming. Unit tests with Vitest, browser tests with Playwright against the real backend running the fake pipeline.
 - **Layout:**
 
 ```
 ai-image-studio/   (repository root)
   backend/studio/    api, queue, worker, pipeline (real + fake), db, storage, config
   backend/tests/
-  frontend/          Vite + React + TS (src/, tests/)
-  Containerfile
-  compose.yaml
+  frontend/          Vite + React + TS (src/, e2e/)
+  Dockerfile         (built on the Spark; docker/ has its build-time check and healthcheck)
+  compose.yaml, .env.example
   docs/DESIGN.md
   scripts/qwen_image.py   (the CLI; stays standalone for now)
 ```
@@ -360,16 +361,27 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 
 Each milestone is committed separately. **After each milestone I stop, report what works and what the tests showed, and wait for your go-ahead (decision #22).** Each milestone is pushed to `ai-image-studio` so you can review the diff on GitHub.
 
-**Progress:** M1 is complete on branch `m1-backend` (2026-10-01) and awaiting your review: backend, database, API, queue, worker process and fake pipeline, with 82 automated tests passing. Deliberately left for later milestones: the real model, idle unload and memory pre-flight (M2), uploads and Edit mode (M5), cancel, pin and retention (M6).
+**Batches (decided 2026-10-02):** milestones are grouped into batches, **one pull request per batch**, so you can test something real sooner. Batch 2 is **M2 + M3 + M4 + M7** (the real model, the web page and the container); M7 moved ahead of M5 and M6 so the studio can run on the Spark before Edit mode and the queue extras exist. M5, M6 and M8 follow.
+
+**Progress:**
+
+- **M1** (2026-10-01, branch `m1-backend`): backend, database, API, queue, worker process and fake pipeline.
+- **Batch 2** (2026-10-02, branch `batch2-real-model-ui`):
+  - **M2:** the real `QwenImage21Pipeline` (checked against the diffusers source, not guessed: sizes must be multiples of 32, output can be RGBA, the per-step callback and `true_cfg_scale` exist); a start-up capability check; idle unload; the memory pre-flight from `/proc/meminfo`; errors translated into actionable messages.
+  - **M3–M4:** the web page as specified in §5, with live updates. The browser tests found and fixed real bugs: a run that failed within milliseconds could show "Queued" forever (the live stream now opens with a consistent snapshot and older copies of a run never replace newer ones, §7), images requested while their run was being deleted gave a 500, and keyboard focus was lost when dialogs closed.
+  - **M7:** `Dockerfile`, `compose.yaml`, `.env.example`, `docs/SPARK_TEST.md`.
+  - Tests: backend 120 (pytest), front end 34 (Vitest) and 10 in the browser (Playwright; 50/50 over five repeats).
+  - **Not verified, and not verifiable from my sandbox:** the image build (no Docker daemon) and anything on the real GPU. Checked instead: hadolint, `docker compose config`, dependency resolution for linux/arm64 + Python 3.12 with NVIDIA's torch held fixed, and the build-time check script in every branch. The Spark checklist covers the rest.
+- Left for later: uploads and Edit mode (M5); cancel, pin and retention (M6; `STUDIO_RETENTION_DAYS` is read but nothing expires yet); the Spark smoke test with you (M8).
 
 ## 18. Open items and facts to verify
 
 1. **Hermes and memory** — per NVIDIA's playbook, Hermes Agent uses a local LLM served by vLLM in a Docker container. Whether yours does, which model, and how much of the 128 GB it claims is unknown. This sets the memory budget (§9a). *Please run the commands in my message.*
 2. **Model license** — third-party summaries say Qwen-Image-2.1 is non-commercial or research-only. Not verified against the official license. Check before other people use this for workshop material.
 3. **Multiple reference images for editing** — third-party pages say up to 10; the model card snippet shows one. Verify on the model card; it changes the Edit UI (several thumbnails, ordering).
-4. **Pipeline arguments** — negative prompt, `true_cfg_scale`, per-step callback, interruption. Checked by the start-up probe; the UI hides what isn't supported.
-5. **`diffusers` commit to pin** — support merged 2026-09-18 (huggingface/diffusers PR #14804); choose and record a specific commit.
-6. **Base image / PyTorch build** — NGC `nvcr.io/nvidia/pytorch` 25.10 or later is reported to support the GB10 (`sm_121`). Choose the newest tag that works and pin it after testing on the Spark.
+4. **Pipeline arguments** — resolved in M2 from the source at the pinned commit: `negative_prompt`, `true_cfg_scale` (default 1.0, i.e. no guidance; the negative prompt only matters above 1), `callback_on_step_end` and `_interrupt` exist. The start-up check reads the signature anyway, and the UI hides what isn't supported.
+5. **`diffusers` commit to pin** — resolved: `578c9b2c6636ab2424a0e56186268b83623656b2` (2026-10-01), in `backend/requirements-container.txt`.
+6. **Base image / PyTorch build** — NGC `nvcr.io/nvidia/pytorch` 25.10 or later is reported to support the GB10 (`sm_121`). The Dockerfile defaults to `25.10-py3` (`NGC_TAG` changes it); confirm or move to a newer tag after the first build on the Spark.
 7. **Size and memory limits** — max pixels (4.5 MP) and the 8-image cap are guesses until measured on the Spark next to Hermes.
 8. **GitHub repository** — resolved. `NoSQLKnowHow/ai-image-studio` (private) was created by you and attached to my session with push access. Earlier, the GitHub integration was refused (HTTP 403) when creating repositories and when pushing to `LiveLabs-Image-Dev`; that repository is deliberately not used for this project.
 9. **Memory budget** — the model's real footprint (transformer, text encoder, VAE, activations at 2K) next to Hermes' LLM server; sets `STUDIO_MIN_FREE_GB` and the size and batch caps.
@@ -391,6 +403,7 @@ Note: NVIDIA publishes a ComfyUI playbook for the Spark, and ComfyUI reportedly 
 ## 20. Approval record
 
 - **Round 5 (2026-09-30):** you reviewed the key proposals and confirmed: separate worker process (#13), starting defaults and limits (#20), security approach (#21), and review after every milestone (#22). All other PROPOSED items are implementation details left to my judgement (see the status labels at the top).
-- **Not yet done:** your explicit go to start M1. Nothing is built until you give it.
+- **2026-10-01:** you gave the go for M1 ("Go, start M1.").
+- **2026-10-02:** you asked for the next sections so you could test for real, chose **real model + container + web UI** as the next batch, and **one pull request per batch** (§17).
 - **Still pending from you (not blocking M1–M7):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9).
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.

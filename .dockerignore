@@ -1,0 +1,27 @@
+# Keep the build context small, and never send host-built (x86/macOS) node_modules into the
+# arm64 build: the image runs `npm ci` itself.
+**/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+**/*.tsbuildinfo
+
+**/__pycache__
+**/*.pyc
+**/.venv
+**/venv
+.pytest_cache
+
+.git
+.github
+data
+outputs
+.env
+*.sqlite
+.DS_Store
+
+# not needed in the image
+scripts
+docs
+backend/tests
+README.md

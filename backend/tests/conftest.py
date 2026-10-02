@@ -16,7 +16,8 @@ TERMINAL = frozenset({"done", "failed", "canceled"})
 
 
 def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
-    values: dict[str, Any] = dict(data_dir=tmp_path / "data", pipeline="fake", fake_step_delay_ms=1, queue_cap=10)
+    values: dict[str, Any] = dict(data_dir=tmp_path / "data", pipeline="fake", fake_step_delay_ms=1, queue_cap=10,
+                                  static_dir=tmp_path / "no-ui")  # placeholder page unless a test builds a UI
     values.update(overrides)
     return Settings(**values)
 

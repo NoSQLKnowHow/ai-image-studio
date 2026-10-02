@@ -81,7 +81,8 @@ def test_event_stream_follows_a_run_to_completion(live):
             assert stream.headers["content-type"].startswith("text/event-stream")
             events = read_events(stream.iter_lines())
             name, hello = next(events)
-            assert name == "hello" and hello["queue"]["cap"] == 10
+            assert name == "hello" and hello["status"]["queue"]["cap"] == 10
+            assert hello["runs"] == {"runs": [], "next_before": None}
             created = http.post("/api/runs", headers=CLIENT,
                                 json={"prompt": "stream me", "options": {"width": 256, "height": 256, "steps": 4}}).json()
             for name, data in events:
@@ -91,6 +92,26 @@ def test_event_stream_follows_a_run_to_completion(live):
                     break
     for expected in ("run.created", "queue.updated", "worker.state", "run.progress", "run.updated"):
         assert expected in seen, (expected, seen)
+
+
+def test_hello_carries_a_snapshot_of_the_newest_runs(live):
+    """The UI takes the hello as the truth and applies later events on top, so a run that changed
+    before the stream connected (here: one that already finished) must be in it, current."""
+    server = live(fake_step_delay_ms=1)
+    with httpx.Client(base_url=server.url, timeout=30) as http:
+        ids = [http.post("/api/runs", headers=CLIENT,
+                         json={"prompt": f"before connecting {i}", "options": {"width": 256, "height": 256, "steps": 2}}).json()["id"]
+               for i in range(2)]
+        deadline = time.monotonic() + 20
+        while http.get(f"/api/runs/{ids[-1]}").json()["status"] != "done":
+            assert time.monotonic() < deadline, "run never finished"
+            time.sleep(0.05)
+        with http.stream("GET", "/api/events") as stream:
+            name, hello = next(read_events(stream.iter_lines()))
+    assert name == "hello"
+    assert [r["id"] for r in hello["runs"]["runs"]] == ids[::-1]  # newest first
+    assert [r["status"] for r in hello["runs"]["runs"]] == ["done", "done"]
+    assert hello["runs"]["next_before"] is None
 
 
 def shutdown_during_a_run(server: "LiveServer") -> tuple[list[str], float, int, str]:
