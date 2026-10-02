@@ -28,7 +28,7 @@ class Settings:
     host: str = "0.0.0.0"
     port: int = 8080
     allowed_hosts: tuple[str, ...] = ()  # empty = accept any Host header
-    idle_timeout_min: float = 15.0  # 0 = unload as soon as the queue is empty
+    idle_timeout_min: float = 30.0  # 0 = unload as soon as the queue is empty
     queue_cap: int = 10
     retention_days: int = 30
     max_images_per_run: int = 8

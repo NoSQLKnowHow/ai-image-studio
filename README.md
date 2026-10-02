@@ -288,7 +288,7 @@ first run step by step and says what each step should show.
   `~/.cache/huggingface`, shared with anything else on the Spark that uses it, and is downloaded once.
 - **Memory:** the Spark's 128 GB is shared with everything else, Hermes' LLM server included. The
   studio refuses to load the model when less than `STUDIO_MIN_FREE_GB` is free (40 GB to start
-  with, until measured), and unloads it after 15 idle minutes.
+  with, until measured), and unloads it after 30 idle minutes.
 - **No login:** anyone who can reach the port can use it. Keep it on a trusted network, or set
   `STUDIO_BIND=127.0.0.1` and use an SSH tunnel or NVIDIA Sync.
 
