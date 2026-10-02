@@ -328,6 +328,40 @@ image, check that the thumbnail kept its transparency.
 
 ---
 
+## 17. Regenerate larger (new in 1.4)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.4** (reload with
+Ctrl+Shift+R). There is no database change. Only runs made with 1.4 can have the button.
+
+**a) From a smaller scale.** Turn **Lock seed** on (Options) and set the prompt bar's **Scale** to **50%**.
+Generate. Good: when the card says Done it has **Regenerate larger** (hover it: it names the size and steps,
+for example "Regenerate at 2048×2048, 40 steps") and a greyed **Upscale** that says it arrives with editing.
+Click **Regenerate larger**. Good: a toast says it is queued at that size, and a second card appears at the
+full size with the **same seed** and prompt, and no button of its own. **Write down both times.** Then look
+at the two pictures: with the same seed they are **not** expected to be the same picture (§23.1). **Write
+down how different they are** (same subject? same layout? nothing alike?), because that decides how much
+the Upscale button below matters.
+
+**b) From a draft.** Select several images in Options (say 3), then click **Draft**. When it is Done, click
+**Regenerate larger** on its card. Good: one full-size image at the size and steps you had selected (not the
+draft's 12), using the seed the draft picked (it is on the draft's card and on the new one).
+
+**c) Where there is no button.** Good: none on the full-size card from (a), none on a failed or canceled run
+(those have Retry), none on runs made before the update, and none when Scale is 100% (a normal run).
+
+**d) Through the API** (optional). A run can say what size it stands in for. Good: this is accepted, and the
+run's JSON has an `options.full`; the second command is refused with a 422 because the "full" size is not
+larger:
+
+```sh
+curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
+  -d '{"prompt": "a lighthouse", "options": {"width": 512, "height": 512, "steps": 20, "full": {"width": 1024, "height": 1024, "steps": 40}}}'
+curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
+  -d '{"prompt": "a lighthouse", "options": {"width": 1024, "height": 1024, "steps": 20, "full": {"width": 512, "height": 512, "steps": 40}}}'
+```
+
+---
+
 ## Troubleshooting
 
 | You see | What to do |
@@ -358,3 +392,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 6. The numbers from step 14: seconds from clicking **Stop generating** to the card saying **Canceled**, and the memory before and after.
 7. The numbers and observations from step 15 (edits through the API).
 8. The numbers from step 16: the time of a draft and of a run at each scale, and how the draft looks.
+9. From step 17: the two times, and how different the small and the regenerated pictures are.

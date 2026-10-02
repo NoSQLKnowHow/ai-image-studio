@@ -13,6 +13,7 @@ import {
   buildRequest,
   defaultOptions,
   draftRequest,
+  largerRequest,
   loadOptions,
   optionsFromRun,
   optionsProblem,
@@ -124,6 +125,19 @@ export default function App() {
     window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
     promptRef.current?.focus({ preventScroll: true });
   };
+
+  const regenerateLarger = (run: Run) =>
+    once(`larger:${run.id}`, async () => {
+      const body = largerRequest(run);
+      if (!body) return;
+      try {
+        dispatch({ type: "runUpsert", run: await api.createRun(body) });
+        push("info", `Queued at ${body.options.width}×${body.options.height}. A bigger size is a new picture, so expect it to differ from this one.`);
+      } catch (error) {
+        const err = error as ApiError;
+        push("error", err.status === 429 ? err.message : `Couldn't regenerate: ${err.message}`);
+      }
+    });
 
   const retry = async (run: Run) => {
     try {
@@ -270,6 +284,7 @@ export default function App() {
                       now={now}
                       workerState={status?.worker.state ?? null}
                       onReuse={() => reuse(run)}
+                      onRegenerateLarger={() => void regenerateLarger(run)}
                       onRetry={() => void retry(run)}
                       onCancel={() => requestCancel(run)}
                       onToggleKeep={() => void toggleKeep(run)}

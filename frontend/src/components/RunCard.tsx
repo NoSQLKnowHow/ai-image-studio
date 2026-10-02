@@ -1,13 +1,15 @@
 import { useState } from "react";
 import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
+import { largerTarget } from "../options";
 import type { Run, WorkerState } from "../types";
-import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon, UpscaleIcon } from "./icons";
 
 interface Props {
   run: Run;
   now: number;
   workerState: WorkerState | null;
   onReuse: () => void;
+  onRegenerateLarger: () => void;
   onRetry: () => void;
   onCancel: () => void;
   onToggleKeep: () => void;
@@ -81,7 +83,7 @@ function Media({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) =>
   );
 }
 
-export function RunCard({ run, now, workerState, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, onReuse, onRegenerateLarger, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const meta = [sizeText(run), `${run.options.steps} steps`, seedText(run)];
@@ -90,6 +92,7 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onCancel, onT
   if (took) meta.push(took);
   const label = statusLabel(run);
   const active = run.status === "queued" || run.status === "running";
+  const target = largerTarget(run); // the bigger size to regenerate at, when this run was made smaller than selected
   const expiry = run.pinned ? null : expiryText(run.expires_at, now);
 
   return (
@@ -142,6 +145,19 @@ export function RunCard({ run, now, workerState, onReuse, onRetry, onCancel, onT
             title="Load this prompt and its options, with the seed locked">
             <ReuseIcon /> Reuse
           </button>
+          {target && (
+            <>
+              <button type="button" className="button small ghost" data-action="regenerate-larger" onClick={onRegenerateLarger}
+                aria-label={`Regenerate larger: ${target.width}×${target.height}, ${target.steps} steps`}
+                title={`Regenerate at ${target.width}×${target.height}, ${target.steps} steps. The same seed at a bigger size makes a different picture.`}>
+                <EnlargeIcon /> Regenerate larger
+              </button>
+              <button type="button" className="button small ghost" disabled data-action="upscale"
+                title="Arrives with editing: it will make this same picture bigger">
+                <UpscaleIcon /> Upscale
+              </button>
+            </>
+          )}
           {run.images.length === 1 && (
             <a className="button small ghost" href={run.images[0].download_url} download>
               <DownloadIcon /> Download

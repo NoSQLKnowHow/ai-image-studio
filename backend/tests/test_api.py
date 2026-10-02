@@ -32,7 +32,7 @@ def test_generate_end_to_end(client, tmp_path):
     assert run["options"] == {"width": 256, "height": 256, "steps": 3, "seed": 42, "seed_was_random": False,
                               "num_images": 2, "negative_prompt": "blurry", "cfg_scale": None, "transparent": False,
                               "resolution": None, "shape_from": None, "roles": [],  # these three: Edit only
-                              "draft": False}
+                              "draft": False, "full": None}
     assert run["inputs"] == []
 
     image = run["images"][1]

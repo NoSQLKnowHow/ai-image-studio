@@ -9,6 +9,9 @@ import {
   draftRequest,
   draftSize,
   effectiveScale,
+  isLarger,
+  largerRequest,
+  largerTarget,
   loadOptions,
   optionsFromRun,
   optionsProblem,
@@ -25,7 +28,7 @@ import {
   type Scale,
 } from "./options";
 import { CAPS, makeRun } from "./testdata";
-import type { Capabilities } from "./types";
+import type { Capabilities, Run } from "./types";
 
 function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
   const data = { ...initial };
@@ -263,7 +266,8 @@ describe("drafts (DESIGN.md §22.2)", () => {
     const options = { ...defaultOptions(CAPS), aspect: "16:9", scale: 50 as Scale, steps: 40, numImages: 4 };
     expect(draftRequest("  a lighthouse ", options, CAPS)).toEqual({
       mode: "generate", prompt: "a lighthouse",
-      options: { width: 512, height: 288, steps: 12, seed: null, num_images: 1, negative_prompt: null, cfg_scale: null, transparent: false, draft: true },
+      options: { width: 512, height: 288, steps: 12, seed: null, num_images: 1, negative_prompt: null, cfg_scale: null, transparent: false, draft: true,
+                 full: { width: 2752, height: 1536, steps: 40 } }, // the chosen size at 100%, with the chosen steps (not the draft's 12)
     });
     expect(draftRequest("x", { ...options, steps: 5 }, CAPS).options.steps).toBe(5); // never more steps than you chose
   });
@@ -286,5 +290,128 @@ describe("drafts (DESIGN.md §22.2)", () => {
     });
     const mine = { ...defaultOptions(CAPS), aspect: "4:3", scale: 50 as Scale, steps: 40, seedLocked: false, numImages: 3 };
     expect(optionsFromRun(draft, CAPS, mine)).toEqual({ ...mine, negativePrompt: "blurry", guidance: 4, transparent: true });
+  });
+});
+
+describe("regenerate larger (DESIGN.md §23)", () => {
+  const FULL = { width: 2048, height: 2048, steps: 40 };
+  const smallRun = (over: Record<string, unknown> = {}, run: Partial<Run> = {}) =>
+    makeRun({ options: { ...makeRun().options, width: 1024, height: 1024, steps: 40, full: FULL, ...over }, ...run });
+
+  describe("what a run remembers", () => {
+    it("a run at a scale under 100% records the chosen size at 100% and the chosen steps", () => {
+      const options = { ...defaultOptions(CAPS), aspect: "16:9", scale: 50 as Scale, steps: 30 };
+      const body = buildRequest("x", options, CAPS);
+      expect([body.options.width, body.options.height]).toEqual([1376, 768]);
+      expect(body.options.full).toEqual({ width: 2752, height: 1536, steps: 30 });
+    });
+
+    it("a custom size is the full size too", () => {
+      const options = { ...defaultOptions(CAPS), aspect: "custom", customWidth: 992, customHeight: 640, scale: 75 as Scale };
+      expect(buildRequest("x", options, CAPS).options.full).toEqual({ width: 992, height: 640, steps: 40 });
+    });
+
+    it("a run at 100% records none", () => {
+      expect(buildRequest("x", defaultOptions(CAPS), CAPS).options).not.toHaveProperty("full");
+    });
+
+    it("a scale that can't be used (it falls back to 100%) records none", () => {
+      const options = { ...defaultOptions(CAPS), aspect: "custom", customWidth: 256, customHeight: 256, scale: 50 as Scale };
+      const body = buildRequest("x", options, CAPS);
+      expect([body.options.width, body.options.height]).toEqual([256, 256]);
+      expect(body.options).not.toHaveProperty("full");
+    });
+
+    it("an edit records none (the server only takes it for Generate)", () => {
+      const options = { ...defaultOptions(CAPS), mode: "edit" as const, scale: 50 as Scale };
+      expect(buildRequest("x", options, CAPS).options).not.toHaveProperty("full");
+    });
+
+    it("a draft records the chosen size at 100% whatever the scale picker says, with the chosen steps", () => {
+      for (const scale of [100, 50, 25] as Scale[]) {
+        const options = { ...defaultOptions(CAPS), scale, steps: 25 };
+        expect(draftRequest("x", options, CAPS).options.full).toEqual({ width: 2048, height: 2048, steps: 25 });
+      }
+    });
+
+    it("a draft as big as the chosen size records none: there is nothing bigger to go back to", () => {
+      const options = { ...defaultOptions(CAPS), aspect: "custom", customWidth: 512, customHeight: 512 };
+      const body = draftRequest("x", options, CAPS);
+      expect([body.options.width, body.options.height]).toEqual([512, 512]);
+      expect(body.options).not.toHaveProperty("full");
+    });
+
+    it("Retry sends it again, so the retried run has its button too; an ordinary run adds none", () => {
+      expect(retryRequest(smallRun()).options.full).toEqual(FULL);
+      expect(retryRequest(makeRun()).options).not.toHaveProperty("full");
+      expect(retryRequest(smallRun({ full: null })).options).not.toHaveProperty("full");
+    });
+  });
+
+  describe("isLarger", () => {
+    it.each([
+      [{ width: 512, height: 512 }, { width: 256, height: 256 }, true],
+      [{ width: 512, height: 256 }, { width: 256, height: 256 }, true], // bigger in one side is enough
+      [{ width: 256, height: 512 }, { width: 256, height: 256 }, true],
+      [{ width: 256, height: 256 }, { width: 256, height: 256 }, false], // the same
+      [{ width: 512, height: 128 }, { width: 256, height: 256 }, false], // smaller in one side
+      [{ width: 128, height: 512 }, { width: 256, height: 256 }, false],
+      [{ width: 128, height: 128 }, { width: 256, height: 256 }, false],
+    ])("%j against %j is %s", (full, size, expected) => {
+      expect(isLarger(full, size)).toBe(expected);
+    });
+  });
+
+  describe("when the button is offered", () => {
+    it("on a finished Generate run that remembers a bigger size, and names it", () => {
+      expect(largerTarget(smallRun())).toEqual(FULL);
+    });
+
+    it.each(["queued", "running", "failed", "canceled"] as const)("not on a %s run", (status) => {
+      expect(largerTarget(smallRun({}, { status }))).toBeNull();
+    });
+
+    it("not on a run with no record (made at full size, or before 1.4), or a null one", () => {
+      expect(largerTarget(makeRun())).toBeNull();
+      expect(largerTarget(smallRun({ full: null }))).toBeNull();
+      expect(largerTarget(smallRun({ full: undefined }))).toBeNull();
+    });
+
+    it("not when the record isn't bigger than the run, or is smaller in a side", () => {
+      expect(largerTarget(smallRun({ full: { width: 1024, height: 1024, steps: 40 } }))).toBeNull();
+      expect(largerTarget(smallRun({ full: { width: 2048, height: 512, steps: 40 } }))).toBeNull();
+    });
+
+    it("not on an edit run, nor one with no size", () => {
+      expect(largerTarget(smallRun({}, { mode: "edit" }))).toBeNull();
+      expect(largerTarget(smallRun({ width: null, height: null }))).toBeNull();
+    });
+  });
+
+  describe("the run it sends", () => {
+    it("is the full size and steps, with the same prompt, seed and everything else, as an ordinary run", () => {
+      const run = smallRun({
+        seed: 777, num_images: 3, negative_prompt: "blurry", cfg_scale: 4, transparent: true, steps: 12,
+        full: { width: 1792, height: 1024, steps: 35 }, width: 896, height: 512,
+      }, { prompt: "a lighthouse, but kinder" });
+      expect(largerRequest(run)).toEqual({
+        mode: "generate", prompt: "a lighthouse, but kinder",
+        options: { width: 1792, height: 1024, steps: 35, seed: 777, num_images: 3, negative_prompt: "blurry", cfg_scale: 4, transparent: true, draft: false },
+      });
+    });
+
+    it("uses the seed the server recorded for a draft that picked its own", () => {
+      const draft = smallRun({ draft: true, seed: 123456789, seed_was_random: true, num_images: 1, steps: 12, width: 512, height: 512 });
+      expect(largerRequest(draft)?.options).toMatchObject({ seed: 123456789, num_images: 1, draft: false, steps: 40, width: 2048, height: 2048 });
+    });
+
+    it("carries no full size of its own, so it has no button in turn", () => {
+      expect(largerRequest(smallRun())?.options).not.toHaveProperty("full");
+    });
+
+    it("is nothing when the button isn't offered", () => {
+      expect(largerRequest(makeRun())).toBeNull();
+      expect(largerRequest(smallRun({}, { status: "failed" }))).toBeNull();
+    });
   });
 });

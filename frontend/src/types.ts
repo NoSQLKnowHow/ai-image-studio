@@ -15,6 +15,13 @@ export interface RunOptionsSnapshot {
   cfg_scale: number | null;
   transparent: boolean;
   draft?: boolean; // a small, quick try (DESIGN.md §22.2); absent on runs made before version 1.3
+  full?: FullSize | null; // the size and steps this run stands in for (DESIGN.md §23.1); absent before 1.4, null at full size
+}
+
+export interface FullSize {
+  width: number;
+  height: number;
+  steps: number;
 }
 
 export interface ImageInfo {
@@ -121,6 +128,7 @@ export interface CreateRunBody {
     cfg_scale: number | null;
     transparent: boolean;
     draft?: boolean;
+    full?: FullSize;
   };
 }
 

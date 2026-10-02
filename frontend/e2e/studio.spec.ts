@@ -506,3 +506,161 @@ test("phone width: the scale buttons and the size they give fit, and Draft and G
   expect(Math.abs(draft!.y - generateBox!.y)).toBeLessThan(4); // one row
   expect(generateBox!.x + generateBox!.width).toBeLessThanOrEqual(360);
 });
+
+// ------------------------------------------------------------------ regenerate larger (DESIGN.md §23)
+type ApiRun = { id: string; status: string; options: Record<string, unknown> };
+const newestRuns = async (page: Page): Promise<ApiRun[]> =>
+  ((await (await page.request.get("/api/runs?limit=10")).json()) as { runs: ApiRun[] }).runs;
+const regenerateButton = (c: Locator): Locator => c.getByRole("button", { name: /^Regenerate larger/ });
+
+test("a run made at 50% offers Regenerate larger, which queues the same prompt and seed at the full size", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 1024, customHeight: 1024, steps: 8, scale: 50, seedLocked: true, seed: 424242 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("a lighthouse at half size");
+  await generate(page, prompt);
+  const small = card(page, prompt).last(); // once the bigger one is queued it is first; this stays the older card
+  await expect(small.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(small.locator(".run-meta")).toContainText("512×512 · 8 steps");
+
+  const again = small.getByRole("button", { name: "Regenerate larger: 1024×1024, 8 steps" });
+  await expect(again).toBeVisible();
+  await expect(again).toHaveText("Regenerate larger");
+  await expect(again).toHaveAttribute("title", /different picture/); // honest about what it will make
+  await expect(small.getByRole("button", { name: "Upscale" })).toBeDisabled();
+  await expect(small.getByRole("button", { name: "Upscale" })).toHaveAttribute("title", /Arrives with editing/);
+
+  await again.click();
+  await expect(page.getByRole("status").filter({ hasText: "Queued at 1024×1024" })).toBeVisible();
+  await expect(card(page, prompt)).toHaveCount(2);
+  const big = card(page, prompt).first();
+  await expect(big.locator(".run-meta")).toContainText("1024×1024 · 8 steps");
+  await expect(big.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(regenerateButton(big)).toHaveCount(0); // it is the full size: nothing bigger to go back to
+  await expect(big.getByRole("button", { name: "Upscale" })).toHaveCount(0);
+  await expect(regenerateButton(small)).toBeVisible(); // the small one keeps its button
+
+  const [newest, older] = await newestRuns(page);
+  expect(newest.options).toMatchObject({ seed: 424242, width: 1024, height: 1024, steps: 8, num_images: 1, draft: false, full: null });
+  expect(older.options.full).toEqual({ width: 1024, height: 1024, steps: 8 });
+});
+
+test("a draft offers Regenerate larger, back to the size and steps that were selected, with the seed it picked", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 1024, customHeight: 576, steps: 20, numImages: 3, seedLocked: false });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("a quick lighthouse");
+  await promptBox(page).fill(prompt);
+  await page.getByRole("button", { name: "Draft", exact: true }).click();
+  const draft = card(page, prompt).last();
+  await expect(draft.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(draft.locator(".run-meta")).toContainText("512×288 · 12 steps");
+
+  await regenerateButton(draft).click(); // named for what it will do: 1024×576 at the 20 steps chosen, not the draft's 12
+  await expect(card(page, prompt)).toHaveCount(2);
+  const big = card(page, prompt).first();
+  await expect(big.locator(".run-meta")).toContainText("1024×576 · 20 steps");
+  await expect(big.locator(".badge-draft")).toHaveCount(0);
+  await expect(big.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(big.locator(".thumb")).toHaveCount(1); // the draft's one image, not the three that were selected
+
+  const [newest, older] = await newestRuns(page);
+  expect(older.options).toMatchObject({ draft: true, seed_was_random: true, full: { width: 1024, height: 576, steps: 20 } });
+  expect(newest.options).toMatchObject({ seed: older.options.seed, seed_was_random: false, draft: false, full: null, num_images: 1 });
+});
+
+test("no Regenerate larger on a run at full size, a failed one, or one that doesn't remember a bigger size", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 100 });
+  await page.goto("/");
+  await clearHistory(page);
+  const post = (prompt: string, options: Record<string, unknown>) =>
+    page.request.post("/api/runs", { headers: { "X-Studio-Client": "1" }, data: { prompt, options: { steps: 3, ...options } } });
+
+  const plain = unique("full size");
+  await generate(page, plain);
+  const failing = unique("fails [fake:error]");
+  expect((await post(failing, { width: 256, height: 256, full: { width: 512, height: 512, steps: 30 } })).ok()).toBe(true);
+  const older = unique("made by an older client");
+  expect((await post(older, { width: 256, height: 256 })).ok()).toBe(true); // small, but says nothing about a full size
+  const withOne = unique("small with a record");
+  expect((await post(withOne, { width: 256, height: 256, full: { width: 512, height: 512, steps: 30 } })).ok()).toBe(true);
+
+  await expect(card(page, withOne).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(regenerateButton(card(page, withOne))).toBeVisible(); // the same cards do have it when they should
+  for (const text of [plain, older]) {
+    await expect(card(page, text).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+    await expect(regenerateButton(card(page, text))).toHaveCount(0);
+    await expect(card(page, text).getByRole("button", { name: "Upscale" })).toHaveCount(0);
+  }
+  await expect(card(page, failing).locator(".badge").first()).toHaveText("Failed", { timeout: 20_000 });
+  await expect(card(page, failing).getByRole("button", { name: "Retry" })).toBeVisible();
+  await expect(regenerateButton(card(page, failing))).toHaveCount(0);
+});
+
+test("when the server refuses or the queue is full, Regenerate larger says so and the card stays as it was", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 50 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("refused");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+
+  const answers = [
+    { status: 422, body: { detail: [{ loc: ["body", "options", "full"], msg: "The full size must be larger than the run.", type: "value_error" }] } },
+    { status: 429, body: { detail: "The queue is full (3 jobs waiting). Try again in a moment.", code: "queue_full" } },
+  ];
+  await page.route("**/api/runs", (route) => {
+    const answer = route.request().method() === "POST" ? answers.shift() : undefined;
+    return answer ? route.fulfill({ status: answer.status, json: answer.body }) : route.continue();
+  });
+  await regenerateButton(card(page, prompt)).click();
+  await expect(page.getByRole("alert").filter({ hasText: "Couldn't regenerate: The full size must be larger than the run." })).toBeVisible();
+  await regenerateButton(card(page, prompt)).click();
+  const fullQueue = page.getByRole("alert").filter({ hasText: "The queue is full (3 jobs waiting)" });
+  await expect(fullQueue).toBeVisible();
+  await expect(fullQueue).not.toContainText("Couldn't regenerate"); // the server's own words, as for Generate
+  await expect(card(page, prompt)).toHaveCount(1); // nothing was queued
+  await expect(regenerateButton(card(page, prompt))).toBeEnabled();
+});
+
+test("phone width: the new buttons wrap inside the card, with no sideways scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 50 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("phone");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  const regenerate = regenerateButton(card(page, prompt));
+  const upscale = card(page, prompt).getByRole("button", { name: "Upscale" });
+  await expect(regenerate).toBeVisible();
+  await expect(upscale).toBeVisible();
+  for (const button of [regenerate, upscale]) {
+    const box = (await button.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(360);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
+});
+
+test("a double click on Regenerate larger queues one run, not two", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 50 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("double click");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  let posts = 0;
+  await page.route("**/api/runs", async (route) => {
+    if (route.request().method() === "POST") {
+      posts += 1;
+      await new Promise((resolve) => setTimeout(resolve, 400)); // the second click lands while the first is still being answered
+    }
+    await route.continue();
+  });
+  await regenerateButton(card(page, prompt)).dblclick();
+  await expect(card(page, prompt)).toHaveCount(2);
+  await page.waitForTimeout(600);
+  expect(posts).toBe(1);
+  await expect(card(page, prompt)).toHaveCount(2);
+});
