@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { ApiError, api } from "./api";
 import { Header } from "./components/Header";
-import { ConfirmCancel, ConfirmDelete, Lightbox, cardReuseButton } from "./components/Dialogs";
+import { ConfirmCancel, ConfirmDelete, Lightbox, cardReuseButton, type ViewerNotice } from "./components/Dialogs";
 import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { OptionsDrawer } from "./components/OptionsDrawer";
 import { PromptBar } from "./components/PromptBar";
@@ -23,7 +23,7 @@ import {
   type Scale,
 } from "./options";
 import { initialState, reducer } from "./store";
-import type { CreateRunBody, Run } from "./types";
+import type { CreateRunBody, ImageInfo, Run } from "./types";
 import { useEventStream } from "./useEvents";
 
 function prefersReducedMotion(): boolean {
@@ -39,7 +39,11 @@ export default function App() {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formProblem, setFormProblem] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<{ runId: string; index: number } | null>(null);
+  const [lightbox, setLightbox] = useState<{ runId: string; index: number; notice?: ViewerNotice } | null>(null);
+  const lightboxOpen = useRef(false); // read when a request made from the viewer is answered, which may be after it closed
+  useEffect(() => {
+    lightboxOpen.current = lightbox !== null;
+  }, [lightbox]);
   const [pendingDelete, setPendingDelete] = useState<Run | null>(null);
   const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
   const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
@@ -126,16 +130,20 @@ export default function App() {
     promptRef.current?.focus({ preventScroll: true });
   };
 
-  const regenerateLarger = (run: Run) =>
-    once(`larger:${run.id}`, async () => {
-      const body = largerRequest(run);
+  // From a card the answer is a toast; from the viewer (`image` given: that one image, DESIGN.md §24) it is a note
+  // inside the viewer, because the page behind a modal, toasts included, is hidden from screen readers.
+  const regenerateLarger = (run: Run, image?: ImageInfo) =>
+    once(`larger:${run.id}:${image?.id ?? "run"}`, async () => {
+      const body = largerRequest(run, image);
       if (!body) return;
+      const tell = (kind: "info" | "error", text: string) =>
+        image && lightboxOpen.current ? setLightbox((current) => (current ? { ...current, notice: { kind, text } } : current)) : push(kind, text);
       try {
         dispatch({ type: "runUpsert", run: await api.createRun(body) });
-        push("info", `Queued at ${body.options.width}×${body.options.height}. A bigger size is a new picture, so expect it to differ from this one.`);
+        tell("info", `Queued ${image ? "this image " : ""}at ${body.options.width}×${body.options.height}. A bigger size is a new picture, so expect it to differ from this one.`);
       } catch (error) {
         const err = error as ApiError;
-        push("error", err.status === 429 ? err.message : `Couldn't regenerate: ${err.message}`);
+        tell("error", err.status === 429 ? err.message : `Couldn't regenerate: ${err.message}`);
       }
     });
 
@@ -315,7 +323,9 @@ export default function App() {
       <Lightbox
         run={lightboxRun}
         index={lightbox?.index ?? 0}
-        onIndex={(index) => setLightbox((current) => (current ? { ...current, index } : current))}
+        notice={lightbox?.notice ?? null}
+        onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
+        onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}
         onClose={() => setLightbox(null)}
       />
       <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />

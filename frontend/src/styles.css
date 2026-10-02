@@ -371,14 +371,20 @@ button, input, textarea, select { font: inherit; color: inherit; }
 fieldset.field { gap: 8px; }
 
 .lightbox { position: fixed; inset: 0; z-index: 50; display: grid; grid-template-rows: auto 1fr; outline: none; color: #f3f3f6; }
-.lightbox-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+.lightbox-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 14px; }
 .lightbox-title { font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
-.lightbox-actions { display: flex; gap: 6px; }
+.lightbox-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .lightbox .button.ghost { color: #f3f3f6; }
 .lightbox .button.ghost:hover { background: rgb(255 255 255 / 12%); }
 .lightbox-stage { display: grid; place-items: center; padding: 0 16px 16px; min-height: 0; }
 .lightbox-stage img { max-width: 100%; max-height: calc(100vh - 80px); object-fit: contain; border-radius: var(--radius-sm); }
 .lightbox-stage.checker { background-clip: content-box; }
+.lightbox-notice-region { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(460px, calc(100vw - 32px)); pointer-events: none; }
+.lightbox-notice {
+  margin: 0; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 14px; color: #f3f3f6;
+  background: rgb(18 18 22 / 94%); border: 1px solid rgb(255 255 255 / 28%); box-shadow: var(--shadow-lg);
+}
+.lightbox-notice.error { color: #ffb4b4; border-color: rgb(255 140 140 / 55%); }
 .lightbox-nav {
   position: fixed; top: 50%; transform: translateY(-50%); width: 44px; height: 44px; border-radius: 50%;
   border: 0; background: rgb(0 0 0 / 55%); color: #fff; font-size: 22px; display: grid; place-items: center; cursor: pointer;

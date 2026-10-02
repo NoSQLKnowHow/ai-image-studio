@@ -277,8 +277,9 @@ export function largerTarget(run: Run): FullSize | null {
 }
 
 /** Regenerate larger: the same prompt, options and seeds at the full size and steps, as an ordinary run (no draft, and
- *  no `full` of its own, so it has no button in turn). The picture will differ from the small one (DESIGN.md §23.1). */
-export function largerRequest(run: Run): CreateRunBody | null {
+ *  no `full` of its own, so it has no button in turn). The picture will differ from the small one (DESIGN.md §23.1).
+ *  Given `image` (the viewer), it enlarges that one image: its own seed and a single image (§24.1). */
+export function largerRequest(run: Run, image?: { seed: number }): CreateRunBody | null {
   const target = largerTarget(run);
   if (!target) return null;
   const o = run.options;
@@ -289,8 +290,8 @@ export function largerRequest(run: Run): CreateRunBody | null {
       width: target.width,
       height: target.height,
       steps: target.steps,
-      seed: o.seed,
-      num_images: o.num_images,
+      seed: image ? image.seed : o.seed,
+      num_images: image ? 1 : o.num_images,
       negative_prompt: o.negative_prompt,
       cfg_scale: o.cfg_scale,
       transparent: o.transparent,
