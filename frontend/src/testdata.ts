@@ -50,7 +50,7 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
 }
 
 export const STATUS: Status = {
-  version: "1.3",
+  version: "1.4",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", pid: 1, unload_at: null, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10 },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, worker_rss_gb: null },

@@ -12,7 +12,8 @@ can reuse and tweak prompts.
 | Version 2, part 1: run housekeeping (built, tested with the fake pipeline; **not yet run on the Spark**) | **Cancel** a queued or running job (finished images are kept), **Keep** a run so it never expires, and **auto-expiry** of runs older than `STUDIO_RETENTION_DAYS` (default 30) with a warning in a card's last week. [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 14 is the checklist. |
 | Version 2, part 2: editing with several images (1.2: the server side is built and tested with the fake pipeline; **the web page for it is not built yet, and the real GPU path has not been run**) | Upload several images, run one edit over them with a prompt that can say "image 1", "image 2"; a "result follows image N" choice, a 1K/2K choice, Transparent in Edit. Until the page exists, [`scripts/edit_via_api.sh`](scripts/edit_via_api.sh) drives it, and [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 15 is the checklist. Local edits (marks and masks) come later. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §21. |
 | Version 1.3: quick size, drafts and thumbnails (built, tested with the fake pipeline; **not yet run on the Spark**) | A **scale picker** (100 / 75 / 50 / 25%) on the prompt bar makes the image smaller without opening Options; a **Draft** button makes a small, quick try of your prompt that jumps ahead of waiting full-size runs; every image has a **Thumbnail** you can download. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §22; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 16 is the checklist. |
-| Still to come | The Spark smoke test together (M8). |
+| Version 1.4: regenerate at full size (built, tested with the fake pipeline; **not yet run on the Spark**) | A run made smaller than you had selected (a Draft, or Scale below 100%) gets a **Regenerate larger** button that sends the same prompt and seed again at the full size and steps you had selected. It will not be the same picture (a new size is a new picture). A greyed **Upscale** shows where "the same picture, bigger" will go once editing works; it is not built. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §23; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 17 is the checklist. |
+| Still to come | The editing page (M5b) and the Spark smoke test together (M8). |
 | `scripts/qwen_image.py`: command-line tool for text-to-image, image editing, transparent (RGBA) output | Written and exercised with mocks only. **Not yet run on a real GPU.** |
 
 ## Build and run on the DGX Spark
@@ -303,6 +304,10 @@ first run step by step and says what each step should show.
   a small, quick version of your prompt (512 px, at most 12 steps) ahead of any waiting full-size runs;
   it is for trying your wording, and the full-size image will look different, as will any other size.
   Both are settings you can tune: `STUDIO_DRAFT_SIZE`, `STUDIO_DRAFT_STEPS`.
+- **Regenerate larger:** a finished Draft, or run made at a Scale under 100%, has a **Regenerate larger**
+  button (hover it to see the size and steps). It queues the same prompt and seed at 100% of the size you
+  had selected, with the steps you had selected. The result is a different picture from the small one, so
+  use it to find a prompt you like, not to enlarge a picture you already like. Older runs have no button.
 - **Cancel, Keep and clean-up:** **Cancel** on a card stops a queued job at once, or a running one
   within a step (images already finished stay). Runs are deleted automatically 30 days after they
   were made (`STUDIO_RETENTION_DAYS`; `0` = never) unless you press **Keep** on them, and a card
@@ -348,7 +353,7 @@ curl -X POST http://127.0.0.1:8080/api/runs -H 'X-Studio-Client: 1' -H 'Content-
 **The version number** lives in `backend/studio/__init__.py` (`__version__`). The page shows it, the API
 reports it, and `frontend/package.json` carries the same number (as `1.1.0`); a test fails if they
 disagree, so bump them together. 1.0 was the first build on the Spark; each release since bumps the minor
-(1.1, 1.2, 1.3, ...). "Version 2" in the design document names a set of features, not a version number.
+(1.1, 1.2, 1.3, 1.4, ...). "Version 2" in the design document names a set of features, not a version number.
 
 `requirements-server.txt` holds the web server's pins and is shared by `requirements.txt`
 (development) and `requirements-container.txt` (the image, which adds diffusers, transformers and

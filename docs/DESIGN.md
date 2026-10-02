@@ -724,7 +724,7 @@ Draft time and quality at the defaults; a 100% / 50% / 25% run of the same promp
 - **Tests:** backend 329 (up from 312), front end 60 Vitest (up from 44) and 21 Playwright (up from 14). **Mutation checks: 45 deliberate breakages, all caught by a failing test** (three first survived: two were gaps in my tests, now closed, and one was a mutant whose unused import stopped the build, so it ran against the old page). One test of mine from M5a turned out to be flaky (about 1 run in 4): the background clean-up tasks run a first sweep at start-up that could land in the middle of a test that counts sweeps. The tests that count now ask for a quiet app; six repeats of the affected files, and two full browser runs, were clean.
 - **Not verified:** nothing about how a draft or a smaller scale actually looks or how fast it is on the model. That is section 16 of the Spark checklist, and it sets the default 512 px / 12 steps.
 
-## 23. Version 1.4: regenerate at full size (decisions #36–#37)
+## 23. Version 1.4: regenerate at full size (decisions #36–#37 DECIDED; details PROPOSED; Regenerate larger BUILT, Upscale not built; awaiting your review)
 
 ### 23.1 Regenerate larger (decision #36)
 
@@ -748,3 +748,18 @@ Draft time and quality at the defaults; a 100% / 50% / 25% run of the same promp
 42. The server accepts `options.full` only for Generate runs, validates it as a size, and refuses one that is not larger than the run.
 43. The Upscale button is present on those cards, disabled, and says when it arrives.
 44. On a phone the card's buttons wrap without a sideways scroll.
+
+### 23.4 What was built, and what differs from the plan above
+
+- **As specified:** the `options.full` record, validated by the server as described (Generate only; the same size rules as any size; larger in at least one side and smaller in neither); the page records it on a run made at a scale under 100% and on a draft smaller than the chosen size, and on nothing else; the **Regenerate larger** button on a finished run that remembers a bigger size, naming the size and steps in its tooltip and accessible name; the request it sends; a disabled **Upscale** that says it arrives with editing.
+- **Small decisions made while building** (tell me if you want any changed):
+  - **A draft's full size is the size chosen in Options at 100%, whatever the Scale buttons said** when you pressed Draft (a draft is always sized from the chosen size, §22.2), and its steps are the steps chosen, not the draft's.
+  - **Retry carries the record**, so a draft or small run that failed and is retried gets its button when it finishes.
+  - **A draft that is already as big as the chosen size has no button** (a 512 px selection makes a 512 px draft: nothing bigger to go back to).
+  - **No scroll to the new run**: it joins the top of the history, as with Retry; a toast says it is queued and that it will differ from the small one.
+  - **Clicking twice quickly queues one run** (the same guard as Cancel and Keep). Clicking again once it has finished queues another, as Reuse and Generate would.
+  - **The server refuses a record that is not larger, even from the API**, so a hand-made request cannot give a full-size run a button.
+  - The schema is unchanged: `full` lives in the run's stored options, which already hold the draft flag. Runs made before 1.4 have no such key and show no button.
+- **Tests:** backend 360 (up from 329), front end 87 Vitest (up from 60) and 27 Playwright (up from 21). **Mutation checks: 63 deliberate breakages, 62 caught by a failing test and one equivalent.** Two first got through, both gaps in my tests and now closed: a full-queue message was only checked as a substring, so it passed with an unwanted prefix; and seven mutants did not compile (an unused variable stops the build) so they ran against the old page and were rewritten until they did. The survivor is the card re-checking `largerTarget` (status, mode, larger size) in its own copy of the rule: the server never stores a record that fails it, so no browser test can tell, and the Vitest tests pin the rule itself.
+- **Not verified:** whether a regenerated image resembles the small one on the real model (§23.1 says it will not), and how much time the small-then-large route saves. That is section 17 of the Spark checklist.
+- **Not built, on purpose:** Upscale (decision #37). The button is a placeholder and does nothing.
