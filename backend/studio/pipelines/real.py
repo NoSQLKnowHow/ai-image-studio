@@ -30,7 +30,7 @@ NO_GPU_HINT = (
 )
 ARCH_HINT = (
     "This PyTorch build has no kernels for the Spark's GPU (GB10). The image must be based on NVIDIA's "
-    "PyTorch container 25.10 or newer (NGC_TAG in compose.yaml)."
+    "PyTorch container 25.10 or newer: set NGC_TAG in .env, then docker compose build."
 )
 NETWORK_NAMES = frozenset({
     "LocalEntryNotFoundError", "OfflineModeIsEnabled", "ConnectionError", "ConnectTimeout", "ReadTimeout",
