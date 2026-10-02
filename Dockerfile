@@ -1,7 +1,7 @@
 # AI Image Studio for the NVIDIA DGX Spark (arm64, GB10 "Blackwell", sm_121).
 #
 # Build it on the Spark itself:   docker compose build
-# (or: docker build -t ai-image-studio:local .). See README "Run it on the Spark".
+# (or: docker build -t ai-image-studio:local .). See README "Build and run on the DGX Spark".
 #
 # NGC_TAG picks NVIDIA's PyTorch release. 25.10 is the first one reported to support GB10;
 # a newer YY.MM-py3 tag should work too and is worth trying if 25.10 gives trouble.

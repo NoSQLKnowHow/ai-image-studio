@@ -6,7 +6,7 @@
 #   open http://<spark-address>:8080
 #
 # Run docker compose as yourself, not with sudo: sudo changes $HOME, and with it the model cache
-# folder below. README "Run it on the Spark" and docs/SPARK_TEST.md have the details.
+# folder below. README "Build and run on the DGX Spark" and docs/SPARK_TEST.md have the details.
 name: ai-image-studio
 
 services:
