@@ -1,6 +1,6 @@
 # Qwen-Image Web Studio — Design Specification (round 6: version 2 planned)
 
-Living document. **Version 1 is built and running on your Spark** (Generate, history, Options, themes, container: milestones M1–M4 and M7). **§21 specifies version 2, editing with several images plus the run housekeeping of M6 (cancel, keep, auto-expiry); nothing in §21 is built yet.** §1–§20 describe version 1 and the shared design; where §21 differs, §21 wins.
+Living document. **Version 1 is built and running on your Spark** (Generate, history, Options, themes, container: milestones M1–M4 and M7). **§21 specifies version 2, editing with several images plus the run housekeeping of M6 (cancel, keep, auto-expiry). M6 is built (§21.11); the editing work in §21 is not yet.** §1–§20 describe version 1 and the shared design; where §21 differs, §21 wins.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer.
 
@@ -144,10 +144,10 @@ Consequences of the decisions:
 ### 5.5a Queue — DECIDED, details PROPOSED
 - One GPU worker, one job at a time; a job = one click (its N images run one after another).
 - Pending cap 10 (env var). Beyond that, Generate is refused with a clear message (HTTP 429, shown inline).
-- Queued jobs show position and can be canceled. Cancelling a running job takes effect between images, and between steps only if the pipeline exposes a per-step callback (to verify).
+- Queued jobs show position and can be canceled. Cancelling a running job stops it at its next step (built in M6: the worker stops from the pipeline's per-step callback), keeps the images already finished and leaves the model loaded.
 
 ### 5.6 Retention — DECIDED, details PROPOSED
-- Runs older than N days (default 30, env var) are deleted with their image files, at startup and once a day. Pending and running runs are never expired.
+- Runs older than N days (default 30, env var) are deleted with their image files, at startup and once a day. Pending and running runs are never expired, and neither is a run you pressed **Keep** on. "Older" counts from when the run was created, the date shown on its card. A card warns when fewer than 7 days remain (built in M6, §21.11).
 - Because auto-expiry can silently discard something you wanted: **Keep** exempts a run, and the card shows "expires in X days" when fewer than 7 remain. Confirm or drop this mitigation.
 
 ## 6. Options panel contents
@@ -183,8 +183,8 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `POST /api/runs` | Create a run | Body: mode, prompt, options, `input_image` (`{upload_id}` or `{image_id}`). 201 with the run; 422 field errors; 429 queue full |
 | `GET /api/runs?limit=&before=` | List runs, newest first | Cursor pagination; "load more" in the UI |
 | `GET /api/runs/{id}` | One run with its images | |
-| `POST /api/runs/{id}/cancel` | Cancel queued or running | 409 if already finished |
-| `PATCH /api/runs/{id}` | `{pinned: bool}` | The only mutable field |
+| `POST /api/runs/{id}/cancel` | Cancel queued or running | `200` with the run for a queued run (canceled at once); `202` for a running one (it carries `canceling: true` and becomes `canceled` at the next step); `409` `run_finished` if it already finished; `404` |
+| `PATCH /api/runs/{id}` | `{pinned: bool}` | The only mutable field; strict (a real boolean, nothing else, or `422`). Returns the run |
 | `DELETE /api/runs/{id}` | Delete run and files | 409 if running (cancel first) |
 | `GET /api/images/{id}` | Full PNG | `?download=1` sets a meaningful filename (below) |
 | `GET /api/images/{id}/thumb` | WebP thumbnail | |
@@ -376,7 +376,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | M3 | Front-end shell, theming, prompt bar, Options drawer, options persistence | Criteria 2, 3, 15, 16 pass in Playwright |
 | M4 | Timeline, run cards, SSE live updates, Reuse, download, delete | Criteria 4, 5, 6, 14 pass |
 | M5 | Edit mode: uploads, all four inputs. **Replaced by M5a–M5d for version 2 (§21.11)** | Criteria 13, 19–30 |
-| M6 | Queue cap, cancel, retention, pin, failure handling. **Now part of version 2 (decision #29); what remains is in §21.11** | Criteria 8, 9, 11, 12, 18 pass |
+| M6 | Queue cap, cancel, retention, pin, failure handling. **Now part of version 2 (decision #29) and built: see §21.11** | Criteria 8, 9, 11, 12, 18 pass |
 | M7 | Containerfile, compose, docs | Image builds; criterion 17 on the Spark |
 | M8 | Spark smoke test with you | Criteria 1, 10, 17 and the real-hardware checklist |
 
@@ -393,7 +393,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
   - **M7:** `Dockerfile`, `compose.yaml`, `.env.example`, `docs/SPARK_TEST.md`.
   - Tests: backend 120 (pytest), front end 34 (Vitest) and 10 in the browser (Playwright; 50/50 over five repeats).
   - **Not verified, and not verifiable from my sandbox:** the image build (no Docker daemon) and anything on the real GPU. Checked instead: hadolint, `docker compose config`, dependency resolution for linux/arm64 + Python 3.12 with NVIDIA's torch held fixed, and the build-time check script in every branch. The Spark checklist covers the rest.
-- Left for later: uploads and Edit mode (M5); cancel, pin and retention (M6; `STUDIO_RETENTION_DAYS` is read but nothing expires yet); the Spark smoke test with you (M8).
+- Left for later: uploads and Edit mode (M5); the Spark smoke test with you (M8). Cancel, Keep and auto-expiry (M6) were built afterwards, as the first part of version 2 (§21.11).
 
 ## 18. Open items and facts to verify
 
@@ -439,7 +439,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **2026-10-02:** you asked for the next sections so you could test for real, chose **real model + container + web UI** as the next batch, and **one pull request per batch** (§17).
 - **Still pending from you (not blocking M1–M7):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9).
 - **Round 6 (2026-10-02):** version 1 was built (batch 2: real model, web page, container), built on the Spark and generating images. You asked for version 2 to add **editing with several uploaded images**, to be specified before any code. After a search of what Qwen announced and a read of the pinned pipeline source, you decided #24–#28: several images per edit, numbered badges with insert-into-prompt, a cap of 4 configurable to 10, local edits specified now and built second, and Auto size with a 1K/2K choice. Later the same day, with network access to the Qwen pages opened for the session, I read the announcement, the model card, the licence and the GitHub README directly; §21 and §18 were corrected from them (the prompt rewriter and the mask convention, which the search summaries had wrong or missing; the licence, now verified), and three refinements (R1–R3, §21.3) await your decision. You then decided that **M6 is part of v2** (#29). Details are §21 and are PROPOSED until you review them.
-- **Round 7 (2026-10-02):** you asked for version 2 to be built and I started with M6 (cancel, Keep, auto-expiry), the smallest piece and independent of the editing design. You also accepted refinements **R1** (the "Result follows image N" selector) and **R2** (Transparent in Edit), now decisions #30 and #31. You also raised the **idle unload from 15 to 30 minutes** (decision #15). **R3** (the optional prompt rewriter) is still open; only M5e depends on it.
+- **Round 7 (2026-10-02):** you asked for version 2 to be built and I started with M6 (cancel, Keep, auto-expiry), the smallest piece and independent of the editing design. You also accepted refinements **R1** (the "Result follows image N" selector) and **R2** (Transparent in Edit), now decisions #30 and #31. You also raised the **idle unload from 15 to 30 minutes** (decision #15). **R3** (the optional prompt rewriter) is still open; only M5e depends on it. M6 was then built in one pull request (backend, page, tests, docs; §21.11 says what it does and where it differs from the plan).
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
 ## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#31 DECIDED; details PROPOSED)
@@ -602,7 +602,7 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 
 | Milestone | Delivers | Done when |
 |---|---|---|
-| M6 | Cancel, Keep and auto-expiry (details below). The v1 plan's remaining housekeeping, now part of v2 (decision #29) | Criteria 9 and 12 of §16, and 31–32 |
+| M6 | Cancel, Keep and auto-expiry (details below). The v1 plan's remaining housekeeping, now part of v2 (decision #29). **BUILT, awaiting your review and the Spark checks below** | Criteria 9 and 12 of §16, and 31–32 (the parts that don't involve editing, which isn't built yet) |
 | M5a | Backend: multi-file uploads and staging, the cleanup job, `run_inputs` and the schema migration, `POST /api/runs` with `input_images`, worker and fake pipeline pass a list | API tests; fake edits show all sources in order |
 | M5b | The page: tray, the four inputs, badges and insert, reorder, cap, shape note, Resolution control with cost hint, run-card sources, Reuse, Retry, Edit this | Criteria 19–27 in Playwright |
 | M5c | The Spark test for edits (checklist supplied): 2- and 4-image edits at 1K, one at 2K, an alpha input; prompts that refer to "image 1" and "image 2"; a transparent edit and a subject extraction; **a mask, tried with both polarities and sizes**; memory and time recorded; cap and cost-hint thresholds set | Criterion 28, and the [unconfirmed] items of §21.2 settled |
@@ -613,13 +613,21 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 
 Each is its own pull request into `main` (never stacked), and I stop after each for your review (decision #22). M8, the Spark smoke test together, comes last.
 
-**M6: what is built, and what remains**
+**M6: built (2026-10-02), awaiting your review**
 
-- **Already built:** the pending cap with a clear 429 message (M1), delete with confirmation, which refuses while a run is running (M1), and the failure handling: out of memory, load failures, crashes and the memory pre-flight, each with an actionable message (M1–M2).
-- **Cancel.** `POST /api/runs/{id}/cancel`. A queued job becomes canceled at once. A running job stops **between steps**: the pipeline has a per-step callback and an interrupt flag [verified], so the worker can stop mid-image; finished images of the batch are kept and the run shows "2 of 4 completed". The worker stays loaded for the next job. UI: a Cancel button on queued and running cards; stopping a running job asks first ("Finished images are kept").
-- **Keep.** `PATCH /api/runs/{id}` with `{pinned: bool}`, a **Keep** button and a small badge on kept cards. Kept runs are exempt from expiry. (The database column already exists.)
-- **Auto-expiry.** A janitor deletes runs older than `STUDIO_RETENTION_DAYS` (default 30; 0 turns it off) with all their files, at start-up and then daily; never queued, running or kept runs. A card shows **"expires in N days"** when fewer than 7 remain, so nothing you wanted vanishes silently (§5.6). The setting is read today but nothing acts on it; `.env.example` will lose its "not active yet" note.
-- **To check on the Spark:** how quickly a cancel takes effect mid-step at 2K.
+- **Already there from v1:** the pending cap with a clear 429 message (M1), delete with confirmation, which refuses while a run is running (M1), and the failure handling: out of memory, load failures, crashes and the memory pre-flight, each with an actionable message (M1–M2).
+- **Cancel.** `POST /api/runs/{id}/cancel`. A queued job becomes canceled at once (no confirmation: nothing is lost). A running job stops **at its next step**: the worker raises a private signal (`Canceled`, deliberately not an `Exception`, so nothing between the callback and the worker can swallow it or turn it into a failure) from the pipeline's per-step callback, which is checked on every step. Finished images of the batch are kept; the image under way is discarded, and the card says "Canceled. 2 of 4 images finished and kept." The worker stays loaded (its process id does not change). The page asks first for a running job, shows "Stopping" until the worker confirms, and every open page sees the same state (`canceling` in the run).
+  - **How the worker hears it.** The worker used to read its commands one at a time, so a cancel could not be seen during a run. It now reads them in a thread of its own (with `os.read`, because a thread blocked in `sys.stdin` can make Python abort at exit; this was tested by starting and stopping the worker 80 times). That thread acts on `cancel` at once and queues everything else.
+  - **Where it deviates from the plan above:** the plan said "the pipeline has an interrupt flag, so the worker can stop mid-image". The studio does not use that flag: after it, the pipeline would still decode the half-finished latents into an image that is then thrown away, and with the 2K size that decode is not free. Raising from the callback skips it. (Stopping mid-loop leaves nothing stale behind, checked in the pinned diffusers source: the callback runs after the step's transformer calls, outside its `cache_context` blocks, and the key/value caches are local variables of the call.)
+  - **Edges, all tested:** a cancel that arrives while the model is still loading waits for the load to finish (a load can't be interrupted), then stops before the first image and leaves the model loaded; a cancel that arrives between two images stops before the next one starts, so its prompt encoding is not wasted; one that arrives while the worker process is still starting is honoured before the job is sent; a stale cancel can never hit a later run.
+  - **Not covered:** if the worker were wedged inside one step, a cancel would wait for that step. There is no kill timeout, because killing the worker means reloading the model (minutes). Whether any step on the Spark is long enough to matter is one of the checks below.
+- **Keep.** `PATCH /api/runs/{id}` with `{"pinned": true|false}` (strict), a **Keep** toggle on finished cards (a real toggle button: `aria-pressed`, the same visible label either way) and a **Kept** badge. Kept runs are exempt from expiry. Deleting a kept run by hand still works, and its confirmation says "You marked it Keep."
+- **Auto-expiry.** A janitor deletes finished runs older than `STUDIO_RETENTION_DAYS` (default 30; 0 turns it off) with their files (images and thumbnails), once at start-up (in the background, so a first sweep of thousands of runs never delays the page) and then every 24 hours. Never queued, running or kept runs. "Older" counts from creation, the date on the card. Choosing and deleting happen in one database transaction, so a run you keep at the same moment is never caught; sweeps go in batches of 200; a failed sweep is logged and tried again at the next interval; open pages remove the cards (`run.deleted`). Each run carries `expires_at`; a card shows **"Will be deleted in N days. Press Keep to save it."** when fewer than 7 remain (rounded down, so it never promises more time than there is, and "within a day" in the last 24 hours).
+  - **One thing to know:** a run that waited in the queue for longer than the retention period (the server stopped for a month with jobs waiting) would run and then be expired at the next sweep, because it counts from when it was created. This needs the studio to be down for 30 days with work queued; if you would rather the clock start when a run finishes, it is a one-line change. Say so.
+  - `.env.example` no longer says "not active yet".
+- **Also in this batch:** the idle unload is now **30 minutes** (you asked; decision #15), and R1 and R2 are recorded as decisions #30 and #31.
+- **Tests:** backend 166 (44 new, covering the worker protocol over a real process, the API, expiry and Keep); front end 44 Vitest (10 new) and 13 Playwright (3 new; three consecutive full runs passed). Mutation checks: I broke 29 specific things on purpose (no raise in the step callback, a stale cancel never cleared, no check between images, the sweep ignoring Keep, the sweep touching running runs, an inverted age comparison, files left behind, a janitor that never repeats, a missing `aria-pressed`, a cancel without the dialog, and so on). 27 were caught by a failing test, and two of those first survived (a cancel between two images, and the worker's state right after a cancel), which exposed gaps in my tests that I then closed. Of the other two, removing the explicit image-row delete from the sweep changes nothing because the database cascades it anyway (an equivalent change), and a mutant that kills the janitor task hangs the test run instead of failing it. Neither reflects a gap in the shipped code.
+- **To check on the Spark** (`docs/SPARK_TEST.md`, section 14): how quickly a cancel takes effect mid-step at 2K; that GPU memory after a cancel is the same as after a normal finish; that Keep and the warning behave on your real history.
 
 ### 21.12 Open items for v2, and ideas parked
 

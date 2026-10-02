@@ -167,7 +167,7 @@ Good: `MemAvailable` rises by about the footprint from step 9, and
 `curl -s localhost:8080/api/status | python3 -m json.tool` shows the worker `"state": "unloaded"`.
 The next Generate loads it again (faster this time: the files are cached).
 
-Put the timeout back afterwards (`15`, or whatever suits you) and `docker compose up -d`.
+Put the timeout back afterwards (`30` is the default, or whatever suits you) and `docker compose up -d`.
 
 ## 12. The memory check fails fast
 
@@ -188,6 +188,60 @@ docker compose down && docker compose up -d
 Good: the page (after a reload) shows all earlier runs with their images. Stopping it while an
 image is generating marks that run failed with `Interrupted because the server was stopped.` (or
 `Interrupted by a server restart.` if the container was killed outright); the next run works.
+
+## 14. Cancel, Keep and automatic clean-up (new in this update)
+
+Update first: `git pull && docker compose up -d --build` (the unchanged layers come from the cache).
+
+One thing to know before you do: from now on a run is **deleted 30 days after it was made** (and you
+get a warning on its card in the last 7 days). Yours are only days old, so nothing goes today. If you
+want to be sure some are never touched, press **Keep** on them (below), or set
+`STUDIO_RETENTION_DAYS=0` in `.env` to turn the clean-up off. A backup (`scripts/backup.sh`) first is
+cheap insurance.
+
+**a) Cancel a queued job.** Click Generate twice. The second card says `Queued · #1`. Click
+**Cancel** on it: it turns **Canceled** at once, with no question asked, and the first job carries on.
+
+**b) Cancel a running job, and time it.** Options: 2048 × 2048, 2 images per click. Generate, wait
+until the card shows `step N of 40`, click **Cancel**, then **Stop generating**. Start a stopwatch at
+the click.
+
+Good: the card says `Stopping` and then **Canceled** within about one step (a 2K step is a few
+seconds: 40 steps take around 4 minutes). If the first image was already finished the card says
+`Canceled. 1 of 2 images finished and kept.` and you can open it; if not, `Canceled before any image
+was finished.` The pill still says **Model ready** (the model was not unloaded), and the next
+Generate starts straight away with no `Loading the model…`. **Write down the seconds from click to
+Canceled**; the log has the same moment: `docker compose logs studio | grep -i cancel`.
+
+**c) No memory is left behind.** Note `free -h` (and `nvidia-smi`) after a normal finished image, then
+cancel three runs in a row and look again. Good: no steady rise.
+
+**d) (Optional) Cancel during the first load.** `docker compose restart studio`, Generate, and Cancel
+straight away. Good: the card says `Stopping… (a model that is still loading finishes loading
+first)`, becomes **Canceled** once the load is done, and the model stays loaded for the next run.
+
+**e) Keep.** Click **Keep** on a card: a **Kept** badge appears and the button shows as pressed. Reload
+the page, then `docker compose down && docker compose up -d`: it is still kept.
+
+**f) (Optional) See the warning and a real expiry.** This changes the date on **one run**, so use a
+throwaway. It ages the newest run by 27 days:
+
+```bash
+RUN=$(curl -s 'localhost:8080/api/runs?limit=1' | python3 -c 'import sys, json; print(json.load(sys.stdin)["runs"][0]["id"])')
+docker compose exec -T studio python - "$RUN" 27 <<'PY'
+import datetime as d, sqlite3, sys
+t = (d.datetime.now(d.timezone.utc) - d.timedelta(days=float(sys.argv[2]))).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+c = sqlite3.connect("/data/studio.sqlite", timeout=10)
+c.execute("UPDATE runs SET created_at=? WHERE id=?", (t, sys.argv[1]))
+c.commit()
+PY
+```
+
+Reload the page. Good: that card says `Will be deleted in 2 days. Press Keep to save it.` Press
+**Keep** and the warning goes; press it again and the warning is back. Now run the same command with
+`40` instead of `27` on a run that is **not** kept, then `docker compose restart studio`. Good: a few
+seconds after start-up the card is gone, and so are its files: `ls data/images | grep "$RUN"` prints
+nothing.
 
 ---
 
@@ -218,3 +272,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 3. The timings from step 8 and the numbers **A**, **B** from step 9.
 4. Anything that didn't match "Good", with the message the page or the log showed.
 5. Whether transparent output really had transparency (step 10).
+6. The numbers from step 14: seconds from clicking **Stop generating** to the card saying **Canceled**, and the memory before and after.
