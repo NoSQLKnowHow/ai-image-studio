@@ -671,7 +671,7 @@ The server side of editing with several images. **There is no page for it yet** 
 - **Sequential editing** (successive local edits assembled into an animation, as in Qwen's capybara example) is already served by "Edit this" chaining; no extra feature.
 - Upscaling, LoRAs (the pipeline has a LoRA loader) and choosing between models stay out, as in §2.
 
-## 22. Version 1.3: quick size, drafts and thumbnails (decisions #33–#35 DECIDED; details PROPOSED)
+## 22. Version 1.3: quick size, drafts and thumbnails (decisions #33–#35 DECIDED; details PROPOSED; BUILT, awaiting your review)
 
 Three small additions you asked for on 2026-10-02, built before the editing page (M5b) because they are useful on the Spark at once and have nothing to do with editing. All three are **for Generate**; Edit mode has its own size controls (Resolution 1K/2K, §21.4) and gets thumbnails like any image.
 
@@ -713,3 +713,10 @@ Three small additions you asked for on 2026-10-02, built before the editing page
 ### 22.5 What to measure on the Spark
 
 Draft time and quality at the defaults; a 100% / 50% / 25% run of the same prompt and seed with their times (and how different the pictures are); whether 12 steps is too few for a recognisable picture (the model's own default is 40).
+
+### 22.6 What was built, and what differs from the plan above
+
+- **As specified:** the scale picker with the stated arithmetic (a table in the tests pins 2048, 2400×1792, 2752×1536 and the rest, and every preset at every scale is checked to be a legal size within 5% of its shape); Draft with its server-side limits, its queue priority and its Reuse and Retry behaviour; the thumbnail download.
+- **Small decisions made while building** (tell me if you want any changed): a draft is **never bigger than the size you chose** (a 256 px selection gives a 256 px draft, not 512); below a 512 px draft size only squares fit exactly, because no side may be under 256 px (a 256 draft of a 16:9 shape is 256×256); on a phone the word "Scale" gives way to the buttons and the size is shown beside them; `Ctrl+Shift+Enter` makes a draft; the server reads the draft flag from the run's stored options, so there is **no database change** and runs made before 1.3 sort as ordinary runs (if a SQLite without JSON functions is ever met, queue order falls back to plain arrival order with a warning).
+- **Tests:** backend 329 (up from 312), front end 60 Vitest (up from 44) and 21 Playwright (up from 14). **Mutation checks: 45 deliberate breakages, all caught by a failing test** (three first survived: two were gaps in my tests, now closed, and one was a mutant whose unused import stopped the build, so it ran against the old page). One test of mine from M5a turned out to be flaky (about 1 run in 4): the background clean-up tasks run a first sweep at start-up that could land in the middle of a test that counts sweeps. The tests that count now ask for a quiet app; six repeats of the affected files, and two full browser runs, were clean.
+- **Not verified:** nothing about how a draft or a smaller scale actually looks or how fast it is on the model. That is section 16 of the Spark checklist, and it sets the default 512 px / 12 steps.
