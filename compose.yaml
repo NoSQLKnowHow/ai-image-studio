@@ -56,6 +56,8 @@ services:
       STUDIO_MAX_INPUT_IMAGES: ${STUDIO_MAX_INPUT_IMAGES:-4}
       STUDIO_UPLOAD_TTL_HOURS: ${STUDIO_UPLOAD_TTL_HOURS:-24}
       STUDIO_MAX_UPLOAD_MB: ${STUDIO_MAX_UPLOAD_MB:-20}
+      STUDIO_DRAFT_SIZE: ${STUDIO_DRAFT_SIZE:-512}
+      STUDIO_DRAFT_STEPS: ${STUDIO_DRAFT_STEPS:-12}
       HF_TOKEN: ${HF_TOKEN:-}
     # The server finishes or fails the current image and stops the worker cleanly on SIGTERM.
     stop_grace_period: 30s

@@ -224,7 +224,7 @@ def test_nothing_is_removed_when_expiry_is_off(seeded, client_factory):
 
 
 def test_pending_runs_are_never_expired_however_old(client_factory):
-    client = client_factory(fake_step_delay_ms=30)
+    client = client_factory(quiet=True, fake_step_delay_ms=30)
     running = create_run(client, steps=40)
     waiting = create_run(client, steps=3)
     wait_for(client, running["id"], frozenset({"running"}))
@@ -238,7 +238,7 @@ def test_pending_runs_are_never_expired_however_old(client_factory):
 
 
 def test_a_kept_run_survives_and_a_run_stops_being_kept_when_unkept(client_factory):
-    client = client_factory()
+    client = client_factory(quiet=True)
     run = create_run(client)
     wait_for(client, run["id"])
     with client.app.state.db.tx() as c:

@@ -21,7 +21,7 @@ from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
 from . import inputs as inputs_mod
 from .jobs import InputStorageError, JobManager, QueueFull, RunConflict, RunNotFound
-from .naming import content_disposition, download_filename
+from .naming import content_disposition, download_filename, thumbnail_filename
 from .runspec import OFFERED_MODES, RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
 from .serialize import parse_ts
@@ -146,6 +146,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "limits": {
                 "prompt_chars": settings.max_prompt_chars,
                 "input_images": {"min": 1, "max": settings.max_input_images},
+                "draft": {"long_side": settings.draft_size, "steps": settings.draft_steps},
                 "resolutions": list(P.RESOLUTIONS),
                 "upload_mb": settings.max_upload_mb,
                 "steps": {"min": P.STEPS_MIN, "max": P.STEPS_MAX},
@@ -286,11 +287,20 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return Response(data, media_type="image/png", headers=headers)
 
     @app.get("/api/images/{image_id}/thumb")
-    async def get_thumb(image_id: str, request: Request) -> Any:
+    async def get_thumb(image_id: str, request: Request, download: bool = False) -> Any:
         image, data = await _image_file(request, image_id, thumb=True)
         if image is None:
             return _error(404, "Thumbnail not found.", "not_found")
-        return Response(data, media_type="image/webp", headers={"Cache-Control": IMMUTABLE})
+        headers = {"Cache-Control": IMMUTABLE}
+        if download and image["kind"] == "output":  # a result's thumbnail is a download; anything else is only shown
+            run = request.app.state.db.get_run(image["run_id"])
+            if run is not None:
+                name = download_filename(
+                    mode=run["mode"], prompt=run["prompt"], width=image["width"], height=image["height"],
+                    seed=image["seed"], created_at=parse_ts(run["created_at"]), transparent=bool(run["transparent"]),
+                )
+                headers["Content-Disposition"] = content_disposition(thumbnail_filename(name), default="thumbnail.webp")
+        return Response(data, media_type="image/webp", headers=headers)
 
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:

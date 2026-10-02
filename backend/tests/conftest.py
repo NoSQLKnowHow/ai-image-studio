@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import time
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable
 
@@ -26,19 +28,43 @@ def make_settings(tmp_path: Path, **overrides: Any) -> Settings:
 
 @pytest.fixture
 def client_factory(tmp_path: Path) -> Callable[..., TestClient]:
-    """Start an app (lifespan included). Extra keyword arguments override Settings fields."""
+    """Start an app (lifespan included). Extra keyword arguments override Settings fields. `quiet=True` also
+    stops the background clean-up tasks (uploads, expiry), for tests that count what a sweep removes: their
+    first sweep runs at start-up, in the background, and could otherwise land in the middle of the test."""
     open_clients: list[TestClient] = []
 
-    def factory(**overrides: Any) -> TestClient:
+    def factory(quiet: bool = False, **overrides: Any) -> TestClient:
         client = TestClient(create_app(make_settings(tmp_path, **overrides)))
         client.__enter__()
         client.headers.update({"X-Studio-Client": "1"})
         open_clients.append(client)
+        if quiet:
+            quiet_janitors(client)
         return client
 
     yield factory
     for client in reversed(open_clients):
         close(client)
+
+
+def quiet_janitors(client: TestClient) -> None:
+    jobs = client.app.state.jobs
+
+    async def stop() -> None:
+        for name in ("_uploads_task", "_janitor_task"):
+            task = getattr(jobs, name)
+            if task is not None:
+                task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await task
+                setattr(jobs, name, None)
+
+    client.portal.call(stop)
+
+
+@pytest.fixture
+def quiet_client(client_factory: Callable[..., TestClient]) -> TestClient:
+    return client_factory(quiet=True)
 
 
 def close(client: TestClient) -> None:

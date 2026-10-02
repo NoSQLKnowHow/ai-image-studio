@@ -345,7 +345,8 @@ def sweep(client) -> int:
     return client.portal.call(client.app.state.jobs.sweep_expired)
 
 
-def test_expiry_takes_the_inputs_with_the_run_and_a_kept_run_keeps_them(client):
+def test_expiry_takes_the_inputs_with_the_run_and_a_kept_run_keeps_them(quiet_client):
+    client = quiet_client
     doomed = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(RED)))])["id"])
     kept = wait_for(client, create_edit(client, "y", [ref(stage(client, image_bytes(GREEN)))])["id"])
     client.patch(f"/api/runs/{kept['id']}", json={"pinned": True})
@@ -356,7 +357,8 @@ def test_expiry_takes_the_inputs_with_the_run_and_a_kept_run_keeps_them(client):
     assert inputs_on_disk(client, kept["id"]) == ["1.png"] and client.get(kept["inputs"][0]["url"]).status_code == 200
 
 
-def test_an_input_copied_into_a_newer_run_survives_its_sources_expiry(client):
+def test_an_input_copied_into_a_newer_run_survives_its_sources_expiry(quiet_client):
+    client = quiet_client
     source = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(RED)))])["id"])
     newer = wait_for(client, create_edit(client, "y", [{"image_id": source["inputs"][0]["id"]}])["id"])
     age(client, source["id"])
@@ -394,7 +396,8 @@ def test_capabilities_describe_edits_but_do_not_offer_the_mode_yet(client_factor
 
 
 # ------------------------------------------------------------------ gaps the mutation checks found, and the paths changed after review
-def test_the_clean_up_never_touches_the_inputs_of_a_run_that_exists_however_old_they_are(client):
+def test_the_clean_up_never_touches_the_inputs_of_a_run_that_exists_however_old_they_are(quiet_client):
+    client = quiet_client
     """Every edit's input folder is older than the sweep's one-hour grace period before long: it must stay because
     the database owns it, not because it is young."""
     run = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(c))) for c in (RED, GREEN)])["id"])

@@ -36,6 +36,8 @@ class Settings:
     max_upload_mb: int = 20
     max_input_images: int = 4  # per edit; Qwen allows up to 10, raised only after measuring on the Spark
     upload_ttl_hours: int = 24  # how long an upload that no run has claimed is kept
+    draft_size: int = 512  # a draft's long side in pixels (DESIGN.md §22.2)
+    draft_steps: int = 12  # the most steps a draft may use
     min_free_gb: Optional[float] = None  # None = memory pre-flight check off (set after measuring, M2)
     cpu_offload: bool = False
     local_files_only: bool = False
@@ -142,12 +144,16 @@ class Settings:
             max_upload_mb=integer("STUDIO_MAX_UPLOAD_MB", cls.max_upload_mb, 1, 200),
             max_input_images=integer("STUDIO_MAX_INPUT_IMAGES", cls.max_input_images, 1, 10),
             upload_ttl_hours=integer("STUDIO_UPLOAD_TTL_HOURS", cls.upload_ttl_hours, 1, 720),
+            draft_size=integer("STUDIO_DRAFT_SIZE", cls.draft_size, 256, 1024),
+            draft_steps=integer("STUDIO_DRAFT_STEPS", cls.draft_steps, 1, 100),
             min_free_gb=optional_float("STUDIO_MIN_FREE_GB", 0.0),
             cpu_offload=boolean("STUDIO_CPU_OFFLOAD", cls.cpu_offload),
             local_files_only=boolean("STUDIO_LOCAL_FILES_ONLY", cls.local_files_only),
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )
+        if settings.draft_size % 32:
+            errors.append(f"STUDIO_DRAFT_SIZE={settings.draft_size} must be a multiple of 32 (the model needs it).")
         if errors:
             raise ConfigError("Invalid configuration:\n  - " + "\n  - ".join(errors))
         return settings
