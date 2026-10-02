@@ -341,7 +341,8 @@ curl -X POST http://127.0.0.1:8080/api/runs -H 'X-Studio-Client: 1' -H 'Content-
 
 **The version number** lives in `backend/studio/__init__.py` (`__version__`). The page shows it, the API
 reports it, and `frontend/package.json` carries the same number (as `1.1.0`); a test fails if they
-disagree, so bump them together. 1.0 was the first build on the Spark; each release since bumps the minor.
+disagree, so bump them together. 1.0 was the first build on the Spark; each release since bumps the minor
+(1.1, 1.2, 1.3, ...). "Version 2" in the design document names a set of features, not a version number.
 
 `requirements-server.txt` holds the web server's pins and is shared by `requirements.txt`
 (development) and `requirements-container.txt` (the image, which adds diffusers, transformers and
