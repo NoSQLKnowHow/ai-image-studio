@@ -9,11 +9,21 @@ export const PROMPT_KEY = "studio.prompt.v1";
 export const CUSTOM = "custom";
 export const DEFAULT_GUIDANCE = 4;
 
+/** Percent of the selected size's width and height (DESIGN.md §22.1). */
+export const SCALES = [100, 75, 50, 25] as const;
+export type Scale = (typeof SCALES)[number];
+
+export interface Size {
+  width: number;
+  height: number;
+}
+
 export interface Options {
   mode: Mode;
   aspect: string; // a preset name from the capabilities, or CUSTOM
   customWidth: number;
   customHeight: number;
+  scale: Scale; // how much of that size to generate at
   steps: number;
   seedLocked: boolean; // false = a new random seed every run (decision #11)
   seed: number;
@@ -29,6 +39,7 @@ export function defaultOptions(caps: Capabilities): Options {
     aspect: caps.defaults.aspect_ratio,
     customWidth: caps.defaults.width,
     customHeight: caps.defaults.height,
+    scale: 100,
     steps: caps.defaults.steps,
     seedLocked: false,
     seed: 42,
@@ -108,6 +119,7 @@ export function sanitizeOptions(raw: unknown, caps: Capabilities): { options: Op
     aspect: pick("aspect", (v) => v === CUSTOM || (typeof v === "string" && v in caps.aspect_ratios)),
     customWidth: pick("customWidth", isInt),
     customHeight: pick("customHeight", isInt),
+    scale: pick("scale", (v) => (SCALES as readonly unknown[]).includes(v)),
     steps: pick("steps", inRange(limits.steps)),
     seedLocked: pick("seedLocked", (v) => typeof v === "boolean"),
     seed: pick("seed", inRange(limits.seed)),
@@ -139,10 +151,59 @@ export function saveOptions(options: Options, store: KeyValueStore): void {
 }
 
 // ------------------------------------------------------------------ requests
-export function resolveSize(options: Options, caps: Capabilities): { width: number; height: number } {
+/** The size chosen in Options, before any scale. */
+export function baseSize(options: Options, caps: Capabilities): Size {
   if (options.aspect === CUSTOM) return { width: options.customWidth, height: options.customHeight };
   const [width, height] = caps.aspect_ratios[options.aspect] ?? caps.aspect_ratios[caps.defaults.aspect_ratio];
   return { width, height };
+}
+
+/** `side` at `scale` percent, to the nearest multiple the model needs (halves round up): 1200 at 50% of 2400 is
+ *  not allowed, so 2400 → 1216 with 32; 2048 → 1024. */
+export function scaledSide(side: number, scale: number, multiple: number): number {
+  return Math.round((side * scale) / 100 / multiple) * multiple;
+}
+
+export function scaledSize(base: Size, scale: number, caps: Capabilities): Size {
+  if (scale === 100) return base; // exactly as chosen; never nudged to a multiple
+  const { multiple } = caps.limits.size;
+  return { width: scaledSide(base.width, scale, multiple), height: scaledSide(base.height, scale, multiple) };
+}
+
+/** Why a scale can't be used with this size (a side would fall under the minimum), or null. */
+export function scaleProblem(base: Size, scale: Scale, caps: Capabilities): string | null {
+  if (scale === 100) return null;
+  const { width, height } = scaledSize(base, scale, caps);
+  const { min } = caps.limits.size;
+  return width < min || height < min
+    ? `${scale}% of ${base.width}×${base.height} would be ${width}×${height}; each side must be at least ${min}.`
+    : null;
+}
+
+/** The scale actually used: the saved one, or the nearest larger one that works for this size. */
+export function usableScale(chosen: Scale, base: Size, caps: Capabilities): Scale {
+  for (let i = SCALES.indexOf(chosen); i >= 0; i--) if (!scaleProblem(base, SCALES[i], caps)) return SCALES[i];
+  return 100;
+}
+
+export function effectiveScale(options: Options, caps: Capabilities): Scale {
+  return usableScale(options.scale, baseSize(options, caps), caps);
+}
+
+/** The size a normal run will use: the chosen size at the effective scale. */
+export function resolveSize(options: Options, caps: Capabilities): Size {
+  const base = baseSize(options, caps);
+  return scaledSize(base, usableScale(options.scale, base, caps), caps);
+}
+
+/** A draft keeps the chosen shape but makes its long side the draft size (DESIGN.md §22.2). Sides stay within
+ *  the model's minimum, so below 512 only squares fit exactly. */
+export function draftSize(base: Size, caps: Capabilities): Size {
+  const { multiple, min } = caps.limits.size;
+  const long = Math.min(caps.limits.draft.long_side, Math.max(base.width, base.height)); // never bigger than the real size
+  const k = long / Math.max(base.width, base.height);
+  const fit = (side: number) => Math.min(long, Math.max(min, Math.round((side * k) / multiple) * multiple));
+  return { width: fit(base.width), height: fit(base.height) };
 }
 
 /** Why these options can't be submitted, or null if they can. */
@@ -169,26 +230,63 @@ export function buildRequest(prompt: string, options: Options, caps: Capabilitie
   };
 }
 
-/** Reuse: everything the run used, seed locked, so a tweaked prompt is a fair comparison (decision #11). */
+/** A Draft: the chosen shape small, at most the draft steps, one image, flagged so the server lets it jump the
+ *  queue and the card can say so. Everything else is as for a normal run. */
+export function draftRequest(prompt: string, options: Options, caps: Capabilities): CreateRunBody {
+  const { width, height } = draftSize(baseSize(options, caps), caps);
+  const supports = caps.supports;
+  return {
+    mode: "generate",
+    prompt: prompt.trim(),
+    options: {
+      width,
+      height,
+      steps: Math.min(options.steps, caps.limits.draft.steps),
+      seed: options.seedLocked ? options.seed : null,
+      num_images: 1,
+      negative_prompt: supports.negative_prompt && options.negativePrompt.trim() ? options.negativePrompt.trim() : null,
+      cfg_scale: supports.cfg_scale ? options.guidance : null,
+      transparent: !!supports.transparent && options.transparent,
+      draft: true,
+    },
+  };
+}
+
+/** The preset and scale that give exactly this size, preferring 100%, so "1:1 at 50%" comes back as that. */
+function presetAndScale(width: number, height: number, caps: Capabilities): { aspect: string; scale: Scale } | null {
+  for (const scale of SCALES) {
+    for (const [name, [w, h]] of Object.entries(caps.aspect_ratios)) {
+      const size = scaledSize({ width: w, height: h }, scale, caps);
+      if (size.width === width && size.height === height) return { aspect: name, scale };
+    }
+  }
+  return null;
+}
+
+/** Reuse: everything the run used, seed locked, so a tweaked prompt is a fair comparison (decision #11). A draft is
+ *  different: its small size, few steps and seed are not what you want next, so only the prompt-side options come back
+ *  and your own size, steps and seed stay as they are (DESIGN.md §22.2). */
 export function optionsFromRun(run: Run, caps: Capabilities, current: Options): Options {
   const { width, height } = run.options;
-  const preset =
-    width && height
-      ? Object.entries(caps.aspect_ratios).find(([, [w, h]]) => w === width && h === height)?.[0]
-      : undefined;
+  const common = {
+    mode: caps.modes.includes(run.mode) ? run.mode : current.mode,
+    negativePrompt: run.options.negative_prompt ?? "",
+    guidance: run.options.cfg_scale,
+    transparent: run.options.transparent,
+  };
+  if (run.options.draft) return sanitizeOptions({ ...current, ...common }, caps).options;
+  const match = width && height ? presetAndScale(width, height, caps) : null;
   const merged: Options = {
     ...current,
-    mode: caps.modes.includes(run.mode) ? run.mode : current.mode,
-    aspect: preset ?? (width && height ? CUSTOM : current.aspect),
-    customWidth: !preset && width ? width : current.customWidth,
-    customHeight: !preset && height ? height : current.customHeight,
+    ...common,
+    aspect: match?.aspect ?? (width && height ? CUSTOM : current.aspect),
+    scale: match?.scale ?? 100,
+    customWidth: !match && width ? width : current.customWidth,
+    customHeight: !match && height ? height : current.customHeight,
     steps: run.options.steps,
     seedLocked: true,
     seed: run.options.seed,
     numImages: run.options.num_images,
-    negativePrompt: run.options.negative_prompt ?? "",
-    guidance: run.options.cfg_scale,
-    transparent: run.options.transparent,
   };
   return sanitizeOptions(merged, caps).options; // clamp to whatever today's limits are
 }
@@ -208,13 +306,15 @@ export function retryRequest(run: Run): CreateRunBody {
       negative_prompt: o.negative_prompt,
       cfg_scale: o.cfg_scale,
       transparent: o.transparent,
+      draft: o.draft === true,
     },
   };
 }
 
 export function summarize(options: Options, caps: Capabilities): string {
   const { width, height } = resolveSize(options, caps);
-  const parts = [`${width}×${height}`, `${options.steps} steps`, options.seedLocked ? `seed ${options.seed}` : "random seed"];
+  const scale = effectiveScale(options, caps);
+  const parts = [`${width}×${height}${scale < 100 ? ` (${scale}%)` : ""}`, `${options.steps} steps`, options.seedLocked ? `seed ${options.seed}` : "random seed"];
   if (options.numImages > 1) parts.push(`${options.numImages} images`);
   if (caps.supports.cfg_scale && options.guidance !== null) parts.push(`guidance ${options.guidance}`);
   if (options.transparent && options.mode === "generate") parts.push("transparent");

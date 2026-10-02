@@ -221,6 +221,19 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .prompt-input:focus-visible { border-color: var(--accent); background: var(--surface); }
 .prompt-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .prompt-row-end { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.prompt-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; }
+.scale-group { display: flex; align-items: center; gap: 8px; }
+.scale-label { color: var(--text-3); font-size: 13px; font-weight: 550; }
+.scale-size { display: none; color: var(--text-3); font-size: 13px; font-variant-numeric: tabular-nums; }
+@media (max-width: 520px) {
+  /* The Options summary, which shows the size, is hidden here, so the size is shown next to the buttons instead;
+     and the word "Scale" goes (it stays for screen readers) to leave room for them. */
+  .scale-size { display: inline; }
+  .scale-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .scale-group { flex: 1 0 100%; }
+  .scale-group .segmented { flex: 1 1 auto; }
+  .scale-group .segmented button { flex: 1 1 0; padding-left: 4px; padding-right: 4px; }
+}
 .options-button { max-width: 100%; min-width: 0; }
 .options-summary { color: var(--text-3); font-weight: 450; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .counter { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
@@ -276,6 +289,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .badge-running { background: var(--accent-soft); color: var(--accent-text); }
 .badge-queued { background: var(--warning-soft); color: var(--warning); }
 .badge-canceled { background: var(--surface-3); color: var(--text-2); }
+.badge-draft { background: var(--warning-soft); color: var(--warning); }
 .badge-kept { background: var(--accent-soft); color: var(--accent-text); gap: 4px; }
 .badge-kept svg { font-size: 12px; fill: currentColor; }
 .run-prompt { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }

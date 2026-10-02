@@ -363,3 +363,145 @@ test("a run close to expiring says so, and Keep removes the warning and survives
   await expect(card(page, prompt).locator(".run-expiry")).toBeVisible();
   await expect(card(page, prompt).locator(".badge-kept")).toHaveCount(0);
 });
+
+const scaleRadio = (page: Page, percent: number): Locator => page.getByRole("radio", { name: `${percent}%`, exact: true });
+const optionsSummary = (page: Page): Locator => page.getByRole("button", { name: /^Options/ });
+
+test("the scale picker changes the size that is sent, shows it, and is remembered", async ({ page }) => {
+  // No useOptions here: it would re-apply its settings on the reload below and hide whether the scale is remembered.
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await clearHistory(page);
+  await expect(scaleRadio(page, 100)).toHaveAttribute("aria-checked", "true");
+  await expect(optionsSummary(page)).toContainText("2048×2048 · 40 steps"); // the page's own defaults: 1:1 preset, 40 steps
+
+  await scaleRadio(page, 25).click();
+  await expect(optionsSummary(page)).toContainText("512×512 (25%) · 40 steps");
+  const c = await generate(page, unique("a tiny lighthouse"));
+  await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(c.locator(".run-meta")).toContainText("512×512");
+
+  await page.reload();
+  await expect(scaleRadio(page, 25)).toHaveAttribute("aria-checked", "true"); // remembered with the other options
+  await expect(optionsSummary(page)).toContainText("512×512 (25%)");
+
+  await scaleRadio(page, 50).click(); // and 50% of 2048 is 1024
+  await expect(optionsSummary(page)).toContainText("1024×1024 (50%)");
+});
+
+test("a scale that would make the image too small is not offered", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, scale: 25 }); // FAST's custom 512 x 512
+  await page.goto("/");
+  await expect(scaleRadio(page, 25)).toBeDisabled();
+  await expect(scaleRadio(page, 25)).toHaveAttribute("title", /would be 128×128; each side must be at least 256/);
+  await expect(scaleRadio(page, 50)).toBeEnabled(); // exactly 256
+  await expect(scaleRadio(page, 50)).toHaveAttribute("aria-checked", "true"); // the nearest larger one stands in for the saved 25%
+  await expect(optionsSummary(page)).toContainText("256×256 (50%)");
+});
+
+test("Draft makes one small, quick run that is marked as a draft, and Reuse on it keeps your own settings", async ({ page }) => {
+  await useOptions(page, { aspect: "16:9", steps: 40, numImages: 4, scale: 100 });
+  await page.goto("/");
+  await clearHistory(page);
+  const draftButton = page.getByRole("button", { name: "Draft", exact: true });
+  await expect(draftButton).toBeDisabled(); // nothing to try yet
+  const prompt = unique("a lighthouse draft");
+  await promptBox(page).fill(prompt);
+  await draftButton.click();
+  const c = card(page, prompt).first();
+  await expect(c.locator(".badge-draft")).toHaveText("Draft");
+  await expect(c.locator(".badge").nth(1)).toBeVisible();
+  await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(c.locator(".run-meta")).toContainText("512×288 · 12 steps"); // the 16:9 shape, long side 512, at most 12 steps
+  await expect(c.locator(".thumb")).toHaveCount(1); // one image, though 4 per click were chosen
+  const { runs } = (await (await page.request.get("/api/runs?limit=5")).json()) as { runs: { options: Record<string, unknown>; prompt: string }[] };
+  expect(runs.find((r) => r.prompt === prompt)!.options).toMatchObject({ draft: true, num_images: 1, steps: 12, width: 512, height: 288 });
+
+  await c.getByRole("button", { name: "Reuse" }).click(); // brings the prompt back, not the draft's size and steps
+  await expect(promptBox(page)).toHaveValue(prompt);
+  await expect(optionsSummary(page)).toContainText("2752×1536 · 40 steps");
+  await expect(optionsSummary(page)).toContainText("4 images");
+  await expect(page.getByRole("status").filter({ hasText: "Your size, steps and seed are unchanged" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Generate", exact: true }).click(); // and Generate makes the full-size one
+  const full = card(page, prompt).first();
+  await expect(full.locator(".badge-draft")).toHaveCount(0);
+  await expect(full.locator(".run-meta")).toContainText("2752×1536");
+});
+
+test("Ctrl+Shift+Enter makes a draft and Ctrl+Enter generates", async ({ page }) => {
+  await useOptions(page, { aspect: "1:1", steps: 3 });
+  await page.goto("/");
+  await clearHistory(page);
+  const quick = unique("shortcut draft");
+  await promptBox(page).fill(quick);
+  await page.keyboard.press("Control+Shift+Enter");
+  await expect(card(page, quick).first().locator(".badge-draft")).toBeVisible();
+  const normal = unique("shortcut full");
+  await promptBox(page).fill(normal);
+  await page.keyboard.press("Control+Enter");
+  await expect(card(page, normal).first()).toBeVisible();
+  await expect(card(page, normal).first().locator(".badge-draft")).toHaveCount(0);
+});
+
+test("a draft goes ahead of waiting full-size runs", async ({ page }) => {
+  await useOptions(page, { steps: 100, numImages: 4 }); // each full run ~4 s: time for a queue to form
+  await page.goto("/");
+  await clearHistory(page);
+  const first = await generate(page, unique("running now"));
+  await expect(first.locator(".badge").first()).toHaveText("Generating", { timeout: 15_000 });
+  const second = await generate(page, unique("waits"));
+  await expect(second.locator(".badge").first()).toHaveText("Queued · #1");
+  const quick = unique("quick try");
+  await promptBox(page).fill(quick);
+  await page.getByRole("button", { name: "Draft", exact: true }).click();
+  const draft = card(page, quick).first();
+  await expect(draft.locator(".badge").first()).toHaveText("Queued · #1"); // ahead of the full-size run ...
+  await expect(second.locator(".badge").first()).toHaveText("Queued · #2"); // ... which moves down one place
+  await expect(draft.locator(".badge").first()).toHaveText("Done", { timeout: 30_000 });
+  await expect(second.locator(".badge").first()).not.toHaveText("Done"); // the draft finished first
+  // tidy up so the server can stop promptly
+  await second.getByRole("button", { name: "Cancel" }).click().catch(() => undefined);
+});
+
+test("every image has a thumbnail to download, on its card and in the viewer", async ({ page }) => {
+  await useOptions(page, { numImages: 2, steps: 3 });
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("two thumbnails");
+  const c = await generate(page, prompt);
+  await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await expect(c.getByRole("link", { name: "Thumbnail" })).toHaveCount(0); // two images: the viewer lets you choose
+  await c.getByRole("button", { name: /Open image 2 of 2/ }).click();
+  const link = page.getByRole("dialog").getByRole("link", { name: "Thumbnail" });
+  const href = (await link.getAttribute("href"))!;
+  expect(href).toMatch(/^\/api\/images\/[0-9a-f]{32}\/thumb\?download=1$/);
+  const response = await page.request.get(href);
+  expect(response.headers()["content-type"]).toBe("image/webp");
+  expect(response.headers()["content-disposition"]).toMatch(/filename="generate_two-thumbnails.*_thumb\.webp"/);
+  await page.keyboard.press("Escape");
+
+  const single = await generate(page, unique("one thumbnail"));
+  await expect(single.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await useOptions(page, { numImages: 1, steps: 3 });
+  await page.reload();
+  const one = await generate(page, unique("single image"));
+  await expect(one.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  const cardLink = one.getByRole("link", { name: "Thumbnail" });
+  await expect(cardLink).toHaveAttribute("href", /thumb\?download=1$/);
+  await expect(cardLink).toHaveAttribute("download", "");
+});
+
+test("phone width: the scale buttons and the size they give fit, and Draft and Generate sit together", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await useOptions(page, { aspect: "1:1", scale: 50 });
+  await page.goto("/");
+  for (const percent of [100, 75, 50, 25]) await expect(scaleRadio(page, percent)).toBeVisible();
+  await expect(page.locator(".scale-size")).toHaveText("1024×1024"); // the Options summary is hidden on a phone
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
+  const draft = await page.getByRole("button", { name: "Draft", exact: true }).boundingBox();
+  const generateBox = await page.getByRole("button", { name: "Generate", exact: true }).boundingBox();
+  expect(Math.abs(draft!.y - generateBox!.y)).toBeLessThan(4); // one row
+  expect(generateBox!.x + generateBox!.width).toBeLessThanOrEqual(360);
+});

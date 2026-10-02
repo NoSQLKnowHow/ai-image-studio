@@ -18,6 +18,7 @@ export const CAPS: Capabilities = {
     seed: { min: 0, max: 4294967295 },
     cfg_scale: { min: 0.1, max: 20 },
     size: { min: 256, max: 4096, multiple: 32, max_pixels: 4_500_000 },
+    draft: { long_side: 512, steps: 12 },
   },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },
