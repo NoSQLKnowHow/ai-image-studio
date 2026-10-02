@@ -616,7 +616,9 @@ test("when the server refuses or the queue is full, Regenerate larger says so an
   await regenerateButton(card(page, prompt)).click();
   await expect(page.getByRole("alert").filter({ hasText: "Couldn't regenerate: The full size must be larger than the run." })).toBeVisible();
   await regenerateButton(card(page, prompt)).click();
-  await expect(page.getByRole("alert").filter({ hasText: "The queue is full (3 jobs waiting)" })).toBeVisible();
+  const fullQueue = page.getByRole("alert").filter({ hasText: "The queue is full (3 jobs waiting)" });
+  await expect(fullQueue).toBeVisible();
+  await expect(fullQueue).not.toContainText("Couldn't regenerate"); // the server's own words, as for Generate
   await expect(card(page, prompt)).toHaveCount(1); // nothing was queued
   await expect(regenerateButton(card(page, prompt))).toBeEnabled();
 });
