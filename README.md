@@ -144,34 +144,59 @@ scripts/backup.sh ~/backups              # history, image and settings
 scripts/backup.sh --model ~/backups      # ... and the 31 GiB model too
 ```
 
-It creates a dated folder such as `~/backups/ai-image-studio-backup-20261002-143015/`:
+The result is **one file**, such as `~/backups/ai-image-studio-backup-20261002-143015.tar`, that you can
+copy anywhere: a NAS, an external drive, another machine. It is an ordinary tar file (not compressed as a
+whole, because what is inside already is), and any archive tool can open it. Inside:
 
-| File | What it is |
+| Piece | What it is |
 |---|---|
 | `data.tar.gz` | your history and images |
 | `image.tar.gz` | the Docker image, exactly as built (left out with `--no-image`) |
-| `env.backup` | your `.env`, readable only by you (left out with `--no-env`) |
+| `env.backup` | your `.env` (left out with `--no-env`) |
 | `model-cache.tar` | the model's files, only with `--model` |
-| `MANIFEST.txt`, `SHA256SUMS` | what was backed up (including the git commit and image id), and checksums that prove nothing was damaged |
+| `MANIFEST.txt`, `SHA256SUMS` | what was backed up (including the git commit and image id), and a checksum for every other piece |
 
 - **Downtime is a few seconds.** The database must be at rest to be copied consistently, so the studio
   is stopped while `./data` is packed and started again straight away. The image and the model are
   copied while it runs.
+- **It checks its own work.** Once the `.tar` is finished, the script reads it back and compares every
+  checksum. The file only gets its real name if that passes, so a `.tar` you can see is a good one.
+  (`--no-verify` skips this to save time.)
 - **It won't cut off your work.** If a picture is being generated or jobs are waiting, the script says
   so and stops (exit code 3). Try again later, or add `--interrupt` to go ahead anyway.
-- **It cleans up after itself.** If a backup fails part-way, the studio is started again and the
-  half-written folder is removed.
+- **It cleans up after itself.** If a backup fails part-way, the studio is started again and nothing
+  half-written is left behind.
+- **Disk space:** the destination needs room for the backup plus, briefly, a copy of its biggest piece.
+  Without `--model` the backup is about the size of the compressed Docker image: roughly 10 GB, since
+  NVIDIA's base image alone is an 8.3 GiB compressed download. The model adds about 31 GiB.
 - `--dry-run` shows what would happen and changes nothing, a good first run. `--keep N` deletes the
   oldest backups afterwards, keeping the newest N. `--yes` stops it asking questions. `--help` lists
   everything.
 
+**Copy it to your NAS**, then check the copy:
+
+```bash
+cp ~/backups/ai-image-studio-backup-20261002-143015.tar /mnt/nas/backups/       # a mounted share
+# or: rsync -ah --progress ~/backups/ai-image-studio-backup-20261002-143015.tar user@nas:/volume1/backups/
+
+scripts/restore.sh --verify /mnt/nas/backups/ai-image-studio-backup-20261002-143015.tar
+```
+
+`--verify` reads the whole file and checks every checksum, changes nothing, and needs no Docker, so it
+also works on another Linux machine that has these scripts. It prints "This backup is intact" or says
+which piece is damaged. Do this before you delete the original: a copy that stopped half way, or was
+damaged on the way, is exactly what it catches.
+
 **Restore:**
 
 ```bash
-scripts/restore.sh ~/backups/ai-image-studio-backup-20261002-143015
+scripts/restore.sh /mnt/nas/backups/ai-image-studio-backup-20261002-143015.tar
 ```
 
-- It first checks the backup's checksums, and inspects the archives before unpacking anything.
+- The `.tar` is read where it is: nothing is unpacked to a temporary place first. From a NAS share it
+  reads the file twice (once to check it, once to restore), so on a slow link it is quicker to copy it
+  back to the Spark first.
+- It checks the checksums first, and inspects the archives before unpacking anything.
 - **It never deletes anything.** If `./data` already has files in it, the restore is refused. Add
   `--force` and the current folder is moved aside to `data.before-restore-<time>` instead, and the same
   goes for `.env` and the model folder. Delete those yourself when you are sure.
@@ -186,10 +211,10 @@ scripts/restore.sh ~/backups/ai-image-studio-backup-20261002-143015
 
 **Worth knowing**
 
-- **The backup folder can contain your Hugging Face token** (in `env.backup`). Keep it private, or leave
-  it out with `--no-env`.
-- **Copy it to another machine.** A backup on the same disk won't survive that disk failing:
-  `rsync -a ~/backups/ai-image-studio-backup-20261002-143015 user@other-host:backups/`
+- **The `.tar` can contain your Hugging Face token** (in `.env`). The script makes it readable only by you,
+  but a copy on a NAS has whatever permissions the NAS gives it. Keep it private, or leave the token out
+  with `--no-env`.
+- **A backup on the same disk won't survive that disk failing.** That is what the NAS copy is for.
 - **Going back after an upgrade needs the data too.** Later versions change the database's layout
   (version 2 does), and the studio refuses to open a database newer than it understands. To go back,
   restore the image *and* the data from a backup made before the upgrade. Take one before every upgrade.
@@ -201,9 +226,18 @@ scripts/restore.sh ~/backups/ai-image-studio-backup-20261002-143015
   Run the command by hand first to be sure it works on your machine.
 
 <details>
-<summary>Doing it by hand, without the scripts</summary>
+<summary>Looking inside the .tar, or doing it by hand, without the scripts</summary>
 
-Run these in the repo folder, as your normal user. `BK` is where the backup goes.
+The `.tar` is a plain tar file, so on any computer (including the NAS, if it has a shell):
+
+```bash
+tar -tf ai-image-studio-backup-20261002-143015.tar                  # list what is inside
+mkdir unpacked && tar -xf ai-image-studio-backup-20261002-143015.tar -C unpacked
+(cd unpacked && sha256sum -c SHA256SUMS)                           # every line should say OK
+```
+
+To make a backup without the scripts, run these in the repo folder, as your normal user. `BK` is where
+the pieces go; the last line packs them into one file:
 
 ```bash
 BK=~/backups/ai-image-studio-$(date +%Y%m%d); mkdir -p "$BK"
@@ -215,9 +249,11 @@ tar -czf "$BK/data.tar.gz" data                       # your history and images
 docker compose start
 docker save ai-image-studio:local | gzip > "$BK/image.tar.gz"
 tar -cf "$BK/model-cache.tar" -C ~/.cache/huggingface hub/models--Qwen--Qwen-Image-2.1   # optional
+
+tar -cf "$BK.tar" -C "$BK" .                          # one file (restore.sh won't read this one: it needs the manifest)
 ```
 
-To restore:
+To restore by hand:
 
 ```bash
 docker compose stop
