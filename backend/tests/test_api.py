@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sqlite3
 
 from PIL import Image
@@ -95,6 +96,18 @@ def test_delete_removes_run_and_files(client, tmp_path):
     assert not image_dir.exists() and not (tmp_path / "data" / "thumbs" / run["id"]).exists()
     assert client.get(f"/api/runs/{run['id']}").status_code == 404
     assert client.get(run["images"][0]["url"]).status_code == 404
+
+
+def test_image_whose_file_vanished_is_a_404_not_a_500(client, tmp_path):
+    """A delete can land between the database lookup and reading the file (the UI fetches
+    thumbnails while a run is deleted from another tab): that's just a missing image."""
+    run = wait_for(client, create_run(client)["id"])
+    image = run["images"][0]
+    for folder in ("images", "thumbs"):
+        shutil.rmtree(tmp_path / "data" / folder / run["id"])  # the rows are still there
+    for url in (image["url"], image["thumb_url"], image["download_url"]):
+        response = client.get(url)
+        assert response.status_code == 404 and response.json()["code"] == "not_found", url
 
 
 def test_queue_order_positions_cap_and_conflicts(client_factory):

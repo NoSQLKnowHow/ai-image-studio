@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
@@ -28,6 +28,7 @@ log = logging.getLogger("studio.api")
 
 HEARTBEAT_SECONDS = 15.0  # keep-alive comment on idle event streams (stops proxies closing them)
 POLL_SECONDS = 1.0  # how quickly an idle event stream notices that the server is shutting down
+HELLO_RUNS = 20  # newest runs in the event stream's opening snapshot (older pages: GET /api/runs)
 IMMUTABLE = "private, max-age=31536000, immutable"
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"  # dev checkout
 
@@ -92,6 +93,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def jobs_of(request: Request) -> JobManager:
         return request.app.state.jobs
 
+    def runs_page(request: Request, limit: int, before: Optional[str] = None) -> dict[str, Any]:
+        """One page of runs, newest first. Raises KeyError for an unknown `before` cursor."""
+        rows, has_more = request.app.state.db.list_runs(limit, before)
+        runs = jobs_of(request).payloads(rows)
+        return {"runs": runs, "next_before": runs[-1]["id"] if has_more and runs else None}
+
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
         return {"ok": True, "version": __version__}
@@ -144,11 +151,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         before: Optional[str] = Query(None),
     ) -> Any:
         try:
-            rows, has_more = request.app.state.db.list_runs(limit, before)
+            return runs_page(request, limit, before)
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
-        runs = jobs_of(request).payloads(rows)
-        return {"runs": runs, "next_before": runs[-1]["id"] if has_more and runs else None}
 
     @app.get("/api/runs/{run_id}")
     async def get_run(run_id: str, request: Request) -> Any:
@@ -166,7 +171,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _error(409, str(exc), "run_active")
         return Response(status_code=204)
 
-    def _image_file(request: Request, image_id: str, thumb: bool) -> Any:
+    async def _image_file(request: Request, image_id: str, thumb: bool) -> tuple[Any, Optional[bytes]]:
+        """(image row, file contents), or (None, None) when there's no such image.
+
+        Read whole, up front: a run deleted while its images are being fetched (the UI loads
+        thumbnails as runs appear, and deletes can come from another tab) then gives a clean 404
+        instead of a 500 or a response cut short after its headers. Files are at most a few MB."""
         db: Database = request.app.state.db
         storage: Storage = request.app.state.storage
         image = db.get_image(image_id)
@@ -174,14 +184,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if rel is None:
             return None, None
         try:
-            path = storage.abs(rel)
-        except StorageError:
+            data = await asyncio.to_thread(storage.abs(rel).read_bytes)
+        except (StorageError, FileNotFoundError, IsADirectoryError):
             return None, None
-        return (image, path) if path.is_file() else (None, None)
+        return image, data
 
     @app.get("/api/images/{image_id}")
     async def get_image(image_id: str, request: Request, download: bool = False) -> Any:
-        image, path = _image_file(request, image_id, thumb=False)
+        image, data = await _image_file(request, image_id, thumb=False)
         if image is None:
             return _error(404, "Image not found.", "not_found")
         headers = {"Cache-Control": IMMUTABLE}
@@ -193,14 +203,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                     seed=image["seed"], created_at=parse_ts(run["created_at"]), transparent=bool(run["transparent"]),
                 )
                 headers["Content-Disposition"] = content_disposition(name)
-        return FileResponse(path, media_type="image/png", headers=headers)
+        return Response(data, media_type="image/png", headers=headers)
 
     @app.get("/api/images/{image_id}/thumb")
     async def get_thumb(image_id: str, request: Request) -> Any:
-        image, path = _image_file(request, image_id, thumb=True)
+        image, data = await _image_file(request, image_id, thumb=True)
         if image is None:
             return _error(404, "Thumbnail not found.", "not_found")
-        return FileResponse(path, media_type="image/webp", headers={"Cache-Control": IMMUTABLE})
+        return Response(data, media_type="image/webp", headers={"Cache-Control": IMMUTABLE})
 
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:
@@ -212,7 +222,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             loop = asyncio.get_running_loop()
             try:
                 yield "retry: 3000\n\n"
-                yield format_sse("hello", jobs.status())
+                # The snapshot is read after subscribing, so every later change arrives as an event
+                # after it: the client can take it as the truth and apply what follows on top.
+                yield format_sse("hello", {"status": jobs.status(), "runs": runs_page(request, HELLO_RUNS)})
                 last_ping = loop.time()
                 while True:
                     if server_stopping(request.app):

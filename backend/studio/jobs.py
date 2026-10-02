@@ -375,6 +375,8 @@ class JobManager:
 
     def _finish(self, run_id: str, status: str, error: Optional[str] = None, hint: Optional[str] = None) -> None:
         self.db.finish_run(run_id, status, utcnow(), error, hint)
+        if status == "failed":
+            log.warning("run %s failed: %s", run_id, error)
         self._progress.pop(run_id, None)
         if self._current == run_id:
             self._current = None
