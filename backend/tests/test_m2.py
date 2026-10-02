@@ -122,3 +122,17 @@ def test_built_ui_is_served_alongside_the_api(client_factory, ui_dir):
     assert client.get("/theme-init.js").status_code == 200
     assert client.get("/api/health").json()["ok"] is True  # API routes win over the UI mount
     assert client.get("/nope.js").status_code == 404
+
+
+def test_the_page_is_always_revalidated_and_hashed_assets_are_cached_for_good(client_factory, ui_dir):
+    """After a rebuild the browser must pick up the new index.html at once; the hashed files it names never change."""
+    client = client_factory(static_dir=ui_dir)
+    page = client.get("/")
+    assert page.headers["cache-control"] == "no-cache"
+    assert client.get("/theme-init.js").headers["cache-control"] == "no-cache"  # not hashed, so not cached blindly
+    asset = client.get("/assets/app-123.js")
+    assert "immutable" in asset.headers["cache-control"] and "max-age=31536000" in asset.headers["cache-control"]
+    # revalidating costs a 304, which must keep saying so (a 304 without the header lets the browser guess)
+    again = client.get("/", headers={"If-None-Match": page.headers["etag"]})
+    assert again.status_code == 304 and again.headers["cache-control"] == "no-cache"
+    assert "immutable" not in client.get("/api/health").headers.get("cache-control", "")  # the API is never cached for good

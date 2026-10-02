@@ -75,6 +75,17 @@ test("loads cleanly and explains the model state", async ({ page }) => {
   await expect(page.getByRole("radio", { name: /Edit/ })).toBeDisabled(); // arrives in M5
 });
 
+test("the title and the tab show the version the server is running", async ({ page }) => {
+  const { version } = (await (await page.request.get("/api/health")).json()) as { version: string };
+  expect(version).toMatch(/^\d+\.\d+/);
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "AI Image Studio" })).toHaveText(`AI Image Studio v${version}`);
+  await expect(page).toHaveTitle(`AI Image Studio v${version}`);
+  // index.html is revalidated on every load, so a rebuilt page can't hide behind the browser's cache
+  const html = await page.request.get("/");
+  expect(html.headers()["cache-control"]).toBe("no-cache");
+});
+
 test("theme follows the system by default, cycles, and persists without a flash", async ({ page }) => {
   await page.goto("/");
   const toggle = page.getByRole("button", { name: /^Theme:/ });
@@ -221,6 +232,14 @@ test("phone width: no sideways scrolling, and Options is a bottom sheet", async 
   await page.setViewportSize({ width: 360, height: 740 });
   await useOptions(page);
   await page.goto("/");
+  // the title and its version are never overlapped by the status pill (the pill gives way, with an ellipsis)
+  await expect(page.getByRole("heading", { name: /^AI Image Studio v\d/ })).toBeVisible();
+  const gap = await page.evaluate(() => {
+    const title = document.querySelector(".brand h1")!.getBoundingClientRect(); // the text, not its (shrinkable) container
+    const pill = document.querySelector(".pill-wrap")!.getBoundingClientRect();
+    return pill.left - title.right;
+  });
+  expect(gap).toBeGreaterThanOrEqual(0);
   const c = await generate(page, unique("a very long prompt " + "with many words ".repeat(30)));
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);

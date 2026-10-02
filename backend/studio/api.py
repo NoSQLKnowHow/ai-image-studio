@@ -12,6 +12,7 @@ from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel, ConfigDict
 from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.types import Scope
 
 from . import __version__
 from . import presets as P
@@ -32,6 +33,18 @@ POLL_SECONDS = 1.0  # how quickly an idle event stream notices that the server i
 HELLO_RUNS = 20  # newest runs in the event stream's opening snapshot (older pages: GET /api/runs)
 IMMUTABLE = "private, max-age=31536000, immutable"
 DEFAULT_STATIC_DIR = Path(__file__).resolve().parents[2] / "frontend" / "dist"  # dev checkout
+
+
+class UiFiles(StaticFiles):
+    """The built web page. Vite names everything under assets/ by a hash of its contents, so those files
+    can be cached for good; index.html (which names them) must be revalidated on every load, or a
+    browser can keep showing an old page for a while after the studio has been rebuilt."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        if response.status_code in (200, 304):
+            response.headers["Cache-Control"] = IMMUTABLE if path.startswith("assets/") else "no-cache"
+        return response
 
 
 def server_stopping(app: FastAPI) -> bool:
@@ -283,7 +296,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     static_dir = settings.static_dir or DEFAULT_STATIC_DIR
     if (static_dir / "index.html").is_file():
         # Registered last, so every /api route above takes precedence.
-        app.mount("/", StaticFiles(directory=static_dir, html=True), name="ui")
+        app.mount("/", UiFiles(directory=static_dir, html=True), name="ui")
         log.info("serving the web UI from %s", static_dir)
     else:
         if settings.static_dir is not None:

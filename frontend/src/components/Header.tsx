@@ -48,7 +48,7 @@ function ModelPill({ status, now }: { status: Status | null; now: number }) {
       <button type="button" className={`pill pill-${w.state}`} aria-expanded={open} aria-controls="model-details"
         onClick={() => setOpen((o) => !o)}>
         <span className="dot" aria-hidden="true" />
-        <span>{LABELS[w.state]}</span>
+        <span className="pill-label">{LABELS[w.state]}</span>
         {until && <span className="pill-sub">· unloads in {until}</span>}
       </button>
       {open && (
@@ -112,7 +112,10 @@ export function Header({ status, now }: { status: Status | null; now: number }) 
       <div className="header-inner">
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><SparkleIcon /></span>
-          <h1>AI Image Studio</h1>
+          <h1>
+            AI Image Studio
+            {status && <span className="brand-version"> v{status.version}</span>}
+          </h1>
         </div>
         <div className="header-right">
           <ModelPill status={status} now={now} />

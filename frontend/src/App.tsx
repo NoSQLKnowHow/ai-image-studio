@@ -45,6 +45,12 @@ export default function App() {
   const now = useNow(30_000);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const { caps, status } = state;
+  const version = status?.version;
+
+  // The tab says which build the server is running, too.
+  useEffect(() => {
+    document.title = version ? `AI Image Studio v${version}` : "AI Image Studio";
+  }, [version]);
 
   const start = useCallback(async () => {
     setStartupError(null);
