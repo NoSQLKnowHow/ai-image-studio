@@ -103,7 +103,7 @@ export const PromptBar = forwardRef<HTMLTextAreaElement, Props>(function PromptB
         onChange={(e) => onPrompt(e.target.value)}
         onFocus={onPromptFocus}
         onPaste={(e) => {
-          const pictures = Array.from(e.clipboardData.files).filter((file) => file.type.startsWith("image/"));
+          const pictures = Array.from(e.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
           if (!pictures.length) return; // ordinary text pastes as always
           e.preventDefault();
           onFiles(pictures);
