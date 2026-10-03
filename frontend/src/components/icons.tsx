@@ -30,6 +30,8 @@ export const EditIcon = () => <Icon><path d="M4 20h4L19 9l-4-4L4 16z" /><path d=
 export const DraftIcon = () => <Icon><path d="M13 3L5 14h6l-1 7 8-11h-6z" /></Icon>;
 export const EnlargeIcon = () => <Icon><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7" /></Icon>;
 export const UpscaleIcon = () => <Icon><rect x="3" y="11" width="10" height="10" rx="1.5" /><path d="M13 3h8v8M21 3l-8 8" /></Icon>;
+export const PlusIcon = () => <Icon><path d="M12 5v14M5 12h14" /></Icon>;
+export const GripIcon = () => <Icon><circle cx="9" cy="6" r="1.2" fill="currentColor" /><circle cx="15" cy="6" r="1.2" fill="currentColor" /><circle cx="9" cy="12" r="1.2" fill="currentColor" /><circle cx="15" cy="12" r="1.2" fill="currentColor" /><circle cx="9" cy="18" r="1.2" fill="currentColor" /><circle cx="15" cy="18" r="1.2" fill="currentColor" /></Icon>;
 export const StopIcon = () => <Icon><rect x="6" y="6" width="12" height="12" rx="2" /></Icon>;
 export const PinIcon = () => <Icon><path d="M7 4h10v17l-5-4-5 4z" /></Icon>;
 export const ChevronLeft = () => <Icon><path d="M15 6l-6 6 6 6" /></Icon>;

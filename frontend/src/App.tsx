@@ -6,13 +6,16 @@ import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { OptionsDrawer } from "./components/OptionsDrawer";
 import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
+import { Tray } from "./components/Tray";
 import { copyText, useNow, useToasts } from "./hooks";
 import {
   PROMPT_KEY,
   browserStore,
+  buildEditRequest,
   buildRequest,
   defaultOptions,
   draftRequest,
+  isAutoSize,
   largerRequest,
   loadOptions,
   optionsFromRun,
@@ -23,8 +26,11 @@ import {
   type Scale,
 } from "./options";
 import { initialState, reducer } from "./store";
+import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
 import type { CreateRunBody, ImageInfo, Run } from "./types";
 import { useEventStream } from "./useEvents";
+import { useTray } from "./useTray";
+import { viewerItems, viewerKnown } from "./viewer";
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -51,7 +57,9 @@ export default function App() {
   const { toasts, push, dismiss } = useToasts();
   const now = useNow(30_000);
   const promptRef = useRef<HTMLTextAreaElement>(null);
+  const caretKnown = useRef(false); // the prompt has been focused at least once, so its caret means something
   const { caps, status } = state;
+  const tray = useTray(caps);
   const version = status?.version;
 
   // The tab says which build the server is running, too.
@@ -84,32 +92,60 @@ export default function App() {
   useEffect(() => {
     if (options) saveOptions(options, store);
   }, [options, store]);
+  // A picture dropped anywhere but the prompt card would make the browser open it and leave the page.
+  useEffect(() => {
+    const stop = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", stop);
+    window.addEventListener("drop", stop);
+    return () => {
+      window.removeEventListener("dragover", stop);
+      window.removeEventListener("drop", stop);
+    };
+  }, []);
   useEffect(() => {
     store.set(PROMPT_KEY, prompt);
   }, [prompt, store]);
 
   const send = useCallback(async (build: (prompt: string, options: Options, caps: NonNullable<typeof state.caps>) => CreateRunBody) => {
-    if (!caps || !options || !prompt.trim() || submitting) return;
+    if (!caps || !options || !prompt.trim() || submitting) return null;
     const problem = optionsProblem(options, caps);
     if (problem) {
       setFormProblem(`Check the options: ${problem}`);
       setOptionsOpen(true);
-      return;
+      return null;
     }
     setSubmitting(true);
     setFormProblem(null);
     try {
-      dispatch({ type: "runUpsert", run: await api.createRun(build(prompt, options, caps)) });
+      const run = await api.createRun(build(prompt, options, caps));
+      dispatch({ type: "runUpsert", run });
+      return run;
     } catch (error) {
       const err = error as ApiError;
       if (err.status === 422) setFormProblem(err.message);
       else push("error", err.status === 429 ? err.message : `Couldn't start the run: ${err.message}`);
+      return null;
     } finally {
       setSubmitting(false);
     }
   }, [caps, options, prompt, submitting, push]);
 
-  const submit = useCallback(() => send(buildRequest), [send]);
+  // Generate sends the size and scale; Edit sends the tray's images in order. Once an edit is sent the server owns
+  // copies of them, so the tray now points at those and stays usable for the next try.
+  const submit = async () => {
+    if (!options) return;
+    if (options.mode !== "edit") {
+      await send(buildRequest);
+      return;
+    }
+    if (submitBlock(tray.items)) return;
+    const inputs = inputRefs(tray.items);
+    const shapeFrom = shapeFromForRequest(tray.items, tray.shapeKey);
+    const run = await send((text, chosen, capabilities) => buildEditRequest(text, chosen, capabilities, inputs, shapeFrom));
+    if (run) tray.adoptRun(run);
+  };
   const submitDraft = useCallback(() => send(draftRequest), [send]);
 
   // A "check the options" message is stale as soon as the options change.
@@ -123,9 +159,18 @@ export default function App() {
     setPrompt(run.prompt);
     setOptions(optionsFromRun(run, caps, options));
     setFormProblem(null);
-    push("info", run.options.draft
+    let message = run.options.draft
       ? "Loaded the prompt. Your size, steps and seed are unchanged, so Generate makes the full-size image."
-      : `Loaded the prompt and options. Seed locked to ${run.options.seed}.`);
+      : `Loaded the prompt and options. Seed locked to ${run.options.seed}.`;
+    if (run.mode === "edit" && caps.modes.includes("edit")) {
+      // An edit comes back with its images, in order, copied into a fresh tray (they stay with the original run too).
+      const sources = viewerItems(run).filter((item) => item.kind === "source").map((item) => viewerKnown(run, item));
+      const outcome = tray.replaceWith(sources);
+      tray.setShapeKey(run.options.shape_from ? outcome.keys[run.options.shape_from - 1] ?? null : null);
+      message = `Loaded the prompt, options and ${outcome.added} ${outcome.added === 1 ? "image" : "images"}. Seed locked to ${run.options.seed}.`
+        + (outcome.skipped ? ` ${outcome.skipped} did not fit: one edit takes at most ${tray.cap}.` : "");
+    }
+    push("info", message);
     window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
     promptRef.current?.focus({ preventScroll: true });
   };
@@ -146,6 +191,62 @@ export default function App() {
         tell("error", err.status === 429 ? err.message : `Couldn't regenerate: ${err.message}`);
       }
     });
+
+  /** Edit this: add a picture the server already has to the tray, and switch to Edit. From the viewer a refusal is
+   *  shown inside it (§24.2). Returns whether the picture was added. */
+  const editThis = (image: KnownImage, fromViewer: boolean): boolean => {
+    if (!caps?.modes.includes("edit") || !options) return false;
+    if (tray.room === 0) {
+      const text = `One edit takes at most ${tray.cap} images. Remove one from the tray first.`;
+      if (fromViewer) setLightbox((current) => (current ? { ...current, notice: { kind: "error", text } } : current));
+      else push("error", text);
+      return false;
+    }
+    const n = tray.items.length + 1;
+    tray.addKnown([image]);
+    setOptions({ ...options, mode: "edit" });
+    setFormProblem(null);
+    setLightbox(null);
+    push("info", `Added as image ${n}. Describe the change, or add more pictures.`);
+    window.scrollTo({ top: 0, behavior: prefersReducedMotion() ? "auto" : "smooth" });
+    promptRef.current?.focus({ preventScroll: true });
+    return true;
+  };
+
+  /** Put "image N" in the prompt at the caret (at the end if the prompt has never been focused). */
+  const insertImageRef = (position: number) => {
+    const box = promptRef.current;
+    const from = caretKnown.current && box ? box.selectionStart : prompt.length;
+    const to = caretKnown.current && box ? box.selectionEnd : prompt.length;
+    const result = insertReference(prompt, from, to, position, caps?.limits.prompt_chars);
+    if (!result) {
+      push("error", "The prompt is too long to add that.");
+      return;
+    }
+    setPrompt(result.text);
+    setFormProblem(null);
+    requestAnimationFrame(() => {
+      box?.focus({ preventScroll: true });
+      box?.setSelectionRange(result.caret, result.caret);
+    });
+  };
+
+  /** Pictures dropped on the prompt card or pasted into the prompt. Generate has no use for them. */
+  const handleFiles = (files: File[]) => {
+    if (!caps || !options || files.length === 0) return;
+    if (options.mode !== "edit") {
+      push("info", caps.modes.includes("edit") ? "Switch to Edit to work with pictures." : "Editing isn't available.");
+      return;
+    }
+    tray.addFiles(files);
+  };
+
+  const applyStarter = () => {
+    if (!options || prompt.trim()) return;
+    setPrompt("Extract the main subject of image 1.");
+    changeOptions({ ...options, transparent: true });
+    push("info", "Prompt filled in, and Transparent is on.");
+  };
 
   const retry = async (run: Run) => {
     try {
@@ -245,6 +346,9 @@ export default function App() {
   }
 
   const lightboxRun = lightbox ? state.runs[lightbox.runId] ?? null : null;
+  const canEdit = !!caps?.modes.includes("edit");
+  const editing = options?.mode === "edit";
+  const cost = caps && options ? editCost(tray.items.length, options.resolution, caps.limits.edit_warn_units) : null;
 
   return (
     <>
@@ -263,6 +367,32 @@ export default function App() {
               prompt={prompt}
               submitting={submitting}
               problem={formProblem}
+              tray={
+                <Tray
+                  items={tray.items}
+                  cap={tray.cap}
+                  notes={tray.notes}
+                  announcement={tray.announcement}
+                  showShape={isAutoSize(options)}
+                  followed={followedPosition(tray.items, tray.shapeKey)}
+                  heavy={cost?.heavy ? `This edit is heavy (${cost.label}): expect a long run, or running out of memory. Use 1K or fewer images.` : null}
+                  onAdd={(files) => void tray.addFiles(files)}
+                  onRemove={tray.remove}
+                  onMoveBy={tray.moveBy}
+                  onMoveTo={tray.moveTo}
+                  onInsert={insertImageRef}
+                  onShape={tray.setShapeKey}
+                  onMissing={tray.markMissing}
+                  onDismissNote={tray.dismissNote}
+                />
+              }
+              blockReason={editing ? submitBlock(tray.items) : null}
+              starterAvailable={!prompt.trim()}
+              onFiles={handleFiles}
+              onStarter={applyStarter}
+              onPromptFocus={() => {
+                caretKnown.current = true;
+              }}
               onPrompt={(text) => {
                 setPrompt(text);
                 if (formProblem) setFormProblem(null);
@@ -291,8 +421,13 @@ export default function App() {
                       run={run}
                       now={now}
                       workerState={status?.worker.state ?? null}
+                      canEdit={canEdit}
                       onReuse={() => reuse(run)}
                       onRegenerateLarger={() => void regenerateLarger(run)}
+                      onEditThis={() => {
+                        const result = viewerItems(run).find((item) => item.kind === "result");
+                        if (result) editThis(viewerKnown(run, result), false);
+                      }}
                       onRetry={() => void retry(run)}
                       onCancel={() => requestCancel(run)}
                       onToggleKeep={() => void toggleKeep(run)}
@@ -314,6 +449,8 @@ export default function App() {
               onOpenChange={setOptionsOpen}
               caps={caps}
               options={options}
+              trayCount={tray.items.length}
+              hasAlphaInput={tray.items.some((item) => item.hasAlpha)}
               onChange={changeOptions}
               onReset={() => changeOptions(defaultOptions(caps))}
             />
@@ -324,6 +461,8 @@ export default function App() {
         run={lightboxRun}
         index={lightbox?.index ?? 0}
         notice={lightbox?.notice ?? null}
+        canEdit={canEdit}
+        onEditThis={(image) => editThis(image, true)}
         onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
         onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}
         onClose={() => setLightbox(null)}

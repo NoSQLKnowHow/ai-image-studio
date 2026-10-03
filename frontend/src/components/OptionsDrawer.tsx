@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import type { ReactNode } from "react";
-import { CUSTOM, DEFAULT_GUIDANCE, randomSeed, sizeProblem, type Options } from "../options";
+import { AUTO, CUSTOM, DEFAULT_GUIDANCE, randomSeed, resolutionLabel, sizeKey, sizeProblem, type Options } from "../options";
+import { editCost } from "../tray";
 import type { Capabilities } from "../types";
 import { useReturnFocus } from "../hooks";
 import { NumberField } from "./NumberField";
@@ -11,6 +12,8 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   caps: Capabilities;
   options: Options;
+  trayCount: number; // images in the tray, for the cost of an edit
+  hasAlphaInput: boolean; // one of them has transparency
   onChange: (options: Options) => void;
   onReset: () => void;
 }
@@ -24,11 +27,15 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   );
 }
 
-export function OptionsDrawer({ open, onOpenChange, caps, options, onChange, onReset }: Props) {
+export function OptionsDrawer({ open, onOpenChange, caps, options, trayCount, hasAlphaInput, onChange, onReset }: Props) {
   const set = <K extends keyof Options>(key: K, value: Options[K]) => onChange({ ...options, [key]: value });
   const { limits, supports } = caps;
   const { props: returnFocus } = useReturnFocus();
-  const customProblem = options.aspect === CUSTOM ? sizeProblem(options.customWidth, options.customHeight, caps) : null;
+  const editing = options.mode === "edit";
+  const key = sizeKey(options); // Edit has its own size choice (it can be Auto), Generate has its own
+  const setSize = (name: string) => set(editing ? "editAspect" : "aspect", name);
+  const customProblem = key === CUSTOM ? sizeProblem(options.customWidth, options.customHeight, caps) : null;
+  const cost = editCost(trayCount, options.resolution, limits.edit_warn_units);
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -43,22 +50,35 @@ export function OptionsDrawer({ open, onOpenChange, caps, options, onChange, onR
           <div className="drawer-body">
             <Section title="Size">
               <div className="preset-grid" role="radiogroup" aria-label="Image size">
+                {editing && (
+                  <button type="button" role="radio" aria-checked={key === AUTO} className="preset" onClick={() => setSize(AUTO)}>
+                    <span className="preset-shape auto" aria-hidden="true" />
+                    <span className="preset-name">Auto</span>
+                    <span className="preset-size">from your images</span>
+                  </button>
+                )}
                 {Object.entries(caps.aspect_ratios).map(([name, [w, h]]) => (
-                  <button key={name} type="button" role="radio" aria-checked={options.aspect === name}
-                    aria-label={`${name}, ${w} by ${h}`} className="preset" onClick={() => set("aspect", name)}>
+                  <button key={name} type="button" role="radio" aria-checked={key === name}
+                    aria-label={`${name}, ${w} by ${h}`} className="preset" onClick={() => setSize(name)}>
                     <span className="preset-shape" style={{ aspectRatio: `${w} / ${h}` }} aria-hidden="true" />
                     <span className="preset-name">{name}</span>
                     <span className="preset-size">{w}×{h}</span>
                   </button>
                 ))}
-                <button type="button" role="radio" aria-checked={options.aspect === CUSTOM} className="preset"
-                  onClick={() => set("aspect", CUSTOM)}>
+                <button type="button" role="radio" aria-checked={key === CUSTOM} className="preset"
+                  onClick={() => setSize(CUSTOM)}>
                   <span className="preset-shape custom" aria-hidden="true" />
                   <span className="preset-name">Custom</span>
                   <span className="preset-size">your size</span>
                 </button>
               </div>
-              {options.aspect === CUSTOM && (
+              {editing && key === AUTO && (
+                <p className="field-hint">
+                  Auto lets the model size the result from your images: about 1 megapixel at 1K, about 4 at 2K. With several images it
+                  follows one of them (the tray says which). Any other size overrides the shape, not the resolution.
+                </p>
+              )}
+              {key === CUSTOM && (
                 <>
                   <div className="field-row">
                     <NumberField label="Width" value={options.customWidth} min={limits.size.min} max={limits.size.max}
@@ -72,6 +92,27 @@ export function OptionsDrawer({ open, onOpenChange, caps, options, onChange, onR
                 </>
               )}
             </Section>
+
+            {editing && (
+              <Section title="Resolution">
+                <div className="segmented" role="radiogroup" aria-label="Edit resolution">
+                  {limits.resolutions.map((value) => (
+                    <button key={value} type="button" role="radio" aria-checked={options.resolution === value}
+                      onClick={() => set("resolution", value as Options["resolution"])}>
+                      {resolutionLabel(value)}
+                    </button>
+                  ))}
+                </div>
+                <p className="field-hint">
+                  1K is about 1 megapixel and quicker. 2K is about 4 and costs far more with several images. It sizes every image you add, not
+                  only the result.
+                </p>
+                <p className={cost.heavy ? "field-error" : "field-hint"} data-testid="edit-cost" role={cost.heavy ? "alert" : undefined}>
+                  Cost: {cost.label} ({trayCount} {trayCount === 1 ? "image" : "images"} at {resolutionLabel(options.resolution)}).
+                  {cost.heavy ? " This edit is heavy: expect a long run, or running out of memory. Use 1K or fewer images." : ""}
+                </p>
+              </Section>
+            )}
 
             <Section title="Sampling">
               <div className="field">
@@ -123,7 +164,7 @@ export function OptionsDrawer({ open, onOpenChange, caps, options, onChange, onR
             <Section title="Output">
               <NumberField label="Images per click" value={options.numImages} min={limits.num_images.min}
                 max={limits.num_images.max} hint="Each extra image uses the next seed." onChange={(v) => set("numImages", v)} />
-              {options.mode === "generate" && supports.transparent && (
+              {supports.transparent && (
                 <div className="field">
                   <label className="choice switch">
                     <input type="checkbox" role="switch" checked={options.transparent}
@@ -131,6 +172,11 @@ export function OptionsDrawer({ open, onOpenChange, caps, options, onChange, onR
                     Transparent background
                   </label>
                   <p className="field-hint">Uses the model card's RGBA prompt format and saves a PNG with an alpha channel.</p>
+                  {editing && hasAlphaInput && (
+                    <p className="field-hint" data-testid="alpha-hint">
+                      One of your images has transparency, and it is kept as it is. Turn this on only if you want the result to be transparent too.
+                    </p>
+                  )}
                 </div>
               )}
             </Section>

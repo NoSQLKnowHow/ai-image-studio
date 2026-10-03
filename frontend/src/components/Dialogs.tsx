@@ -2,8 +2,10 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect } from "react";
 import { useReturnFocus } from "../hooks";
 import { largerTarget } from "../options";
+import type { KnownImage } from "../tray";
 import type { ImageInfo, Run } from "../types";
-import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EnlargeIcon } from "./icons";
+import { viewerItems, viewerKnown, viewerTitle } from "../viewer";
+import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EditIcon, EnlargeIcon } from "./icons";
 
 /** What the viewer says about a request made from it. The page behind a modal, toasts included, is hidden from
  *  screen readers, so the answer is shown inside the viewer instead (DESIGN.md §24.2). */
@@ -12,19 +14,21 @@ export interface ViewerNotice {
   text: string;
 }
 
-export function Lightbox({ run, index, notice, onIndex, onRegenerateLarger, onClose }: {
+export function Lightbox({ run, index, notice, canEdit, onIndex, onRegenerateLarger, onEditThis, onClose }: {
   run: Run | null;
   index: number;
   notice: ViewerNotice | null;
+  canEdit: boolean; // the studio can edit, so "Edit this" is offered
   onIndex: (index: number) => void;
   onRegenerateLarger: (image: ImageInfo) => void;
+  onEditThis: (image: KnownImage) => boolean; // whether it was added (the tray may be full)
   onClose: () => void;
 }) {
   const target = run ? largerTarget(run) : null; // the same rule as the run's card
-  const images = run?.images ?? [];
-  const image = images[index];
-  const count = images.length;
-  const { props: returnFocus } = useReturnFocus();
+  const items = run ? viewerItems(run) : []; // an edit's sources, then its results
+  const item = items[index];
+  const count = items.length;
+  const { props: returnFocus, redirectTo } = useReturnFocus();
 
   useEffect(() => {
     if (!run || count < 2) return;
@@ -36,35 +40,45 @@ export function Lightbox({ run, index, notice, onIndex, onRegenerateLarger, onCl
     return () => document.removeEventListener("keydown", onKey);
   }, [run, index, count, onIndex]);
 
+  const source = item?.kind === "source" ? item.input : null;
+  const result = item?.kind === "result" ? item.image : null;
+  const shown = source ?? result;
+
   return (
-    <Dialog.Root open={!!run && !!image} onOpenChange={(open) => !open && onClose()}>
+    <Dialog.Root open={!!run && !!item} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay dark" />
         <Dialog.Content className="lightbox" aria-describedby={undefined} {...returnFocus}>
-          {run && image && (
+          {run && item && shown && (
             <>
               <div className="lightbox-bar">
-                <Dialog.Title className="lightbox-title">
-                  {count > 1 ? `Image ${index + 1} of ${count} · ` : ""}seed {image.seed} · {image.width}×{image.height}
-                </Dialog.Title>
+                <Dialog.Title className="lightbox-title">{viewerTitle(item, run.mode === "edit")}</Dialog.Title>
                 <div className="lightbox-actions">
-                  {target && (
-                    <button type="button" className="button small" data-action="regenerate-larger" onClick={() => onRegenerateLarger(image)}
+                  {result && target && (
+                    <button type="button" className="button small" data-action="regenerate-larger" onClick={() => onRegenerateLarger(result)}
                       aria-label={`Regenerate larger: ${target.width}×${target.height}, ${target.steps} steps`}
                       title={`Regenerate this image at ${target.width}×${target.height}, ${target.steps} steps. The same seed at a bigger size makes a different picture.`}>
                       <EnlargeIcon /> Regenerate larger
                     </button>
                   )}
-                  <a className="button small" href={image.download_url} download><DownloadIcon /> Download</a>
-                  {image.thumb_url && (
-                    <a className="button small" href={`${image.thumb_url}?download=1`} download
+                  {canEdit && (
+                    <button type="button" className="button small" data-action="edit-this" onClick={() => {
+                        if (onEditThis(viewerKnown(run, item))) redirectTo(document.getElementById("prompt")); // the viewer closes: go to the prompt, not back to the thumbnail
+                      }}
+                      title="Add this picture to the images you are editing">
+                      <EditIcon /> Edit this
+                    </button>
+                  )}
+                  {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
+                  {result?.thumb_url && (
+                    <a className="button small" href={`${result.thumb_url}?download=1`} download
                       title="A small copy of this image (WebP, 512 px on the long side)"><DownloadIcon /> Thumbnail</a>
                   )}
                   <Dialog.Close className="button small ghost icon-only" aria-label="Close"><CloseIcon /></Dialog.Close>
                 </div>
               </div>
-              <div className={`lightbox-stage${image.has_alpha ? " checker" : ""}`}>
-                <img src={image.url} alt={run.prompt} />
+              <div className={`lightbox-stage${shown.has_alpha ? " checker" : ""}`}>
+                <img src={shown.url} alt={source ? `Source image ${source.position}` : run.prompt} />
               </div>
               <div className="lightbox-notice-region" role="status">
                 {notice && <p className={`lightbox-notice${notice.kind === "error" ? " error" : ""}`}>{notice.text}</p>}

@@ -18,6 +18,16 @@ export interface TrayItem {
   missing: boolean; // its picture could not be loaded, so the file is probably gone
 }
 
+/** An image the server already has (an earlier result or input) that can go straight into the tray. */
+export interface KnownImage {
+  imageId: string;
+  name: string;
+  thumbUrl: string | null;
+  width: number;
+  height: number;
+  hasAlpha: boolean;
+}
+
 /** How many more images fit. */
 export function room(items: readonly TrayItem[], cap: number): number {
   return Math.max(0, cap - items.length);

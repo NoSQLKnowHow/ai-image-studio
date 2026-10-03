@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
-import { largerTarget } from "../options";
+import { largerTarget, resolutionLabel } from "../options";
 import type { Run, WorkerState } from "../types";
 import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon, UpscaleIcon } from "./icons";
 
@@ -8,8 +8,10 @@ interface Props {
   run: Run;
   now: number;
   workerState: WorkerState | null;
+  canEdit: boolean; // the studio can edit, so "Edit this" is offered
   onReuse: () => void;
   onRegenerateLarger: () => void;
+  onEditThis: () => void;
   onRetry: () => void;
   onCancel: () => void;
   onToggleKeep: () => void;
@@ -60,7 +62,26 @@ function ProgressBlock({ run, workerState }: { run: Run; workerState: WorkerStat
   );
 }
 
-function Media({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) => void }) {
+/** An edit's source images, numbered as the prompt refers to them ("image 2"), before its results. Each opens the viewer. */
+function Sources({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) => void }) {
+  const inputs = [...run.inputs].sort((a, b) => a.position - b.position);
+  return (
+    <ol className="run-sources" aria-label="Source images">
+      {inputs.map((input, i) => (
+        <li key={input.id}>
+          <button type="button" className={`source-thumb${input.has_alpha ? " checker" : ""}`} onClick={() => onOpenImage(i)}
+            aria-label={`Open source image ${input.position} of ${inputs.length}`} title={`Source image ${input.position}`}>
+            <img src={input.thumb_url ?? input.url} alt="" loading="lazy" />
+            <span className="source-number" aria-hidden="true">{input.position}</span>
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** The results. `offset` is how many sources come before them in the viewer, which pages through both. */
+function Media({ run, offset, onOpenImage }: { run: Run; offset: number; onOpenImage: (index: number) => void }) {
   const images = run.images;
   if (!images.length) {
     return (
@@ -74,7 +95,7 @@ function Media({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) =>
     <div className={`run-media grid-${Math.min(images.length, MAX_THUMBS)}`}>
       {shown.map((img, i) => (
         <button key={img.id} type="button" className={`thumb${img.has_alpha ? " checker" : ""}`}
-          onClick={() => onOpenImage(i)} aria-label={`Open image ${i + 1} of ${images.length} (seed ${img.seed})`}>
+          onClick={() => onOpenImage(offset + i)} aria-label={`Open image ${i + 1} of ${images.length} (seed ${img.seed})`}>
           <img src={img.thumb_url ?? img.url} alt="" loading="lazy" width={img.width} height={img.height} />
           {i === MAX_THUMBS - 1 && images.length > MAX_THUMBS && <span className="more">+{images.length - MAX_THUMBS}</span>}
         </button>
@@ -83,10 +104,13 @@ function Media({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) =>
   );
 }
 
-export function RunCard({ run, now, workerState, onReuse, onRegenerateLarger, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, canEdit, onReuse, onRegenerateLarger, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
-  const meta = [sizeText(run), `${run.options.steps} steps`, seedText(run)];
+  const edit = run.mode === "edit";
+  const meta = edit
+    ? [`${run.inputs.length} ${run.inputs.length === 1 ? "image" : "images"}`, sizeText(run), resolutionLabel(run.options.resolution ?? 1024), `${run.options.steps} steps`, seedText(run)]
+    : [sizeText(run), `${run.options.steps} steps`, seedText(run)];
   if (run.options.cfg_scale !== null) meta.push(`guidance ${run.options.cfg_scale}`);
   const took = run.status === "done" ? duration(run.started_at, run.finished_at) : null;
   if (took) meta.push(took);
@@ -97,7 +121,10 @@ export function RunCard({ run, now, workerState, onReuse, onRegenerateLarger, on
 
   return (
     <article className={`run-card status-${run.status}`} data-run-id={run.id} aria-label={`${label}: ${run.prompt.slice(0, 80)}`}>
-      <Media run={run} onOpenImage={onOpenImage} />
+      <div className="run-media-col">
+        {run.inputs.length > 0 && <Sources run={run} onOpenImage={onOpenImage} />}
+        <Media run={run} offset={run.inputs.length} onOpenImage={onOpenImage} />
+      </div>
       <div className="run-body">
         <div className="run-head">
           <span className={`badge badge-${run.status}`}>{label}</span>
@@ -182,9 +209,12 @@ export function RunCard({ run, now, workerState, onReuse, onRegenerateLarger, on
               <PinIcon /> Keep
             </button>
           )}
-          <button type="button" className="button small ghost" disabled title="Edit mode arrives in a later update">
-            <EditIcon /> Edit this
-          </button>
+          {canEdit && run.status === "done" && run.images.length === 1 && (
+            <button type="button" className="button small ghost" data-action="edit-this" onClick={onEditThis}
+              title="Add this picture to the images you are editing">
+              <EditIcon /> Edit this
+            </button>
+          )}
           <button type="button" className="button small ghost danger" data-action="delete" onClick={onDelete} disabled={run.status === "running"}
             title={run.status === "running" ? "Can't delete while it's generating" : "Delete this run and its images"}>
             <TrashIcon /> Delete
