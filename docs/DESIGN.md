@@ -18,7 +18,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.3 | Scale picker, Draft, downloadable thumbnails | §22 | #13 | §16 not yet reported back |
 | 1.4 | Regenerate larger on a run's card; a disabled Upscale placeholder | §23 | #14 | §17 not yet reported back |
 | 1.5 | Regenerate larger in the image viewer, for that one image | §24 | #15 | §17(e) not yet reported back |
-| 1.6 | **The editing page (M5b)**: Edit mode on, the reference tray, Resolution and its cost warning, edit run cards, Reuse and Retry for edits, Edit this | §21.4, §21.11 | @@PR@@ | §18 (the Spark test for edits, M5c) not yet run; **the real-GPU edit path has never run** |
+| 1.6 | **The editing page (M5b)**: Edit mode on, the reference tray, Resolution and its cost warning, edit run cards, Reuse and Retry for edits, Edit this | §21.4, §21.11 | #17 | §18 (the Spark test for edits, M5c) not yet run; **the real-GPU edit path has never run** |
 
 **Tests today (1.6):** backend 363 (pytest), front end 169 (Vitest) and 68 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
@@ -496,7 +496,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
   - **1.3 (#13):** scale picker, Draft (queue priority), downloadable thumbnails. Backend 329, Vitest 60, Playwright 21.
   - **1.4 (#14):** Regenerate larger on a card, the `full` record, a disabled Upscale. Backend 360, Vitest 87, Playwright 27.
   - **1.5 (#15):** Regenerate larger in the viewer; a flaky test of mine fixed at its cause. Backend 360, Vitest 90, Playwright 34.
-  - **1.6 (@@PR@@):** M5b, the editing page (§21.11). Backend 363, Vitest 169, Playwright 68.
+  - **1.6 (#17):** M5b, the editing page (§21.11). Backend 363, Vitest 169, Playwright 68.
 - **Left to build:** M5c (the Spark test for edits), M5d (local edits), M5e (only if R3 is accepted), Upscale (decision #37) and M8, the Spark smoke test together. The table in "Status at a glance" (top of this document) says what each waits on.
 
 ## 18. Open items and facts to verify
