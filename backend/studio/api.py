@@ -22,7 +22,7 @@ from .events import OVERFLOW, EventBus, format_sse
 from . import inputs as inputs_mod
 from .jobs import InputStorageError, JobManager, QueueFull, RunConflict, RunNotFound
 from .naming import content_disposition, download_filename, thumbnail_filename
-from .runspec import OFFERED_MODES, RunCreate, RunRequestError, resolve_run
+from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
 from .serialize import parse_ts
 from .storage import Storage, StorageError, check_id
@@ -133,11 +133,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def capabilities(request: Request) -> dict[str, Any]:
         jobs = jobs_of(request)
         width, height = P.DEFAULT_SIZE
+        supports = jobs.supports()
         return {
             "pipeline": settings.pipeline,
             "model": jobs.model_id,
-            "modes": list(OFFERED_MODES),
-            "supports": jobs.supports(),
+            "modes": ["generate", *(["edit"] if supports.get("edit") else [])],  # Edit only where the pipeline can
+            "supports": supports,
             "aspect_ratios": {name: list(size) for name, size in P.ASPECT_RATIOS.items()},
             "defaults": {
                 "mode": "generate", "aspect_ratio": P.DEFAULT_ASPECT, "width": width, "height": height,
@@ -147,6 +148,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "prompt_chars": settings.max_prompt_chars,
                 "input_images": {"min": 1, "max": settings.max_input_images},
                 "draft": {"long_side": settings.draft_size, "steps": settings.draft_steps},
+                "edit_warn_units": settings.edit_warn_units,
                 "resolutions": list(P.RESOLUTIONS),
                 "upload_mb": settings.max_upload_mb,
                 "steps": {"min": P.STEPS_MIN, "max": P.STEPS_MAX},
