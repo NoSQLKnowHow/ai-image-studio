@@ -1,8 +1,8 @@
 # Qwen-Image Web Studio — Design Specification
 
-Living document. **Last brought up to date 2026-10-03, for version 1.5** (the number the page shows in its title).
+Living document. **Last brought up to date 2026-10-03, for version 1.7** (the number the page shows in its title).
 
-**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, and the editing page itself (M5b) is **version 1.6**. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
+**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, and §25 specifies **1.7**, loading the model ahead of time. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer. **BUILT** says something is in the code on `main`; it does not say it has run on the Spark (the "Spark" column below says that).
 
@@ -19,8 +19,9 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.4 | Regenerate larger on a run's card; a disabled Upscale placeholder | §23 | #14 | §17 not yet reported back |
 | 1.5 | Regenerate larger in the image viewer, for that one image | §24 | #15 | §17(e) not yet reported back |
 | 1.6 | **The editing page (M5b)**: Edit mode on, the reference tray, Resolution and its cost warning, edit run cards, Reuse and Retry for edits, Edit this | §21.4, §21.11 | #17 | §18 (the Spark test for edits, M5c) not yet run; **the real-GPU edit path has never run** |
+| 1.7 | **Load model / Unload model** buttons beside the model pill, so the model can be loaded while you write the prompt | §25 | #18 | §19 of `SPARK_TEST.md` not yet reported back |
 
-**Tests today (1.6):** backend 363 (pytest), front end 169 (Vitest) and 68 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
+**Tests today (1.7):** backend 382 (pytest), front end 179 (Vitest) and 74 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
 **What is left to build**, in the order proposed in §21.11:
 
@@ -90,7 +91,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 29 | M6 is part of v2 | The housekeeping the v1 plan left for M6 (**cancel** a queued or running job, **Keep** a run, **auto-expiry** with a warning) is built as part of version 2, not as a separate release (§21.11) | DECIDED |
 | 30 | Result shape (v2) | With Size on Auto, a **"Result follows image [N]"** selector names the image the result's shape follows (default: the last one that is not a mask). Nothing is reordered (§21.4) | DECIDED |
 | 31 | Transparent in Edit (v2) | **Offered in Edit as well as Generate**, wrapping the prompt in the recommended format (§21.4) | DECIDED |
-| 32 | Version numbers | **major.minor, and each release bumps the minor** (your call, 2026-10-02). **How it turned out:** 1.0 was the first build on the Spark, M6 is 1.1, the editing backend (M5a) 1.2, the scale picker, drafts and thumbnails 1.3, Regenerate larger 1.4, and Regenerate larger in the viewer 1.5. The editing page (M5b) will be the next, 1.6, and so on. The spec's "version 2" names a set of features, not a version number: nothing is called 2.0 unless you say so. The number is set in one place, `studio.__version__`, and shown in the page title | DECIDED |
+| 32 | Version numbers | **major.minor, and each release bumps the minor** (your call, 2026-10-02). **How it turned out:** 1.0 was the first build on the Spark, M6 is 1.1, the editing backend (M5a) 1.2, the scale picker, drafts and thumbnails 1.3, Regenerate larger 1.4, and Regenerate larger in the viewer 1.5. The editing page (M5b) is 1.6 and loading the model ahead of time is 1.7. The spec's "version 2" names a set of features, not a version number: nothing is called 2.0 unless you say so. The number is set in one place, `studio.__version__`, and shown in the page title | DECIDED |
 | 33 | Quick size (1.3) | A **scale picker, 100% / 75% / 50% / 25%**, on the prompt bar. It scales the **width and height** of the selected size (50% of 2048×2048 is 1024×1024: a quarter of the pixels, roughly four times faster), rounded to the multiples of 32 the model needs (§22.1) | DECIDED |
 | 34 | Draft (1.3) | A **Draft button** makes a small, fast version of the prompt (512 px on the long side, 12 steps) to try the wording before a long run. Drafts jump ahead of waiting full-size runs (never the one running). The full-size image will look different, even with the same seed (§22.2) | DECIDED |
 | 35 | Thumbnails (1.3) | Every image gets a small **thumbnail you can download** (WebP, 512 px on the long side, transparency kept), from the run card and from the viewer (§22.3) | DECIDED |
@@ -112,7 +113,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #36 | Yes (1.4). |
 | #37 | **Not built.** A disabled button marks the place (1.4). |
 | #38 | Yes (1.5). |
-| #39 | Being built (1.7). |
+| #39 | Yes (1.7). |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -163,7 +164,7 @@ Consequences of the decisions:
 ```
 
 - The title shows the **version** (`AI Image Studio v1.5`), as does the browser tab. It comes from the server (`studio.__version__`, the one place it is set), so it tells you which build is actually running; on a phone it sits under the title. `index.html` is sent with `Cache-Control: no-cache` (revalidated on every load) and the hashed files under `/assets/` are cached for good, so a rebuilt page appears on the next reload.
-- Header shows a **model state pill**: unloaded / loading / ready (with idle countdown) / busy / error / unavailable. `unavailable` means the pipeline can't be imported (e.g. `diffusers` too old); the pill links to the reason and the fix. (PROPOSED)
+- Header shows a **model state pill**: unloaded / loading / ready (with idle countdown) / busy / error / unavailable. `unavailable` means the pipeline can't be imported (e.g. `diffusers` too old); the pill links to the reason and the fix. (PROPOSED) **Since 1.7** a **Load model** or **Unload model** button sits beside it (§25.1), and on a phone the pill says its state in one short word (Unloaded, Loading…, Ready, Working, Problem, Unavailable) because the button takes some of its room.
 - Ctrl/Cmd+Enter submits; **Ctrl/Cmd+Shift+Enter** sends a **Draft** (§22.2). The Generate button stays usable while jobs are queued, up to the cap. (PROPOSED)
 - The **Scale** buttons (100 / 75 / 50 / 25%) and the **Draft** button sit on the prompt bar beside Options and Generate (§22). On a phone the word "Scale" gives way to the buttons and the size they give is shown beside them.
 - Single column so it works down to phone width. (PROPOSED)
@@ -453,9 +454,9 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 17. On the Spark, `docker compose up` from a clean checkout starts the server with a green healthcheck, and data persists across recreating the container.
 18. With too little free memory, the pre-flight check fails the job immediately with an actionable message (Retry works once memory is free), and the machine is not pushed into swap.
 
-**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3) and 48–50 (§21.13). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
+**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3), 48–50 (§21.13) and 51–60 (§25.5). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
 
-**Where each criterion stands (1.5).** "Automated" means a test passes against the fake pipeline; "Spark" means it needs the real machine and has not been reported back to me.
+**Where each criterion stands (1.7).** "Automated" means a test passes against the fake pipeline; "Spark" means it needs the real machine and has not been reported back to me.
 
 | Criteria | About | Status |
 |---|---|---|
@@ -469,6 +470,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | 31–32 | Cancel and expiry (M6) | **Automated;** `SPARK_TEST.md` §14 for the real GPU |
 | 33–38, 40–47 | Scale, Draft, thumbnails, Regenerate larger, the viewer | **Automated** (a draft's queue priority and limits, the `full` record, the one-image request, the in-viewer note) |
 | 39 | Draft and scale timings on the Spark | **Spark** (`SPARK_TEST.md` §16, §17) |
+| 51–60 | Load model and Unload model | **Automated** (the server's states, the idle clock, the lock, the memory check; the page's buttons, focus, announcements, phone width). **Spark** for how long the real model takes to load and how much memory Unload gives back (`SPARK_TEST.md` §19) |
 
 ## 17. Build order (PROPOSED)
 
@@ -503,6 +505,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
   - **1.4 (#14):** Regenerate larger on a card, the `full` record, a disabled Upscale. Backend 360, Vitest 87, Playwright 27.
   - **1.5 (#15):** Regenerate larger in the viewer; a flaky test of mine fixed at its cause. Backend 360, Vitest 90, Playwright 34.
   - **1.6 (#17):** M5b, the editing page (§21.11). Backend 363, Vitest 169, Playwright 68.
+  - **1.7 (#18):** Load model and Unload model (§25). Backend 382, Vitest 179, Playwright 74.
 - **Left to build:** M5c (the Spark test for edits), M5d (local edits), M5e (only if R3 is accepted), Upscale (decision #37) and M8, the Spark smoke test together. The table in "Status at a glance" (top of this document) says what each waits on.
 
 ## 18. Open items and facts to verify
@@ -518,7 +521,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 9. **Memory budget** — the model's real footprint (transformer, text encoder, VAE, activations at 2K) next to Hermes' LLM server; sets `STUDIO_MIN_FREE_GB` and the size and batch caps.
 10. **NVIDIA's pages were unreachable** — docs.nvidia.com and build.nvidia.com are blocked from my sandbox, so §9a and §12 rest on search summaries and community posts. Before building, compare them with the current Container Runtime, NGC and Hermes playbook pages.
 11. **Two quirks of the CLI script** (`scripts/qwen_image.py`, deliberately left as is): its size warning uses a multiple-of-16 rule, but the pipeline requires 32; and it flattens an RGBA input to RGB, while the pipeline's image encoder reads all four channels (§21.2 point 5). The studio does neither.
-12. **The Spark checks for 1.1 to 1.6 have not been reported back** (`docs/SPARK_TEST.md` §14–§18): how fast a cancel takes effect mid-step at 2K and what it does to memory; real edits, through the API (§15) and now on the page (§18) (none of the real-GPU edit path has ever run); the time and look of drafts and of 50% / 25% runs; and how different a regenerated image is from the small one. Until they are, those releases are verified only against the fake pipeline.
+12. **The Spark checks for 1.1 to 1.7 have not been reported back** (`docs/SPARK_TEST.md` §14–§19): how fast a cancel takes effect mid-step at 2K and what it does to memory; real edits, through the API (§15) and now on the page (§18) (none of the real-GPU edit path has ever run); the time and look of drafts and of 50% / 25% runs; how different a regenerated image is from the small one; and how long Load model takes with the real weights and how much memory Unload gives back. Until they are, those releases are verified only against the fake pipeline.
 13. **Model behaviours nobody has confirmed** (§21.2 [unconfirmed], §22.1): that a prompt can refer to images by number; the mask convention (which colour means "edit here", and whether the mask must match the original's size); that the same prompt and seed at a larger size gives a different picture (assumed from how latent diffusion models behave; it is the reason Regenerate larger warns you); and whether the editing model can enlarge an image without changing it (decides Upscale, #37).
 14. **R3, the optional prompt rewriter, awaits your decision** (§21.12 item 3). Only M5e depends on it.
 15. **The edit cost warning's threshold is a guess** (`STUDIO_EDIT_WARN_UNITS`, default 8, §21.11 M5b): the Spark test (M5c) should replace it with a measured one, together with the default cap of 4 images.
@@ -616,7 +619,7 @@ These were opened and read in full, not taken from search results. The announcem
 | 29 | M6 is part of v2 | **Cancel** (queued and running jobs), **Keep** (pin) and **auto-expiry** with a warning, left unbuilt by the v1 plan, are built as part of version 2 (§21.11) | DECIDED |
 | 30 | Result shape | With Size on Auto, a **"Result follows image [N ▾]"** selector names the image the result's shape follows. It defaults to the pipeline's own choice (the last image that is not a mask) and reorders nothing; the studio computes an explicit width and height from the chosen image | DECIDED |
 | 31 | Transparent in Edit | The **Transparent toggle is offered in Edit mode** too, wrapping the prompt in the recommended format, as in Generate | DECIDED |
-| 32 | Version numbers | **major.minor, and each release bumps the minor.** 1.0 was the first Spark build, M6 is 1.1, and each release since has taken the next minor (1.2 M5a, 1.3, 1.4, 1.5; the editing page will be 1.6; see the table in §3). "Version 2" in this section names the feature set, not the number | DECIDED |
+| 32 | Version numbers | **major.minor, and each release bumps the minor.** 1.0 was the first Spark build, M6 is 1.1, and each release since has taken the next minor (1.2 M5a, 1.3, 1.4, 1.5, 1.6 the editing page, 1.7 loading the model ahead of time; see the table in §3). "Version 2" in this section names the feature set, not the number | DECIDED |
 
 **Refinements proposed after reading Qwen's pages.** R1 and R2 were accepted on 2026-10-02 (decisions #30 and #31, in the table above); R3 is still open:
 
@@ -938,7 +941,7 @@ The viewer is a modal dialog, and while one is open the page behind it is hidden
 - **Not verified:** the same as §23.4: whether a regenerated image resembles the one you opened, on the real model. Part (e) of section 17 of the Spark checklist covers the viewer.
 
 
-## 25. Version 1.7: load the model ahead of time (decision #39 DECIDED; details PROPOSED; BEING BUILT)
+## 25. Version 1.7: load the model ahead of time (decision #39 DECIDED; details PROPOSED; BUILT, awaiting your review)
 
 You asked for a button that loads the model, so that you can work on the prompt while it loads instead of waiting for the load after pressing Generate. I asked three questions and you chose: the button goes **next to the model pill in the header**; there is **also an Unload button**; and **nothing loads by itself** (no warm-up as you type).
 

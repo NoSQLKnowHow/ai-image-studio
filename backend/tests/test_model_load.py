@@ -3,6 +3,7 @@ memory check, a run that arrives meanwhile, and the lock that keeps a click from
 
 from __future__ import annotations
 
+import asyncio
 import threading
 import time
 from datetime import datetime
@@ -164,6 +165,40 @@ def test_a_run_that_arrives_during_an_unload_waits_for_it_and_gets_a_fresh_worke
     assert outcome["status"] == 200 and run["status"] == "done"
     now = worker(client)
     assert now["pid"] not in (None, old)  # it ran on a new worker, which is still loaded
+
+
+def test_a_load_pressed_while_the_idle_timeout_is_stopping_the_worker_waits_and_loads_again(client_factory):
+    """The idle timeout stops the worker in the job loop, an Unload or Load comes in from a request: the same lock
+    keeps a Load from being told "already loaded" by a worker that is on its way out."""
+    client = client_factory(idle_timeout_min=0.03)  # about 2 s
+    real_stop = WorkerClient.stop
+    stopping = threading.Event()
+
+    async def slow_stop(self, *args, **kwargs):
+        stopping.set()
+        await asyncio.sleep(0.6)  # the worker is still alive and listening here
+        return await real_stop(self, *args, **kwargs)
+
+    with mock.patch.object(WorkerClient, "stop", slow_stop):
+        load(client)
+        old = wait_for_worker_state(client, "ready")["worker"]["pid"]
+        assert stopping.wait(15)  # the idle timeout has begun to stop it
+        load(client)  # 202, not "nothing to do": it waited for the stop and started a new worker
+        ready = wait_for_worker_state(client, "ready", timeout=20)
+    assert ready["worker"]["pid"] not in (None, old)
+
+
+def test_a_worker_that_cannot_be_started_is_reported_and_leaves_a_problem(client):
+    async def broken(self):
+        raise OSError("exec failed")
+
+    with mock.patch.object(WorkerClient, "start", broken):
+        body = load(client, expect=503).json()
+    assert body["code"] == "worker_failed" and "exec failed" in body["detail"] and body["hint"]
+    state = worker(client)
+    assert state["state"] == "error" and "exec failed" in state["detail"]
+    load(client)  # and it works once the cause is gone
+    wait_for_worker_state(client, "ready")
 
 
 # ---------------------------------------------------------------- pressing twice, or at the wrong moment (criterion 56)

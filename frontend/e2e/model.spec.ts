@@ -39,11 +39,32 @@ test("Load model loads the model without a run, and Unload model gives it back",
   await expect(load(page)).toHaveCount(0);
   await expect(page.locator("article.run-card")).toHaveCount(0); // no run was made
 
+  // Unload waits for the worker to stop; slow it down to see what the page does meanwhile
+  await page.route("**/api/model/unload", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    await route.continue();
+  });
   await unloadButton(page).click();
+  await expect(announcement(page)).toHaveText("Unloading the model…");
+  await expect(unloadButton(page)).toBeDisabled(); // not twice while it is on its way
   await expect(pill(page)).toHaveText(/^Model not loaded/);
   await expect(pill(page)).toBeFocused();
   await expect(announcement(page)).toHaveText("Model unloaded.");
   await expect(load(page)).toBeVisible();
+});
+
+test("only what you asked for is announced: a later load that a run causes is not", async ({ page }) => {
+  await unloaded(page);
+  await page.goto("/");
+  await load(page).click();
+  await expect(announcement(page)).toHaveText("Model ready.");
+  expect((await page.request.post("/api/model/unload", { headers: ASK })).status()).toBe(200); // not through the page
+  await expect(pill(page)).toHaveText(/^Model not loaded/);
+  const c = await generate(page, unique("a lantern on a hill")); // this run loads the model again
+  await expect(pill(page)).toHaveText(/^Loading model…/);
+  await page.waitForTimeout(400); // long enough for a stale request to have spoken
+  await expect(announcement(page)).toHaveText("Model ready."); // still what it said before: nothing new was asked
+  await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
 });
 
 test("a run sent while the model loads waits for it and then runs", async ({ page }) => {
