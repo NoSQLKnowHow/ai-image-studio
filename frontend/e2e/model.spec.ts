@@ -63,7 +63,7 @@ test("only what you asked for is announced: a later load that a run causes is no
   const c = await generate(page, unique("a lantern on a hill")); // this run loads the model again
   await expect(pill(page)).toHaveText(/^Loading model…/);
   await page.waitForTimeout(400); // long enough for a stale request to have spoken
-  await expect(announcement(page)).toHaveText("Model ready."); // still what it said before: nothing new was asked
+  expect(await announcement(page).textContent()).toBe("Model ready."); // still what it said before (read once: a retry could wait out a stale "Loading")
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
 });
 
