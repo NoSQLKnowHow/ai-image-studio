@@ -35,6 +35,7 @@ export default defineConfig({
       STUDIO_PORT: String(port),
       STUDIO_STATIC_DIR: resolve("dist"),
       STUDIO_FAKE_STEP_DELAY_MS: "10",
+      STUDIO_FAKE_LOAD_DELAY_MS: "1200", // long enough for a test to see "Loading model…" (§25)
       STUDIO_QUEUE_CAP: "3",
     },
   },

@@ -90,6 +90,8 @@ export function uploadImage(file: Blob, onProgress?: (fraction: number) => void)
 export const api = {
   capabilities: () => request<Capabilities>("/api/capabilities"),
   status: () => request<Status>("/api/status"),
+  loadModel: () => request<Status>("/api/model/load", { method: "POST" }),
+  unloadModel: () => request<Status>("/api/model/unload", { method: "POST" }),
   listRuns: (before?: string | null, limit = 20) =>
     request<RunsPage>(`/api/runs?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
   createRun: (body: CreateRunBody) => request<Run>("/api/runs", { method: "POST", body: JSON.stringify(body) }),

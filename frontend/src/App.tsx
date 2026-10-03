@@ -8,6 +8,7 @@ import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { Tray } from "./components/Tray";
 import { copyText, useNow, useToasts } from "./hooks";
+import type { ModelKind } from "./model";
 import {
   PROMPT_KEY,
   browserStore,
@@ -54,6 +55,7 @@ export default function App() {
   const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
   const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
   const { toasts, push, dismiss } = useToasts();
   const now = useNow(30_000);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -147,6 +149,21 @@ export default function App() {
     if (run) tray.adoptRun(run);
   };
   const submitDraft = useCallback(() => send(draftRequest), [send]);
+
+  // Load or unload the model from the header. The new state arrives over the event stream like every other change, so
+  // the answer is not used to move the pill: it could overtake a later event and make the pill go backwards.
+  const changeModel = useCallback(async (kind: ModelKind) => {
+    setModelBusy(true);
+    try {
+      await (kind === "load" ? api.loadModel() : api.unloadModel());
+      return true;
+    } catch (error) {
+      push("error", `Couldn't ${kind} the model: ${(error as ApiError).message}`);
+      return false;
+    } finally {
+      setModelBusy(false);
+    }
+  }, [push]);
 
   // A "check the options" message is stale as soon as the options change.
   const changeOptions = (next: Options) => {
@@ -353,7 +370,7 @@ export default function App() {
   return (
     <>
       <a className="skip-link" href="#prompt">Skip to the prompt</a>
-      <Header status={status} now={now} />
+      <Header status={status} now={now} busy={modelBusy} onModel={changeModel} />
       <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
       <main className="app-main">
         {!caps || !options ? (
