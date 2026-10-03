@@ -20,7 +20,7 @@ from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
 from . import inputs as inputs_mod
-from .jobs import InputStorageError, JobManager, QueueFull, RunConflict, RunNotFound
+from .jobs import InputStorageError, JobManager, ModelRefused, QueueFull, RunConflict, RunNotFound
 from .naming import content_disposition, download_filename, thumbnail_filename
 from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
@@ -73,6 +73,13 @@ class RunPatch(BaseModel):
 
 def _error(status: int, detail: str, code: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"detail": detail, "code": code})
+
+
+def _model_refused(exc: ModelRefused) -> JSONResponse:
+    content = {"detail": exc.detail, "code": exc.code}
+    if exc.hint:
+        content["hint"] = exc.hint
+    return JSONResponse(status_code=exc.status, content=content)
 
 
 def create_app(settings: Optional[Settings] = None) -> FastAPI:
@@ -160,6 +167,26 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
         }
+
+    @app.post("/api/model/load")
+    async def load_model(request: Request) -> Any:
+        """Start loading the model now, without a run (DESIGN.md §25.2)."""
+        jobs = jobs_of(request)
+        try:
+            started = await jobs.load_model()
+        except ModelRefused as exc:
+            return _model_refused(exc)
+        return JSONResponse(status_code=202 if started else 200, content=jobs.status())
+
+    @app.post("/api/model/unload")
+    async def unload_model(request: Request) -> Any:
+        """Unload the model now, unless a run is using it (DESIGN.md §25.2)."""
+        jobs = jobs_of(request)
+        try:
+            await jobs.unload_model()
+        except ModelRefused as exc:
+            return _model_refused(exc)
+        return jobs.status()
 
     @app.post("/api/runs", status_code=201)
     async def create_run(body: RunCreate, request: Request) -> Any:

@@ -56,6 +56,14 @@ class InputStorageError(Exception):
     """The inputs of a new run could not be copied (usually: the disk is full)."""
 
 
+class ModelRefused(Exception):
+    """Loading or unloading the model on request was not possible (DESIGN.md §25.2). `status` is the HTTP answer."""
+
+    def __init__(self, status: int, code: str, detail: str, hint: Optional[str] = None):
+        super().__init__(detail)
+        self.status, self.code, self.detail, self.hint = status, code, detail, hint
+
+
 class JobManager:
     def __init__(self, settings: Settings, db: Database, storage: Storage, bus: EventBus):
         self.settings = settings
@@ -76,6 +84,9 @@ class JobManager:
         self._uploads_task: Optional[asyncio.Task] = None
         self._probe: dict[str, Any] = {"state": "pending"}
         self._unload_at: Optional[float] = None
+        # Starting and stopping the worker process happen one at a time: a run starting it, a Load, an Unload and the
+        # idle timeout. Without this a click could meet a worker that is half stopped (DESIGN.md §25.3).
+        self._lifecycle = asyncio.Lock()
 
     # ------------------------------------------------------------ lifecycle
     async def start(self) -> None:
@@ -124,6 +135,7 @@ class JobManager:
             "pipeline": self.settings.pipeline,
             "pid": self._worker.pid,
             "unload_at": unload_at,
+            "idle_timeout_min": self.settings.idle_timeout_min,
             "device": self._probe.get("device"),
             "probe": self._probe.get("state"),
         }
@@ -377,22 +389,25 @@ class JobManager:
         if not self.db.mark_running(run_id, utcnow()):
             return  # deleted (or otherwise changed) since it was picked
         self._current = run_id
-        while not self._run_events.empty():  # drop anything stale from an earlier run
-            self._run_events.get_nowait()
         self._publish_run(run_id)
         self._publish_queue()
         try:
             try:
                 started_worker = False
-                if not self._worker.alive():
-                    shortfall = self._memory_shortfall()
-                    if shortfall:
-                        self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
-                        self._finish(run_id, "failed", shortfall, sysinfo.MEMORY_HINT)
-                        return
-                    self._set_worker_state("loading")
-                    await self._worker.start()
-                    started_worker = True
+                async with self._lifecycle:  # not while an Unload or the idle timeout is stopping it
+                    # Anything stale goes, and only now: a worker that was being stopped while this run waited for the
+                    # lock reports its exit as the run's current event, and it must not be taken for a crash.
+                    while not self._run_events.empty():
+                        self._run_events.get_nowait()
+                    if not self._worker.alive():
+                        shortfall = self._memory_shortfall()
+                        if shortfall:
+                            self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
+                            self._finish(run_id, "failed", shortfall, sysinfo.MEMORY_HINT)
+                            return
+                        self._set_worker_state("loading")
+                        await self._worker.start()
+                        started_worker = True
                 if run_id in self._cancel_requested:  # cancelled while the worker was starting
                     if started_worker:
                         self._set_worker_state("unloaded")
@@ -452,8 +467,10 @@ class JobManager:
                 return
 
     async def _wait_while_idle(self) -> None:
-        """Wait for work. A loaded model is unloaded (worker exits, memory freed) after the idle timeout."""
-        if not self._worker.alive():
+        """Wait for work. A loaded model is unloaded (worker exits, memory freed) after the idle timeout. The clock is
+        not running while the model is still loading (a Load without a run): the worker's report that it is ready, or
+        that the load failed, wakes this up so the countdown starts then (DESIGN.md §25.3)."""
+        if not self._worker.alive() or self._worker_state["state"] == "loading":
             await self._wakeup.wait()
             return
         timeout = self.settings.idle_timeout_min * 60
@@ -462,13 +479,61 @@ class JobManager:
         try:
             await asyncio.wait_for(self._wakeup.wait(), timeout)
         except asyncio.TimeoutError:
-            log.info("unloading the model after %.1f idle minute(s)", self.settings.idle_timeout_min)
-            self._unload_at = None
-            await self._worker.stop()
+            async with self._lifecycle:
+                if self._worker.alive():  # an Unload may have got there first
+                    log.info("unloading the model after %.1f idle minute(s)", self.settings.idle_timeout_min)
+                    self._unload_at = None
+                    await self._worker.stop()
         finally:
             if self._unload_at is not None:
                 self._unload_at = None
                 self.bus.publish("worker.state", self.worker_status())
+
+    # ------------------------------------------------------------ load and unload on request (DESIGN.md §25)
+    async def load_model(self) -> bool:
+        """Start loading the model now, without a run. True if a load was started, False if there was nothing to do
+        (it is loading or loaded already, or a run is using it). Raises ModelRefused."""
+        if self.settings.idle_timeout_min <= 0:
+            raise ModelRefused(409, "no_idle_time",
+                               "The model unloads as soon as it is idle (STUDIO_IDLE_TIMEOUT_MIN=0), so loading it ahead of "
+                               "time would unload it again at once.", "Set STUDIO_IDLE_TIMEOUT_MIN above 0 to use Load model.")
+        async with self._lifecycle:
+            if self._current is not None:
+                return False
+            if self._worker.alive():
+                if self._worker_state["state"] in ("loading", "ready", "busy"):
+                    return False
+                retry = True  # a worker that is running but has no model (a load that failed, or a run canceled while it started)
+            else:
+                retry = False
+                shortfall = self._memory_shortfall()
+                if shortfall:
+                    self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
+                    raise ModelRefused(409, "not_enough_memory", shortfall, sysinfo.MEMORY_HINT)
+            self._set_worker_state("loading")
+            try:
+                if not retry:
+                    await self._worker.start()
+                await self._worker.send({"cmd": "load"})
+            except (WorkerGone, OSError) as exc:
+                message = f"Could not start the image worker: {exc}"
+                self._set_worker_state("error", message, "See the server log for details.")
+                raise ModelRefused(503, "worker_failed", message, "See the server log for details.") from exc
+        self._wakeup.set()  # the job loop is waiting without a worker (or with a timer): let it look again
+        return True
+
+    async def unload_model(self) -> bool:
+        """Unload the model now. True if a worker was stopped. Raises ModelRefused while a run is running."""
+        async with self._lifecycle:
+            if self._current is not None:
+                raise ModelRefused(409, "busy", "The model is working on a run. Cancel it or wait for it to finish.")
+            if not self._worker.alive():
+                return False
+            loading = self._worker_state["state"] == "loading"  # a worker that is loading hears no polite request
+            self._unload_at = None
+            await self._worker.stop(busy=loading)
+        self._wakeup.set()  # drop the idle timer that was running for the worker that is gone
+        return True
 
     def _memory_shortfall(self) -> Optional[str]:
         """Fail fast (decision #19) instead of starting a load that can't fit next to Hermes."""
@@ -617,12 +682,16 @@ class JobManager:
             if event.get("state") == "ready":
                 self._worker_info = event.get("info") or {}
                 self._set_worker_state("busy" if self._current else "ready")
+                if self._current is None:
+                    self._wakeup.set()  # a Load without a run: the idle countdown starts now
             elif event.get("state") == "loading":
                 self._set_worker_state("loading")
         elif kind == "load_failed":
             error = event.get("error") or {}
             state = "unavailable" if error.get("kind") == "unavailable" else "error"
             self._set_worker_state(state, error.get("message"), error.get("hint"))
+            if self._current is None:
+                self._wakeup.set()
         elif kind == "worker_exited":
             if event.get("expected"):
                 self._set_worker_state("unloaded")
