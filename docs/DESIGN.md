@@ -97,6 +97,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 36 | Regenerate larger (1.4) | A finished run made **smaller than the size you had selected** (a draft, or a 25 / 50 / 75% run) gets a **Regenerate larger** button: the same prompt, seed and image count sent again at the **full size you had selected, with the steps you had selected**. The run remembers that size, so it works from the history. It will look different from the small image (§23.1) | DECIDED |
 | 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needed the editing page (built in 1.6) and still needs a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
 | 38 | Regenerate larger in the viewer (1.5) | The single-image viewer has the **same Regenerate larger button**. It enlarges **that image only**: a new job at the full size and steps, with **that image's own seed** and **one** image (§24.1). Its confirmation, or an error, shows **inside the viewer** (§24.2) | DECIDED (the request); details PROPOSED |
+| 39 | Load the model ahead of time (1.7) | A **Load model button next to the model pill** in the header starts loading the model now, without a run, so you can work on the prompt while it loads. When the model is loaded and idle the same place offers **Unload model**, which gives the memory back at once. **No automatic warm-up** (nothing loads because you started typing): the button only (§25) | DECIDED (the request and the three choices); details PROPOSED |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -111,6 +112,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #36 | Yes (1.4). |
 | #37 | **Not built.** A disabled button marks the place (1.4). |
 | #38 | Yes (1.5). |
+| #39 | Being built (1.7). |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -242,6 +244,8 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 |---|---|---|
 | `GET /api/health` | Liveness for the container healthcheck | Always cheap; does not touch the GPU |
 | `GET /api/status` | Model state, idle countdown, queue length, system-memory figures (§9a) | Also pushed over SSE |
+| `POST /api/model/load` | **1.7:** start loading the model now, without a run (§25.2) | `202` started, `200` nothing to do; `409` `not_enough_memory` or `no_idle_time`; `503` `worker_failed` |
+| `POST /api/model/unload` | **1.7:** unload the model now (§25.2) | `200`; `409` `busy` while a run is running |
 | `GET /api/capabilities` | Which options the pipeline supports, and all limits and defaults | `modes` (`edit` is listed when the pipeline can edit), `supports`, `aspect_ratios`, `defaults`, `limits` (prompt length, `input_images`, `draft` {long side, steps}, `resolutions`, `upload_mb`, `edit_warn_units`, steps, images, seed, guidance, size), `queue_cap`, `device`. See below |
 | `POST /api/uploads` | Stage one reference image for an edit. **The file is the raw request body, not multipart** (§21.6) | Returns `upload_id`, `width`, `height`, `has_alpha`, `bytes`, `url`, `thumb_url`; 413 too large, 415 wrong type, 422 undecodable, 507 disk full |
 | `DELETE /api/uploads/{id}` | Take back a staged upload no run has claimed | 204; 404 for anything else |
@@ -282,6 +286,7 @@ SQLite in WAL mode; the API process is the only writer.
 - API ↔ worker: JSON lines over stdio. Commands: `load`, `run`, `cancel`, `shutdown`. Events: `hello`, `state`, `load_failed`, `run_started`, `progress`, `image_done`, `run_finished`, `run_failed`, `run_canceled`, `protocol_error`, `bye` (and `probe` for the start-up capability check). The worker reads commands in a thread of its own, so a `cancel` is heard while a run is under way (§21.11, M6).
 - **Queue order:** drafts first, then everything else in arrival order, never displacing the run in progress (§22.2).
 - The worker is started lazily when a job needs it. After the queue has been empty for the idle timeout, the API sends `shutdown` and waits for the process to exit; a job arriving mid-shutdown waits for the exit, then a fresh worker starts.
+- **1.7:** it can also be started, and told to `load`, by the page's **Load model** button, and stopped at once by **Unload model**, without a run (§25). Starting and stopping the process are done under one lock; the idle clock counts from when a load finishes.
 - The worker saves each PNG straight to the data volume and reports the path; the API validates, makes the thumbnail and writes the database row.
 - Loading follows the CLI's proven settings: `dtype=torch.bfloat16`, `.to("cuda")` (or CPU offload if configured), seed via `torch.Generator("cuda").manual_seed(seed + i)`.
 - Memory is logged at load and after each image and shown in `/api/status`, using system-memory figures rather than NVML (§9a), so the real footprint next to Hermes can be measured on the Spark instead of guessed.
@@ -382,6 +387,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_PIPELINE` | `real` | `fake` uses the test pipeline (§15) |
 | `STUDIO_FAKE_STEP_DELAY_MS` | `30` | Fake pipeline only: delay per step (added in M1) |
 | `STUDIO_FAKE_LOAD_FAIL` | unset | Fake pipeline only: simulate a model load failure (added in M1) |
+| `STUDIO_FAKE_LOAD_DELAY_MS` | `200` | **1.7:** fake pipeline only: how long its "load" takes, so tests can see the loading state (§25.3) |
 | `STUDIO_TOKEN` | unset | Reserved; setting it stops the server from starting (§11) |
 
 ## 14. Tech stack and repo layout (PROPOSED)
@@ -554,6 +560,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Round 11 (2026-10-02):** version 1.4 (Regenerate larger on a run's card) was reviewed and merged. You asked for the same button in the viewer you get by clicking one image, starting a new job to enlarge that image. Decision #38, specified in §24 as version 1.5.
 - **Round 12 (2026-10-03):** version 1.5 was reviewed and merged. You asked what features remain, and then for this specification to be brought up to date with everything built and changed so far. That is this revision. **No behaviour changed.** I read the whole document against the code and corrected what had drifted: the header and a new "Status at a glance" with the release history and what is left; decision #32's list of version numbers; a table of which decisions are built; the screen and run-card descriptions (Draft, Scale, Cancel, Regenerate larger, the viewer); the API, data-model, worker-protocol, layout and configuration tables (including `STUDIO_DRAFT_SIZE` and `STUDIO_DRAFT_STEPS`, which were missing); a table of where each acceptance criterion stands; the build order and its progress; the open items; and stale statements such as "upscaling stays out" (§21.12), which decision #37 had superseded.
 - **Round 13 (2026-10-03):** the specification was merged. You asked to work on the next feature, which was **M5b, the editing page**. The decisions behind it were already made (#24–#31), so I built it to §21.4 without further questions and listed the small choices I made in §21.11 for you to veto: how pictures dropped in Generate mode are handled, where Edit this appears, that the cost warning's threshold is a setting (default 8, a guess until the Spark measures it), and the others there. Version 1.6.
+- **Round 14 (2026-10-03):** version 1.6 (the editing page) was reviewed and merged. You asked whether there could be a button that loads the model, so that you can work on the prompt instead of waiting for the load after pressing Generate. I answered that it was possible and asked three questions; you chose the button **next to the model pill in the header**, **an Unload button as well**, and **no automatic warm-up** (decision #39, specified in §25 as version 1.7). Two things the code showed me while specifying it, now in §25: the idle clock must start when the load **finishes** (and be refused for `STUDIO_IDLE_TIMEOUT_MIN=0`, where loading ahead would load and instantly unload), and the starting and stopping of the worker needs one lock so that a click cannot meet a half-stopped worker. Small choices of mine for you to veto are in §25.4.
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
 ## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#32 DECIDED; details PROPOSED; M6, M5a and M5b BUILT, M5c–M5e NOT built)
@@ -929,3 +936,57 @@ The viewer is a modal dialog, and while one is open the page behind it is hidden
 - **Tests:** backend 360 (unchanged), front end 90 Vitest (up from 87) and 34 Playwright (up from 27). **Mutation checks: 33 deliberate breakages, 32 caught by a failing test and one equivalent** (the card's request using the run's first image's seed instead of the run's seed: they are the same number for a real run, though not for the unit tests' image-less fixtures). Two mutants first did not compile (an unused variable and a possibly-null value stop the build) and were rewritten until they did, as in §23.4. Before the mutants I added two tests for behaviour I had written but not tested (enlarging two images in a row, and closing the viewer before the answer arrives).
 - **A flaky test of mine, found and fixed.** In the final full run one older test (`test_files_nothing_owns_are_removed_…`) failed once, though nothing it covers had changed. It passed 9 of 9 alone, so I reproduced it rather than calling it a fluke: under CPU stress it failed **9 times in 60**. The cause was in my test set-up: the start-up clean-up sweep runs in a worker thread, stopping its loop does not stop a thread already running, and on a busy machine that thread could delete the files the test had just made. Quiet test clients now never start those loops (a change to `tests/conftest.py` only; the server is unchanged, since only one sweep runs at a time there). With the fix the same stress runs gave **0 failures in 60**, and 0 in 12 for the whole housekeeping file; the full suite then passed.
 - **Not verified:** the same as §23.4: whether a regenerated image resembles the one you opened, on the real model. Part (e) of section 17 of the Spark checklist covers the viewer.
+
+
+## 25. Version 1.7: load the model ahead of time (decision #39 DECIDED; details PROPOSED; BEING BUILT)
+
+You asked for a button that loads the model, so that you can work on the prompt while it loads instead of waiting for the load after pressing Generate. I asked three questions and you chose: the button goes **next to the model pill in the header**; there is **also an Unload button**; and **nothing loads by itself** (no warm-up as you type).
+
+### 25.1 What you see
+
+- **Load model** appears beside the model pill when the pill says *Model not loaded* or *Model problem*, which is when loading it is useful or worth retrying. Pressing it starts the load at once, with no run. The pill changes to *Loading model…*, and to *Model ready · unloads in 30 min* when the load has finished. A run you send meanwhile waits for the load and then runs on that same loaded model: nothing loads twice.
+- **Unload model** appears in the same place when the pill says *Model ready*, that is, loaded and not working on a run. Pressing it frees the memory **now**, without waiting out the idle timeout. The next run loads the model again, which takes as long as the first time did. There is **no confirmation question**; see 25.4.
+- **Neither button is shown** while the model is loading, while it is generating (Unload would have to stop your run; use Cancel for that), or when the pill says *Model unavailable* (loading cannot work until the server's set-up is fixed, so there is nothing to press).
+- **A problem is shown, not hidden.** If there is not enough free memory (the same check a run makes, `STUDIO_MIN_FREE_GB`, decision #19) or the load fails, nothing is left loading, the pill says *Model problem* with the reason and the hint in its details, a message also appears on screen, and **Load model** stays so that you can try again once memory is free.
+- **The idle timeout still applies.** A model you loaded with the button is unloaded after the usual idle time, counted **from the moment the load finished**, not from the click. So pressing Load and then going to lunch does not hold the memory for ever.
+- **If the idle timeout is `0`** (`STUDIO_IDLE_TIMEOUT_MIN=0`: unload as soon as the queue is empty) loading ahead of time would load the model and unload it again at once, so the button is **not offered** and the server refuses (25.2).
+- **Screen readers and keyboard.** Both buttons are ordinary buttons with a name and a tooltip. When one is pressed it disappears, so focus moves to the model pill instead of being lost, and the change is announced ("Loading the model…", "Model ready.", or the problem).
+- **On a phone** the header still fits without sideways scrolling: the button is compact and the pill's longer text is already shortened there.
+
+### 25.2 API (added to §7)
+
+| Method & path | Purpose | Answers |
+|---|---|---|
+| `POST /api/model/load` | Start loading the model without a run | `202` with the status (the body of `GET /api/status`) when a load was started; `200` with the status when there was nothing to do (it is already loading or loaded, or a run is using it); `409` `not_enough_memory` (the same message and hint as a failed run); `409` `no_idle_time` when the idle timeout is `0`; `503` `worker_failed` when the worker process could not be started |
+| `POST /api/model/unload` | Unload the model now | `200` with the status; `409` `busy` while a run is running (the model is not touched); `200` with nothing done when nothing is loaded |
+
+Both need the `X-Studio-Client: 1` header like every mutation (§11). An error answer has the usual `detail` and `code` and, for the memory case, also the `hint`. The status's `worker` object gains **`idle_timeout_min`**, which the page uses to decide whether to offer Load. The state changes themselves arrive over the event stream (`worker.state`) as they always did.
+
+### 25.3 How the server does it (the worker's life, §9)
+
+- **Same start, no run.** Loading ahead of time is the first half of what a run does anyway: the memory check, starting the worker process, and telling it to load (the worker's `load` command has existed since 1.0 and was never used). A model that failed to load leaves the worker running, so **Load model again** re-sends `load` to the same worker instead of starting another.
+- **One at a time.** Starting and stopping the worker process is done under one lock, shared by a run starting it, a Load, an Unload and the idle timeout. So a click cannot meet a worker that is half stopped: it waits, then acts on what is really there. Unload checks that no run is running **inside** that lock.
+- **The idle clock.** The job loop arms the idle timer only when the worker is loaded. While a load is in progress it waits without a timer, and the worker's *ready* (or *load failed*) report wakes it so that the countdown begins then. Unloading wakes it too, so no stale timer is left running behind a worker that is gone.
+- **A run during the load.** The worker reads commands in order, so a `run` sent while it is loading waits for the load to finish and then proceeds; the page shows *Loading model…* and then *Generating*.
+- **Unload while it is still loading** (API only; the page does not offer it) stops the worker process at once instead of asking it politely, since a worker busy loading would not hear a polite request until the load finished.
+- **Fake pipeline for tests.** `STUDIO_FAKE_LOAD_DELAY_MS` (default 200) sets how long the fake pipeline takes to load, so a test can see the loading state and send a run during it.
+
+### 25.4 Small choices I made (tell me if you want any changed)
+
+- **No confirmation on Unload.** It costs a reload (minutes with the real model), but it is only offered when the model is idle, and a dialog for a button you pressed on purpose is friction. If you would rather have one, it is a small change.
+- **Unload is not offered while loading.** You chose "loaded and idle". A way to abandon a load that you started by mistake would be a *Cancel loading* button; the server can already do it (25.3), and it is an easy addition if you want it.
+- **The page does not use the answer to move the pill.** The state arrives over the event stream, as for every other change, so an answer that overtakes an event can never make the pill go backwards.
+- **Retry on a problem is the same button.** *Model problem* with Load model next to it, rather than a separate Retry.
+
+### 25.5 Acceptance criteria (continue §24.3)
+
+51. **Load model** is offered exactly when the model is not loaded or had a problem and the idle timeout is above 0; **Unload model** exactly when it is loaded and idle. Neither is offered while loading, while generating, or when the model is unavailable.
+52. Pressing Load model loads the model **without creating a run**: the pill goes to *Loading model…* and then *Model ready*, and the unload countdown starts when the load **finishes**.
+53. Loading ahead of time makes the same **memory check** as a run: with too little free memory no worker is started, the state is *Model problem* with the message and hint, the request is answered `409`, and Load model can be pressed again.
+54. A run sent **while the model is loading** waits for it, runs on the same worker, and the model is loaded **once**.
+55. **Unload model** frees the memory at once when idle and is **refused with `409` while a run is running**, leaving the run untouched. After it, the next run loads the model again.
+56. Pressing either button twice, or Load when the model is already loading, loaded or in use, starts nothing extra and unloads nothing it should not.
+57. With `STUDIO_IDLE_TIMEOUT_MIN=0` the button is not offered and the server answers `409` `no_idle_time`.
+58. After a failed load, Load model **retries on the same worker** and works once the cause is gone.
+59. A model loaded with the button is **still unloaded after the idle timeout**, counted from when the load finished.
+60. After pressing a button, **keyboard focus is on the model pill** and the new state is announced; on a phone the header does not scroll sideways.
