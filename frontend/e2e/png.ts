@@ -1,4 +1,5 @@
 // A tiny PNG encoder for the browser tests: the server decodes every upload for real, so the files must be valid.
+import { randomFillSync } from "node:crypto";
 import { deflateSync } from "node:zlib";
 
 const TABLE = Array.from({ length: 256 }, (_, n) => {
@@ -52,3 +53,22 @@ export const RED: [number, number, number] = [220, 50, 47];
 export const GREEN: [number, number, number] = [40, 160, 90];
 export const BLUE: [number, number, number] = [50, 90, 200];
 export const GOLD: [number, number, number] = [230, 170, 30];
+
+/** A big, incompressible PNG (random pixels), for a picture the server takes a moment to decode and thumbnail:
+ *  2400 x 2400 is about 17 MB, under the 20 MB limit. */
+export function noisePng(width: number, height: number): Buffer {
+  const row = Buffer.alloc(1 + width * 3);
+  const rows = Buffer.alloc(height * row.length);
+  for (let y = 0; y < height; y++) randomFillSync(rows, y * row.length + 1, width * 3); // filter byte 0, then random pixels
+  const header = Buffer.alloc(13);
+  header.writeUInt32BE(width, 0);
+  header.writeUInt32BE(height, 4);
+  header[8] = 8;
+  header[9] = 2;
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", header),
+    chunk("IDAT", deflateSync(rows, { level: 0 })), // stored, not compressed: fast to make, and as big as it looks
+    chunk("IEND", Buffer.alloc(0)),
+  ]);
+}

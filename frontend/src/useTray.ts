@@ -41,10 +41,15 @@ export function useTray(caps: Capabilities | null) {
   const dismissNote = useCallback((id: number) => setNotes((all) => all.filter((n) => n.id !== id)), []);
   const newKey = () => `tray-${++counter.current}`;
 
-  /** Let go of what an item holds: stop its upload, or delete the staged file nobody has claimed, and free its preview. */
+  /** Let go of what an item holds: stop its upload, or delete the staged file nobody has claimed, and free its preview.
+   *  An upload is stopped only while bytes are still going out. Once the last one has been sent the server will stage
+   *  the picture whatever we do, so the answer is let through and `startUpload` deletes what lands for an item that is
+   *  no longer in the tray. */
   const release = useCallback((item: TrayItem) => {
-    aborts.current.get(item.key)?.();
-    aborts.current.delete(item.key);
+    if (!(item.state === "uploading" && item.progress >= 1)) {
+      aborts.current.get(item.key)?.();
+      aborts.current.delete(item.key);
+    }
     if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
     if (item.state === "ready" && item.ref && "upload_id" in item.ref) void api.deleteUpload(item.ref.upload_id).catch(() => undefined);
   }, []);

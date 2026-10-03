@@ -1,6 +1,6 @@
 // End-to-end: Edit mode (DESIGN.md §21.4, criteria 19-27), against the real backend with the fake pipeline.
 import { card, clearHistory, expect, promptBox, test, unique, useOptions, type Locator, type Page } from "./helpers";
-import { BLUE, GOLD, GREEN, RED, png } from "./png";
+import { BLUE, GOLD, GREEN, RED, noisePng, png } from "./png";
 
 // ------------------------------------------------------------------ helpers
 type Pic = { name: string; mimeType: string; buffer: Buffer };
@@ -233,6 +233,8 @@ test("the arrows reorder, keep focus on the moved picture, and announce it", asy
   await page.keyboard.press("Enter");
   expect(await trayOrder(page)).toEqual(["blue", "red", "green"]);
   await expect(page.getByRole("button", { name: "Move image 1 earlier" })).toBeDisabled(); // it is first now
+  // the arrow that was just used is disabled now, so focus must not be lost to the page: it stays on that picture
+  await expect(page.getByRole("button", { name: /^Image 1:/ })).toBeFocused();
   await expect(page.locator(".tray-badge")).toHaveText(["1", "2", "3"]); // the numbers always follow the places
 });
 
@@ -273,24 +275,47 @@ test("Generate waits for uploads that are still going, and says so", async ({ pa
   await expect(generateButton(page)).toBeEnabled();
 });
 
-test("taking a picture out while it is still going up stops it, and nothing is left staged", async ({ page }) => {
+test("taking a picture out while it is still being sent stops the request, so nothing reaches the server", async ({ page }) => {
   await openEdit(page);
-  const received: string[] = [];
-  await page.route("**/api/uploads", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    await route.continue();
-  });
+  const created: string[] = [];
+  const stopped: string[] = [];
   page.on("response", async (response) => {
-    if (response.url().endsWith("/api/uploads") && response.status() === 201) received.push(((await response.json()) as { upload_id: string }).upload_id);
+    if (response.url().endsWith("/api/uploads") && response.status() === 201) created.push(((await response.json()) as { upload_id: string }).upload_id);
+  });
+  page.on("requestfailed", (request) => {
+    if (request.url().endsWith("/api/uploads")) stopped.push(request.failure()?.errorText ?? "");
+  });
+  await page.route("**/api/uploads", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 900)); // still on its way when the picture is taken out
+    await route.continue().catch(() => undefined);
   });
   await fileInput(page).setInputFiles([red()]);
   await expect(tiles(page)).toHaveCount(1);
   await page.getByRole("button", { name: "Remove image 1" }).click();
   await expect(tiles(page)).toHaveCount(0);
-  await page.waitForTimeout(1500); // the slow request may still complete on the server; the page must clean it up
-  for (const id of received) await expect.poll(async () => (await page.request.get(`/api/images/${id}`)).status(), { timeout: 10_000 }).toBe(404);
+  await expect.poll(() => stopped.length, { timeout: 5_000 }).toBe(1); // the browser cancelled the request
+  await page.waitForTimeout(1500);
+  expect(created).toEqual([]); // and the server never staged anything
 });
 
+test("a picture taken out after its last byte was sent is deleted when the server's answer lands", async ({ page }) => {
+  await openEdit(page);
+  const created: string[] = [];
+  page.on("response", async (response) => {
+    if (response.url().endsWith("/api/uploads") && response.status() === 201) created.push(((await response.json()) as { upload_id: string }).upload_id);
+  });
+  // A big picture: it is sent quickly, but the server then needs a while to decode and thumbnail it, which is the
+  // window in which the page has sent everything and not yet been answered.
+  const big: Pic = { name: "big.png", mimeType: "image/png", buffer: noisePng(2400, 2400) };
+  await fileInput(page).setInputFiles([big]);
+  const bar = page.getByRole("progressbar", { name: "Uploading big.png" });
+  await expect(bar).toHaveAttribute("aria-valuenow", "100", { timeout: 15_000 });
+  await page.getByRole("button", { name: "Remove image 1" }).click(); // everything has been sent: the page must not give up on it
+  await expect(tiles(page)).toHaveCount(0);
+  await expect.poll(() => created.length, { timeout: 20_000 }).toBe(1); // the server did stage it, and its answer did arrive
+  await expect.poll(async () => (await page.request.get(`/api/images/${created[0]}`)).status(), { timeout: 10_000 }).toBe(404); // and it was cleaned up
+  await expect(tiles(page)).toHaveCount(0);
+});
 
 // ------------------------------------------------------------------ sending an edit
 test("an edit on Auto sends the images in the order shown, and its card shows them numbered", async ({ page }) => {
