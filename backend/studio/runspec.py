@@ -19,10 +19,6 @@ from .config import Settings
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 
-# What the page is told it can offer (GET /api/capabilities). The API already accepts Edit runs (M5a), but the
-# page has no way to make one until M5b, so Edit is not offered yet: the mode switch stays disabled.
-OFFERED_MODES: tuple[str, ...] = ("generate",)
-
 
 class FullSize(BaseModel):
     """What a run that was made smaller than intended should be at full size (DESIGN.md §23.1). The page records it

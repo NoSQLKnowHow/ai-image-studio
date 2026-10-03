@@ -2,7 +2,7 @@
 
 Living document. **Last brought up to date 2026-10-03, for version 1.5** (the number the page shows in its title).
 
-**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
+**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, and the editing page itself (M5b) is **version 1.6**. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer. **BUILT** says something is in the code on `main`; it does not say it has run on the Spark (the "Spark" column below says that).
 
@@ -18,19 +18,19 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.3 | Scale picker, Draft, downloadable thumbnails | §22 | #13 | §16 not yet reported back |
 | 1.4 | Regenerate larger on a run's card; a disabled Upscale placeholder | §23 | #14 | §17 not yet reported back |
 | 1.5 | Regenerate larger in the image viewer, for that one image | §24 | #15 | §17(e) not yet reported back |
+| 1.6 | **The editing page (M5b)**: Edit mode on, the reference tray, Resolution and its cost warning, edit run cards, Reuse and Retry for edits, Edit this | §21.4, §21.11 | #17 | §18 (the Spark test for edits, M5c) not yet run; **the real-GPU edit path has never run** |
 
-**Tests today (1.5):** backend 360 (pytest), front end 90 (Vitest) and 34 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
+**Tests today (1.6):** backend 363 (pytest), front end 169 (Vitest) and 68 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
 **What is left to build**, in the order proposed in §21.11:
 
 | # | Milestone | What | Waiting on |
 |---|---|---|---|
-| 1 | **M5b** | The editing page: reference tray, the four ways in, number badges and click-to-insert, reordering, the cap, "Result follows image N", Resolution 1K/2K with a cost hint, source thumbnails on run cards, Reuse and Retry for edits, **Edit this**, and switching Edit on (§21.4) | Nothing |
-| 2 | **M5c** | The Spark test for edits (`SPARK_TEST.md` §15): whether "image 1" in a prompt works, alpha inputs, mask polarity and size, memory and time; sets the cap's default and the cost-hint thresholds | You, on the Spark |
-| 3 | **M5d** | Local edits: a mark-up editor and a mask editor (§21.5) | M5c (the mask convention) |
-| 4 | **M5e** | "Improve prompt", Qwen's official rewriter (§21.12 item 3) | **Your decision on R3**; only if accepted |
-| 5 | **Upscale** | "The same picture, bigger" (decision #37, §23.2) | M5b and the M5c result; may be dropped if the editing model changes the picture |
-| 6 | **M8** | The Spark smoke test together | Everything above |
+| 1 | **M5c** | The Spark test for edits (`SPARK_TEST.md` §18, on the page; §15 is the same through the API): whether "image 1" in a prompt works, alpha inputs, mask polarity and size, memory and time; sets the cap's default and the cost warning's threshold | You, on the Spark |
+| 2 | **M5d** | Local edits: a mark-up editor and a mask editor (§21.5) | M5c (the mask convention) |
+| 3 | **M5e** | "Improve prompt", Qwen's official rewriter (§21.12 item 3) | **Your decision on R3**; only if accepted |
+| 4 | **Upscale** | "The same picture, bigger" (decision #37, §23.2) | The M5c result (editing now exists, 1.6); may be dropped if the editing model changes the picture |
+| 5 | **M8** | The Spark smoke test together | Everything above |
 
 **Open questions for you:** R3 (the prompt rewriter, §21.12 item 3); any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2).
 
@@ -95,16 +95,15 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 34 | Draft (1.3) | A **Draft button** makes a small, fast version of the prompt (512 px on the long side, 12 steps) to try the wording before a long run. Drafts jump ahead of waiting full-size runs (never the one running). The full-size image will look different, even with the same seed (§22.2) | DECIDED |
 | 35 | Thumbnails (1.3) | Every image gets a small **thumbnail you can download** (WebP, 512 px on the long side, transparency kept), from the run card and from the viewer (§22.3) | DECIDED |
 | 36 | Regenerate larger (1.4) | A finished run made **smaller than the size you had selected** (a draft, or a 25 / 50 / 75% run) gets a **Regenerate larger** button: the same prompt, seed and image count sent again at the **full size you had selected, with the steps you had selected**. The run remembers that size, so it works from the history. It will look different from the small image (§23.1) | DECIDED |
-| 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needs the editing page (M5b) and a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
+| 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needed the editing page (built in 1.6) and still needs a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
 | 38 | Regenerate larger in the viewer (1.5) | The single-image viewer has the **same Regenerate larger button**. It enlarges **that image only**: a new job at the full size and steps, with **that image's own seed** and **one** image (§24.1). Its confirmation, or an error, shows **inside the viewer** (§24.2) | DECIDED (the request); details PROPOSED |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
 | Decisions | Built? |
 |---|---|
-| #1–#23 | Yes in 1.0, with these exceptions. **#7 and #8** were completed in 1.1 (cancel, Keep, auto-expiry; the queue cap and manual delete were already there). **#10**: the Generate \| Edit switch exists, but Edit is disabled until M5b. **#12**: the four ways to add an image are M5b. **#18**: inputs are kept with the run on the server since 1.2; there is no page to upload from yet. #3 and #15 (idle unload, now 30 minutes) are checked only against the fake pipeline unless you tried them on the Spark. |
-| #24, #26, #28, #30, #31 | **The server side is built (1.2)**: several inputs per run, the cap, `resolution`, `shape_from`, Transparent in Edit. **The page is not (M5b)**: Edit is not offered yet. |
-| #25 | Not built (M5b): number badges and click-to-insert. |
+| #1–#23 | Yes in 1.0, with these exceptions. **#7 and #8** were completed in 1.1 (cancel, Keep, auto-expiry; the queue cap and manual delete were already there). **#10** and **#12**: the Generate \| Edit switch is on and the four ways to add an image work since 1.6 (M5b). **#18**: inputs are kept with the run on the server since 1.2, and uploaded from the page since 1.6. #3 and #15 (idle unload, now 30 minutes) are checked only against the fake pipeline unless you tried them on the Spark. |
+| #24, #25, #26, #28, #30, #31 | **Yes**: the server side in 1.2 (several inputs per run, the cap, `resolution`, `shape_from`, Transparent in Edit) and the page in 1.6 (M5b: the tray, number badges and click-to-insert, the cap, Resolution, "Result follows image N", Transparent in Edit). #26's default of 4 is still to be raised or lowered by the Spark test (M5c). |
 | #27 | Not built (M5d). |
 | #29 | Yes (1.1). |
 | #32 | In effect. |
@@ -146,7 +145,7 @@ Consequences of the decisions:
 ┌─────────────────────────────────────────────────────────────┐
 │ ◐ AI Image Studio v1.5              [model: ready] [☾/☀]    │  header
 ├─────────────────────────────────────────────────────────────┤
-│ [ Generate | Edit soon ]                                     │  mode toggle (Edit disabled until M5b)
+│ [ Generate | Edit ]                                          │  mode toggle (Edit adds a tray of pictures)
 │ [ prompt (multi-line, grows) ............................ ]  │  prompt bar
 │ Scale [100%][75%][50%][25%]  [ Options ⚙ ] [ Draft ⚡ ] [ Generate ▶ ] │
 ├─────────────────────────────────────────────────────────────┤
@@ -156,9 +155,9 @@ Consequences of the decisions:
 │ │ img  │ "Halloween town at dawn…"                           │
 │ └──────┘ 1024×1024 · 40 steps · seed 42 · 31s                │
 │          [Reuse] [Regenerate larger] [Upscale ⊘] [Download]   │
-│          [Thumbnail] [Copy prompt] [Keep] [Edit this ⊘] [🗑]   │
+│          [Thumbnail] [Copy prompt] [Keep] [Edit this] [🗑]     │
 └─────────────────────────────────────────────────────────────┘
-        ⊘ = shown but disabled: it arrives with editing
+        ⊘ = shown but disabled: Upscale is not built yet (§23.2)
 ```
 
 - The title shows the **version** (`AI Image Studio v1.5`), as does the browser tab. It comes from the server (`studio.__version__`, the one place it is set), so it tells you which build is actually running; on a phone it sits under the title. `index.html` is sent with `Cache-Control: no-cache` (revalidated on every load) and the hashed files under `/assets/` are cached for good, so a rebuilt page appears on the next reload.
@@ -181,26 +180,26 @@ Consequences of the decisions:
 
 ### 5.4 Edit mode — DECIDED inputs, PROPOSED details
 
-> **Version 1 text; superseded by §21.4**, which allows several reference images (decision #24). The four input methods and the rest of the behaviour carry over as described there. **Not built yet: the page for Edit is milestone M5b.** Today the Edit switch is shown disabled ("soon"), and the **Edit this** button on a card is disabled with it.
+> **Version 1 text; superseded by §21.4**, which allows several reference images (decision #24). The four input methods and the rest of the behaviour carry over as described there. **Built in 1.6 (milestone M5b): §21.4 describes it and §21.11 records what differs.** The Edit switch is enabled when the pipeline can edit, and the **Edit this** button works.
 
 - A reference image can arrive four ways: choose-file button, drag-and-drop onto the prompt area, paste from the clipboard, or **Edit this** on any past result.
 - Shows a thumbnail of the reference with a remove (✕) button. One reference image in v1 (see open item 3).
 - In Edit mode, size defaults to **Auto — from input** (the pipeline sizes the result), matching the CLI behaviour. Choosing a size overrides it.
 - **Transparent** was hidden in Edit mode in v1 (the model card documented it for text-to-image only); decision #31 offers it in Edit too (§21.4).
 
-### 5.5 Run card — PROPOSED (built; the Edit parts wait for M5b)
+### 5.5 Run card — PROPOSED (built)
 - One card per **click**. A batch of N shows N thumbnails in a small grid, sharing the prompt; each image records its own seed.
 - **Badges:** the status (**Queued · #n**, **Generating**, **Stopping**, **Done**, **Failed**, **Canceled**), **Kept** when you pressed Keep, **Draft** for a draft (§22.2), **Edit** and **Transparent** where they apply, and how long ago it was made.
-- Shows: the prompt (collapsed after a few lines, expandable), the negative prompt if used, and a meta line: the **size the run actually used** (a 50% run shows "1024×1024", not the percentage; the "(50%)" appears only in the Options summary), steps, seed(s), guidance, and how long it took. For Edit runs it will also show the numbered source thumbnails (§21.4; M5b). A card shows **"Will be deleted in N days. Press Keep to save it."** when fewer than 7 remain (§5.6).
+- Shows: the prompt (collapsed after a few lines, expandable), the negative prompt if used, and a meta line: the **size the run actually used** (a 50% run shows "1024×1024", not the percentage; the "(50%)" appears only in the Options summary), steps, seed(s), guidance, and how long it took. For an Edit run it also shows the numbered source thumbnails above the result, and its meta line starts with the number of images and gives the resolution ("3 images · 1024×1024 · 1K · 40 steps", §21.4). A card shows **"Will be deleted in N days. Press Keep to save it."** when fewer than 7 remain (§5.6).
 - Running cards show progress: image i of N and, with the per-step callback, step k of T; otherwise a spinner with elapsed time. A canceled card says how many images finished and were kept.
 - Failed cards show the error message, its hint and a **Retry** button (resubmits the stored options, a draft as a draft).
-- Click an image → the **viewer** (lightbox): the full image, its seed and size, **Download**, **Thumbnail** (§22.3) and, where the card has it, **Regenerate larger** for that one image (§24); the arrow keys and buttons page through a batch.
+- Click an image → the **viewer** (lightbox): the full image, its seed and size, **Download**, **Thumbnail** (§22.3) and, where the card has it, **Regenerate larger** for that one image (§24); the arrow keys and buttons page through a batch (and through an edit's source images and then its results).
 - Actions (shown as they apply):
   - **Cancel** on a queued or running card (§5.5a); a running one asks first.
-  - **Reuse**: loads the prompt and options into the bar and drawer, **Lock seed on**, and the run's size as a preset and scale where it is exactly one (§22.1); for a **draft** it loads only the prompt-side options and leaves your size, steps and seed (§22.2). It will switch the mode toggle to the run's mode once Edit exists.
+  - **Reuse**: loads the prompt and options into the bar and drawer, **Lock seed on**, and the run's size as a preset and scale where it is exactly one (§22.1); for a **draft** it loads only the prompt-side options and leaves your size, steps and seed (§22.2). It switches the mode toggle to the run's mode, and for an edit brings its images back into the tray, in order (§21.4).
   - **Regenerate larger** (and a disabled **Upscale**) on a finished run made smaller than selected (§23).
   - **Download** (one image) or **Download…** (opens the viewer to choose), **Thumbnail** (one image), **Copy prompt**.
-  - **Keep** (exempt from auto-expiry; a toggle), **Edit this** (disabled until M5b), **Delete** (with confirmation; refused while it is running).
+  - **Keep** (exempt from auto-expiry; a toggle), **Edit this** (on a result with one image: it adds the picture to the tray and switches to Edit; for a batch, open the image in the viewer, which has it for any image, §21.4), **Delete** (with confirmation; refused while it is running).
 - Cards update live in every open browser (server-sent events).
 
 ### 5.5a Queue — DECIDED, details PROPOSED
@@ -227,7 +226,7 @@ Every value is saved in `localStorage` and restored on the next visit. Server-si
 | Guidance strength | both | model default | sent as `true_cfg_scale`; 0.1–20; shown only if supported |
 | Transparent (RGBA) | Generate (and Edit, decision #31) | off | wraps the prompt in the model card's recommended format; saves an alpha PNG |
 | Scale | Generate (Edit with a fixed size) | 100% | 100 / 75 / 50 / 25% of the selected size's width **and** height, rounded to multiples of 32, no side under 256 (§22.1). On the prompt bar, not in the drawer; saved with the options |
-| Resolution | Edit | 1K | 1K or 2K (1024 or 2048): sizes the result and every input (§21.4). **Server built (1.2); the page control is M5b** |
+| Resolution | Edit | 1K | 1K or 2K (1024 or 2048): sizes the result and every input (§21.4). Built (server in 1.2, page in 1.6) |
 
 The prompt lives in the prompt bar, max 8000 characters (env var). Mode is the toggle above it; both are remembered in the browser.
 
@@ -243,7 +242,7 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 |---|---|---|
 | `GET /api/health` | Liveness for the container healthcheck | Always cheap; does not touch the GPU |
 | `GET /api/status` | Model state, idle countdown, queue length, system-memory figures (§9a) | Also pushed over SSE |
-| `GET /api/capabilities` | Which options the pipeline supports, and all limits and defaults | `modes` (**only `generate` until M5b**), `supports`, `aspect_ratios`, `defaults`, `limits` (prompt length, `input_images`, `draft` {long side, steps}, `resolutions`, `upload_mb`, steps, images, seed, guidance, size), `queue_cap`, `device`. See below |
+| `GET /api/capabilities` | Which options the pipeline supports, and all limits and defaults | `modes` (`edit` is listed when the pipeline can edit), `supports`, `aspect_ratios`, `defaults`, `limits` (prompt length, `input_images`, `draft` {long side, steps}, `resolutions`, `upload_mb`, `edit_warn_units`, steps, images, seed, guidance, size), `queue_cap`, `device`. See below |
 | `POST /api/uploads` | Stage one reference image for an edit. **The file is the raw request body, not multipart** (§21.6) | Returns `upload_id`, `width`, `height`, `has_alpha`, `bytes`, `url`, `thumb_url`; 413 too large, 415 wrong type, 422 undecodable, 507 disk full |
 | `DELETE /api/uploads/{id}` | Take back a staged upload no run has claimed | 204; 404 for anything else |
 | `POST /api/runs` | Create a run | Body: `mode`, `prompt`, `options` (`width`, `height`, `steps`, `seed`, `num_images`, `negative_prompt`, `cfg_scale`, `transparent`; Generate only: `draft` §22.2, `full` §23.1; Edit only: `resolution`, `shape_from`), and for Edit `input_images`, an ordered list of `{upload_id}` or `{image_id}` (§21.6). 201 with the run; 422 field errors that name the field; 429 queue full; 507 disk full |
@@ -375,6 +374,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_UPLOAD_TTL_HOURS` | `24` | **v2:** how long an unclaimed staged upload is kept (§21.9) |
 | `STUDIO_DRAFT_SIZE` | `512` | **1.3:** a draft's longest side in pixels; 256–1024, a multiple of 32 (§22.2) |
 | `STUDIO_DRAFT_STEPS` | `12` | **1.3:** the most steps a draft may use; 1–100 (§22.2) |
+| `STUDIO_EDIT_WARN_UNITS` | `8` | **1.6:** the page warns that an edit is heavy above this many units (images × (resolution ÷ 1024)², so 3 images at 2K is 12); `0` = never. 8 is a guess until the Spark has measured it (§21.11, M5c) |
 | `STUDIO_STATIC_DIR` | `<repo>/frontend/dist` if built; `/app/static` in the image | The built web page (added in M2) |
 | `STUDIO_HOST` | `0.0.0.0` | Listen address inside the container (added in M1) |
 | `STUDIO_PORT` | `8080` | Listen port |
@@ -447,7 +447,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 17. On the Spark, `docker compose up` from a clean checkout starts the server with a green healthcheck, and data persists across recreating the container.
 18. With too little free memory, the pre-flight check fails the job immediately with an actionable message (Retry works once memory is free), and the machine is not pushed into swap.
 
-**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
+**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3) and 48–50 (§21.13). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
 
 **Where each criterion stands (1.5).** "Automated" means a test passes against the fake pipeline; "Spark" means it needs the real machine and has not been reported back to me.
 
@@ -457,7 +457,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | 8, 18 | Transparent output; the memory pre-flight | Automated with the fake pipeline; **Spark** for the real model |
 | 1, 10, 17 | Another LAN device; idle unload frees memory; `docker compose up` and persistence | **Spark.** You built and ran 1.0 there; the worker's exit after the idle time is automated; the memory figures (10) and persistence across recreation (17, `SPARK_TEST.md` §13) have not been reported |
 | 7 | Edit through four input methods | **Replaced** by 19–27 |
-| 19–27 | Editing with several images | **Server side automated (1.2); the page side is not built (M5b)** |
+| 19–27, 48–50 | Editing with several images | **Automated**: the server side (1.2) and the page (1.6, M5b) |
 | 28 | Real edits on the Spark | **Spark** (M5c) |
 | 29–30 | Mark-up and masks | **Not built** (M5d) |
 | 31–32 | Cancel and expiry (M6) | **Automated;** `SPARK_TEST.md` §14 for the real GPU |
@@ -472,7 +472,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | M2 | Real worker process + pipeline, idle unload, capability probe | Fake path still green; real path only checkable on the Spark | **Built** (1.0); ran on the Spark |
 | M3 | Front-end shell, theming, prompt bar, Options drawer, options persistence | Criteria 2, 3, 15, 16 pass in Playwright | **Built** (1.0) |
 | M4 | Timeline, run cards, SSE live updates, Reuse, download, delete | Criteria 4, 5, 6, 14 pass | **Built** (1.0) |
-| M5 | Edit mode: uploads, all four inputs. **Replaced by M5a–M5e for version 2 (§21.11)** | Criteria 13, 19–30 | Split: **M5a built** (1.2); **M5b–M5e not built** |
+| M5 | Edit mode: uploads, all four inputs. **Replaced by M5a–M5e for version 2 (§21.11)** | Criteria 13, 19–30 | Split: **M5a built** (1.2); **M5b built** (1.6); **M5c–M5e not built** |
 | M6 | Queue cap, cancel, retention, pin, failure handling. **Now part of version 2 (decision #29): see §21.11** | Criteria 8, 9, 11, 12, 18 pass | **Built** (cap and failures in 1.0; cancel, Keep and expiry in 1.1) |
 | M7 | Containerfile, compose, docs | Image builds; criterion 17 on the Spark | **Built** (1.0); built on the Spark |
 | M8 | Spark smoke test with you | Criteria 1, 10, 17 and the real-hardware checklist | **Not done**; last |
@@ -496,7 +496,8 @@ Each milestone is committed separately. **After each milestone I stop, report wh
   - **1.3 (#13):** scale picker, Draft (queue priority), downloadable thumbnails. Backend 329, Vitest 60, Playwright 21.
   - **1.4 (#14):** Regenerate larger on a card, the `full` record, a disabled Upscale. Backend 360, Vitest 87, Playwright 27.
   - **1.5 (#15):** Regenerate larger in the viewer; a flaky test of mine fixed at its cause. Backend 360, Vitest 90, Playwright 34.
-- **Left to build:** M5b (the editing page), M5c (the Spark test for edits), M5d (local edits), M5e (only if R3 is accepted), Upscale (decision #37) and M8, the Spark smoke test together. The table in "Status at a glance" (top of this document) says what each waits on.
+  - **1.6 (#17):** M5b, the editing page (§21.11). Backend 363, Vitest 169, Playwright 68.
+- **Left to build:** M5c (the Spark test for edits), M5d (local edits), M5e (only if R3 is accepted), Upscale (decision #37) and M8, the Spark smoke test together. The table in "Status at a glance" (top of this document) says what each waits on.
 
 ## 18. Open items and facts to verify
 
@@ -511,9 +512,10 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 9. **Memory budget** — the model's real footprint (transformer, text encoder, VAE, activations at 2K) next to Hermes' LLM server; sets `STUDIO_MIN_FREE_GB` and the size and batch caps.
 10. **NVIDIA's pages were unreachable** — docs.nvidia.com and build.nvidia.com are blocked from my sandbox, so §9a and §12 rest on search summaries and community posts. Before building, compare them with the current Container Runtime, NGC and Hermes playbook pages.
 11. **Two quirks of the CLI script** (`scripts/qwen_image.py`, deliberately left as is): its size warning uses a multiple-of-16 rule, but the pipeline requires 32; and it flattens an RGBA input to RGB, while the pipeline's image encoder reads all four channels (§21.2 point 5). The studio does neither.
-12. **The Spark checks for 1.1 to 1.5 have not been reported back** (`docs/SPARK_TEST.md` §14–§17): how fast a cancel takes effect mid-step at 2K and what it does to memory; real edits through the API (§15; none of the real-GPU edit path has ever run); the time and look of drafts and of 50% / 25% runs; and how different a regenerated image is from the small one. Until they are, those releases are verified only against the fake pipeline.
+12. **The Spark checks for 1.1 to 1.6 have not been reported back** (`docs/SPARK_TEST.md` §14–§18): how fast a cancel takes effect mid-step at 2K and what it does to memory; real edits, through the API (§15) and now on the page (§18) (none of the real-GPU edit path has ever run); the time and look of drafts and of 50% / 25% runs; and how different a regenerated image is from the small one. Until they are, those releases are verified only against the fake pipeline.
 13. **Model behaviours nobody has confirmed** (§21.2 [unconfirmed], §22.1): that a prompt can refer to images by number; the mask convention (which colour means "edit here", and whether the mask must match the original's size); that the same prompt and seed at a larger size gives a different picture (assumed from how latent diffusion models behave; it is the reason Regenerate larger warns you); and whether the editing model can enlarge an image without changing it (decides Upscale, #37).
 14. **R3, the optional prompt rewriter, awaits your decision** (§21.12 item 3). Only M5e depends on it.
+15. **The edit cost warning's threshold is a guess** (`STUDIO_EDIT_WARN_UNITS`, default 8, §21.11 M5b): the Spark test (M5c) should replace it with a measured one, together with the default cap of 4 images.
 
 ## 19. References (as returned by search; not independently opened)
 
@@ -543,7 +545,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Round 5 (2026-09-30):** you reviewed the key proposals and confirmed: separate worker process (#13), starting defaults and limits (#20), security approach (#21), and review after every milestone (#22). All other PROPOSED items are implementation details left to my judgement (see the status labels at the top).
 - **2026-10-01:** you gave the go for M1 ("Go, start M1.").
 - **2026-10-02:** you asked for the next sections so you could test for real, chose **real model + container + web UI** as the next batch, and **one pull request per batch** (§17).
-- **Still pending from you (none of it blocks M5b):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9); the reports from the Spark checks of 1.1–1.5 (§18 item 12); the decision on R3 (§18 item 14).
+- **Still pending from you (the Spark reports are what M5c and M8 wait on):** the `docker ps` / `docker stats` / `free -h` / `nvidia-smi` output from the Spark (sets the memory budget, §18 items 1 and 9); the reports from the Spark checks of 1.1–1.6 (§18 item 12); the decision on R3 (§18 item 14).
 - **Round 6 (2026-10-02):** version 1 was built (batch 2: real model, web page, container), built on the Spark and generating images. You asked for version 2 to add **editing with several uploaded images**, to be specified before any code. After a search of what Qwen announced and a read of the pinned pipeline source, you decided #24–#28: several images per edit, numbered badges with insert-into-prompt, a cap of 4 configurable to 10, local edits specified now and built second, and Auto size with a 1K/2K choice. Later the same day, with network access to the Qwen pages opened for the session, I read the announcement, the model card, the licence and the GitHub README directly; §21 and §18 were corrected from them (the prompt rewriter and the mask convention, which the search summaries had wrong or missing; the licence, now verified), and three refinements (R1–R3, §21.3) await your decision. You then decided that **M6 is part of v2** (#29). Details are §21 and are PROPOSED until you review them.
 - **Round 7 (2026-10-02):** you asked for version 2 to be built and I started with M6 (cancel, Keep, auto-expiry), the smallest piece and independent of the editing design. You also accepted refinements **R1** (the "Result follows image N" selector) and **R2** (Transparent in Edit), now decisions #30 and #31. You also raised the **idle unload from 15 to 30 minutes** (decision #15). **R3** (the optional prompt rewriter) is still open; only M5e depends on it. M6 was then built in one pull request (backend, page, tests, docs; §21.11 says what it does and where it differs from the plan). Afterwards you asked for a version number in the page title: it now reads `AI Image Studio v1.1` (1.0 was the first Spark build; M6 is 1.1). I numbered releases as major.minor, as in your example, and you confirmed that each release bumps the minor (decision #32); the editing work will therefore ship as 1.2, 1.3 and so on, not as a 2.0. (As it turned out, 1.2 was the editing backend and 1.3–1.5 were three small additions you asked for before the editing page; the editing page will be 1.6. Decision #32 has the list.)
 - **Round 8 (2026-10-02):** you asked for the next set of features and I built **M5a**, the server side of editing with several images, as version 1.2 (§21.11). One change from the spec, flagged there: uploads are a raw request body, not multipart (no new dependency in the container, the size cap enforced while streaming). The page for editing is next (M5b); it needs no further decision from you except R3 if you want the prompt rewriter.
@@ -551,9 +553,10 @@ These were opened and read in full, not taken from search results. The announcem
 - **Round 10 (2026-10-02):** version 1.3 was reviewed and merged. You asked whether an image made at a lower resolution could have a button to regenerate it larger. I asked what that should produce; you chose **both**: a **Regenerate larger** button now (the same prompt and seed at the full size you had selected) and an **Upscale** button later (the same picture, bigger, once editing works), "back to the full size" as the step, and a **small v1.4 before M5b**. Decisions #36 and #37, specified in §23.
 - **Round 11 (2026-10-02):** version 1.4 (Regenerate larger on a run's card) was reviewed and merged. You asked for the same button in the viewer you get by clicking one image, starting a new job to enlarge that image. Decision #38, specified in §24 as version 1.5.
 - **Round 12 (2026-10-03):** version 1.5 was reviewed and merged. You asked what features remain, and then for this specification to be brought up to date with everything built and changed so far. That is this revision. **No behaviour changed.** I read the whole document against the code and corrected what had drifted: the header and a new "Status at a glance" with the release history and what is left; decision #32's list of version numbers; a table of which decisions are built; the screen and run-card descriptions (Draft, Scale, Cancel, Regenerate larger, the viewer); the API, data-model, worker-protocol, layout and configuration tables (including `STUDIO_DRAFT_SIZE` and `STUDIO_DRAFT_STEPS`, which were missing); a table of where each acceptance criterion stands; the build order and its progress; the open items; and stale statements such as "upscaling stays out" (§21.12), which decision #37 had superseded.
+- **Round 13 (2026-10-03):** the specification was merged. You asked to work on the next feature, which was **M5b, the editing page**. The decisions behind it were already made (#24–#31), so I built it to §21.4 without further questions and listed the small choices I made in §21.11 for you to veto: how pictures dropped in Generate mode are handled, where Edit this appears, that the cost warning's threshold is a setting (default 8, a guess until the Spark measures it), and the others there. Version 1.6.
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
-## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#32 DECIDED; details PROPOSED; M6 and M5a BUILT and merged, M5b–M5e NOT built)
+## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#32 DECIDED; details PROPOSED; M6, M5a and M5b BUILT, M5c–M5e NOT built)
 
 ### 21.1 What v2 is, and what it replaces
 
@@ -614,7 +617,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **R2 (accepted, #31), Transparent is offered in Edit mode.** v1 hid it because the model card only showed it for text-to-image; the post now documents editing transparent images and extracting subjects as RGBA layers. The toggle wraps the prompt in the recommended format, as in Generate.
 - **R3 (still open), an optional "Improve prompt" step** using Qwen's official rewriter (§21.2). It is a separate 9B model with real costs (§21.12 item 3), so it is a question for you, not a default.
 
-### 21.4 Edit mode on the page (supersedes §5.4) — NOT BUILT (milestone M5b)
+### 21.4 Edit mode on the page (supersedes §5.4) — BUILT (version 1.6, milestone M5b; §21.11 says where it differs)
 
 **The reference tray** sits above the prompt in Edit mode: a wrapping grid of thumbnails (3 across on a phone, so the page never scrolls sideways) plus an **Add images** tile.
 
@@ -665,7 +668,7 @@ Qwen documents three ways to mark where an edit goes ([Qwen], §21.2), and the p
 | `POST /api/uploads` | Called once per image, in parallel. **The file itself is the request body, not multipart** (changed while building M5a: it needs no new dependency pinned into the container, the size limit is enforced while the body streams in, and `curl --data-binary @photo.jpg` is all a script needs). The type is decided by decoding, never by the Content-Type header. Returns `upload_id`, `width`, `height`, `has_alpha`, `bytes`, `url` and `thumb_url` (the ordinary image routes serve a staged upload). **413** too large (bytes or pixels), **415** not a PNG, JPEG or WebP, **422** damaged, **507** disk full |
 | `DELETE /api/uploads/{id}` | **New.** Removes a staged upload (the ✕ before submitting). Only for an upload no run has claimed: 404 for anything else, so it cannot delete a run's own image |
 | `POST /api/runs` | `input_image` is replaced by **`input_images`: an ordered list, 1 … cap, of `{upload_id}` or `{image_id}`** (a past result or input). Edit-mode options add **`resolution`** (1024 or 2048, default 1024); `width`/`height` null = Auto, plus **`shape_from`** (1-based index of the image the result follows, decision #30; default the last non-mask image) and **`transparent`**, which is now allowed in Edit (decision #31). Each list item is validated on its own and errors name the position: `input_images[2]`. Items may also carry `role` (`reference` by default; `marked` and `mask` are accepted now and used by local edits later). **An error names the position**: `loc` is `["body", "input_images", 1]` (0-based, like FastAPI's own) and the message says "Image 2: …" (1-based, as the page numbers them). **429** when the queue is full (the uploads are kept for another try); **507** if the copies don't fit on disk |
-| `GET /api/capabilities` | Adds `limits.input_images {min, max}`, `limits.resolutions [1024, 2048]`, and `supports.multi_image`. The start-up check cannot see inside a loaded pipeline, so `multi_image` is assumed wherever `edit` is, and confirmed by the real-hardware test (§21.10). If the pipeline rejects a list, the run fails with a clear message. M5a adds `limits.upload_mb` too. **`modes` still lists only `generate`**: the server accepts Edit runs, but the page can't make one until M5b, and its Edit switch is enabled by this list, so Edit is not offered yet |
+| `GET /api/capabilities` | Adds `limits.input_images {min, max}`, `limits.resolutions [1024, 2048]`, and `supports.multi_image`. The start-up check cannot see inside a loaded pipeline, so `multi_image` is assumed wherever `edit` is, and confirmed by the real-hardware test (§21.10). If the pipeline rejects a list, the run fails with a clear message. M5a adds `limits.upload_mb` too. **`modes` lists `edit` when `supports.edit` is true** (since 1.6; in 1.2 the page could not make an edit yet, so it listed only `generate`), and `limits.edit_warn_units` tells the page the cost warning's threshold (§21.11, M5b) |
 
 The singular `input_image` of §7 was never implemented, so nothing breaks by replacing it.
 
@@ -719,7 +722,7 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 |---|---|---|
 | M6 | Cancel, Keep and auto-expiry (details below). The v1 plan's remaining housekeeping, now part of v2 (decision #29). **BUILT (1.1), reviewed and merged; the Spark checks below are still to do** | Criteria 9 and 12 of §16, and 31–32 (the parts that don't involve editing, which isn't built yet) |
 | M5a | Backend: multi-file uploads and staging, the cleanup job, `run_inputs` and the schema migration, `POST /api/runs` with `input_images`, worker and fake pipeline pass a list | API tests; fake edits show all sources in order. **BUILT (1.2), reviewed and merged; the Spark checks below are still to do** |
-| M5b | The page: tray, the four inputs, badges and insert, reorder, cap, shape note, Resolution control with cost hint, run-card sources, Reuse, Retry, Edit this. **NOT BUILT; next** | Criteria 19–27 in Playwright |
+| M5b | The page: tray, the four inputs, badges and insert, reorder, cap, shape note, Resolution control with cost hint, run-card sources, Reuse, Retry, Edit this. **BUILT (1.6)** | Criteria 19–27 in Playwright |
 | M5c | The Spark test for edits (checklist supplied): 2- and 4-image edits at 1K, one at 2K, an alpha input; prompts that refer to "image 1" and "image 2"; a transparent edit and a subject extraction; **a mask, tried with both polarities and sizes**; memory and time recorded; cap and cost-hint thresholds set | Criterion 28, and the [unconfirmed] items of §21.2 settled |
 | M5d | Local edits: mark-up editor and mask (§21.5), after M5c has settled the mask convention | Criteria 29–30 |
 | M5e | *Only if R3 is accepted:* the "Improve prompt" step (§21.12 item 3) | Its own criteria, written when decided |
@@ -728,7 +731,7 @@ The singular `input_image` of §7 was never implemented, so nothing breaks by re
 
 Each is its own pull request into `main` (never stacked), and I stop after each for your review (decision #22). M8, the Spark smoke test together, comes last.
 
-**What happened to the order:** M6 and M5a went first, as proposed (1.1, 1.2). Before M5b you asked for three small things that had nothing to do with editing, so they were built as their own releases: the scale picker, drafts and thumbnails (1.3, §22), Regenerate larger (1.4, §23) and Regenerate larger in the viewer (1.5, §24). The rest of the order stands.
+**What happened to the order:** M6 and M5a went first, as proposed (1.1, 1.2). Before M5b you asked for three small things that had nothing to do with editing, so they were built as their own releases: the scale picker, drafts and thumbnails (1.3, §22), Regenerate larger (1.4, §23) and Regenerate larger in the viewer (1.5, §24). Then M5b (1.6). The rest of the order stands: M5c is next.
 
 **M6: built (2026-10-02, version 1.1), reviewed and merged (#10, #11)**
 
@@ -748,7 +751,7 @@ Each is its own pull request into `main` (never stacked), and I stop after each 
 
 **M5a: built (2026-10-02, version 1.2), reviewed and merged (#12)**
 
-The server side of editing with several images. **There is no page for it yet** (M5b), so nothing changes on screen except the version: the Edit switch stays disabled because `GET /api/capabilities` still lists only `generate` in `modes`. You can try it with `scripts/edit_via_api.sh` (section 15 of the Spark checklist).
+The server side of editing with several images. **At 1.2 there was no page for it yet** (it is M5b, built in 1.6), so nothing changed on screen except the version: the Edit switch stayed disabled because `GET /api/capabilities` listed only `generate` in `modes`. You can try it with `scripts/edit_via_api.sh` (section 15 of the Spark checklist).
 
 - **Uploads.** `POST /api/uploads` stages one image; `DELETE /api/uploads/{id}` takes it back; unclaimed ones are removed after `STUDIO_UPLOAD_TTL_HOURS` (hourly, and at start-up), together with files and folders nothing owns. Validation by decoding: PNG, JPEG or WebP, 20 MB, 16 MP; stored as PNG with transparency kept, rotated upright, 16-bit greyscale scaled to 8 bits (Pillow's own conversion clips it to white, which I found by checking pixels and fixed), metadata dropped. **Where it differs from the spec:** the file is the request body, not multipart (§21.6 says why). That is the one thing I would like you to know I changed.
 - **Edit runs.** `POST /api/runs` takes `input_images` (1 to `STUDIO_MAX_INPUT_IMAGES`, default 4), `resolution`, `shape_from`, and Transparent. Each image is an upload id or an image id from an earlier run (a result or an input: "Edit this" and Reuse need nothing else). Errors name the position. The run owns copies of its inputs; claiming is one transaction; a refused or failed submit leaves nothing behind and keeps the uploads (§21.7).
@@ -760,6 +763,25 @@ The server side of editing with several images. **There is no page for it yet** 
 - **Not covered:** a limit on how many staged uploads may wait at once (they are bounded by the 24-hour clean-up, not by count); an animated WebP or PNG uses its first frame; uploads are not de-duplicated.
 - **To check on the Spark** (checklist section 15): a real 1K edit with two and four images, then 2K, with time and memory; whether the model follows "image 1" and "image 2"; transparency; and the point at which memory runs out, which sets the default cap.
 
+**M5b: built (2026-10-03, version 1.6), awaiting your review**
+
+The editing page. Edit is now offered wherever the pipeline can edit (the capabilities' `modes` comes from `supports.edit`), and everything in §21.4 is built: the reference tray with its four ways in (the Add tile, drag-and-drop onto the prompt card, paste into the prompt, and **Edit this**), uploads that start at once and show their progress on the picture, number badges that put "image N" at the caret, reordering by drag or by Move earlier / Move later with focus kept on the moved picture, remove, the cap ("3 of 4"), a file that fails rejected on its own with the reason, **Result follows image N** with Size on Auto, Edit's own size choice (Auto by default), the 1K / 2K Resolution with the cost in units and a warning when it is heavy, Transparent in Edit with a hint when an input has transparency, an "Extract the subject" starter, edit run cards with their numbered sources, the viewer paging through sources and then results, and Reuse and Retry for edits.
+
+- **Small decisions I made while building** (tell me if you want any changed):
+  - **A picture dropped on the card or pasted in Generate mode is not taken**: a message says to switch to Edit. It does not switch for you, so a stray drop cannot change what Generate does. A file dropped anywhere outside the card is ignored (rather than the browser opening it and leaving the page).
+  - **Edit this on a card appears only for a result with one image.** For a batch, open the image in the viewer: the viewer has Edit this for any image, source or result, so you choose which. From the viewer, a full tray is reported inside the viewer, and a successful add closes it and puts you in the prompt.
+  - **The tray keeps working after you send.** The server uses up the staged uploads when it claims them, so afterwards the tray points at the run's own copies of the pictures (as Reuse does). Change the prompt and send again, with nothing to re-add.
+  - **"Result follows image N" follows the picture, not the number.** Reordering keeps the choice; if that picture is removed it falls back to the last. It sends `shape_from` only for a picture other than the last, which is what the pipeline does anyway.
+  - **Edit has its own size choice**, separate from Generate's (they share only the custom width and height). Options saved before 1.6 read as Edit on Auto at 1K. With Size on Auto the scale picker is disabled, with the reason in its tooltip; with a fixed size it works as in Generate.
+  - **The cost warning's threshold is a setting, `STUDIO_EDIT_WARN_UNITS` (default 8, 0 = never)**, which the page is told. This section's own rule is that the thresholds come from Spark measurements, so a number built into the page would need a rebuild to change. **8 is a guess** (3 images at 2K is 12; 2 at 2K is 8 and does not warn). M5c should replace it, together with the default cap of 4. The line under the tray warns too, not only the Options drawer, so a heavy edit is seen without opening Options.
+  - **Taking a picture out of the tray cleans up after it**: an upload still being sent is stopped (the browser cancels the request, so nothing reaches the server); once its last byte is out the server will stage it anyway, so the page lets the answer land and deletes the file then; a picture already staged is deleted at once. A file over the upload size limit is refused before it is sent.
+  - **The starter fills only an empty prompt** ("Extract the main subject of image 1.") and turns Transparent on; it is disabled while the prompt has text, so it never replaces your words.
+  - **The Edit switch lost its "soon" label.** If the pipeline cannot edit, Edit is disabled with the reason in its tooltip.
+  - The Upscale button's tooltip no longer says it "arrives with editing" (editing has arrived; Upscale waits for the Spark test, §23.2).
+- **Server changes** (small): `modes` is derived from `supports.edit`; the new setting `STUDIO_EDIT_WARN_UNITS` and `limits.edit_warn_units`. Nothing else on the server changed; M5a already had the rest.
+- **Tests:** backend 363, front end 169 Vitest (the tray rules, Edit's size and request, Reuse and Retry, the viewer's items) and 68 Playwright (the tray, the options, the cards, Reuse and Retry, failures, phone width). **Mutation checks: 105 deliberate breakages (the tray rules, Edit's size and request, Reuse and Retry, the viewer's items, the upload clean-up, the tray and prompt-bar controls, the Options drawer, the cards, and the server's new settings), all caught by a failing test.** Not all at first: in the first pass 94 were caught, 2 survived, 7 did not compile (an unused variable stops the build) and 1 pattern was ambiguous. The survivors were worth having. One showed that **my test for removing a picture mid-upload was vacuous**: a delayed request was cancelled before it reached the server, so it checked nothing, and behind it was a real gap in the page: a picture taken out after its last byte was sent was left staged on the server until the 24-hour sweep, because cancelling threw away the answer that said where it was. It is fixed (below) and now covered by two real tests. The other survivor showed that nothing checked that keyboard focus survives when the arrow you just used becomes disabled; it does now. The rest were rewritten until they compiled and were then caught.
+- **Not verified:** everything about the real model: whether it follows "image 1" and "image 2", what it does with a transparent input, how long an edit takes and how much memory it needs (§21.2 [unconfirmed]). Also: dragging real files from your desktop and pasting a real screenshot were tested with simulated drop and paste events, not through a real file manager or clipboard, and the layout was checked at 360 px in Chromium only (not Safari or Firefox, and without real touch). `SPARK_TEST.md` §18 is the checklist; try the drag and the paste yourself.
+
 ### 21.12 Open items for v2, and ideas parked
 
 **Open**
@@ -768,7 +790,7 @@ The server side of editing with several images. **There is no page for it yet** 
 2. **Measure on the Spark** (M5c): time and memory for 1, 2 and 4 images at 1K and 2K, next to Hermes. This sets the cap's default, the cost-hint thresholds and any size limits for edits.
 3. **The prompt rewriter (R3).** It is official and recommended by Qwen, but it is a separate **9B vision-language model** (about 18 GB in bf16 by the usual arithmetic, not stated by Qwen) next to a main model whose footprint is still an estimate (the studio starts from 40 GB, to be measured, §9a), on a Spark that Hermes shares. Open questions: load it only when "Improve prompt" is clicked and unload it again, in its own worker process, as the main model is (decision #13)? Show the rewritten prompt for you to edit and approve, never apply it silently? Honour its `wh_ratio` and `ratio_follow` suggestions? What licence do the two rewriter checkpoints carry (not read yet)? Time to rewrite a prompt on the Spark?
 4. **Settle the [unconfirmed] items** (§21.2) on the Spark: referring to images by number, and the mask conventions.
-5. **The order of work** (§21.11): resolved. M6 was first, then M5a, then the three small releases of §22–§24 at your request; M5b is next.
+5. **The order of work** (§21.11): resolved. M6 was first, then M5a, then the three small releases of §22–§24 at your request, then M5b (1.6); M5c is next.
 6. **The licence** (§18 item 2) now has a definite answer to act on: non-commercial, research or evaluation only. Whether your use is covered is your call, or a question for Qwen.
 
 **Parked (not in v2, and not scheduled)**
@@ -776,6 +798,12 @@ The server side of editing with several images. **There is no page for it yet** 
 - **Prompt starters** for the jobs Qwen itself shows: virtual try-on (a person, clothes, shoes, a bag, a hat), a group portrait from separate portraits, a room from furniture images, subject extraction to a transparent layer, a panorama from a selfie, an infographic from a photograph, a storyboard from a three-view character sheet. A small menu in Edit mode; cheap and now well grounded; not scheduled.
 - **Sequential editing** (successive local edits assembled into an animation, as in Qwen's capybara example) is already served by "Edit this" chaining; no extra feature.
 - LoRAs (the pipeline has a LoRA loader) and choosing between models stay out, as in §2. **Upscaling is no longer parked:** decision #37 plans it as a button that waits for the editing page (§23.2).
+
+### 21.13 Criteria added with the editing page (continue §24.3)
+
+48. In Edit the Options show **Resolution 1K | 2K** and the cost in units (images × (resolution ÷ 1024)²), and warn that the edit is heavy above `STUDIO_EDIT_WARN_UNITS` (default 8; 0 = never): in the drawer and under the tray. The server tells the page the threshold.
+49. Edit is offered exactly when the pipeline supports it: the capabilities' `modes` lists `edit` if and only if `supports.edit` is true.
+50. **Edit this** adds the picture to the tray and switches to Edit: from a card for a result with one image, and from the viewer for any image, source or result. A full tray is reported where the request was made (a toast from a card, a note inside the viewer), and nothing is added.
 
 ## 22. Version 1.3: quick size, drafts and thumbnails (decisions #33–#35 DECIDED; details PROPOSED; BUILT and merged, #13)
 
@@ -789,7 +817,7 @@ Three small additions you asked for on 2026-10-02, built before the editing page
 - **It is remembered** with the other options. Options saved by an earlier version have no scale and read as 100%.
 - **Reuse and Retry.** The run records the size actually used. **Reuse** looks for the preset-and-scale pair that gives exactly that size (preferring 100%) and restores it, so a run made with "1:1 at 50%" comes back as "1:1 at 50%", not as a custom size. Retry sends the same request again.
 - **What it does not do.** The same prompt and seed at a different size is **a different picture** [not stated by Qwen; how latent diffusion models behave; to confirm on the Spark]. The picker is for trying things quickly, not for previewing a large image. The Options help text says so.
-- **Edit mode** (M5b): the picker applies to an edit with a fixed size; with Size on Auto, Resolution (1K/2K) is the control and the picker is disabled with that explanation.
+- **Edit mode** (built in 1.6): the picker applies to an edit with a fixed size; with Size on Auto, Resolution (1K/2K) is the control and the picker is disabled with that explanation.
 
 ### 22.2 Drafts (decision #34)
 
@@ -841,20 +869,20 @@ Draft time and quality at the defaults; a 100% / 50% / 25% run of the same promp
 ### 23.2 Upscale (decision #37, planned and not built)
 
 - **What it would be.** A second button, **Upscale**, that keeps *your picture* and makes it bigger, which Regenerate larger cannot do. The model has no upscaler, so the attempt would be an **edit run with the small image as its only input**, at Resolution 2K, asking for the same image in finer detail. [Unconfirmed: whether the editing model leaves the picture recognisably the same, how much detail it adds, and what it costs in time and memory. Nobody has tried it.]
-- **Why it waits.** It needs the editing page (M5b), and a test on the Spark (M5c) before it is worth a button. If the test shows it does not work well, I will say so and drop it rather than ship a button that disappoints.
-- **Meanwhile** the button is shown beside Regenerate larger, **disabled**, with "Arrives with editing" in its tooltip, as **Edit this** is today.
+- **Why it waits.** It needed the editing page (built in 1.6), and it still needs a test on the Spark (M5c) before it is worth a button. If the test shows it does not work well, I will say so and drop it rather than ship a button that disappoints.
+- **Meanwhile** the button is shown beside Regenerate larger, **disabled**. Its tooltip said "Arrives with editing" until 1.6; now that editing exists it says it is **not built yet** and what it waits for (the Spark test, M5c).
 
 ### 23.3 Acceptance criteria (continue §22.4)
 
 40. A run made at 25%, 50% or 75%, or as a draft smaller than the selected size, records its full size and steps; a run at 100% records none.
 41. **Regenerate larger** appears on a done run whose recorded full size is larger than the run, names the target in its tooltip, and queues a run with the same prompt, seed, image count and options at the full size and steps; it is absent on full-size, failed, canceled and older runs.
 42. The server accepts `options.full` only for Generate runs, validates it as a size, and refuses one that is not larger than the run.
-43. The Upscale button is present on those cards, disabled, and says when it arrives.
+43. The Upscale button is present on those cards, disabled, and says it is not built yet (until 1.6: that it arrives with editing).
 44. On a phone the card's buttons wrap without a sideways scroll.
 
 ### 23.4 What was built, and what differs from the plan above
 
-- **As specified:** the `options.full` record, validated by the server as described (Generate only; the same size rules as any size; larger in at least one side and smaller in neither); the page records it on a run made at a scale under 100% and on a draft smaller than the chosen size, and on nothing else; the **Regenerate larger** button on a finished run that remembers a bigger size, naming the size and steps in its tooltip and accessible name; the request it sends; a disabled **Upscale** that says it arrives with editing.
+- **As specified:** the `options.full` record, validated by the server as described (Generate only; the same size rules as any size; larger in at least one side and smaller in neither); the page records it on a run made at a scale under 100% and on a draft smaller than the chosen size, and on nothing else; the **Regenerate larger** button on a finished run that remembers a bigger size, naming the size and steps in its tooltip and accessible name; the request it sends; a disabled **Upscale** that says it arrives with editing (until 1.6, when it began to say it is not built yet).
 - **Small decisions made while building** (tell me if you want any changed):
   - **A draft's full size is the size chosen in Options at 100%, whatever the Scale buttons said** when you pressed Draft (a draft is always sized from the chosen size, §22.2), and its steps are the steps chosen, not the draft's.
   - **Retry carries the record**, so a draft or small run that failed and is retried gets its button when it finishes.

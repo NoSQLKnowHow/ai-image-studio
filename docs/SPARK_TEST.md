@@ -245,9 +245,10 @@ nothing.
 
 ## 15. Editing with several images, through the API (new in 1.2)
 
-The web page can't do this yet (it comes in the next update), but the server can, and this is the first
-time the **real model** is asked to edit, so it is worth trying now. You need two or three pictures: say a
-photo of an object or pet, and a scene. Any JPEG, PNG or WebP.
+This is the same thing as section 18, through the API with `curl` instead of the page. The page has had an
+Edit mode since 1.6, so section 18 is the one to do; this one stays for checking the API from a terminal. It
+is the first time the **real model** is asked to edit, so it is worth trying. You need two or three pictures:
+say a photo of an object or pet, and a scene. Any JPEG, PNG or WebP.
 
 **Before you update:** this version changes the database layout. The first start upgrades it and keeps a
 copy of the old one as `data/studio.sqlite.before-schema-2`. That copy is also the way back to version 1.1
@@ -335,7 +336,7 @@ Ctrl+Shift+R). There is no database change. Only runs made with 1.4 or later can
 
 **a) From a smaller scale.** Turn **Lock seed** on (Options) and set the prompt bar's **Scale** to **50%**.
 Generate. Good: when the card says Done it has **Regenerate larger** (hover it: it names the size and steps,
-for example "Regenerate at 2048×2048, 40 steps") and a greyed **Upscale** that says it arrives with editing.
+for example "Regenerate at 2048×2048, 40 steps") and a greyed **Upscale** that says it is not built yet.
 Click **Regenerate larger**. Good: a toast says it is queued at that size, and a second card appears at the
 full size with the **same seed** and prompt, and no button of its own. **Write down both times.** Then look
 at the two pictures: with the same seed they are **not** expected to be the same picture (§23.1). **Write
@@ -366,6 +367,63 @@ tooltip as the card). Click it. Good: a note inside the viewer says "Queued this
 viewer stays open, and a **new card at the top of the history makes one image** at the full size, with the
 second image's seed (the viewer's title shows it, one more than the run's first). **Write down** that it is
 one image and not three, and, as in (a), how it compares with the small one.
+
+---
+
+## 18. Editing on the page, and the Spark test for edits (new in 1.6; this is milestone M5c)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.6** (reload with
+Ctrl+Shift+R). There is no database change. The **Edit** switch should be enabled; if it is greyed out,
+hover it for the reason (the pipeline reports it cannot edit; `docker compose logs studio` says why).
+
+You need a few pictures: a photo of an object or pet, a scene, a PNG with a transparent background, and (for
+part f) a black-and-white mask the size of one of the photos (white where a change should go). Keep a
+notebook: **times and memory** are what this section is for. Watch memory with `docker stats` or `free -h`
+in a second terminal while an edit runs. The first edit after a quiet spell includes loading the model, so do
+one throw-away edit first and time the ones after it.
+
+**a) One picture.** Click **Edit**, add one photo (the **Add images** tile), type "Make it look like a
+watercolour painting." and click **Generate**. Good: a card with an **Edit** badge, a numbered source
+thumbnail (1) above the result, and a meta line like "1 image · 1024×1024 · 1K · 40 steps". **Write down the
+time.** Is the subject still recognisably the same?
+
+**b) Several pictures, and "image N".** Add the object and the scene. Click the **1** badge on the object:
+"image 1" appears in the prompt where the cursor was. Finish it: "Put the object from image 1 into the scene
+from image 2." and send. **Write down whether the result follows the numbers.** (Nobody knows yet: §21.2.)
+Then use the arrows to swap the two pictures and send the same prompt again: does "image 1" now mean the
+other one?
+
+**c) The shape.** Leave Size on **Auto** and, with two pictures of different shapes, use **Result follows
+image** to pick each one in turn. Good: the result takes that picture's shape, about 1 megapixel at 1K.
+
+**d) Resolution, cost and memory (the important one).** In Options choose **Resolution**; the line under it
+gives the cost in units (images × (resolution ÷ 1024)²) and a warning above `STUDIO_EDIT_WARN_UNITS` (8).
+Make a table of **time and peak memory** for: 1 picture at 1K and 2K; 2 pictures at 1K and 2K; 4 pictures at
+1K and, if memory allows, 2K. Good: each completes, or fails with a card that says what to do (use 1K or fewer
+pictures) while the server stays up. **Then tell me:** where it really starts to struggle (the number that
+should replace 8: set `STUDIO_EDIT_WARN_UNITS` in `.env` and `docker compose up -d`), and whether 4 pictures is
+the right default (`STUDIO_MAX_INPUT_IMAGES`, up to 10).
+
+**e) Transparency.** Add the transparent PNG: Options shows a hint that its transparency is kept. Edit it with
+Transparent off, then on. Then try the **Extract the subject** starter on a photo of an object. **Write down**
+whether the background comes back transparent (the viewer shows a checkerboard) and whether the Transparent
+switch was needed when the input already had transparency (§21.2 [unconfirmed]).
+
+**f) A mask** (so local edits can be designed, §21.5). Add the photo as image 1 and the black-and-white mask as
+image 2, and write the prompt "Change the area marked in white in image 2 to ...". **Write down which colour the model
+treats as "edit here"**: try with white where you want the change, then a mask with the colours swapped; and
+whether a mask the same size as the photo matters (try one of a different size).
+
+**g) Edit this.** On a finished single-image card click **Edit this**: the picture is added as image 1 and
+the page switches to Edit. For a card with several images, open one in the viewer (it has **Edit this** for any
+image, and for an edit's source pictures too).
+
+**h) Reuse and Retry.** **Reuse** an edit's card: the prompt, the options and all its pictures come back, in
+order, with the seed locked. If you can make one fail (a picture of 4 at 2K, say), **Retry** sends the same
+pictures again.
+
+**i) A phone.** Open the page on a phone: the tray is three pictures across, **Add images** opens the photo
+picker, and nothing scrolls sideways.
 
 ---
 
@@ -400,3 +458,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 7. The numbers and observations from step 15 (edits through the API).
 8. The numbers from step 16: the time of a draft and of a run at each scale, and how the draft looks.
 9. From step 17: the two times, and how different the small and the regenerated pictures are.
+10. From step 18 (the Spark test for edits, M5c): the times and memory for each case, whether the model followed "image 1" and "image 2", what it did with a transparent picture, which mask colour worked, and the numbers you suggest for the cap and the cost warning.

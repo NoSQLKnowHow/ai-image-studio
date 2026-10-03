@@ -386,13 +386,39 @@ def test_retry_and_reuse_can_name_a_past_runs_inputs(client):
 
 
 # ------------------------------------------------------------------ what the page is told
-def test_capabilities_describe_edits_but_do_not_offer_the_mode_yet(client_factory):
+def test_capabilities_describe_edits_and_offer_the_mode(client_factory):
     caps = client_factory(max_input_images=6).get("/api/capabilities").json()
     assert caps["limits"]["input_images"] == {"min": 1, "max": 6}
     assert caps["limits"]["resolutions"] == [1024, 2048] and caps["limits"]["upload_mb"] == 20
     assert caps["supports"]["edit"] is True and caps["supports"]["multi_image"] is True
-    # The API accepts edits, but the page cannot make one until M5b, so it must not offer the mode yet.
-    assert caps["modes"] == ["generate"]
+    assert caps["modes"] == ["generate", "edit"]  # the page's Edit switch is enabled by this list (M5b)
+
+
+def test_edit_is_offered_only_where_the_pipeline_can_edit(client_factory, monkeypatch):
+    from studio.pipelines.fake import FakePipeline
+
+    monkeypatch.setattr(FakePipeline, "SUPPORTS", {**FakePipeline.SUPPORTS, "edit": False})
+    caps = client_factory().get("/api/capabilities").json()
+    assert caps["modes"] == ["generate"] and caps["supports"]["edit"] is False
+
+
+def test_the_edit_cost_warning_is_a_setting_the_page_is_told(client_factory):
+    assert client_factory().get("/api/capabilities").json()["limits"]["edit_warn_units"] == 8
+    assert client_factory(edit_warn_units=0).get("/api/capabilities").json()["limits"]["edit_warn_units"] == 0
+
+
+def test_the_edit_cost_warning_setting_is_validated():
+    from studio.config import ConfigError, Settings
+
+    assert Settings.from_env({}).edit_warn_units == 8
+    assert Settings.from_env({"STUDIO_EDIT_WARN_UNITS": "0"}).edit_warn_units == 0
+    assert Settings.from_env({"STUDIO_EDIT_WARN_UNITS": "16"}).edit_warn_units == 16
+    for bad in ("-1", "1001", "many", "2.5"):
+        try:
+            Settings.from_env({"STUDIO_EDIT_WARN_UNITS": bad})
+        except ConfigError:
+            continue
+        raise AssertionError(f"STUDIO_EDIT_WARN_UNITS={bad} should be refused")
 
 
 # ------------------------------------------------------------------ gaps the mutation checks found, and the paths changed after review

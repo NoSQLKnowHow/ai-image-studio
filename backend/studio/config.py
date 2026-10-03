@@ -38,6 +38,7 @@ class Settings:
     upload_ttl_hours: int = 24  # how long an upload that no run has claimed is kept
     draft_size: int = 512  # a draft's long side in pixels (DESIGN.md §22.2)
     draft_steps: int = 12  # the most steps a draft may use
+    edit_warn_units: int = 8  # an edit costing more "units" (images x (resolution/1024)^2) gets a warning; 0 = never (DESIGN.md §21.4)
     min_free_gb: Optional[float] = None  # None = memory pre-flight check off (set after measuring, M2)
     cpu_offload: bool = False
     local_files_only: bool = False
@@ -146,6 +147,7 @@ class Settings:
             upload_ttl_hours=integer("STUDIO_UPLOAD_TTL_HOURS", cls.upload_ttl_hours, 1, 720),
             draft_size=integer("STUDIO_DRAFT_SIZE", cls.draft_size, 256, 1024),
             draft_steps=integer("STUDIO_DRAFT_STEPS", cls.draft_steps, 1, 100),
+            edit_warn_units=integer("STUDIO_EDIT_WARN_UNITS", cls.edit_warn_units, 0, 1000),
             min_free_gb=optional_float("STUDIO_MIN_FREE_GB", 0.0),
             cpu_offload=boolean("STUDIO_CPU_OFFLOAD", cls.cpu_offload),
             local_files_only=boolean("STUDIO_LOCAL_FILES_ONLY", cls.local_files_only),

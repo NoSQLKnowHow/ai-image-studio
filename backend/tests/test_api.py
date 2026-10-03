@@ -17,7 +17,7 @@ def test_health_index_and_capabilities(client):
     page = client.get("/").text  # no UI build in this test's settings -> placeholder
     assert "AI Image Studio" in page and "/api/health" in page
     caps = client.get("/api/capabilities").json()
-    assert caps["pipeline"] == "fake" and caps["modes"] == ["generate"] and caps["model"] == "fake-pipeline"
+    assert caps["pipeline"] == "fake" and caps["modes"] == ["generate", "edit"] and caps["model"] == "fake-pipeline"
     assert caps["defaults"]["width"] == 2048 and caps["defaults"]["steps"] == 40 and caps["queue_cap"] == 10
     assert caps["aspect_ratios"]["16:9"] == [2752, 1536] and caps["supports"]["negative_prompt"] is True
     assert caps["limits"]["num_images"]["max"] == 8

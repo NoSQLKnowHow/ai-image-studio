@@ -1,20 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
+  AUTO,
   CUSTOM,
   OPTIONS_KEY,
   SCALES,
   baseSize,
+  buildEditRequest,
   buildRequest,
   defaultOptions,
   draftRequest,
   draftSize,
   effectiveScale,
+  isAutoSize,
   isLarger,
   largerRequest,
   largerTarget,
   loadOptions,
   optionsFromRun,
   optionsProblem,
+  resolutionLabel,
   resolveSize,
   retryRequest,
   sanitizeOptions,
@@ -22,13 +26,15 @@ import {
   scaledSide,
   scaledSize,
   saveOptions,
+  sizeKey,
+  sizeLabel,
   summarize,
   usableScale,
   type KeyValueStore,
   type Scale,
 } from "./options";
 import { CAPS, makeRun } from "./testdata";
-import type { Capabilities, Run } from "./types";
+import type { Capabilities, Mode, Run } from "./types";
 
 function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
   const data = { ...initial };
@@ -70,8 +76,10 @@ describe("defaults and persistence", () => {
     expect(sanitizeOptions({ steps: 20 }, CAPS)).toEqual({ options: { ...defaultOptions(CAPS), steps: 20 }, repaired: false });
   });
 
-  it("rejects modes the server doesn't offer yet", () => {
-    expect(sanitizeOptions({ mode: "edit" }, CAPS).options.mode).toBe("generate");
+  it("rejects a mode the server doesn't offer (an older server, or a pipeline that can't edit)", () => {
+    const noEdit: Capabilities = { ...CAPS, modes: ["generate"] as Mode[] };
+    expect(sanitizeOptions({ mode: "edit" }, noEdit).options.mode).toBe("generate");
+    expect(sanitizeOptions({ mode: "edit" }, CAPS).options.mode).toBe("edit");
   });
 
   it("resets an invalid custom size", () => {
@@ -323,8 +331,8 @@ describe("regenerate larger (DESIGN.md §23)", () => {
     });
 
     it("an edit records none (the server only takes it for Generate)", () => {
-      const options = { ...defaultOptions(CAPS), mode: "edit" as const, scale: 50 as Scale };
-      expect(buildRequest("x", options, CAPS).options).not.toHaveProperty("full");
+      const options = { ...defaultOptions(CAPS), mode: "edit" as const, editAspect: "1:1", scale: 50 as Scale };
+      expect(buildEditRequest("x", options, CAPS, [{ upload_id: "u" }], null).options).not.toHaveProperty("full");
     });
 
     it("a draft records the chosen size at 100% whatever the scale picker says, with the chosen steps", () => {
@@ -435,5 +443,200 @@ describe("regenerate larger (DESIGN.md §23)", () => {
       expect(largerRequest(makeRun(), { seed: 1 })).toBeNull();
       expect(largerRequest(smallRun({}, { status: "canceled" }), { seed: 1 })).toBeNull();
     });
+  });
+});
+
+// ------------------------------------------------------------------ editing (DESIGN.md §21.4)
+describe("editing: the size choice and the resolution", () => {
+  const edit = (over: Partial<ReturnType<typeof defaultOptions>> = {}) => ({ ...defaultOptions(CAPS), mode: "edit" as const, ...over });
+
+  it("Edit starts on Auto at 1K", () => {
+    const d = defaultOptions(CAPS);
+    expect([d.editAspect, d.resolution]).toEqual([AUTO, 1024]);
+  });
+
+  it("options saved before editing existed read as those defaults, without being called repaired", () => {
+    const old = { mode: "generate", aspect: "16:9", customWidth: 2048, customHeight: 2048, scale: 50, steps: 30, seedLocked: false, seed: 42,
+      numImages: 1, negativePrompt: "", guidance: null, transparent: false };
+    const { options, repaired } = sanitizeOptions(old, CAPS);
+    expect(repaired).toBe(false);
+    expect([options.editAspect, options.resolution, options.aspect]).toEqual([AUTO, 1024, "16:9"]);
+  });
+
+  it("accepts Auto, a preset or Custom for Edit's size, and repairs anything else", () => {
+    for (const good of [AUTO, CUSTOM, "4:3"]) expect(sanitizeOptions({ editAspect: good }, CAPS)).toMatchObject({ options: { editAspect: good }, repaired: false });
+    const bad = sanitizeOptions({ editAspect: "banana" }, CAPS);
+    expect(bad.repaired).toBe(true);
+    expect(bad.options.editAspect).toBe(AUTO);
+  });
+
+  it("Generate's size cannot be Auto", () => {
+    expect(sanitizeOptions({ aspect: AUTO }, CAPS)).toMatchObject({ options: { aspect: "1:1" }, repaired: true });
+  });
+
+  it("accepts the resolutions the server offers and repairs anything else", () => {
+    expect(sanitizeOptions({ resolution: 2048 }, CAPS)).toMatchObject({ options: { resolution: 2048 }, repaired: false });
+    expect(sanitizeOptions({ resolution: 1536 }, CAPS)).toMatchObject({ options: { resolution: 1024 }, repaired: true });
+    const only1k: Capabilities = { ...CAPS, limits: { ...CAPS.limits, resolutions: [1024] } };
+    expect(sanitizeOptions({ resolution: 2048 }, only1k)).toMatchObject({ options: { resolution: 1024 }, repaired: true });
+  });
+
+  it("the size choice that applies depends on the mode", () => {
+    const o = { ...defaultOptions(CAPS), aspect: "16:9", editAspect: "3:4" };
+    expect(sizeKey({ ...o, mode: "generate" })).toBe("16:9");
+    expect(sizeKey({ ...o, mode: "edit" })).toBe("3:4");
+    expect(baseSize({ ...o, mode: "generate" }, CAPS)).toEqual({ width: 2752, height: 1536 });
+    expect(baseSize({ ...o, mode: "edit" }, CAPS)).toEqual({ width: 1792, height: 2400 });
+  });
+
+  it("only an Edit on Auto is Auto", () => {
+    expect(isAutoSize(edit())).toBe(true);
+    expect(isAutoSize(edit({ editAspect: "1:1" }))).toBe(false);
+    expect(isAutoSize({ ...defaultOptions(CAPS), mode: "generate", editAspect: AUTO })).toBe(false);
+  });
+
+  it("an Edit on Auto has no scale, whatever the scale picker had", () => {
+    expect(effectiveScale(edit({ scale: 50 }), CAPS)).toBe(100);
+    expect(effectiveScale(edit({ editAspect: "1:1", scale: 50 }), CAPS)).toBe(50);
+  });
+
+  it("the size is worded Auto, or as width × height", () => {
+    expect(sizeLabel(edit(), CAPS)).toBe("Auto");
+    expect(sizeLabel(edit({ editAspect: "16:9" }), CAPS)).toBe("2752×1536");
+    expect(sizeLabel(edit({ editAspect: "16:9", scale: 50 }), CAPS)).toBe("1376×768");
+    expect(sizeLabel({ ...defaultOptions(CAPS), mode: "generate" }, CAPS)).toBe("2048×2048");
+  });
+
+  it("only a custom size that is in use is checked", () => {
+    const badCustom = { customWidth: 1000, customHeight: 1000 };
+    expect(optionsProblem(edit({ editAspect: CUSTOM, ...badCustom }), CAPS)).toContain("multiple of 32");
+    expect(optionsProblem(edit({ editAspect: AUTO, aspect: CUSTOM, ...badCustom }), CAPS)).toBeNull(); // Generate's choice, not Edit's
+    expect(optionsProblem({ ...defaultOptions(CAPS), mode: "generate", editAspect: CUSTOM, ...badCustom }, CAPS)).toBeNull();
+  });
+
+  it("the resolution is worded 1K or 2K", () => {
+    expect([resolutionLabel(1024), resolutionLabel(2048)]).toEqual(["1K", "2K"]);
+  });
+});
+
+describe("editing: the request", () => {
+  const edit = (over: Partial<ReturnType<typeof defaultOptions>> = {}) => ({ ...defaultOptions(CAPS), mode: "edit" as const, ...over });
+  const inputs = [{ upload_id: "u1" }, { image_id: "i2" }];
+
+  it("on Auto sends no size, the images in order, and the resolution", () => {
+    expect(buildEditRequest("  put it there ", edit(), CAPS, inputs, null)).toEqual({
+      mode: "edit", prompt: "put it there", input_images: inputs,
+      options: { width: null, height: null, steps: 40, seed: null, num_images: 1, negative_prompt: null, cfg_scale: null, transparent: false, resolution: 1024 },
+    });
+  });
+
+  it("sends the resolution chosen", () => {
+    expect(buildEditRequest("x", edit({ resolution: 2048 }), CAPS, inputs, null).options.resolution).toBe(2048);
+  });
+
+  it("names the image the result follows, but only on Auto", () => {
+    expect(buildEditRequest("x", edit(), CAPS, inputs, 1).options.shape_from).toBe(1);
+    expect(buildEditRequest("x", edit(), CAPS, inputs, null).options).not.toHaveProperty("shape_from");
+    expect(buildEditRequest("x", edit({ editAspect: "1:1" }), CAPS, inputs, 1).options).not.toHaveProperty("shape_from");
+  });
+
+  it("with a size chosen, sends it, at the scale chosen", () => {
+    const body = buildEditRequest("x", edit({ editAspect: "16:9", scale: 50 }), CAPS, inputs, null);
+    expect([body.options.width, body.options.height]).toEqual([1376, 768]);
+    const custom = buildEditRequest("x", edit({ editAspect: CUSTOM, customWidth: 1024, customHeight: 512 }), CAPS, inputs, null);
+    expect([custom.options.width, custom.options.height]).toEqual([1024, 512]);
+  });
+
+  it("carries the seed, negative prompt, guidance, images per click and Transparent", () => {
+    const options = edit({ seedLocked: true, seed: 99, negativePrompt: " blurry ", guidance: 4, numImages: 3, transparent: true });
+    expect(buildEditRequest("x", options, CAPS, inputs, null).options).toMatchObject({
+      seed: 99, negative_prompt: "blurry", cfg_scale: 4, num_images: 3, transparent: true,
+    });
+  });
+
+  it("is an Edit whatever mode the options say, and never a draft or a regenerate-larger", () => {
+    const body = buildEditRequest("x", { ...edit({ editAspect: "1:1", scale: 50 }), mode: "generate" }, CAPS, inputs, null);
+    expect(body.mode).toBe("edit");
+    expect(body.options).not.toHaveProperty("draft");
+    expect(body.options).not.toHaveProperty("full");
+  });
+
+  it("the Generate request ignores Edit's choices", () => {
+    const body = buildRequest("x", { ...defaultOptions(CAPS), mode: "edit", aspect: "16:9", editAspect: AUTO, resolution: 2048 }, CAPS);
+    expect(body.mode).toBe("generate");
+    expect([body.options.width, body.options.height]).toEqual([2752, 1536]);
+    expect(body).not.toHaveProperty("input_images");
+    expect(body.options).not.toHaveProperty("resolution");
+  });
+
+  it("Transparent is allowed in Edit (decision #31)", () => {
+    expect(buildEditRequest("x", edit({ transparent: true }), CAPS, inputs, null).options.transparent).toBe(true);
+    const unsupported: Capabilities = { ...CAPS, supports: { ...CAPS.supports, transparent: false } };
+    expect(buildEditRequest("x", edit({ transparent: true }), unsupported, inputs, null).options.transparent).toBe(false);
+  });
+});
+
+describe("editing: Reuse, Retry and the summary", () => {
+  const input = (position: number, id = `in${position}`) => ({
+    position, role: "reference" as const, id, width: 600, height: 400, has_alpha: false, url: `/api/images/${id}`, thumb_url: `/api/images/${id}/thumb`,
+  });
+  const editRun = (options: Partial<Run["options"]> = {}, extra: Partial<Run> = {}): Run =>
+    makeRun({
+      mode: "edit",
+      inputs: [input(1), input(2)],
+      options: { ...makeRun().options, width: null, height: null, steps: 30, seed: 7, resolution: 1024, shape_from: null, roles: ["reference", "reference"], ...options },
+      ...extra,
+    });
+
+  it("Reuse of an Edit run on Auto goes back to Edit on Auto, with its resolution, seed locked", () => {
+    const next = optionsFromRun(editRun({ resolution: 2048, num_images: 2, negative_prompt: "blurry", cfg_scale: 4, transparent: true }), CAPS,
+      { ...defaultOptions(CAPS), editAspect: "3:4", scale: 50 });
+    expect(next).toMatchObject({ mode: "edit", editAspect: AUTO, scale: 100, resolution: 2048, steps: 30, seedLocked: true, seed: 7, numImages: 2,
+      negativePrompt: "blurry", guidance: 4, transparent: true });
+  });
+
+  it("Reuse of an Edit run with a size restores the preset and scale that give it, else a custom size", () => {
+    const preset = optionsFromRun(editRun({ width: 1376, height: 768 }), CAPS, defaultOptions(CAPS));
+    expect([preset.editAspect, preset.scale]).toEqual(["16:9", 50]);
+    const custom = optionsFromRun(editRun({ width: 1000 - 8, height: 640 }), CAPS, defaultOptions(CAPS));
+    expect([custom.editAspect, custom.customWidth, custom.customHeight]).toEqual([CUSTOM, 992, 640]);
+  });
+
+  it("Reuse of an Edit run leaves Generate's own size alone", () => {
+    const current = { ...defaultOptions(CAPS), aspect: "9:16", scale: 25 as Scale };
+    expect(optionsFromRun(editRun({ width: 1376, height: 768 }), CAPS, current).aspect).toBe("9:16");
+  });
+
+  it("Reuse of a Generate run leaves Edit's choices alone", () => {
+    const current = { ...defaultOptions(CAPS), editAspect: "3:2", resolution: 2048 as const };
+    const next = optionsFromRun(makeRun(), CAPS, current);
+    expect([next.mode, next.editAspect, next.resolution]).toEqual(["generate", "3:2", 2048]);
+  });
+
+  it("Reuse of an Edit run on a server that cannot edit stays in the current mode", () => {
+    const noEdit: Capabilities = { ...CAPS, modes: ["generate"] as Mode[] };
+    expect(optionsFromRun(editRun(), noEdit, defaultOptions(noEdit)).mode).toBe("generate");
+  });
+
+  it("Retry of an Edit run sends its images by id, in order, with their roles, and its resolution and shape", () => {
+    const run = editRun({ resolution: 2048, shape_from: 1, roles: ["reference", "mask"] }, { inputs: [input(1, "a"), { ...input(2, "b"), role: "mask" }] });
+    const body = retryRequest(run);
+    expect(body.mode).toBe("edit");
+    expect(body.input_images).toEqual([{ image_id: "a", role: "reference" }, { image_id: "b", role: "mask" }]);
+    expect(body.options).toMatchObject({ width: null, height: null, resolution: 2048, shape_from: 1, seed: 7, draft: false });
+  });
+
+  it("Retry of a Generate run has no images, resolution or shape", () => {
+    const body = retryRequest(makeRun());
+    expect(body).not.toHaveProperty("input_images");
+    expect(body.options).not.toHaveProperty("resolution");
+    expect(body.options).not.toHaveProperty("shape_from");
+  });
+
+  it("the summary says Auto and the resolution for an Edit, and Transparent in either mode", () => {
+    const edit = { ...defaultOptions(CAPS), mode: "edit" as const };
+    expect(summarize(edit, CAPS)).toBe("Auto · 1K · 40 steps · random seed");
+    expect(summarize({ ...edit, editAspect: "1:1", scale: 50, resolution: 2048, transparent: true }, CAPS)).toBe("1024×1024 (50%) · 2K · 40 steps · random seed · transparent");
+    expect(summarize({ ...defaultOptions(CAPS), transparent: true }, CAPS)).toBe("2048×2048 · 40 steps · random seed · transparent");
   });
 });

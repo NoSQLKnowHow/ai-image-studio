@@ -1,57 +1,7 @@
 // End-to-end: the built UI against the real backend (fake pipeline). See playwright.config.ts.
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { expect, test as base, type Locator, type Page } from "@playwright/test";
-
-// Every test fails on browser console errors: CSP violations and runtime errors surface there.
-// "Failed to load resource" for a 4xx the test provoked on purpose is expected and ignored.
-const test = base.extend<{ consoleErrors: string[] }>({
-  consoleErrors: [
-    async ({ page }, use) => {
-      const errors: string[] = [];
-      page.on("console", (m) => {
-        if (m.type() === "error" && !/Failed to load resource: the server responded with a status of 4\d\d/.test(m.text())) errors.push(m.text());
-      });
-      page.on("pageerror", (e) => errors.push(String(e)));
-      await use(errors);
-      expect(errors, "browser console errors").toEqual([]);
-    },
-    { auto: true },
-  ],
-});
-
-const FAST = { mode: "generate", aspect: "custom", customWidth: 512, customHeight: 512, steps: 8, seedLocked: false, seed: 42,
-  numImages: 1, negativePrompt: "", guidance: null, transparent: false };
-
-async function useOptions(page: Page, overrides: Record<string, unknown> = {}) {
-  await page.addInitScript((opts) => localStorage.setItem("studio.options.v1", JSON.stringify(opts)), { ...FAST, ...overrides });
-}
-
-const unique = (text: string) => `${text} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-const card = (page: Page, prompt: string): Locator => page.locator("article.run-card", { hasText: prompt });
-// exact: run cards carry aria-labels made from their prompts, which may contain the word "prompt"
-const promptBox = (page: Page): Locator => page.getByRole("textbox", { name: "Prompt", exact: true });
-
-async function generate(page: Page, prompt: string): Promise<Locator> {
-  await promptBox(page).fill(prompt);
-  await page.keyboard.press("Control+Enter");
-  const c = card(page, prompt).first();
-  await expect(c).toBeVisible();
-  return c;
-}
-
-/** Delete every run over the API (waiting out one that's still generating). */
-async function clearHistory(page: Page) {
-  await expect
-    .poll(async () => {
-      const { runs } = (await (await page.request.get("/api/runs?limit=100")).json()) as { runs: { id: string; status: string }[] };
-      for (const run of runs) {
-        if (run.status !== "running") await page.request.delete(`/api/runs/${run.id}`, { headers: { "X-Studio-Client": "1" } });
-      }
-      return runs.length;
-    }, { timeout: 20_000 })
-    .toBe(0);
-}
+import { card, clearHistory, expect, generate, promptBox, test, unique, useOptions, type Locator, type Page } from "./helpers";
 
 async function setRange(locator: Locator, value: number) {
   await locator.evaluate((el, v) => {
@@ -72,7 +22,7 @@ test("loads cleanly and explains the model state", async ({ page }) => {
   await expect(details).toContainText("Test pipeline (fake images, no GPU)");
   await page.keyboard.press("Escape");
   await expect(details).toBeHidden();
-  await expect(page.getByRole("radio", { name: /Edit/ })).toBeDisabled(); // arrives in M5
+  await expect(page.getByRole("radio", { name: /Edit/ })).toBeEnabled(); // the fake pipeline can edit (M5b)
 });
 
 test("the title and the tab show the version the server is running", async ({ page }) => {
@@ -528,7 +478,7 @@ test("a run made at 50% offers Regenerate larger, which queues the same prompt a
   await expect(again).toHaveText("Regenerate larger");
   await expect(again).toHaveAttribute("title", /different picture/); // honest about what it will make
   await expect(small.getByRole("button", { name: "Upscale" })).toBeDisabled();
-  await expect(small.getByRole("button", { name: "Upscale" })).toHaveAttribute("title", /Arrives with editing/);
+  await expect(small.getByRole("button", { name: "Upscale" })).toHaveAttribute("title", /Not built yet/);
 
   await again.click();
   await expect(page.getByRole("status").filter({ hasText: "Queued at 1024×1024" })).toBeVisible();

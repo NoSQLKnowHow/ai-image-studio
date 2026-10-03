@@ -1,4 +1,4 @@
-import type { Capabilities, CreateRunBody, Run, RunsPage, Status } from "./types";
+import type { Capabilities, CreateRunBody, Run, RunsPage, Status, UploadResult } from "./types";
 
 export interface FieldError {
   field: string; // e.g. "options.width" or "prompt"
@@ -58,6 +58,35 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+/** Send one image to be staged for an edit (DESIGN.md §21.6): the file itself is the request body. This uses
+ *  XMLHttpRequest rather than fetch because only it reports how much has been sent, and the tray shows that on the
+ *  picture. `abort` stops it; the promise then rejects with an AbortError. */
+export function uploadImage(file: Blob, onProgress?: (fraction: number) => void): { promise: Promise<UploadResult>; abort: () => void } {
+  const xhr = new XMLHttpRequest();
+  const promise = new Promise<UploadResult>((resolve, reject) => {
+    xhr.open("POST", "/api/uploads");
+    xhr.setRequestHeader("X-Studio-Client", "1"); // as on every mutation (§11)
+    xhr.setRequestHeader("Accept", "application/json");
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(event.total ? event.loaded / event.total : 0);
+    };
+    xhr.onload = () => {
+      let body: unknown = null;
+      try {
+        body = JSON.parse(xhr.responseText);
+      } catch {
+        /* empty or non-JSON body */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(body as UploadResult);
+      else reject(toApiError(xhr.status, body));
+    };
+    xhr.onerror = () => reject(toApiError(0, null));
+    xhr.onabort = () => reject(new DOMException("The upload was canceled.", "AbortError"));
+    xhr.send(file);
+  });
+  return { promise, abort: () => xhr.abort() };
+}
+
 export const api = {
   capabilities: () => request<Capabilities>("/api/capabilities"),
   status: () => request<Status>("/api/status"),
@@ -68,4 +97,5 @@ export const api = {
   keepRun: (id: string, pinned: boolean) =>
     request<Run>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ pinned }) }),
   deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  deleteUpload: (id: string) => request<void>(`/api/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

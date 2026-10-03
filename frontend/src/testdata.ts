@@ -4,8 +4,8 @@ import type { Capabilities, Run, Status } from "./types";
 export const CAPS: Capabilities = {
   pipeline: "fake",
   model: "fake-pipeline",
-  modes: ["generate"],
-  supports: { negative_prompt: true, cfg_scale: true, step_progress: true, transparent: true, edit: false },
+  modes: ["generate", "edit"],
+  supports: { negative_prompt: true, cfg_scale: true, step_progress: true, transparent: true, edit: true, multi_image: true },
   aspect_ratios: {
     "1:1": [2048, 2048], "4:3": [2400, 1792], "3:4": [1792, 2400], "3:2": [2528, 1696],
     "2:3": [1696, 2528], "16:9": [2752, 1536], "9:16": [1536, 2752],
@@ -19,6 +19,10 @@ export const CAPS: Capabilities = {
     cfg_scale: { min: 0.1, max: 20 },
     size: { min: 256, max: 4096, multiple: 32, max_pixels: 4_500_000 },
     draft: { long_side: 512, steps: 12 },
+    input_images: { min: 1, max: 4 },
+    resolutions: [1024, 2048],
+    upload_mb: 20,
+    edit_warn_units: 8,
   },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },
@@ -44,13 +48,14 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     queue_position: null,
     progress: null,
     canceling: false,
+    inputs: [],
     images: [],
     ...overrides,
   };
 }
 
 export const STATUS: Status = {
-  version: "1.5",
+  version: "1.6",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", pid: 1, unload_at: null, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10 },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, worker_rss_gb: null },
