@@ -478,7 +478,7 @@ test("a run made at 50% offers Regenerate larger, which queues the same prompt a
   await expect(again).toHaveText("Regenerate larger");
   await expect(again).toHaveAttribute("title", /different picture/); // honest about what it will make
   await expect(small.getByRole("button", { name: "Upscale" })).toBeDisabled();
-  await expect(small.getByRole("button", { name: "Upscale" })).toHaveAttribute("title", /Arrives with editing/);
+  await expect(small.getByRole("button", { name: "Upscale" })).toHaveAttribute("title", /Not built yet/);
 
   await again.click();
   await expect(page.getByRole("status").filter({ hasText: "Queued at 1024×1024" })).toBeVisible();

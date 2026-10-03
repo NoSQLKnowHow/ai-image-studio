@@ -180,7 +180,7 @@ export function RunCard({ run, now, workerState, canEdit, onReuse, onRegenerateL
                 <EnlargeIcon /> Regenerate larger
               </button>
               <button type="button" className="button small ghost" disabled data-action="upscale"
-                title="Arrives with editing: it will make this same picture bigger">
+                title="Not built yet: it waits for a test of whether editing can enlarge a picture without changing it">
                 <UpscaleIcon /> Upscale
               </button>
             </>
