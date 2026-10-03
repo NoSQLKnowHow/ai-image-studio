@@ -4,6 +4,9 @@ export type Mode = "generate" | "edit";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "canceled";
 export type WorkerState = "unloaded" | "loading" | "ready" | "busy" | "error" | "unavailable";
 
+/** What an input image is for. Only "reference" is used until local edits (DESIGN.md §21.5). */
+export type InputRole = "reference" | "marked" | "mask";
+
 export interface RunOptionsSnapshot {
   width: number | null;
   height: number | null;
@@ -16,6 +19,9 @@ export interface RunOptionsSnapshot {
   transparent: boolean;
   draft?: boolean; // a small, quick try (DESIGN.md §22.2); absent on runs made before version 1.3
   full?: FullSize | null; // the size and steps this run stands in for (DESIGN.md §23.1); absent before 1.4, null at full size
+  resolution?: number | null; // Edit: 1024 or 2048; null for Generate
+  shape_from?: number | null; // Edit with Size on Auto: the 1-based image the result follows, when one was chosen
+  roles?: InputRole[]; // the inputs' roles, in order (Edit)
 }
 
 export interface FullSize {
@@ -34,6 +40,18 @@ export interface ImageInfo {
   url: string;
   thumb_url: string | null;
   download_url: string;
+}
+
+/** An image an edit was given: its place in the order the model sees them (1 = "image 1"). */
+export interface RunInput {
+  position: number;
+  role: InputRole;
+  id: string;
+  width: number;
+  height: number;
+  has_alpha: boolean;
+  url: string;
+  thumb_url: string | null;
 }
 
 export interface Progress {
@@ -60,6 +78,7 @@ export interface Run {
   queue_position: number | null;
   progress: Progress | null;
   canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
+  inputs: RunInput[]; // an edit's images, in order; empty for Generate
   images: ImageInfo[];
 }
 
@@ -90,7 +109,7 @@ export interface Capabilities {
   pipeline: string;
   model: string;
   modes: Mode[];
-  supports: { negative_prompt?: boolean; cfg_scale?: boolean; step_progress?: boolean; transparent?: boolean; edit?: boolean };
+  supports: { negative_prompt?: boolean; cfg_scale?: boolean; step_progress?: boolean; transparent?: boolean; edit?: boolean; multi_image?: boolean };
   aspect_ratios: Record<string, [number, number]>;
   defaults: {
     mode: Mode;
@@ -110,14 +129,33 @@ export interface Capabilities {
     cfg_scale: Range;
     size: Range & { multiple: number; max_pixels: number };
     draft: { long_side: number; steps: number }; // what a draft may be: its long side in pixels, and its most steps
+    input_images: Range; // how many images one edit may use
+    resolutions: number[]; // Edit's 1K / 2K choices (1024, 2048)
+    upload_mb: number; // the largest single upload
+    edit_warn_units: number; // an edit costing more units than this gets a warning; 0 = never (DESIGN.md §21.4)
   };
   queue_cap: number;
   device: WorkerStatus["device"];
 }
 
+/** How an edit names one of its images: an upload that is waiting, or an image from an earlier run. */
+export type InputRef = ({ upload_id: string } | { image_id: string }) & { role?: InputRole };
+
+/** What POST /api/uploads answers (DESIGN.md §21.6). */
+export interface UploadResult {
+  upload_id: string;
+  width: number;
+  height: number;
+  has_alpha: boolean;
+  bytes: number;
+  url: string;
+  thumb_url: string | null;
+}
+
 export interface CreateRunBody {
   mode: Mode;
   prompt: string;
+  input_images?: InputRef[]; // Edit only, in the order the model sees them
   options: {
     width: number | null;
     height: number | null;
@@ -129,6 +167,8 @@ export interface CreateRunBody {
     transparent: boolean;
     draft?: boolean;
     full?: FullSize;
+    resolution?: number; // Edit only
+    shape_from?: number; // Edit only, with Size on Auto
   };
 }
 

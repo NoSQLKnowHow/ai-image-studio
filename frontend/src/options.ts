@@ -2,12 +2,19 @@
 // (DESIGN.md §6). Every saved field is validated on its own, so a corrupt or outdated value can
 // only ever reset that one field to its default, never break the page.
 
-import type { Capabilities, CreateRunBody, FullSize, Mode, Range, Run } from "./types";
+import type { Capabilities, CreateRunBody, FullSize, InputRef, Mode, Range, Run } from "./types";
 
 export const OPTIONS_KEY = "studio.options.v1";
 export const PROMPT_KEY = "studio.prompt.v1";
 export const CUSTOM = "custom";
+/** Edit's own size choice: let the pipeline size the result from the images (DESIGN.md §21.4). */
+export const AUTO = "auto";
 export const DEFAULT_GUIDANCE = 4;
+
+/** Edit's output resolution: 1K (about 1 megapixel) or 2K (about 4). It sizes the result and every input. */
+export const RESOLUTIONS = [1024, 2048] as const;
+export type Resolution = (typeof RESOLUTIONS)[number];
+export const resolutionLabel = (resolution: number): string => (resolution === 2048 ? "2K" : "1K");
 
 /** Percent of the selected size's width and height (DESIGN.md §22.1). */
 export const SCALES = [100, 75, 50, 25] as const;
@@ -20,7 +27,9 @@ export interface Size {
 
 export interface Options {
   mode: Mode;
-  aspect: string; // a preset name from the capabilities, or CUSTOM
+  aspect: string; // Generate's size: a preset name from the capabilities, or CUSTOM
+  editAspect: string; // Edit's size: AUTO, a preset name, or CUSTOM (the width and height below are shared)
+  resolution: Resolution; // Edit only: 1K or 2K
   customWidth: number;
   customHeight: number;
   scale: Scale; // how much of that size to generate at
@@ -37,6 +46,8 @@ export function defaultOptions(caps: Capabilities): Options {
   return {
     mode: caps.modes.includes(caps.defaults.mode) ? caps.defaults.mode : "generate",
     aspect: caps.defaults.aspect_ratio,
+    editAspect: AUTO,
+    resolution: 1024,
     customWidth: caps.defaults.width,
     customHeight: caps.defaults.height,
     scale: 100,
@@ -117,6 +128,8 @@ export function sanitizeOptions(raw: unknown, caps: Capabilities): { options: Op
   const options: Options = {
     mode: pick("mode", (v) => typeof v === "string" && caps.modes.includes(v as Mode)),
     aspect: pick("aspect", (v) => v === CUSTOM || (typeof v === "string" && v in caps.aspect_ratios)),
+    editAspect: pick("editAspect", (v) => v === AUTO || v === CUSTOM || (typeof v === "string" && v in caps.aspect_ratios)),
+    resolution: pick("resolution", (v) => (caps.limits.resolutions as readonly unknown[]).includes(v) && (RESOLUTIONS as readonly unknown[]).includes(v)),
     customWidth: pick("customWidth", isInt),
     customHeight: pick("customHeight", isInt),
     scale: pick("scale", (v) => (SCALES as readonly unknown[]).includes(v)),
@@ -152,9 +165,21 @@ export function saveOptions(options: Options, store: KeyValueStore): void {
 
 // ------------------------------------------------------------------ requests
 /** The size chosen in Options, before any scale. */
+/** The size choice that applies now: Edit has its own (it can be Auto), Generate has its own. */
+export function sizeKey(options: Options): string {
+  return options.mode === "edit" ? options.editAspect : options.aspect;
+}
+
+/** Edit with Size on Auto: no size is sent, and the pipeline sizes the result from the images (Resolution and,
+ *  with several images, "Result follows image N" decide how). */
+export function isAutoSize(options: Options): boolean {
+  return options.mode === "edit" && options.editAspect === AUTO;
+}
+
 export function baseSize(options: Options, caps: Capabilities): Size {
-  if (options.aspect === CUSTOM) return { width: options.customWidth, height: options.customHeight };
-  const [width, height] = caps.aspect_ratios[options.aspect] ?? caps.aspect_ratios[caps.defaults.aspect_ratio];
+  const key = sizeKey(options);
+  if (key === CUSTOM) return { width: options.customWidth, height: options.customHeight };
+  const [width, height] = caps.aspect_ratios[key] ?? caps.aspect_ratios[caps.defaults.aspect_ratio]; // Auto: only a stand-in
   return { width, height };
 }
 
@@ -187,7 +212,14 @@ export function usableScale(chosen: Scale, base: Size, caps: Capabilities): Scal
 }
 
 export function effectiveScale(options: Options, caps: Capabilities): Scale {
-  return usableScale(options.scale, baseSize(options, caps), caps);
+  return isAutoSize(options) ? 100 : usableScale(options.scale, baseSize(options, caps), caps);
+}
+
+/** The size as the page words it: "Auto" for an Edit that lets the pipeline decide, else width × height. */
+export function sizeLabel(options: Options, caps: Capabilities): string {
+  if (isAutoSize(options)) return "Auto";
+  const { width, height } = resolveSize(options, caps);
+  return `${width}×${height}`;
 }
 
 /** The size a normal run will use: the chosen size at the effective scale. */
@@ -208,7 +240,7 @@ export function draftSize(base: Size, caps: Capabilities): Size {
 
 /** Why these options can't be submitted, or null if they can. */
 export function optionsProblem(options: Options, caps: Capabilities): string | null {
-  return options.aspect === CUSTOM ? sizeProblem(options.customWidth, options.customHeight, caps) : null;
+  return sizeKey(options) === CUSTOM ? sizeProblem(options.customWidth, options.customHeight, caps) : null;
 }
 
 /** True when `full` is bigger than `size` in at least one side and smaller in neither: the only case the server
@@ -224,11 +256,12 @@ function fullSizeFor(size: Size, options: Options, caps: Capabilities): { full?:
   return isLarger(base, size) ? { full: { width: base.width, height: base.height, steps: options.steps } } : {};
 }
 
+/** A Generate request: the size chosen at the scale chosen (and, when that is smaller, the size to go back to). */
 export function buildRequest(prompt: string, options: Options, caps: Capabilities): CreateRunBody {
-  const { width, height } = resolveSize(options, caps);
+  const { width, height } = resolveSize({ ...options, mode: "generate" }, caps);
   const supports = caps.supports;
   return {
-    mode: options.mode,
+    mode: "generate",
     prompt: prompt.trim(),
     options: {
       width,
@@ -238,8 +271,35 @@ export function buildRequest(prompt: string, options: Options, caps: Capabilitie
       num_images: options.numImages,
       negative_prompt: supports.negative_prompt && options.negativePrompt.trim() ? options.negativePrompt.trim() : null,
       cfg_scale: supports.cfg_scale ? options.guidance : null,
-      transparent: options.mode === "generate" && !!supports.transparent && options.transparent,
-      ...(options.mode === "generate" ? fullSizeFor({ width, height }, options, caps) : {}),
+      transparent: !!supports.transparent && options.transparent,
+      ...fullSizeFor({ width, height }, { ...options, mode: "generate" }, caps),
+    },
+  };
+}
+
+/** An Edit request (DESIGN.md §21.6): the images in the order shown, the resolution, and either an explicit size or,
+ *  with Size on Auto, none, optionally with `shapeFrom` naming the image the result follows (decision #30). A fixed
+ *  size is scaled by the scale picker like Generate's. Never a draft, and never a `full` size (Generate only). */
+export function buildEditRequest(prompt: string, options: Options, caps: Capabilities, inputs: InputRef[], shapeFrom: number | null): CreateRunBody {
+  const edit: Options = { ...options, mode: "edit" };
+  const auto = isAutoSize(edit);
+  const size = auto ? null : resolveSize(edit, caps);
+  const supports = caps.supports;
+  return {
+    mode: "edit",
+    prompt: prompt.trim(),
+    input_images: inputs,
+    options: {
+      width: size?.width ?? null,
+      height: size?.height ?? null,
+      steps: options.steps,
+      seed: options.seedLocked ? options.seed : null,
+      num_images: options.numImages,
+      negative_prompt: supports.negative_prompt && options.negativePrompt.trim() ? options.negativePrompt.trim() : null,
+      cfg_scale: supports.cfg_scale ? options.guidance : null,
+      transparent: !!supports.transparent && options.transparent,
+      resolution: options.resolution,
+      ...(auto && shapeFrom ? { shape_from: shapeFrom } : {}),
     },
   };
 }
@@ -316,6 +376,7 @@ function presetAndScale(width: number, height: number, caps: Capabilities): { as
  *  and your own size, steps and seed stay as they are (DESIGN.md §22.2). */
 export function optionsFromRun(run: Run, caps: Capabilities, current: Options): Options {
   const { width, height } = run.options;
+  if (run.mode === "edit") return editOptionsFromRun(run, caps, current);
   const common = {
     mode: caps.modes.includes(run.mode) ? run.mode : current.mode,
     negativePrompt: run.options.negative_prompt ?? "",
@@ -339,12 +400,38 @@ export function optionsFromRun(run: Run, caps: Capabilities, current: Options): 
   return sanitizeOptions(merged, caps).options; // clamp to whatever today's limits are
 }
 
+/** Reuse of an Edit run: the same options, with Size back on Auto if the run had no size, and the resolution it
+ *  used; the images come back in the tray (the page does that). Seed locked, as for any Reuse (decision #11). */
+function editOptionsFromRun(run: Run, caps: Capabilities, current: Options): Options {
+  const { width, height } = run.options;
+  const match = width && height ? presetAndScale(width, height, caps) : null;
+  const size = !width || !height
+    ? { editAspect: AUTO, scale: 100 as Scale }
+    : { editAspect: match?.aspect ?? CUSTOM, scale: match?.scale ?? (100 as Scale), customWidth: match ? current.customWidth : width, customHeight: match ? current.customHeight : height };
+  const merged: Options = {
+    ...current,
+    mode: caps.modes.includes("edit") ? "edit" : current.mode,
+    ...size,
+    resolution: run.options.resolution === 2048 ? 2048 : 1024,
+    negativePrompt: run.options.negative_prompt ?? "",
+    guidance: run.options.cfg_scale,
+    transparent: run.options.transparent,
+    steps: run.options.steps,
+    seedLocked: true,
+    seed: run.options.seed,
+    numImages: run.options.num_images,
+  };
+  return sanitizeOptions(merged, caps).options;
+}
+
 /** Retry: exactly the same request again, same seed included. */
 export function retryRequest(run: Run): CreateRunBody {
   const o = run.options;
   return {
     mode: run.mode,
     prompt: run.prompt,
+    // An edit's images are named by their ids: the run owns copies, and the server copies them again for the new run.
+    ...(run.mode === "edit" ? { input_images: run.inputs.map((input) => ({ image_id: input.id, role: input.role })) } : {}),
     options: {
       width: o.width,
       height: o.height,
@@ -356,17 +443,20 @@ export function retryRequest(run: Run): CreateRunBody {
       transparent: o.transparent,
       draft: o.draft === true,
       ...(o.full ? { full: o.full } : {}), // so the retried run gets its Regenerate larger button too
+      ...(o.resolution ? { resolution: o.resolution } : {}),
+      ...(o.shape_from ? { shape_from: o.shape_from } : {}),
     },
   };
 }
 
 export function summarize(options: Options, caps: Capabilities): string {
-  const { width, height } = resolveSize(options, caps);
   const scale = effectiveScale(options, caps);
-  const parts = [`${width}×${height}${scale < 100 ? ` (${scale}%)` : ""}`, `${options.steps} steps`, options.seedLocked ? `seed ${options.seed}` : "random seed"];
+  const parts = [`${sizeLabel(options, caps)}${scale < 100 ? ` (${scale}%)` : ""}`];
+  if (options.mode === "edit") parts.push(resolutionLabel(options.resolution));
+  parts.push(`${options.steps} steps`, options.seedLocked ? `seed ${options.seed}` : "random seed");
   if (options.numImages > 1) parts.push(`${options.numImages} images`);
   if (caps.supports.cfg_scale && options.guidance !== null) parts.push(`guidance ${options.guidance}`);
-  if (options.transparent && options.mode === "generate") parts.push("transparent");
+  if (options.transparent) parts.push("transparent");
   return parts.join(" · ");
 }
 
