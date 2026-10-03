@@ -82,6 +82,16 @@ test("Edit mode shows an empty tray, and Generate says why it must wait", async 
   await expect(page.locator(".tray")).toHaveCount(0);
 });
 
+test("Ctrl+Enter does not send an edit with no pictures: nothing is queued and no error is shown", async ({ page }) => {
+  await openEdit(page);
+  await promptBox(page).fill("describe something");
+  await page.keyboard.press("Control+Enter"); // the shortcut must respect the same block as the button
+  await page.waitForTimeout(600);
+  expect(await newestRuns(page)).toHaveLength(0);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText("Add at least one image to edit.")).toBeVisible();
+});
+
 test("pictures added from the picker are numbered in order, and uploaded as soon as they are added", async ({ page }) => {
   await openEdit(page);
   await addPictures(page, [red(), green(), blue()]);
