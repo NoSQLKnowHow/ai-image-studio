@@ -503,17 +503,16 @@ class JobManager:
             if self._worker.alive():
                 if self._worker_state["state"] in ("loading", "ready", "busy"):
                     return False
-                retry = True  # a worker that is running but has no model (a load that failed, or a run canceled while it started)
+                # else a worker that is running but has no model (a load that failed, or a run canceled while it started):
+                # it is asked to load again below, and `start` leaves it be
             else:
-                retry = False
                 shortfall = self._memory_shortfall()
                 if shortfall:
                     self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
                     raise ModelRefused(409, "not_enough_memory", shortfall, sysinfo.MEMORY_HINT)
             self._set_worker_state("loading")
             try:
-                if not retry:
-                    await self._worker.start()
+                await self._worker.start()  # does nothing for a worker that is already running
                 await self._worker.send({"cmd": "load"})
             except (WorkerGone, OSError) as exc:
                 message = f"Could not start the image worker: {exc}"

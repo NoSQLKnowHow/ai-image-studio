@@ -208,6 +208,29 @@ def test_after_a_failed_load_pressing_load_again_retries_on_the_same_worker(clie
     assert ready["pid"] == failed["pid"] and ready["detail"] is None
 
 
+def test_a_retry_that_takes_longer_than_the_idle_timeout_is_not_cut_short(client_factory, monkeypatch):
+    """The idle countdown that was running for the worker that had failed must not run on during the retry's load."""
+    monkeypatch.setenv("STUDIO_FAKE_LOAD_FAIL", "once")
+    monkeypatch.setenv("STUDIO_FAKE_LOAD_DELAY_MS", "4000")
+    client = client_factory(idle_timeout_min=0.05)  # 3 s, shorter than the load
+    load(client)
+    wait_for_worker_state(client, "error")  # the first load fails at once, and the countdown starts
+    pid = worker(client)["pid"]
+    load(client)  # the retry takes 4 s
+    ready = wait_for_worker_state(client, "ready", timeout=20)
+    time.sleep(1.0)  # a countdown that had run on would have stopped the worker by now
+    assert worker(client)["state"] == "ready" and worker(client)["pid"] == pid == ready["worker"]["pid"]
+
+
+def test_a_failed_load_does_not_keep_the_worker_for_ever(client_factory, monkeypatch):
+    monkeypatch.setenv("STUDIO_FAKE_LOAD_FAIL", "1")
+    client = client_factory(idle_timeout_min=0.03)  # about 2 s
+    load(client)
+    wait_for_worker_state(client, "error")
+    gone = wait_status(client, lambda s: s["worker"]["state"] == "unloaded", timeout=15)
+    assert gone["worker"]["pid"] is None
+
+
 def test_unloading_after_a_failed_load_clears_the_problem(client_factory, monkeypatch):
     monkeypatch.setenv("STUDIO_FAKE_LOAD_FAIL", "1")
     client = client_factory()
