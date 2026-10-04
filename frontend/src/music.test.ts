@@ -119,6 +119,7 @@ describe("what stops a form from being sent", () => {
 
   it("lyrics over the limit", () => {
     expect(musicProblem({ ...ok, lyricsOn: true, lyrics: "x".repeat(6001) }, CAPS)).toMatch(/6001 characters; the limit is 6000/);
+    expect(musicProblem({ ...ok, lyricsOn: true, lyrics: "x".repeat(6000) }, CAPS)).toBeNull(); // exactly at the limit is fine
   });
 
   it("length, versions, steps and a locked seed are checked against the server's limits", () => {
@@ -168,6 +169,11 @@ describe("the saved form", () => {
     const { form: loaded, repaired } = sanitizeMusicForm({ fields: { genre: "x".repeat(401), mood: 5, key: "A minor" } }, CAPS);
     expect(repaired).toBe(true);
     expect(loaded.fields).toEqual({ ...emptyFields(), key: "A minor" });
+  });
+
+  it("a field exactly as long as the server allows is kept", () => {
+    const { form: loaded, repaired } = sanitizeMusicForm({ fields: { genre: "x".repeat(400) } }, CAPS);
+    expect([loaded.fields.genre.length, repaired]).toEqual([400, false]);
   });
 
   it("a value added in a later version is simply its default, and is not 'repaired'", () => {
@@ -334,6 +340,7 @@ describe("lengths in words and on a clock", () => {
     expect(chipsFor({ min: 10, max: 300 })).toEqual([15, 30, 60, 120, 180, 300]);
     expect(chipsFor({ min: 10, max: 120 })).toEqual([15, 30, 60, 120]);
     expect(chipsFor({ min: 20, max: 200 })).toEqual([30, 60, 120, 180]);
+    expect(chipsFor({ min: 15, max: 60 })).toEqual([15, 30, 60]); // a chip equal to the minimum or the maximum is offered
   });
   it("a track's label says which version it is and when the model stopped short of what was allowed", () => {
     expect(trackLabel(0, 1, 60, 60)).toBe("Track · 1:00");
@@ -351,7 +358,9 @@ describe("lengths in words and on a clock", () => {
   it("a card's title is the genre, else the mood or instruments, else the start of the description", () => {
     const base = makeMusicRun();
     expect(musicTitle(base)).toBe("ambient");
-    expect(musicTitle({ ...base, options: { ...base.options, fields: { mood: "slow" } } })).toBe("slow");
+    expect(musicTitle({ ...base, options: { ...base.options, fields: { genre: "ambient", mood: "slow", instruments: "piano" } } })).toBe("ambient"); // the genre wins
+    expect(musicTitle({ ...base, options: { ...base.options, fields: { mood: "slow", instruments: "piano" } } })).toBe("slow");
+    expect(musicTitle({ ...base, options: { ...base.options, fields: { instruments: "piano" } } })).toBe("piano");
     expect(musicTitle({ ...base, options: { ...base.options, fields: {} }, prompt: "Global Metadata\nBasic Attributes: key is C." })).toBe("Basic Attributes: key is C.");
   });
 });
