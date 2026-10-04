@@ -104,6 +104,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 40 | Music tab (planned for 1.8 and 1.9) | A separate **Music** tab, beside Images, makes music with **MiniMax-Music3**. **Instrumental by default**; an **Add lyrics** switch reveals a lyrics box with the section tags (§26.1) | DECIDED (the request and your answers); details PROPOSED; **NOT built** |
 | 41 | One model in memory at a time | The music model and the image model are **never loaded together**: starting one unloads the other first (never during a run), so the Spark does not hold both next to Hermes (§26.4) | DECIDED; **NOT built** |
 | 42 | Describing the music | **Fields** (genre, mood, tempo, key, instruments and arrangement, and a voice description when lyrics are on) build the structured description the model's card recommends, shown in a preview you can edit (§26.2) | DECIDED; **NOT built** |
+| 43 | Models come from the local cache (1.8) | After the first download **neither model contacts Hugging Face again**: with `STUDIO_LOCAL_FILES_ONLY=auto` (the new default) each model is loaded from the cache, and the network is used only if files are missing from it. `true` never goes online, `false` is the old behaviour (a check of the hub on every load). Applies to the image model as well (§26.11) | DECIDED (your request); details PROPOSED; **NOT built** |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -119,7 +120,8 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #37 | **Not built.** A disabled button marks the place (1.4). |
 | #38 | Yes (1.5). |
 | #39 | Yes (1.7). |
-| #40, #41, #42 | **Not built.** Specified in §26 (planned as 1.8, the server, and 1.9, the page). |
+| #43 | **Not built** (1.8). |
+| #40, #41, #42 | **Not built.** Specified in §26 (being built as 1.8, the server, and 1.9, the page). |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -460,7 +462,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 17. On the Spark, `docker compose up` from a clean checkout starts the server with a green healthcheck, and data persists across recreating the container.
 18. With too little free memory, the pre-flight check fails the job immediately with an actionable message (Retry works once memory is free), and the machine is not pushed into swap.
 
-**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3), 48–50 (§21.13) 51–60 (§25.5) and 61–75 (§26.10, music, not built). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
+**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3), 48–50 (§21.13) 51–60 (§25.5) 61–75 (§26.10, music) and 76–77 (§26.11, cache). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
 
 **Where each criterion stands (1.7).** "Automated" means a test passes against the fake pipeline; "Spark" means it needs the real machine and has not been reported back to me.
 
@@ -478,6 +480,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | 39 | Draft and scale timings on the Spark | **Spark** (`SPARK_TEST.md` §16, §17) |
 | 51–60 | Load model and Unload model | **Automated** (the server's states, the idle clock, the lock, the memory check; the page's buttons, focus, announcements, phone width). **Spark** for how long the real model takes to load and how much memory Unload gives back (`SPARK_TEST.md` §19) |
 | 61–75 | Music tab (§26.10) | **Not built** (planned: 1.8 the server, 1.9 the page); 71 also needs the **Spark** |
+| 76–77 | Models come from the local cache (§26.11) | **Not built** (1.8); the real hub's behaviour is a **Spark** question |
 
 ## 17. Build order (PROPOSED)
 
@@ -1133,3 +1136,18 @@ What that means for the studio as I read it (I am not a lawyer, and it is your l
 73. An **existing database migrates** to schema 3 without losing a run, an image or an input, and the old file is kept as a copy. (1.8)
 74. The Music tab **names the model and shows the disclosure reminder**, and every WAV carries the machine-generated note. (1.8, 1.9)
 75. On a **phone** the tab bar and the Music tab fit with no sideways scroll, the player and its buttons stay on screen. (1.9)
+
+### 26.11 Using the local cache (decision #43)
+
+You asked: after the first load, no downloading if possible.
+
+- **Where the files live.** Both models are kept in the Hugging Face cache, which `compose.yaml` mounts from your host (`HF_CACHE_DIR`, by default `~/.cache/huggingface`) at `/models`. It survives rebuilding and recreating the container and is shared with anything else on the Spark that uses the default cache.
+- **What happened before 1.8.** `from_pretrained` asked the Hugging Face hub on every load whether anything had changed. That is a few small requests when nothing has, but **if the model's authors push an update, the next load downloads it**, which for the music model is tens of gigabytes. `STUDIO_LOCAL_FILES_ONLY=true` stopped that for the image model, but it was off by default and it made the very first load fail.
+- **What 1.8 does.** `STUDIO_LOCAL_FILES_ONLY` takes three values: **`auto` (the new default):** each model is loaded **from the cache only**, with no network request at all; **only if that fails because files are missing** does the studio try again online (the first load, or after the cache was cleared), and the log says so. **`true`:** never goes online; a missing file fails the load with "the model is not in the local cache" and says how to download it. **`false`:** the old behaviour. The same setting governs both models. Any other failure (out of memory, a broken file) is reported as it was, not retried online.
+- **Download it ahead of time, the music model without the parts it never loads.** The first load of the music model downloads about 29 GB, and your first Load model press does exactly that, with the pill saying *Loading…* for the length of the download. To fetch it separately, on the Spark: `hf download MiniMaxAI/MiniMax-Music3 --include "modular_model_index.json" "config.json" "condition_encoder/*" "language_model/*" "rvq_depth_decoder/*" "scheduler/*" "tokenizer/*" "transformer/*" "vocoder/*"` (it leaves out the two `.pth` files and a second copy of the language model that this pipeline does not use). `SPARK_TEST.md` §20 has the command in context.
+- **Nothing else downloads at run time.** The libraries are installed when the image is built, and the studio sets `HF_HUB_DISABLE_TELEMETRY=1` for its workers so they do not report usage.
+
+Acceptance criteria:
+
+76. With `STUDIO_LOCAL_FILES_ONLY=auto` (the default) a model is loaded with the network switched off first, and **only if that fails because files are missing** is the load tried again online; any other failure is reported at once and is not retried online. (1.8)
+77. With `true` a model is never loaded online and a missing file fails the load with an actionable message; with `false` the load is as before. The setting applies to the image and the music model alike. (1.8)
