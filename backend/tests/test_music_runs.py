@@ -552,3 +552,20 @@ def test_the_progress_bar_stand_in_reports_each_step_whether_it_is_iterated_or_u
         bar.update()
         bar.set_description("anything else a progress bar does is accepted and ignored")
     assert seen == [(1, 2), (2, 2)]
+
+
+def test_the_fake_tune_depends_on_everything_that_was_asked_for():
+    from studio.pipelines.base import MusicJob
+    from studio.pipelines.fake_music import FakeMusicPipeline
+
+    pipeline = FakeMusicPipeline(step_delay_ms=0)
+
+    def tune(seed: int = 3, **change) -> bytes:
+        asked = {"prompt": "p", "lyrics": "[Verse]\nla", "duration": 2, "steps": 10, **change}
+        job = MusicJob(run_id="0" * 32, mode="music", seeds=[seed], model_id="x", **asked)
+        return pipeline.generate(job, 0, seed, lambda *_: None).pcm
+
+    base = tune()
+    assert tune() == base  # the same request, the same tune
+    for change in ({"seed": 4}, {"prompt": "q"}, {"lyrics": "[Verse]\nlo"}, {"duration": 3}, {"steps": 11}):
+        assert tune(**change) != base, change
