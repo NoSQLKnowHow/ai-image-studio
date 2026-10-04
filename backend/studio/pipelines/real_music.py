@@ -179,7 +179,12 @@ class RealMusicPipeline:
             pipe = modular_pipeline.from_pretrained(self.model, **extra)
             # Every component is loaded from the same place as the pipeline's index, even when STUDIO_MUSIC_MODEL
             # is a folder: the index itself names the hub repository.
-            pipe.load_components(dtype=getattr(torch, self.dtype), pretrained_model_name_or_path=self.model, **extra)
+            # `fix_mistral_regex=False` for the tokenizer only: transformers cannot tell that a tokenizer with a large
+            # vocabulary, loaded from a local folder whose config.json has no `transformers_version` (the model's
+            # has none), is not a Mistral one, and warns about "incorrect tokenization". This tokenizer is Qwen's, so the
+            # warning is wrong; False says so and changes nothing else (True would replace the tokenizer's split rule).
+            pipe.load_components(dtype=getattr(torch, self.dtype), pretrained_model_name_or_path=self.model,
+                                 fix_mistral_regex={"tokenizer": False}, **extra)
             missing = unloaded_components(pipe)
             if missing:
                 raise MissingComponents(missing)

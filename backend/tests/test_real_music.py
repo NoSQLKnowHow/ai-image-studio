@@ -198,6 +198,43 @@ def test_a_folder_with_a_part_missing_is_reported_as_incomplete_and_not_as_loade
     assert "folder" in (info.value.hint or "")
 
 
+def test_a_big_vocabulary_tokenizer_in_a_local_folder_does_not_trigger_the_mistral_regex_warning(repo, tmp_path):
+    """transformers checks tokenizers with more than 100,000 entries for Mistral's old regex bug, and for a local folder
+    whose config.json has no `transformers_version` (the real model's has none) it cannot rule Mistral out, so it warns
+    of "incorrect tokenization" for the model's Qwen tokenizer. The loader says it is not Mistral. The same tokens come
+    out either way; the warning is the only difference."""
+    import logging
+
+    from tokenizers import Tokenizer, models
+
+    copy = _copy_of(repo, tmp_path)
+    old = json.loads((copy / "tokenizer" / "tokenizer.json").read_text())
+    vocab = dict(old["model"]["vocab"])
+    vocab.update({f"filler{i}": 1000 + i for i in range(100_500)})  # over 100,000 entries, none of them in the text used here
+    big = Tokenizer(models.WordLevel(vocab, unk_token="<unk>"))
+    big.pre_tokenizer = Tokenizer.from_str(json.dumps(old)).pre_tokenizer
+    big.add_special_tokens([t["content"] for t in old.get("added_tokens", [])])
+    big.save(str(copy / "tokenizer" / "tokenizer.json"))
+    (copy / "config.json").write_text(json.dumps({"architectures": ["MiniMaxMusic3ForConditionalGeneration"], "model_type": "minimax_music3"}))
+
+    class Catch(logging.Handler):
+        def __init__(self):
+            super().__init__()
+            self.messages: list[str] = []
+
+        def emit(self, record):
+            self.messages.append(record.getMessage())
+
+    handler = Catch()
+    logger = logging.getLogger("transformers")
+    logger.addHandler(handler)
+    try:
+        RealMusicPipeline(str(copy), hub_mode="offline", device="cpu", dtype="float32").load()
+    finally:
+        logger.removeHandler(handler)
+    assert not [m for m in handler.messages if "incorrect regex pattern" in m], handler.messages
+
+
 def test_a_folder_that_is_not_there_fails_the_load_with_an_explanation(tmp_path):
     with pytest.raises(PipelineError) as info:
         RealMusicPipeline(str(tmp_path / "nowhere"), hub_mode="offline", device="cpu", dtype="float32").load()
