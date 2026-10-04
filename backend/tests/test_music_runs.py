@@ -456,3 +456,37 @@ def test_the_queue_is_shared_and_in_order(client_factory):
 def test_a_music_run_does_not_count_against_a_pictures_limits(client):
     run = run_and_wait(client, duration=300, steps=60, tracks=4, seed=1)  # far outside any picture limit
     assert run["status"] == "done" and len(run["tracks"]) == 4
+
+
+# ------------------------------------------------------------------ two things a music worker must not disturb
+def test_the_image_capabilities_do_not_change_when_the_music_worker_has_been_loaded(client):
+    before = client.get("/api/capabilities").json()
+    deadline = time.monotonic() + 15
+    while "music" not in before["modes"]:  # the start-up checks run in the background: wait for both to finish
+        assert time.monotonic() < deadline
+        time.sleep(0.05)
+        before = client.get("/api/capabilities").json()
+    assert wait_for(client, create_music(client)["id"])["status"] == "done"  # the music worker reports its own supports
+    after = client.get("/api/capabilities").json()
+    assert after["supports"] == before["supports"] and after["supports"]["edit"] is True and after["modes"] == before["modes"]
+
+
+def test_a_path_a_worker_reports_for_a_track_must_be_inside_that_runs_audio_folder(tmp_path):
+    from studio.storage import Storage, StorageError
+
+    storage = Storage(tmp_path)
+    storage.ensure_layout()
+    run, other = "a" * 32, "b" * 32
+    (storage.audio / run).mkdir()
+    good = storage.audio / run / "0.wav"
+    good.write_bytes(b"x")
+    assert storage.accept_worker_audio(f"audio/{run}/0.wav", run) == good.resolve()
+    for rel, fragment in ((f"audio/{other}/0.wav", "outside the run folder"), ("images/x/0.png", "outside the run folder"),
+                          ("../../etc/passwd", "escapes"), (f"audio/{run}/missing.wav", "missing track file"),
+                          (f"audio/{run}/sub/../../{other}/0.wav", "outside the run folder")):
+        with pytest.raises(StorageError, match=fragment):
+            storage.accept_worker_audio(rel, run)
+    (storage.audio / other).mkdir()
+    (storage.audio / other / "0.wav").write_bytes(b"y")
+    with pytest.raises(StorageError):  # another run's real file is still not this run's
+        storage.accept_worker_audio(f"audio/{other}/0.wav", run)
