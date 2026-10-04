@@ -1,8 +1,8 @@
 # Qwen-Image Web Studio — Design Specification
 
-Living document. **Last brought up to date 2026-10-03, for version 1.5** (the number the page shows in its title).
+Living document. **Last brought up to date 2026-10-03, for version 1.7** (the number the page shows in its title).
 
-**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, and the editing page itself (M5b) is **version 1.6**. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
+**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, and §25 specifies **1.7**, loading the model ahead of time. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer. **BUILT** says something is in the code on `main`; it does not say it has run on the Spark (the "Spark" column below says that).
 
@@ -19,8 +19,9 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.4 | Regenerate larger on a run's card; a disabled Upscale placeholder | §23 | #14 | §17 not yet reported back |
 | 1.5 | Regenerate larger in the image viewer, for that one image | §24 | #15 | §17(e) not yet reported back |
 | 1.6 | **The editing page (M5b)**: Edit mode on, the reference tray, Resolution and its cost warning, edit run cards, Reuse and Retry for edits, Edit this | §21.4, §21.11 | #17 | §18 (the Spark test for edits, M5c) not yet run; **the real-GPU edit path has never run** |
+| 1.7 | **Load model / Unload model** buttons beside the model pill, so the model can be loaded while you write the prompt | §25 | #18 | §19 of `SPARK_TEST.md` not yet reported back |
 
-**Tests today (1.6):** backend 363 (pytest), front end 169 (Vitest) and 68 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
+**Tests today (1.7):** backend 384 (pytest), front end 179 (Vitest) and 75 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
 **What is left to build**, in the order proposed in §21.11:
 
@@ -90,13 +91,14 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 29 | M6 is part of v2 | The housekeeping the v1 plan left for M6 (**cancel** a queued or running job, **Keep** a run, **auto-expiry** with a warning) is built as part of version 2, not as a separate release (§21.11) | DECIDED |
 | 30 | Result shape (v2) | With Size on Auto, a **"Result follows image [N]"** selector names the image the result's shape follows (default: the last one that is not a mask). Nothing is reordered (§21.4) | DECIDED |
 | 31 | Transparent in Edit (v2) | **Offered in Edit as well as Generate**, wrapping the prompt in the recommended format (§21.4) | DECIDED |
-| 32 | Version numbers | **major.minor, and each release bumps the minor** (your call, 2026-10-02). **How it turned out:** 1.0 was the first build on the Spark, M6 is 1.1, the editing backend (M5a) 1.2, the scale picker, drafts and thumbnails 1.3, Regenerate larger 1.4, and Regenerate larger in the viewer 1.5. The editing page (M5b) will be the next, 1.6, and so on. The spec's "version 2" names a set of features, not a version number: nothing is called 2.0 unless you say so. The number is set in one place, `studio.__version__`, and shown in the page title | DECIDED |
+| 32 | Version numbers | **major.minor, and each release bumps the minor** (your call, 2026-10-02). **How it turned out:** 1.0 was the first build on the Spark, M6 is 1.1, the editing backend (M5a) 1.2, the scale picker, drafts and thumbnails 1.3, Regenerate larger 1.4, and Regenerate larger in the viewer 1.5. The editing page (M5b) is 1.6 and loading the model ahead of time is 1.7. The spec's "version 2" names a set of features, not a version number: nothing is called 2.0 unless you say so. The number is set in one place, `studio.__version__`, and shown in the page title | DECIDED |
 | 33 | Quick size (1.3) | A **scale picker, 100% / 75% / 50% / 25%**, on the prompt bar. It scales the **width and height** of the selected size (50% of 2048×2048 is 1024×1024: a quarter of the pixels, roughly four times faster), rounded to the multiples of 32 the model needs (§22.1) | DECIDED |
 | 34 | Draft (1.3) | A **Draft button** makes a small, fast version of the prompt (512 px on the long side, 12 steps) to try the wording before a long run. Drafts jump ahead of waiting full-size runs (never the one running). The full-size image will look different, even with the same seed (§22.2) | DECIDED |
 | 35 | Thumbnails (1.3) | Every image gets a small **thumbnail you can download** (WebP, 512 px on the long side, transparency kept), from the run card and from the viewer (§22.3) | DECIDED |
 | 36 | Regenerate larger (1.4) | A finished run made **smaller than the size you had selected** (a draft, or a 25 / 50 / 75% run) gets a **Regenerate larger** button: the same prompt, seed and image count sent again at the **full size you had selected, with the steps you had selected**. The run remembers that size, so it works from the history. It will look different from the small image (§23.1) | DECIDED |
 | 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needed the editing page (built in 1.6) and still needs a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
 | 38 | Regenerate larger in the viewer (1.5) | The single-image viewer has the **same Regenerate larger button**. It enlarges **that image only**: a new job at the full size and steps, with **that image's own seed** and **one** image (§24.1). Its confirmation, or an error, shows **inside the viewer** (§24.2) | DECIDED (the request); details PROPOSED |
+| 39 | Load the model ahead of time (1.7) | A **Load model button next to the model pill** in the header starts loading the model now, without a run, so you can work on the prompt while it loads. When the model is loaded and idle the same place offers **Unload model**, which gives the memory back at once. **No automatic warm-up** (nothing loads because you started typing): the button only (§25) | DECIDED (the request and the three choices); details PROPOSED |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -111,6 +113,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #36 | Yes (1.4). |
 | #37 | **Not built.** A disabled button marks the place (1.4). |
 | #38 | Yes (1.5). |
+| #39 | Yes (1.7). |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -161,7 +164,7 @@ Consequences of the decisions:
 ```
 
 - The title shows the **version** (`AI Image Studio v1.5`), as does the browser tab. It comes from the server (`studio.__version__`, the one place it is set), so it tells you which build is actually running; on a phone it sits under the title. `index.html` is sent with `Cache-Control: no-cache` (revalidated on every load) and the hashed files under `/assets/` are cached for good, so a rebuilt page appears on the next reload.
-- Header shows a **model state pill**: unloaded / loading / ready (with idle countdown) / busy / error / unavailable. `unavailable` means the pipeline can't be imported (e.g. `diffusers` too old); the pill links to the reason and the fix. (PROPOSED)
+- Header shows a **model state pill**: unloaded / loading / ready (with idle countdown) / busy / error / unavailable. `unavailable` means the pipeline can't be imported (e.g. `diffusers` too old); the pill links to the reason and the fix. (PROPOSED) **Since 1.7** a **Load model** or **Unload model** button sits beside it (§25.1), and on a phone the pill says its state in one short word (Unloaded, Loading…, Ready, Working, Problem, Unavailable) because the button takes some of its room.
 - Ctrl/Cmd+Enter submits; **Ctrl/Cmd+Shift+Enter** sends a **Draft** (§22.2). The Generate button stays usable while jobs are queued, up to the cap. (PROPOSED)
 - The **Scale** buttons (100 / 75 / 50 / 25%) and the **Draft** button sit on the prompt bar beside Options and Generate (§22). On a phone the word "Scale" gives way to the buttons and the size they give is shown beside them.
 - Single column so it works down to phone width. (PROPOSED)
@@ -242,6 +245,8 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 |---|---|---|
 | `GET /api/health` | Liveness for the container healthcheck | Always cheap; does not touch the GPU |
 | `GET /api/status` | Model state, idle countdown, queue length, system-memory figures (§9a) | Also pushed over SSE |
+| `POST /api/model/load` | **1.7:** start loading the model now, without a run (§25.2) | `202` started, `200` nothing to do; `409` `not_enough_memory` or `no_idle_time`; `503` `worker_failed` |
+| `POST /api/model/unload` | **1.7:** unload the model now (§25.2) | `200`; `409` `busy` while a run is running |
 | `GET /api/capabilities` | Which options the pipeline supports, and all limits and defaults | `modes` (`edit` is listed when the pipeline can edit), `supports`, `aspect_ratios`, `defaults`, `limits` (prompt length, `input_images`, `draft` {long side, steps}, `resolutions`, `upload_mb`, `edit_warn_units`, steps, images, seed, guidance, size), `queue_cap`, `device`. See below |
 | `POST /api/uploads` | Stage one reference image for an edit. **The file is the raw request body, not multipart** (§21.6) | Returns `upload_id`, `width`, `height`, `has_alpha`, `bytes`, `url`, `thumb_url`; 413 too large, 415 wrong type, 422 undecodable, 507 disk full |
 | `DELETE /api/uploads/{id}` | Take back a staged upload no run has claimed | 204; 404 for anything else |
@@ -282,6 +287,7 @@ SQLite in WAL mode; the API process is the only writer.
 - API ↔ worker: JSON lines over stdio. Commands: `load`, `run`, `cancel`, `shutdown`. Events: `hello`, `state`, `load_failed`, `run_started`, `progress`, `image_done`, `run_finished`, `run_failed`, `run_canceled`, `protocol_error`, `bye` (and `probe` for the start-up capability check). The worker reads commands in a thread of its own, so a `cancel` is heard while a run is under way (§21.11, M6).
 - **Queue order:** drafts first, then everything else in arrival order, never displacing the run in progress (§22.2).
 - The worker is started lazily when a job needs it. After the queue has been empty for the idle timeout, the API sends `shutdown` and waits for the process to exit; a job arriving mid-shutdown waits for the exit, then a fresh worker starts.
+- **1.7:** it can also be started, and told to `load`, by the page's **Load model** button, and stopped at once by **Unload model**, without a run (§25). Starting and stopping the process are done under one lock; the idle clock counts from when a load finishes.
 - The worker saves each PNG straight to the data volume and reports the path; the API validates, makes the thumbnail and writes the database row.
 - Loading follows the CLI's proven settings: `dtype=torch.bfloat16`, `.to("cuda")` (or CPU offload if configured), seed via `torch.Generator("cuda").manual_seed(seed + i)`.
 - Memory is logged at load and after each image and shown in `/api/status`, using system-memory figures rather than NVML (§9a), so the real footprint next to Hermes can be measured on the Spark instead of guessed.
@@ -382,6 +388,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_PIPELINE` | `real` | `fake` uses the test pipeline (§15) |
 | `STUDIO_FAKE_STEP_DELAY_MS` | `30` | Fake pipeline only: delay per step (added in M1) |
 | `STUDIO_FAKE_LOAD_FAIL` | unset | Fake pipeline only: simulate a model load failure (added in M1) |
+| `STUDIO_FAKE_LOAD_DELAY_MS` | `200` | **1.7:** fake pipeline only: how long its "load" takes, so tests can see the loading state (§25.3) |
 | `STUDIO_TOKEN` | unset | Reserved; setting it stops the server from starting (§11) |
 
 ## 14. Tech stack and repo layout (PROPOSED)
@@ -447,9 +454,9 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 17. On the Spark, `docker compose up` from a clean checkout starts the server with a green healthcheck, and data persists across recreating the container.
 18. With too little free memory, the pre-flight check fails the job immediately with an actionable message (Retry works once memory is free), and the machine is not pushed into swap.
 
-**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3) and 48–50 (§21.13). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
+**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3), 48–50 (§21.13) and 51–60 (§25.5). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
 
-**Where each criterion stands (1.5).** "Automated" means a test passes against the fake pipeline; "Spark" means it needs the real machine and has not been reported back to me.
+**Where each criterion stands (1.7).** "Automated" means a test passes against the fake pipeline; "Spark" means it needs the real machine and has not been reported back to me.
 
 | Criteria | About | Status |
 |---|---|---|
@@ -463,6 +470,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | 31–32 | Cancel and expiry (M6) | **Automated;** `SPARK_TEST.md` §14 for the real GPU |
 | 33–38, 40–47 | Scale, Draft, thumbnails, Regenerate larger, the viewer | **Automated** (a draft's queue priority and limits, the `full` record, the one-image request, the in-viewer note) |
 | 39 | Draft and scale timings on the Spark | **Spark** (`SPARK_TEST.md` §16, §17) |
+| 51–60 | Load model and Unload model | **Automated** (the server's states, the idle clock, the lock, the memory check; the page's buttons, focus, announcements, phone width). **Spark** for how long the real model takes to load and how much memory Unload gives back (`SPARK_TEST.md` §19) |
 
 ## 17. Build order (PROPOSED)
 
@@ -497,6 +505,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
   - **1.4 (#14):** Regenerate larger on a card, the `full` record, a disabled Upscale. Backend 360, Vitest 87, Playwright 27.
   - **1.5 (#15):** Regenerate larger in the viewer; a flaky test of mine fixed at its cause. Backend 360, Vitest 90, Playwright 34.
   - **1.6 (#17):** M5b, the editing page (§21.11). Backend 363, Vitest 169, Playwright 68.
+  - **1.7 (#18):** Load model and Unload model (§25). Backend 384, Vitest 179, Playwright 75.
 - **Left to build:** M5c (the Spark test for edits), M5d (local edits), M5e (only if R3 is accepted), Upscale (decision #37) and M8, the Spark smoke test together. The table in "Status at a glance" (top of this document) says what each waits on.
 
 ## 18. Open items and facts to verify
@@ -512,7 +521,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 9. **Memory budget** — the model's real footprint (transformer, text encoder, VAE, activations at 2K) next to Hermes' LLM server; sets `STUDIO_MIN_FREE_GB` and the size and batch caps.
 10. **NVIDIA's pages were unreachable** — docs.nvidia.com and build.nvidia.com are blocked from my sandbox, so §9a and §12 rest on search summaries and community posts. Before building, compare them with the current Container Runtime, NGC and Hermes playbook pages.
 11. **Two quirks of the CLI script** (`scripts/qwen_image.py`, deliberately left as is): its size warning uses a multiple-of-16 rule, but the pipeline requires 32; and it flattens an RGBA input to RGB, while the pipeline's image encoder reads all four channels (§21.2 point 5). The studio does neither.
-12. **The Spark checks for 1.1 to 1.6 have not been reported back** (`docs/SPARK_TEST.md` §14–§18): how fast a cancel takes effect mid-step at 2K and what it does to memory; real edits, through the API (§15) and now on the page (§18) (none of the real-GPU edit path has ever run); the time and look of drafts and of 50% / 25% runs; and how different a regenerated image is from the small one. Until they are, those releases are verified only against the fake pipeline.
+12. **The Spark checks for 1.1 to 1.7 have not been reported back** (`docs/SPARK_TEST.md` §14–§19): how fast a cancel takes effect mid-step at 2K and what it does to memory; real edits, through the API (§15) and now on the page (§18) (none of the real-GPU edit path has ever run); the time and look of drafts and of 50% / 25% runs; how different a regenerated image is from the small one; and how long Load model takes with the real weights and how much memory Unload gives back. Until they are, those releases are verified only against the fake pipeline.
 13. **Model behaviours nobody has confirmed** (§21.2 [unconfirmed], §22.1): that a prompt can refer to images by number; the mask convention (which colour means "edit here", and whether the mask must match the original's size); that the same prompt and seed at a larger size gives a different picture (assumed from how latent diffusion models behave; it is the reason Regenerate larger warns you); and whether the editing model can enlarge an image without changing it (decides Upscale, #37).
 14. **R3, the optional prompt rewriter, awaits your decision** (§21.12 item 3). Only M5e depends on it.
 15. **The edit cost warning's threshold is a guess** (`STUDIO_EDIT_WARN_UNITS`, default 8, §21.11 M5b): the Spark test (M5c) should replace it with a measured one, together with the default cap of 4 images.
@@ -554,6 +563,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Round 11 (2026-10-02):** version 1.4 (Regenerate larger on a run's card) was reviewed and merged. You asked for the same button in the viewer you get by clicking one image, starting a new job to enlarge that image. Decision #38, specified in §24 as version 1.5.
 - **Round 12 (2026-10-03):** version 1.5 was reviewed and merged. You asked what features remain, and then for this specification to be brought up to date with everything built and changed so far. That is this revision. **No behaviour changed.** I read the whole document against the code and corrected what had drifted: the header and a new "Status at a glance" with the release history and what is left; decision #32's list of version numbers; a table of which decisions are built; the screen and run-card descriptions (Draft, Scale, Cancel, Regenerate larger, the viewer); the API, data-model, worker-protocol, layout and configuration tables (including `STUDIO_DRAFT_SIZE` and `STUDIO_DRAFT_STEPS`, which were missing); a table of where each acceptance criterion stands; the build order and its progress; the open items; and stale statements such as "upscaling stays out" (§21.12), which decision #37 had superseded.
 - **Round 13 (2026-10-03):** the specification was merged. You asked to work on the next feature, which was **M5b, the editing page**. The decisions behind it were already made (#24–#31), so I built it to §21.4 without further questions and listed the small choices I made in §21.11 for you to veto: how pictures dropped in Generate mode are handled, where Edit this appears, that the cost warning's threshold is a setting (default 8, a guess until the Spark measures it), and the others there. Version 1.6.
+- **Round 14 (2026-10-03):** version 1.6 (the editing page) was reviewed and merged. You asked whether there could be a button that loads the model, so that you can work on the prompt instead of waiting for the load after pressing Generate. I answered that it was possible and asked three questions; you chose the button **next to the model pill in the header**, **an Unload button as well**, and **no automatic warm-up** (decision #39, specified in §25 as version 1.7). Two things the code showed me while specifying it, now in §25: the idle clock must start when the load **finishes** (and be refused for `STUDIO_IDLE_TIMEOUT_MIN=0`, where loading ahead would load and instantly unload), and the starting and stopping of the worker needs one lock so that a click cannot meet a half-stopped worker. Small choices of mine for you to veto are in §25.4.
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
 ## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#32 DECIDED; details PROPOSED; M6, M5a and M5b BUILT, M5c–M5e NOT built)
@@ -609,7 +619,7 @@ These were opened and read in full, not taken from search results. The announcem
 | 29 | M6 is part of v2 | **Cancel** (queued and running jobs), **Keep** (pin) and **auto-expiry** with a warning, left unbuilt by the v1 plan, are built as part of version 2 (§21.11) | DECIDED |
 | 30 | Result shape | With Size on Auto, a **"Result follows image [N ▾]"** selector names the image the result's shape follows. It defaults to the pipeline's own choice (the last image that is not a mask) and reorders nothing; the studio computes an explicit width and height from the chosen image | DECIDED |
 | 31 | Transparent in Edit | The **Transparent toggle is offered in Edit mode** too, wrapping the prompt in the recommended format, as in Generate | DECIDED |
-| 32 | Version numbers | **major.minor, and each release bumps the minor.** 1.0 was the first Spark build, M6 is 1.1, and each release since has taken the next minor (1.2 M5a, 1.3, 1.4, 1.5; the editing page will be 1.6; see the table in §3). "Version 2" in this section names the feature set, not the number | DECIDED |
+| 32 | Version numbers | **major.minor, and each release bumps the minor.** 1.0 was the first Spark build, M6 is 1.1, and each release since has taken the next minor (1.2 M5a, 1.3, 1.4, 1.5, 1.6 the editing page, 1.7 loading the model ahead of time; see the table in §3). "Version 2" in this section names the feature set, not the number | DECIDED |
 
 **Refinements proposed after reading Qwen's pages.** R1 and R2 were accepted on 2026-10-02 (decisions #30 and #31, in the table above); R3 is still open:
 
@@ -929,3 +939,72 @@ The viewer is a modal dialog, and while one is open the page behind it is hidden
 - **Tests:** backend 360 (unchanged), front end 90 Vitest (up from 87) and 34 Playwright (up from 27). **Mutation checks: 33 deliberate breakages, 32 caught by a failing test and one equivalent** (the card's request using the run's first image's seed instead of the run's seed: they are the same number for a real run, though not for the unit tests' image-less fixtures). Two mutants first did not compile (an unused variable and a possibly-null value stop the build) and were rewritten until they did, as in §23.4. Before the mutants I added two tests for behaviour I had written but not tested (enlarging two images in a row, and closing the viewer before the answer arrives).
 - **A flaky test of mine, found and fixed.** In the final full run one older test (`test_files_nothing_owns_are_removed_…`) failed once, though nothing it covers had changed. It passed 9 of 9 alone, so I reproduced it rather than calling it a fluke: under CPU stress it failed **9 times in 60**. The cause was in my test set-up: the start-up clean-up sweep runs in a worker thread, stopping its loop does not stop a thread already running, and on a busy machine that thread could delete the files the test had just made. Quiet test clients now never start those loops (a change to `tests/conftest.py` only; the server is unchanged, since only one sweep runs at a time there). With the fix the same stress runs gave **0 failures in 60**, and 0 in 12 for the whole housekeeping file; the full suite then passed.
 - **Not verified:** the same as §23.4: whether a regenerated image resembles the one you opened, on the real model. Part (e) of section 17 of the Spark checklist covers the viewer.
+
+
+## 25. Version 1.7: load the model ahead of time (decision #39 DECIDED; details PROPOSED; BUILT, awaiting your review)
+
+You asked for a button that loads the model, so that you can work on the prompt while it loads instead of waiting for the load after pressing Generate. I asked three questions and you chose: the button goes **next to the model pill in the header**; there is **also an Unload button**; and **nothing loads by itself** (no warm-up as you type).
+
+### 25.1 What you see
+
+- **Load model** appears beside the model pill when the pill says *Model not loaded* or *Model problem*, which is when loading it is useful or worth retrying. Pressing it starts the load at once, with no run. The pill changes to *Loading model…*, and to *Model ready · unloads in 30 min* when the load has finished. A run you send meanwhile waits for the load and then runs on that same loaded model: nothing loads twice.
+- **Unload model** appears in the same place when the pill says *Model ready*, that is, loaded and not working on a run. Pressing it frees the memory **now**, without waiting out the idle timeout. The next run loads the model again, which takes as long as the first time did. There is **no confirmation question**; see 25.4.
+- **Neither button is shown** while the model is loading, while it is generating (Unload would have to stop your run; use Cancel for that), or when the pill says *Model unavailable* (loading cannot work until the server's set-up is fixed, so there is nothing to press).
+- **A problem is shown, not hidden.** If there is not enough free memory (the same check a run makes, `STUDIO_MIN_FREE_GB`, decision #19) or the load fails, nothing is left loading, the pill says *Model problem* with the reason and the hint in its details, a message also appears on screen, and **Load model** stays so that you can try again once memory is free.
+- **The idle timeout still applies.** A model you loaded with the button is unloaded after the usual idle time, counted **from the moment the load finished**, not from the click. So pressing Load and then going to lunch does not hold the memory for ever.
+- **If the idle timeout is `0`** (`STUDIO_IDLE_TIMEOUT_MIN=0`: unload as soon as the queue is empty) loading ahead of time would load the model and unload it again at once, so the button is **not offered** and the server refuses (25.2).
+- **Screen readers and keyboard.** Both buttons are ordinary buttons with a name and a tooltip. When one is pressed it disappears, so focus moves to the model pill instead of being lost, and the change is announced ("Loading the model…", "Model ready.", or the problem).
+- **On a phone** the header still fits without sideways scrolling: the button is compact and the pill's longer text is already shortened there.
+
+### 25.2 API (added to §7)
+
+| Method & path | Purpose | Answers |
+|---|---|---|
+| `POST /api/model/load` | Start loading the model without a run | `202` with the status (the body of `GET /api/status`) when a load was started; `200` with the status when there was nothing to do (it is already loading or loaded, or a run is using it); `409` `not_enough_memory` (the same message and hint as a failed run); `409` `no_idle_time` when the idle timeout is `0`; `503` `worker_failed` when the worker process could not be started |
+| `POST /api/model/unload` | Unload the model now | `200` with the status; `409` `busy` while a run is running (the model is not touched); `200` with nothing done when nothing is loaded |
+
+Both need the `X-Studio-Client: 1` header like every mutation (§11). An error answer has the usual `detail` and `code` and, for the memory case, also the `hint`. The status's `worker` object gains **`idle_timeout_min`**, which the page uses to decide whether to offer Load. The state changes themselves arrive over the event stream (`worker.state`) as they always did.
+
+### 25.3 How the server does it (the worker's life, §9)
+
+- **Same start, no run.** Loading ahead of time is the first half of what a run does anyway: the memory check, starting the worker process, and telling it to load (the worker's `load` command has existed since 1.0 and was never used). A model that failed to load leaves the worker running, so **Load model again** re-sends `load` to the same worker instead of starting another.
+- **One at a time.** Starting and stopping the worker process is done under one lock, shared by a run starting it, a Load, an Unload and the idle timeout. So a click cannot meet a worker that is half stopped: it waits, then acts on what is really there. Unload checks that no run is running **inside** that lock.
+- **The idle clock.** The job loop arms the idle timer only when the worker is loaded. While a load is in progress it waits without a timer, and the worker's *ready* (or *load failed*) report wakes it so that the countdown begins then. Unloading wakes it too, so no stale timer is left running behind a worker that is gone.
+- **A run during the load.** The worker reads commands in order, so a `run` sent while it is loading waits for the load to finish and then proceeds; the page shows *Loading model…* and then *Generating*.
+- **Unload while it is still loading** (API only; the page does not offer it) stops the worker process at once instead of asking it politely, since a worker busy loading would not hear a polite request until the load finished.
+- **Fake pipeline for tests.** `STUDIO_FAKE_LOAD_DELAY_MS` (default 200) sets how long the fake pipeline takes to load, so a test can see the loading state and send a run during it.
+
+### 25.4 Small choices I made (tell me if you want any changed)
+
+- **No confirmation on Unload.** It costs a reload (minutes with the real model), but it is only offered when the model is idle, and a dialog for a button you pressed on purpose is friction. If you would rather have one, it is a small change.
+- **Unload is not offered while loading.** You chose "loaded and idle". A way to abandon a load that you started by mistake would be a *Cancel loading* button; the server can already do it (25.3), and it is an easy addition if you want it.
+- **The page does not use the answer to move the pill.** The state arrives over the event stream, as for every other change, so an answer that overtakes an event can never make the pill go backwards.
+- **Retry on a problem is the same button.** *Model problem* with Load model next to it, rather than a separate Retry.
+
+### 25.5 Acceptance criteria (continue §24.3)
+
+51. **Load model** is offered exactly when the model is not loaded or had a problem and the idle timeout is above 0; **Unload model** exactly when it is loaded and idle. Neither is offered while loading, while generating, or when the model is unavailable.
+52. Pressing Load model loads the model **without creating a run**: the pill goes to *Loading model…* and then *Model ready*, and the unload countdown starts when the load **finishes**.
+53. Loading ahead of time makes the same **memory check** as a run: with too little free memory no worker is started, the state is *Model problem* with the message and hint, the request is answered `409`, and Load model can be pressed again.
+54. A run sent **while the model is loading** waits for it, runs on the same worker, and the model is loaded **once**.
+55. **Unload model** frees the memory at once when idle and is **refused with `409` while a run is running**, leaving the run untouched. After it, the next run loads the model again.
+56. Pressing either button twice, or Load when the model is already loading, loaded or in use, starts nothing extra and unloads nothing it should not.
+57. With `STUDIO_IDLE_TIMEOUT_MIN=0` the button is not offered and the server answers `409` `no_idle_time`.
+58. After a failed load, Load model **retries on the same worker** and works once the cause is gone.
+59. A model loaded with the button is **still unloaded after the idle timeout**, counted from when the load finished.
+60. After pressing a button, **keyboard focus is on the model pill** and the new state is announced; on a phone the header does not scroll sideways.
+
+### 25.6 What was built, and what differs from the plan above
+
+- **As specified:** the two buttons beside the pill, shown by the rule of 25.1 (`modelAction`, one pure function with its own tests); `POST /api/model/load` and `/api/model/unload` with the answers of 25.2; the worker's life under one lock; the idle clock that waits out a load and starts when it finishes; the same memory check as a run; focus moved to the pill and the result announced; the idle timeout of `0` refused and not offered.
+- **A real bug of my own, found by a test while building.** The first version of the lock let a run that had arrived during an Unload wait for it, as intended, but that run had already been marked as the current one, so the stopped worker's exit report was handed to it as an event and taken for a crash ("The image worker stopped unexpectedly (exit code 0)"). The test for exactly that race failed, and the fix is in `_execute`: the queue of events is emptied **after** the lock is won, not before. A server that only ever stopped the worker from the job loop (before 1.7) could not meet this; a Load or Unload from a request can.
+- **Something I had not planned: the pill on a phone.** At 360 px the new button left the pill 107 px, and its label read "Model …". I measured it rather than guessing: **on a phone the pill now says its state in one word** (Unloaded, Loading…, Ready, Working, Problem, Unavailable; the full words are still on wider screens and in the details), **the decorative logo square is hidden**, and a few gaps are smaller. The title and version are still shown. This changes how the header looks on a phone even when no button is shown; it is the price of keeping the state readable.
+- **Small choices of mine for you to veto,** besides those in 25.4:
+  - A refusal appears as a toast ("Couldn't load the model: …"). **The hint** (for the memory check, how to free memory) is in the pill's details, not the toast.
+  - **Load model is offered after a problem (the pill's *Model problem*), but not when the pill says *Model unavailable*,** because loading cannot succeed there until the server's set-up is fixed. The server still tries if asked directly, and reports the same reason again.
+  - The details text for *Model not loaded* and *Model problem* now mention Load model.
+  - Two test knobs for the fake pipeline: `STUDIO_FAKE_LOAD_DELAY_MS` (a slower "load") and `STUDIO_FAKE_LOAD_FAIL=once` (the first load fails, a retry succeeds). The browser tests' server uses a 1.2 s load so that *Loading model…* can be seen.
+- **Tests:** backend 384 (up from 363: 21 new, in `tests/test_model_load.py`, and the two new endpoints added to the missing-header test), front end 179 Vitest (up from 169: the offer rule and the announcements) and 75 Playwright (up from 68: seven new in `e2e/model.spec.ts`, including a phone and the "only what you asked for is announced" case).
+- **Mutation checks: 60 deliberate breakages (28 in the server, 13 in the offer rule, 19 in the page and its styles).** The first run caught 54, found one that did not compile, and let 5 through. Four of those were real gaps in my tests, now closed by new tests (the idle timeout stopping the worker without the lock; a worker that cannot be started; the "Unloading the model…" announcement and the disabled button while the request is on its way; a stale request speaking for a load that a run later caused, which first escaped because my assertion retried until the stale text had gone away, so it now reads once). The fifth is **equivalent**: `"busy"` in the list of states for which Load does nothing is also covered by the check that no run is current, so removing it changes nothing anyone can see. After the fixes **59 of the 60 are caught** and that one is equivalent. I dropped one mutant (swapped icons) as untestable: the icons are decorative and hidden from screen readers.
+- **One unexplained failure, reported rather than hidden.** In one full browser run (5 unstressed runs of the final code in all) the thumbnails test of 1.3 failed once, waiting for a run card; it passed alone 15 of 15 under heavy CPU load and in the 4 full runs after it, and I could not reproduce it or find a cause (the page does not show the prompt box until it has the server's capabilities, which rules out one guess). Separately, under **deliberate heavy CPU load** (four spinning processes) the 1.6 test that watches an upload at 100% before removing it can miss that moment and fail: it depends on a window of about a second, which I widened with a big picture in 1.6 and cannot make airtight. Neither touches anything 1.7 changed; I left both as they are.
+- **Not verified:** how long the real model takes to load, how much memory Load takes and Unload gives back, and whether a worker that is stopped while loading really frees its memory at once on the Spark (`SPARK_TEST.md` §19). Everything here has been checked only against the fake pipeline.

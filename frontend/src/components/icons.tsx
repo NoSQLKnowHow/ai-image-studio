@@ -38,3 +38,7 @@ export const ChevronLeft = () => <Icon><path d="M15 6l-6 6 6 6" /></Icon>;
 export const ChevronRight = () => <Icon><path d="M9 6l6 6-6 6" /></Icon>;
 export const DiceIcon = () => <Icon><rect x="4" y="4" width="16" height="16" rx="3" /><circle cx="9" cy="9" r="1" fill="currentColor" /><circle cx="15" cy="15" r="1" fill="currentColor" /><circle cx="15" cy="9" r="1" fill="currentColor" /><circle cx="9" cy="15" r="1" fill="currentColor" /></Icon>;
 export const AlertIcon = () => <Icon><path d="M12 3l9 16H3z" /><path d="M12 10v4M12 17h0" /></Icon>;
+export const ChipIcon = () => (
+  <Icon><rect x="7" y="7" width="10" height="10" rx="2" /><path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2" /></Icon>
+);
+export const EjectIcon = () => <Icon><path d="M12 5l7 8H5z" /><path d="M5 18h14" /></Icon>;

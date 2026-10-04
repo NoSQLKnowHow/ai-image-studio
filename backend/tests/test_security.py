@@ -6,7 +6,7 @@ from conftest import create_run
 
 
 def test_mutations_need_the_client_header(client):
-    for method, url in (("post", "/api/runs"), ("delete", "/api/runs/" + "a" * 32)):
+    for method, url in (("post", "/api/runs"), ("delete", "/api/runs/" + "a" * 32), ("post", "/api/model/load"), ("post", "/api/model/unload")):
         response = client.request(method.upper(), url, json={"prompt": "x"}, headers={"X-Studio-Client": ""})
         assert response.status_code == 403 and response.json()["code"] == "missing_client_header"
     assert client.get("/api/runs", headers={"X-Studio-Client": ""}).status_code == 200  # reads are fine

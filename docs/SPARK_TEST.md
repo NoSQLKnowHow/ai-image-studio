@@ -427,6 +427,42 @@ picker, and nothing scrolls sideways.
 
 ---
 
+## 19. Load model and Unload model (new in 1.7)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.7** (reload with
+Ctrl+Shift+R). There is no database change. You need a second terminal for `free -h` (or `docker stats`), and
+the idle timeout at its normal value (30), not the 2 minutes of step 11.
+
+**a) Load without a run.** Start from **Model not loaded** (restart the container if it isn't:
+`docker compose restart`). Write down `free -h`. Click **Load model** beside the pill. Good: the button goes
+away, the pill says **Loading model…**, focus is on the pill, and **no run card appears**. **Write down how long
+until the pill says Model ready** (this is the real load time, first time and then with the files cached, if you
+unload and load again) and `free -h` once it is ready: the difference is what Load takes. Then type a prompt and
+generate: it should start at once, with no loading pause.
+
+**b) The countdown starts when the load finishes.** Right after the pill says Model ready it should say about
+**unloads in 30 minutes**, not 29 or 28 (the load itself does not eat into it).
+
+**c) A run sent while it loads.** Unload, click Load model, and send a Generate straight away. Good: the card
+waits, then runs when the load is done, and the model is loaded **once** (one worker; `docker compose logs studio`
+shows one "pipeline ... ready" line for that pair).
+
+**d) Unload.** With the model ready, click **Unload model**. Good: the pill says Model not loaded **at once** and
+`free -h` shows the memory coming back within a few seconds. **Write down how much comes back** and compare it with
+the figure from step 9. While a run is going the button is not shown (the pill says Generating).
+
+**e) The memory check.** Make memory scarce (the way step 12 does) and click Load model. Good: nothing starts, a
+message appears on screen, the pill says **Model problem** with the reason (open it for the hint), and **Load
+model** is still there to try again once memory is free.
+
+**f) The idle timeout still works.** Load the model with the button and leave it alone. After the idle timeout
+(set it to 2 for this, then put it back) the pill goes back to Model not loaded and the memory is returned.
+
+**g) A phone.** On a phone the button is an icon, the pill says one word (Unloaded, Loading…, Ready), and the
+header does not scroll sideways.
+
+---
+
 ## Troubleshooting
 
 | You see | What to do |
@@ -459,3 +495,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 8. The numbers from step 16: the time of a draft and of a run at each scale, and how the draft looks.
 9. From step 17: the two times, and how different the small and the regenerated pictures are.
 10. From step 18 (the Spark test for edits, M5c): the times and memory for each case, whether the model followed "image 1" and "image 2", what it did with a transparent picture, which mask colour worked, and the numbers you suggest for the cap and the cost warning.
+11. From step 19: how long Load model takes (first time and cached), how much memory it takes and how much Unload gives back, and anything that did not match "Good".

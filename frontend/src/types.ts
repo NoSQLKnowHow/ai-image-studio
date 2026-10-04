@@ -89,6 +89,7 @@ export interface WorkerStatus {
   pipeline: string;
   pid: number | null;
   unload_at: string | null;
+  idle_timeout_min: number; // 0 = unload as soon as the queue is empty, so loading ahead of time is not offered (§25)
   device: { name?: string; capability?: string; torch?: string; cuda?: string | null } | null;
   probe: string | null;
 }

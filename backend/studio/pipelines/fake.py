@@ -9,7 +9,9 @@ the prompt, e.g. "a cat [fake:oom]" or "a cat [fake:crash@1]" (only on image ind
     [fake:crash]  kill the worker process abruptly (exit code 3)
     [fake:noise]  write junk to stdout, to prove the protocol channel is protected
 
-A model load failure is simulated by setting STUDIO_FAKE_LOAD_FAIL=1 for the worker.
+A model load failure is simulated by setting STUDIO_FAKE_LOAD_FAIL=1 for the worker (`once` fails only the first
+load, so a retry on the same worker can succeed, DESIGN.md §25.3), and a slower load (so a test can
+see the loading state, DESIGN.md §25.3) by setting STUDIO_FAKE_LOAD_DELAY_MS.
 
 Edits (DESIGN.md §21.8): the result follows the *last* input's shape when no size is given (at about
 RESOLUTION x RESOLUTION pixels, with the pipeline's own arithmetic), and a strip of numbered thumbnails of the
@@ -119,18 +121,30 @@ class FakePipeline:
     def __init__(self, step_delay_ms: int = 30, load_delay_ms: int = 200):
         self.step_delay = step_delay_ms / 1000
         self.load_delay = load_delay_ms / 1000
+        self._failed_once = False
 
     @classmethod
     def probe(cls) -> dict[str, Any]:
         return {"pipeline": cls.name, "supports": dict(cls.SUPPORTS), "device": {"name": "fake (no GPU used)"}}
 
+    def _load_delay(self) -> float:
+        raw = os.environ.get("STUDIO_FAKE_LOAD_DELAY_MS", "").strip()
+        try:
+            return max(0, int(raw)) / 1000 if raw else self.load_delay
+        except ValueError:
+            return self.load_delay
+
     def load(self) -> dict[str, Any]:
-        if os.environ.get("STUDIO_FAKE_LOAD_FAIL", "").strip().lower() in ("1", "true", "yes", "on"):
+        fail = os.environ.get("STUDIO_FAKE_LOAD_FAIL", "").strip().lower()
+        if fail == "once" and not self._failed_once:
+            self._failed_once = True
+            fail = "1"
+        if fail in ("1", "true", "yes", "on"):
             raise PipelineLoadError(
                 "Simulated model load failure (STUDIO_FAKE_LOAD_FAIL is set).",
                 hint="Unset STUDIO_FAKE_LOAD_FAIL to let the fake pipeline load.",
             )
-        time.sleep(self.load_delay)
+        time.sleep(self._load_delay())
         return {"pipeline": self.name, "supports": dict(self.SUPPORTS)}
 
     def generate(self, job: ImageJob, index: int, seed: int, on_step: StepCallback) -> Image.Image:

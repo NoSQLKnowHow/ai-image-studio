@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 /** Current time, refreshed on an interval (for "3 min ago" and countdowns). */
 export function useNow(intervalMs = 30_000): number {
@@ -8,6 +8,19 @@ export function useNow(intervalMs = 30_000): number {
     return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
+}
+
+/** True while the window is as narrow as a phone (the page's own breakpoint). Where there is no matchMedia, it is false. */
+export function useNarrow(query = "(max-width: 520px)"): boolean {
+  return useSyncExternalStore(
+    (notify) => {
+      const list = window.matchMedia?.(query);
+      list?.addEventListener("change", notify);
+      return () => list?.removeEventListener("change", notify);
+    },
+    () => window.matchMedia?.(query).matches ?? false,
+    () => false,
+  );
 }
 
 export type ToastKind = "info" | "success" | "error";
