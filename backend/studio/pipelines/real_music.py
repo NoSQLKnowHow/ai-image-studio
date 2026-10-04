@@ -140,28 +140,31 @@ def reporting_progress_bars(report: Any) -> Iterator[None]:
 class RealMusicPipeline:
     name = "real"
 
-    def __init__(self, model: str, hub_mode: str = "auto"):
+    def __init__(self, model: str, hub_mode: str = "auto", device: str = "cuda", dtype: str = "bfloat16"):
         self.model = model
         self.hub_mode = hub_mode  # DESIGN.md §26.11
+        self.device = device  # "cuda" for real; the tests run a tiny random-weight copy on "cpu" (float32)
+        self.dtype = dtype
         self._pipe: Any = None
         self._torch: Any = None
 
     def load(self) -> dict[str, Any]:
         torch, modular_pipeline = import_music_runtime()
-        require_gpu(torch)
-        log.info("loading %s (bfloat16, files: %s)", self.model, self.hub_mode)
+        if self.device == "cuda":
+            require_gpu(torch)
+        log.info("loading %s (%s, files: %s)", self.model, self.dtype, self.hub_mode)
 
         def fetch(offline: bool) -> Any:
             extra: dict[str, Any] = {"local_files_only": True} if offline else {}
             pipe = modular_pipeline.from_pretrained(self.model, **extra)
             # Every component is loaded from the same place as the pipeline's index, even when STUDIO_MUSIC_MODEL
             # is a folder: the index itself names the hub repository.
-            pipe.load_components(dtype=torch.bfloat16, pretrained_model_name_or_path=self.model, **extra)
+            pipe.load_components(dtype=getattr(torch, self.dtype), pretrained_model_name_or_path=self.model, **extra)
             return pipe
 
         try:
             pipe = load_with_hub_mode(fetch, self.hub_mode, self.model)
-            pipe.to("cuda")
+            pipe.to(self.device)
         except Exception as exc:
             raise translate_load_error(exc, torch, self.hub_mode == "offline") from exc
         configure = getattr(pipe, "set_progress_bar_config", None)
@@ -197,7 +200,7 @@ class RealMusicPipeline:
                     lyrics=job.lyrics,
                     audio_duration=float(job.duration),
                     num_inference_steps=job.steps,
-                    generator=torch.Generator("cuda").manual_seed(seed),
+                    generator=torch.Generator(self.device).manual_seed(seed),
                     output="audios",
                 )
         except Canceled:

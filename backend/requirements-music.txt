@@ -1,0 +1,8 @@
+# The music worker's own copy of diffusers (DESIGN.md §26.4).
+#
+# Neither diffusers serves both models: the commit the image worker is pinned to (requirements-container.txt) has
+# Qwen-Image-2.1 and no MiniMax-Music3 pipeline, and the released 0.40.0 has MiniMax-Music3 and no Qwen-Image-2.1. The
+# Dockerfile installs this one, WITHOUT its dependencies (the image already has the right ones), into /opt/music-libs,
+# and the music worker is started with that folder first on its Python path (STUDIO_MUSIC_LIBS). The image worker never
+# sees it. It is a pure-Python wheel.
+diffusers==0.40.0
