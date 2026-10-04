@@ -20,8 +20,9 @@ outputs
 *.sqlite
 .DS_Store
 
-# not needed in the image
-scripts
+# not needed in the image (the music example is the one script the image ships: the Dockerfile copies it)
+scripts/*
+!scripts/minimax_music.py
 docs
 backend/tests
 README.md
