@@ -6,6 +6,8 @@ the shape and rate of the output, the files the worker writes). What the real mo
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -155,6 +157,45 @@ def test_a_pipeline_that_was_never_loaded_says_so(repo):
 def test_the_model_loads_from_a_local_folder_in_every_cache_mode(repo, mode):
     loaded = RealMusicPipeline(str(repo), hub_mode=mode, device="cpu", dtype="float32").load()
     assert loaded["supports"] == {"music": True, "instrumental": True, "step_progress": True, "cancel": True}
+
+
+def _copy_of(repo, tmp_path):
+    import shutil
+
+    copy = tmp_path / "folder"
+    shutil.copytree(repo, copy)
+    return copy
+
+
+@pytest.mark.parametrize("mode", ["auto", "offline", "online"])
+def test_a_model_folder_loads_from_the_folder_even_though_its_index_names_a_hub_repository(repo, tmp_path, mode):
+    """The real model's index says "MiniMaxAI/MiniMax-Music3" for every part. A copy of the model that you downloaded
+    yourself and point STUDIO_MUSIC_MODEL at must be read from that folder, never from the hub: here the index names a
+    repository that does not exist, so anything that went to the hub would fail, and a track is made to prove every part
+    is really there (diffusers would otherwise only log a warning for a part that did not load)."""
+    copy = _copy_of(repo, tmp_path)
+    index_file = copy / "modular_model_index.json"
+    index = json.loads(index_file.read_text())
+    for value in index.values():
+        if isinstance(value, list):
+            value[2]["pretrained_model_name_or_path"] = "NoSuchOrganisation/NoSuchModel-0000"
+    index_file.write_text(json.dumps(index))
+    pipeline = RealMusicPipeline(str(copy), hub_mode=mode, device="cpu", dtype="float32")
+    pipeline.load()
+    made, _ = make(pipeline, job(duration=2, steps=4))
+    assert made.seconds > 0 and made.pcm
+
+
+@pytest.mark.parametrize("mode", ["auto", "offline"])
+def test_a_folder_with_a_part_missing_is_reported_as_incomplete_and_not_as_loaded(repo, tmp_path, mode):
+    import shutil
+
+    copy = _copy_of(repo, tmp_path)
+    shutil.rmtree(copy / "transformer")
+    with pytest.raises(PipelineError) as info:
+        RealMusicPipeline(str(copy), hub_mode=mode, device="cpu", dtype="float32").load()
+    assert info.value.kind == "load_failed" and "incomplete" in info.value.message and "transformer" in info.value.message
+    assert "folder" in (info.value.hint or "")
 
 
 def test_a_folder_that_is_not_there_fails_the_load_with_an_explanation(tmp_path):

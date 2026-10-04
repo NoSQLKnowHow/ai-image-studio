@@ -84,6 +84,15 @@ def test_auto_goes_online_only_when_files_are_missing():
     assert load.calls == [True, False]  # offline first, then online
 
 
+def test_a_half_loaded_model_counts_as_files_missing_so_auto_completes_it_online():
+    from studio.pipelines.real_music import MissingComponents
+
+    load = Loader(MissingComponents(["transformer"]))
+    assert is_cache_miss(MissingComponents(["transformer"]))
+    assert load_with_hub_mode(load, "auto", "the music model") == "model loaded online"
+    assert load.calls == [True, False]
+
+
 def test_auto_does_not_go_online_for_any_other_failure():
     boom = RuntimeError("CUDA out of memory")
     load = Loader(boom, None)
