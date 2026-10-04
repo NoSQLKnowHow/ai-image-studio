@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useReturnFocus } from "../hooks";
 import { largerTarget } from "../options";
 import type { KnownImage } from "../tray";
-import type { ImageInfo, Run } from "../types";
+import type { ImageInfo, ImageRun, Run } from "../types";
 import { viewerItems, viewerKnown, viewerTitle } from "../viewer";
 import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EditIcon, EnlargeIcon } from "./icons";
 
@@ -15,7 +15,7 @@ export interface ViewerNotice {
 }
 
 export function Lightbox({ run, index, notice, canEdit, onIndex, onRegenerateLarger, onEditThis, onClose }: {
-  run: Run | null;
+  run: ImageRun | null;
   index: number;
   notice: ViewerNotice | null;
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
@@ -100,15 +100,16 @@ export function Lightbox({ run, index, notice, canEdit, onIndex, onRegenerateLar
 }
 
 /** After a delete, keep a keyboard user's place: the Delete button of the next card (or the previous
- *  one at the end of the list), else the prompt box once the list is empty. */
+ *  one at the end of the list) on the same tab, else the first box of that tab's form once the list is empty. */
 function focusAfterDelete(runId: string): HTMLElement | null {
-  const cards = [...document.querySelectorAll<HTMLElement>("article.run-card")];
+  const own = document.querySelector<HTMLElement>(`article.run-card[data-run-id="${runId}"]`);
+  const cards = [...(own?.closest(".timeline") ?? document).querySelectorAll<HTMLElement>("article.run-card")];
   const at = cards.findIndex((card) => card.dataset.runId === runId);
   for (const card of [cards[at + 1], cards[at - 1]]) {
     const button = card?.querySelector<HTMLButtonElement>('button[data-action="delete"]:not(:disabled)');
     if (button) return button;
   }
-  return document.getElementById("prompt");
+  return own?.closest(".tab-panel")?.querySelector<HTMLElement>("#prompt, .music-grid input") ?? document.getElementById("prompt");
 }
 
 /** The Reuse button of a run's card: where focus goes when a control that had it disappears. */
@@ -117,7 +118,9 @@ export function cardReuseButton(runId: string): HTMLElement | null {
 }
 
 export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onBack: () => void; onConfirm: () => void }) {
-  const done = run?.images.length ?? 0;
+  const music = run?.mode === "music";
+  const thing = music ? "track" : "image";
+  const done = (music ? run?.tracks.length : run?.images.length) ?? 0;
   const { props: returnFocus, redirectTo } = useReturnFocus();
   const confirm = () => {
     if (run) redirectTo(cardReuseButton(run.id)); // the Cancel button turns into "Stopping…" and then goes away
@@ -131,12 +134,12 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
           <Dialog.Title>Stop this run?</Dialog.Title>
           <Dialog.Description>
             {done
-              ? `The ${done === 1 ? "image" : `${done} images`} already finished ${done === 1 ? "is" : "are"} kept. The one being made now is discarded.`
-              : "Nothing has been finished yet, so nothing is kept. The image being made now is discarded."}
+              ? `The ${done === 1 ? thing : `${done} ${thing}s`} already finished ${done === 1 ? "is" : "are"} kept. The one being made now is discarded.`
+              : `Nothing has been finished yet, so nothing is kept. The ${thing} being made now is discarded.`}
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Keep going</Dialog.Close>
-            <button type="button" className="button danger-solid" onClick={confirm}>Stop generating</button>
+            <button type="button" className="button danger-solid" onClick={confirm}>{music ? "Stop making music" : "Stop generating"}</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -145,7 +148,9 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
 }
 
 export function ConfirmDelete({ run, onCancel, onConfirm }: { run: Run | null; onCancel: () => void; onConfirm: () => void }) {
-  const n = run?.images.length ?? 0;
+  const music = run?.mode === "music";
+  const thing = music ? "track" : "image";
+  const n = (music ? run?.tracks.length : run?.images.length) ?? 0;
   const { props: returnFocus, redirectTo } = useReturnFocus();
   const confirm = () => {
     if (run) redirectTo(focusAfterDelete(run.id));
@@ -158,7 +163,7 @@ export function ConfirmDelete({ run, onCancel, onConfirm }: { run: Run | null; o
         <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
           <Dialog.Title>Delete this run?</Dialog.Title>
           <Dialog.Description>
-            {n ? `Its ${n === 1 ? "image is" : `${n} images are`} removed from the Spark.` : "It is removed from the history."}
+            {n ? `Its ${n === 1 ? `${thing} is` : `${n} ${thing}s are`} removed from the Spark.` : "It is removed from the history."}
             {run?.pinned ? " You marked it Keep." : ""} This can't be undone.
           </Dialog.Description>
           <div className="confirm-actions">

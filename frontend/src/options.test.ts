@@ -34,7 +34,7 @@ import {
   type Scale,
 } from "./options";
 import { CAPS, makeRun } from "./testdata";
-import type { Capabilities, Mode, Run } from "./types";
+import type { Capabilities, ImageRun, Mode } from "./types";
 
 function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
   const data = { ...initial };
@@ -303,7 +303,7 @@ describe("drafts (DESIGN.md §22.2)", () => {
 
 describe("regenerate larger (DESIGN.md §23)", () => {
   const FULL = { width: 2048, height: 2048, steps: 40 };
-  const smallRun = (over: Record<string, unknown> = {}, run: Partial<Run> = {}) =>
+  const smallRun = (over: Record<string, unknown> = {}, run: Partial<ImageRun> = {}) =>
     makeRun({ options: { ...makeRun().options, width: 1024, height: 1024, steps: 40, full: FULL, ...over }, ...run });
 
   describe("what a run remembers", () => {
@@ -580,7 +580,7 @@ describe("editing: Reuse, Retry and the summary", () => {
   const input = (position: number, id = `in${position}`) => ({
     position, role: "reference" as const, id, width: 600, height: 400, has_alpha: false, url: `/api/images/${id}`, thumb_url: `/api/images/${id}/thumb`,
   });
-  const editRun = (options: Partial<Run["options"]> = {}, extra: Partial<Run> = {}): Run =>
+  const editRun = (options: Partial<ImageRun["options"]> = {}, extra: Partial<ImageRun> = {}): ImageRun =>
     makeRun({
       mode: "edit",
       inputs: [input(1), input(2)],

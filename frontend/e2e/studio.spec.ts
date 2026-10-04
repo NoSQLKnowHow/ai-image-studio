@@ -16,10 +16,10 @@ test("loads cleanly and explains the model state", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "AI Image Studio" })).toBeVisible();
   // whatever state the model is in (a run from an earlier test may still be going)
   const pill = page.locator('button[aria-controls="model-details"]');
-  await expect(pill).toHaveText(/^(Model not loaded|Loading model…|Model ready|Generating)/);
+  await expect(pill).toHaveText(/^(Model not loaded|Loading (image|music) model…|(Image|Music) model ready|Generating|Making music)/);
   await pill.click();
   const details = page.getByRole("region", { name: "Model details" });
-  await expect(details).toContainText("Test pipeline (fake images, no GPU)");
+  await expect(details).toContainText(/Test pipeline \(fake (images|music), no GPU\)/); // whichever model an earlier test left loaded
   await page.keyboard.press("Escape");
   await expect(details).toBeHidden();
   await expect(page.getByRole("radio", { name: /Edit/ })).toBeEnabled(); // the fake pipeline can edit (M5b)

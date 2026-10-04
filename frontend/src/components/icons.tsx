@@ -42,3 +42,4 @@ export const ChipIcon = () => (
   <Icon><rect x="7" y="7" width="10" height="10" rx="2" /><path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2" /></Icon>
 );
 export const EjectIcon = () => <Icon><path d="M12 5l7 8H5z" /><path d="M5 18h14" /></Icon>;
+export const NoteIcon = () => <Icon><path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="17" cy="16" r="3" /></Icon>;

@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
-import type { Run, WorkerState } from "../types";
+import type { ImageRun, WorkerState } from "../types";
 import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon, UpscaleIcon } from "./icons";
 
 interface Props {
-  run: Run;
+  run: ImageRun;
   now: number;
   workerState: WorkerState | null;
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
@@ -22,7 +22,7 @@ interface Props {
 
 const MAX_THUMBS = 4;
 
-function statusLabel(run: Run): string {
+function statusLabel(run: ImageRun): string {
   switch (run.status) {
     case "queued":
       return run.queue_position ? `Queued · #${run.queue_position}` : "Queued";
@@ -37,7 +37,7 @@ function statusLabel(run: Run): string {
   }
 }
 
-function ProgressBlock({ run, workerState }: { run: Run; workerState: WorkerState | null }) {
+function ProgressBlock({ run, workerState }: { run: ImageRun; workerState: WorkerState | null }) {
   const p = run.progress;
   if (!p) {
     const text = run.canceling
@@ -63,7 +63,7 @@ function ProgressBlock({ run, workerState }: { run: Run; workerState: WorkerStat
 }
 
 /** An edit's source images, numbered as the prompt refers to them ("image 2"), before its results. Each opens the viewer. */
-function Sources({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) => void }) {
+function Sources({ run, onOpenImage }: { run: ImageRun; onOpenImage: (index: number) => void }) {
   const inputs = [...run.inputs].sort((a, b) => a.position - b.position);
   return (
     <ol className="run-sources" aria-label="Source images">
@@ -81,7 +81,7 @@ function Sources({ run, onOpenImage }: { run: Run; onOpenImage: (index: number) 
 }
 
 /** The results. `offset` is how many sources come before them in the viewer, which pages through both. */
-function Media({ run, offset, onOpenImage }: { run: Run; offset: number; onOpenImage: (index: number) => void }) {
+function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; onOpenImage: (index: number) => void }) {
   const images = run.images;
   if (!images.length) {
     return (

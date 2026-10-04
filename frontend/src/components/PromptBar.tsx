@@ -1,6 +1,6 @@
 import { forwardRef, useState, type DragEvent, type ReactNode } from "react";
 import { SCALES, baseSize, effectiveScale, isAutoSize, scaleProblem, scaledSize, sizeLabel, summarize, type Options, type Scale } from "../options";
-import type { Capabilities, Mode } from "../types";
+import type { Capabilities, ImageMode } from "../types";
 import { DraftIcon, SlidersIcon, SparkleIcon } from "./icons";
 
 interface Props {
@@ -16,14 +16,14 @@ interface Props {
   onStarter: () => void;
   onPromptFocus: () => void; // the prompt has been focused, so its caret is real (the page inserts "image N" there)
   onPrompt: (text: string) => void;
-  onMode: (mode: Mode) => void;
+  onMode: (mode: ImageMode) => void;
   onScale: (scale: Scale) => void;
   onOpenOptions: () => void;
   onSubmit: () => void;
   onDraft: () => void;
 }
 
-const MODES: { mode: Mode; label: string }[] = [
+const MODES: { mode: ImageMode; label: string }[] = [
   { mode: "generate", label: "Generate" },
   { mode: "edit", label: "Edit" },
 ];
