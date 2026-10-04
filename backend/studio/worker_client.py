@@ -89,12 +89,12 @@ class WorkerClient:
     async def send(self, message: dict[str, Any]) -> None:
         proc = self._proc
         if proc is None or proc.returncode is not None or proc.stdin is None:
-            raise WorkerGone("The image worker is not running.")
+            raise WorkerGone(f"The {self.kind} worker is not running.")
         try:
             proc.stdin.write((json.dumps(message, separators=(",", ":")) + "\n").encode("utf-8"))
             await proc.stdin.drain()
         except (BrokenPipeError, ConnectionResetError) as exc:
-            raise WorkerGone(f"The image worker went away ({exc}).") from exc
+            raise WorkerGone(f"The {self.kind} worker went away ({exc}).") from exc
 
     async def stop(self, timeout: float = 10.0, busy: bool = False) -> None:
         """Stop the worker. An idle worker is asked to exit; a busy one only reads commands
@@ -114,7 +114,7 @@ class WorkerClient:
             try:
                 await asyncio.wait_for(proc.wait(), timeout)
             except asyncio.TimeoutError:
-                log.warning("image worker did not exit within %.0fs; killing it", timeout)
+                log.warning("%s worker did not exit within %.0fs; killing it", self.kind, timeout)
                 with suppress(ProcessLookupError):
                     proc.kill()
                 await proc.wait()
@@ -131,24 +131,24 @@ class WorkerClient:
                 try:
                     line = await proc.stdout.readline()
                 except ValueError:  # a line longer than the buffer limit; it has been discarded
-                    log.warning("discarded an over-long line from the image worker")
+                    log.warning("discarded an over-long line from the %s worker", self.kind)
                     continue
                 if not line:
                     break
                 try:
                     event = json.loads(line)
                 except ValueError:
-                    log.warning("ignoring non-protocol output from the image worker: %r", line[:200])
+                    log.warning("ignoring non-protocol output from the %s worker: %r", self.kind, line[:200])
                     continue
                 if not isinstance(event, dict) or "event" not in event:
-                    log.warning("ignoring malformed event from the image worker: %r", line[:200])
+                    log.warning("ignoring malformed event from the %s worker: %r", self.kind, line[:200])
                     continue
                 self._dispatch(event)
         finally:
             returncode = await proc.wait()
             level = logging.INFO if self._stopping else logging.WARNING
-            log.log(level, "image worker pid %s exited with code %s", proc.pid, returncode)
-            self._dispatch({"event": "worker_exited", "returncode": returncode, "expected": self._stopping})
+            log.log(level, "%s worker pid %s exited with code %s", self.kind, proc.pid, returncode)
+            self._dispatch({"event": "worker_exited", "returncode": returncode, "expected": self._stopping, "kind": self.kind})
 
     def _dispatch(self, event: dict[str, Any]) -> None:
         try:

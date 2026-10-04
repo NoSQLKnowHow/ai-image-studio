@@ -144,7 +144,7 @@ def test_pipeline_error_and_out_of_memory_fail_the_run_with_hints(client):
 
 def test_worker_crash_fails_the_run_and_the_worker_restarts(client):
     crashed = wait_for(client, create_run(client, "x [fake:crash@1]", num_images=3)["id"])
-    assert crashed["status"] == "failed" and "stopped unexpectedly (exit code 3)" in crashed["error"]["message"]
+    assert crashed["status"] == "failed" and "The image worker stopped unexpectedly (exit code 3)" in crashed["error"]["message"]
     assert "1 of 3" in crashed["error"]["message"] and "restarted automatically" in crashed["error"]["hint"]
     assert client.get("/api/status").json()["worker"]["state"] == "error"
     assert wait_for(client, create_run(client, "after the crash")["id"])["status"] == "done"

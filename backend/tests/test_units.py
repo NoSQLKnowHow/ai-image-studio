@@ -13,7 +13,7 @@ from PIL import Image
 from studio import presets as P
 from studio.config import ConfigError, Settings
 from studio.events import OVERFLOW, EventBus, format_sse
-from studio.naming import content_disposition, download_filename, slugify
+from studio.naming import content_disposition, download_filename, music_filename, slugify
 from studio.runspec import RunCreate, RunRequestError, resolve_run
 from studio.security import hostname
 from studio.storage import Storage, StorageError, check_id
@@ -113,6 +113,13 @@ def test_slugify(text, expected):
 def test_slugify_keeps_non_latin_and_respects_byte_budget():
     assert slugify("夜晚的万圣节小镇") != "untitled"
     assert len(slugify("骷" * 200).encode()) <= 60
+
+
+def test_a_music_filename_says_the_length_the_model_made_to_the_nearest_second():
+    when = datetime(2026, 10, 4, 14, 15, 2, tzinfo=timezone.utc)
+    name = lambda seconds: music_filename(label="Acoustic Pop!", seconds=seconds, seed=7, created_at=when)  # noqa: E731
+    assert name(60.0) == "music_acoustic-pop_60s_s7_20261004-141502.wav"
+    assert name(47.4).split("_")[2] == "47s" and name(47.6).split("_")[2] == "48s"  # rounded, not cut off
 
 
 def test_download_filename_and_content_disposition():

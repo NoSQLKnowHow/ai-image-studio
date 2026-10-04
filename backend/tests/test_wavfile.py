@@ -38,6 +38,15 @@ def test_an_odd_length_text_is_padded_so_the_chunks_after_it_still_line_up(tmp_p
     assert info.info == {"comment": "abc", "title": "de"} and info.frames == 10
 
 
+def test_a_text_note_ends_with_a_NUL_as_the_format_says(tmp_path):
+    """Our reader strips NULs, so only the raw bytes can show it: players that follow the format read to the NUL."""
+    write_wav(tmp_path / "a.wav", tone(4), 8000, 2, {"comment": "abcd"})
+    raw = (tmp_path / "a.wav").read_bytes()
+    at = raw.index(b"ICMT")
+    length = struct.unpack("<I", raw[at + 4:at + 8])[0]
+    assert length == 5 and raw[at + 8:at + 8 + length] == b"abcd\0"
+
+
 def test_text_that_is_not_ascii_survives(tmp_path):
     write_wav(tmp_path / "a.wav", tone(10), 8000, 2, {"title": "Étude für Elise ♪"})
     assert read_wav(tmp_path / "a.wav").info["title"] == "Étude für Elise ♪"
@@ -102,6 +111,15 @@ def test_only_16_bit_pcm_is_accepted(tmp_path):
     body = b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", 0)
     (tmp_path / "a.wav").write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
     with pytest.raises(WavError, match="16-bit PCM"):
+        read_wav(tmp_path / "a.wav")
+
+
+def test_8_bit_pcm_is_refused_too(tmp_path):
+    """Plain PCM (format 1) at another width is not what the studio writes or plays back: refused, not misread."""
+    fmt = struct.pack("<HHIIHH", 1, 1, 8000, 8000, 1, 8)
+    body = b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", 2) + b"\x80\x80"
+    (tmp_path / "a.wav").write_bytes(b"RIFF" + struct.pack("<I", len(body)) + body)
+    with pytest.raises(WavError, match="not 16-bit PCM"):
         read_wav(tmp_path / "a.wav")
 
 

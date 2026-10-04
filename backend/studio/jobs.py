@@ -501,7 +501,7 @@ class JobManager:
                     self._set_worker_state("ready")
                 return
             elif kind == "worker_exited":
-                message = f"The image worker stopped unexpectedly (exit code {event.get('returncode')})."
+                message = f"The {event.get('kind', 'image')} worker stopped unexpectedly (exit code {event.get('returncode')})."
                 self._finish(run_id, "failed", self._with_partial(run_id, row, message), WORKER_RESTART_HINT)
                 return
 
@@ -814,7 +814,7 @@ class JobManager:
                 self._set_worker_state("unloaded")
             else:
                 self._set_worker_state(
-                    "error", f"The image worker stopped unexpectedly (exit code {event.get('returncode')}).",
+                    "error", f"The {event.get('kind', 'image')} worker stopped unexpectedly (exit code {event.get('returncode')}).",
                     WORKER_RESTART_HINT,
                 )
             if self._current is not None:
@@ -822,4 +822,4 @@ class JobManager:
         elif kind == "hello":
             log.info("%s worker pid %s says hello (%s pipeline)", event.get("kind", "image"), event.get("pid"), event.get("pipeline"))
         elif kind == "protocol_error":
-            log.error("image worker reported a protocol error: %s", event.get("message"))
+            log.error("%s worker reported a protocol error: %s", self._worker.kind, event.get("message"))

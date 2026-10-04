@@ -80,6 +80,12 @@ def test_progress_counts_every_frame_then_every_render_step_then_finishes(pipe):
     assert seen.count(("finish", 0, 1)) == 1
 
 
+def test_the_number_of_rendering_steps_asked_for_is_the_number_the_pipeline_makes(pipe):
+    """Every other test uses 4 steps, which is also what a pipeline that ignored the request might do."""
+    _, seen = make(pipe, job(duration=2, steps=3))
+    assert [item for item in seen if item[0] == "render"] == [("render", i, 3) for i in range(1, 4)]
+
+
 def test_a_long_track_is_rendered_in_several_windows_and_the_total_says_so(pipe):
     _, seen = make(pipe, job(duration=10, steps=4))  # 250 frames: two 200-frame windows with a 100-frame hop
     render = [s for s in seen if s[0] == "render"]

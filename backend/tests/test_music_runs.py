@@ -142,6 +142,7 @@ def test_the_job_a_worker_gets_has_everything_it_needs(client):
 
 def test_versions_have_their_own_seeds_and_sound_different(client):
     run = run_and_wait(client, seed=100, tracks=3)
+    assert run["options"]["tracks"] == 3  # what was asked for is what Reuse, Retry and the card's "3 versions" read back
     assert [t["seed"] for t in run["tracks"]] == [100, 101, 102] and [t["idx"] for t in run["tracks"]] == [0, 1, 2]
     sounds = {frames_of(audio_bytes(client, t)) for t in run["tracks"]}
     assert len(sounds) == 3
@@ -368,7 +369,8 @@ def test_an_ordinary_error_fails_the_run_and_the_next_one_works(client):
 
 def test_a_crash_of_the_music_worker_fails_the_run_and_the_next_one_starts_a_new_worker(client):
     run = run_and_wait(client, "warm piano [fake:crash]")
-    assert run["status"] == "failed" and "stopped unexpectedly" in run["error"]["message"]
+    assert run["status"] == "failed" and "The music worker stopped unexpectedly (exit code 3)" in run["error"]["message"]  # not "image"
+    assert client.get("/api/status").json()["worker"]["detail"].startswith("The music worker stopped unexpectedly")
     assert run_and_wait(client)["status"] == "done"
 
 
@@ -490,3 +492,63 @@ def test_a_path_a_worker_reports_for_a_track_must_be_inside_that_runs_audio_fold
     (storage.audio / other / "0.wav").write_bytes(b"y")
     with pytest.raises(StorageError):  # another run's real file is still not this run's
         storage.accept_worker_audio(f"audio/{other}/0.wav", run)
+
+
+# ------------------------------------------------------------------ each model's start-up check decides for that model
+@pytest.mark.parametrize("image_ok,music_ok", [(False, True), (True, False)])
+def test_each_models_start_up_check_decides_its_own_availability(client_factory, image_ok, music_ok):
+    """The Music tab is offered because the *music* check passed, and the image model's state comes from the image check:
+    one failing must not make the other look failed, and one passing must not make the other look fine."""
+    from unittest import mock
+
+    from studio.jobs import JobManager
+
+    def outcome(kind: str, ok: bool) -> dict:
+        if ok:
+            return {"event": "probe", "ok": True, "supports": {"edit": True}, "device": {"name": f"{kind} device"}}
+        return {"event": "probe", "ok": False, "error": {"kind": "error", "message": f"the {kind} check failed", "hint": None}}
+
+    async def probe(self, kind):
+        return outcome(kind, image_ok if kind == "image" else music_ok)
+
+    with mock.patch.object(JobManager, "_probe_subprocess", probe):
+        client = client_factory()
+        deadline = time.monotonic() + 15
+        while client.get("/api/capabilities").json()["music"]["state"] in ("pending", "running"):
+            assert time.monotonic() < deadline
+            time.sleep(0.05)
+        caps = client.get("/api/capabilities").json()
+        worker = client.get("/api/status").json()["worker"]
+    assert caps["music"]["available"] is music_ok and ("music" in caps["modes"]) is music_ok
+    assert caps["music"]["reason"] == (None if music_ok else "the music check failed")
+    assert worker["probe"] == ("done" if image_ok else "failed")
+    assert (worker["detail"] is None) is image_ok  # and only a failed image check puts a problem on the worker
+
+
+def test_with_lyrics_the_fake_melody_has_a_second_voice_so_the_two_kinds_of_track_sound_different():
+    import random
+
+    from studio.pipelines.base import MusicJob
+    from studio.pipelines.fake_music import FakeMusicPipeline, melody_seed, render_melody
+
+    plain, sung = render_melody(random.Random(5), 1.0, False), render_melody(random.Random(5), 1.0, True)
+    assert len(plain) == len(sung) and plain != sung
+    pipeline = FakeMusicPipeline(step_delay_ms=0)
+    for lyrics, voiced in (("[Verse]\nla", True), ("[Instrumental]", False), ("  [INSTRUMENTAL] ", False)):  # the tag, however it is written
+        job = MusicJob(run_id="0" * 32, mode="music", prompt="p", lyrics=lyrics, duration=2, steps=10, seeds=[3], model_id="x")
+        made = pipeline.generate(job, 0, 3, lambda *_: None)
+        assert made.pcm == render_melody(random.Random(melody_seed(job, 3)), made.seconds, voiced), lyrics
+
+
+def test_the_progress_bar_stand_in_reports_each_step_whether_it_is_iterated_or_updated():
+    from studio.pipelines.real_music import _ReportingBar
+
+    seen: list = []
+    assert list(_ReportingBar(lambda n, t: seen.append((n, t)), [10, 20, 30], total=3)) == [10, 20, 30]
+    assert seen == [(1, 3), (2, 3), (3, 3)]
+    seen.clear()
+    with _ReportingBar(lambda n, t: seen.append((n, t)), total=2) as bar:
+        bar.update()
+        bar.update()
+        bar.set_description("anything else a progress bar does is accepted and ignored")
+    assert seen == [(1, 2), (2, 2)]
