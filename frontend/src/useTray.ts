@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, uploadImage } from "./api";
 import { addItems, moveBy as moveByInList, moveItem, positionOf, removeItem, room, type KnownImage, type TrayItem } from "./tray";
-import type { Capabilities, Run } from "./types";
+import type { Capabilities, ImageRun } from "./types";
 
 export interface TrayNote {
   id: number;
@@ -153,7 +153,7 @@ export function useTray(caps: Capabilities | null) {
 
   /** After an edit was sent the server owns copies of the images (and has used up the staged uploads), so the tray
    *  now points at those copies and stays usable for the next try. Each tile keeps its place and its key. */
-  const adoptRun = useCallback((run: Run) => {
+  const adoptRun = useCallback((run: ImageRun) => {
     if (run.inputs.length !== latest.current.length) return;
     commit(latest.current.map((item, i) => {
       if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);

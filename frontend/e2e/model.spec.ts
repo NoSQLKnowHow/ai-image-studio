@@ -27,14 +27,14 @@ test("Load model loads the model without a run, and Unload model gives it back",
   await expect(load(page)).toHaveAttribute("title", /ready when you press Generate/);
 
   await load(page).click();
-  await expect(pill(page)).toHaveText(/^Loading model…/);
+  await expect(pill(page)).toHaveText(/^Loading image model…/);
   await expect(pill(page)).toBeFocused(); // the button went away: focus is not lost with it
-  await expect(announcement(page)).toHaveText("Loading the model…");
+  await expect(announcement(page)).toHaveText("Loading the image model…");
   await expect(load(page)).toHaveCount(0); // and neither button is offered while it loads
   await expect(unloadButton(page)).toHaveCount(0);
 
-  await expect(pill(page)).toHaveText(/^Model ready\s*· unloads in/);
-  await expect(announcement(page)).toHaveText("Model ready.");
+  await expect(pill(page)).toHaveText(/^Image model ready\s*· unloads in/);
+  await expect(announcement(page)).toHaveText("Image model ready.");
   await expect(unloadButton(page)).toBeVisible();
   await expect(load(page)).toHaveCount(0);
   await expect(page.locator("article.run-card")).toHaveCount(0); // no run was made
@@ -45,11 +45,11 @@ test("Load model loads the model without a run, and Unload model gives it back",
     await route.continue();
   });
   await unloadButton(page).click();
-  await expect(announcement(page)).toHaveText("Unloading the model…");
+  await expect(announcement(page)).toHaveText("Unloading the image model…");
   await expect(unloadButton(page)).toBeDisabled(); // not twice while it is on its way
   await expect(pill(page)).toHaveText(/^Model not loaded/);
   await expect(pill(page)).toBeFocused();
-  await expect(announcement(page)).toHaveText("Model unloaded.");
+  await expect(announcement(page)).toHaveText("Image model unloaded.");
   await expect(load(page)).toBeVisible();
 });
 
@@ -57,13 +57,13 @@ test("only what you asked for is announced: a later load that a run causes is no
   await unloaded(page);
   await page.goto("/");
   await load(page).click();
-  await expect(announcement(page)).toHaveText("Model ready.");
+  await expect(announcement(page)).toHaveText("Image model ready.");
   expect((await page.request.post("/api/model/unload", { headers: ASK })).status()).toBe(200); // not through the page
   await expect(pill(page)).toHaveText(/^Model not loaded/);
   const c = await generate(page, unique("a lantern on a hill")); // this run loads the model again
-  await expect(pill(page)).toHaveText(/^Loading model…/);
+  await expect(pill(page)).toHaveText(/^Loading image model…/);
   await page.waitForTimeout(400); // long enough for a stale request to have spoken
-  expect(await announcement(page).textContent()).toBe("Model ready."); // still what it said before (read once: a retry could wait out a stale "Loading")
+  expect(await announcement(page).textContent()).toBe("Image model ready."); // still what it said before (read once: a retry could wait out a stale "Loading")
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
 });
 
@@ -71,11 +71,11 @@ test("a run sent while the model loads waits for it and then runs", async ({ pag
   await unloaded(page);
   await page.goto("/");
   await load(page).click();
-  await expect(pill(page)).toHaveText(/^Loading model…/);
+  await expect(pill(page)).toHaveText(/^Loading image model…/);
   const prompt = unique("a fox in a snowy wood");
   const c = await generate(page, prompt); // sent while the load is going on
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
-  await expect(pill(page)).toHaveText(/^Model ready/);
+  await expect(pill(page)).toHaveText(/^Image model ready/);
 });
 
 test("a refused request is reported, and Load model stays so it can be tried again", async ({ page }) => {
@@ -90,7 +90,7 @@ test("a refused request is reported, and Load model stays so it can be tried aga
   await expect(announcement(page)).toHaveText(""); // nothing was started, so nothing is announced as loading
   await page.unroute("**/api/model/load");
   await load(page).click(); // the same button works once the cause is gone
-  await expect(pill(page)).toHaveText(/^Model ready/);
+  await expect(pill(page)).toHaveText(/^Image model ready/);
 });
 
 test("the buttons are never doubled: pressing Load twice quickly loads once", async ({ page }) => {
@@ -99,7 +99,7 @@ test("the buttons are never doubled: pressing Load twice quickly loads once", as
   const posts: string[] = [];
   page.on("request", (r) => r.method() === "POST" && r.url().endsWith("/api/model/load") && posts.push(r.url()));
   await load(page).dblclick();
-  await expect(pill(page)).toHaveText(/^Model ready/);
+  await expect(pill(page)).toHaveText(/^Image model ready/);
   expect(posts.length).toBe(1);
 });
 
@@ -138,5 +138,5 @@ test("after Unload model the next run loads the model again", async ({ page }) =
   await expect(pill(page)).toHaveText(/^Model not loaded/);
   const c = await generate(page, unique("a quiet harbour"));
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
-  await expect(pill(page)).toHaveText(/^Model ready/);
+  await expect(pill(page)).toHaveText(/^Image model ready/);
 });

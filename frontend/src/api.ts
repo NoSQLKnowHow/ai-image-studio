@@ -1,4 +1,4 @@
-import type { Capabilities, CreateRunBody, Run, RunsPage, Status, UploadResult } from "./types";
+import type { Capabilities, CreateMusicBody, CreateRunBody, ImageRun, ModelName, MusicRun, Run, RunsPage, Status, UploadResult } from "./types";
 
 export interface FieldError {
   field: string; // e.g. "options.width" or "prompt"
@@ -90,11 +90,13 @@ export function uploadImage(file: Blob, onProgress?: (fraction: number) => void)
 export const api = {
   capabilities: () => request<Capabilities>("/api/capabilities"),
   status: () => request<Status>("/api/status"),
-  loadModel: () => request<Status>("/api/model/load", { method: "POST" }),
-  unloadModel: () => request<Status>("/api/model/unload", { method: "POST" }),
+  // The model is named, so a button on one tab never acts on the other tab's model (DESIGN.md §26.3).
+  loadModel: (model: ModelName) => request<Status>("/api/model/load", { method: "POST", body: JSON.stringify({ model }) }),
+  unloadModel: (model: ModelName) => request<Status>("/api/model/unload", { method: "POST", body: JSON.stringify({ model }) }),
   listRuns: (before?: string | null, limit = 20) =>
     request<RunsPage>(`/api/runs?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
-  createRun: (body: CreateRunBody) => request<Run>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
+  createRun: (body: CreateRunBody) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
+  createMusicRun: (body: CreateMusicBody) => request<MusicRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   cancelRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   keepRun: (id: string, pinned: boolean) =>
     request<Run>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ pinned }) }),
