@@ -56,6 +56,7 @@ ENV STUDIO_MUSIC_LIBS=/opt/music-libs
 
 COPY backend/studio /app/backend/studio
 COPY docker/ /app/docker/
+COPY scripts/minimax_music.py /app/scripts/minimax_music.py
 COPY --from=ui /ui/dist /app/static
 
 # Fail the build now, not at the first Generate, if the stack doesn't fit together.

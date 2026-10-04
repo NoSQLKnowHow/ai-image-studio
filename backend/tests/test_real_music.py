@@ -244,3 +244,21 @@ def test_the_command_line_example_makes_a_wav_on_the_tiny_model(repo, tmp_path):
     assert (info.sample_rate, info.channels) == (44100, 2) and info.seconds == pytest.approx(10.0, abs=0.05)
     assert "machine-generated" in info.info["comment"] and "composing" in done.stderr and "rendering" in done.stderr
     assert "say so" in done.stderr
+
+
+def test_the_example_puts_the_music_libs_first_on_its_path_like_the_music_worker(tmp_path):
+    """In the image the diffusers that has the music pipeline is in its own folder (STUDIO_MUSIC_LIBS). A plain `python`
+    finds the other one first, so the script must do what the worker does. Proof: a stand-in diffusers in that folder
+    is the one that gets imported."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    libs = tmp_path / "libs"
+    (libs / "diffusers").mkdir(parents=True)
+    (libs / "diffusers" / "__init__.py").write_text('__version__ = "stand-in"\n')
+    script = Path(__file__).resolve().parents[2] / "scripts" / "minimax_music.py"
+    done = subprocess.run([sys.executable, str(script), "--genre", "ambient"], capture_output=True, text=True, timeout=120,
+                          env=dict(os.environ, STUDIO_MUSIC_LIBS=str(libs)))
+    assert done.returncode == 3 and "diffusers package is not installed" in done.stderr  # the stand-in has no ModularPipeline

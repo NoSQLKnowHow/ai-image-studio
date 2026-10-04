@@ -38,6 +38,7 @@ Exit codes: 0 ok, 1 unexpected error, 2 bad arguments, 3 environment problem (mi
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import time
 from pathlib import Path
@@ -46,6 +47,11 @@ ROOT = Path(__file__).resolve().parents[1]
 for candidate in (ROOT / "backend", Path("/app/backend")):  # a checkout, or the studio image
     if (candidate / "studio").is_dir() and str(candidate) not in sys.path:
         sys.path.insert(0, str(candidate))
+# The studio image keeps the diffusers that has the music pipeline in its own folder, which only the music worker puts
+# first on its path (DESIGN.md section 26.4). This script does the same, or `python` would find the image worker's one.
+_libs = os.environ.get("STUDIO_MUSIC_LIBS", "").strip()
+if _libs and Path(_libs).is_dir():
+    sys.path.insert(0, _libs)
 
 from studio import presets as P  # noqa: E402
 from studio.musicprompt import FIELDS, INSTRUMENTAL_LYRICS, build_description  # noqa: E402
