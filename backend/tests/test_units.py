@@ -40,7 +40,34 @@ def test_config_parses_every_variable():
         "STUDIO_FAKE_STEP_DELAY_MS": "0",
     })
     assert s.pipeline == "fake" and s.port == 9000 and s.allowed_hosts == ("spark.lan", "10.0.0.5")
-    assert s.min_free_gb == 40.5 and s.cpu_offload and s.local_files_only and s.queue_cap == 3
+    assert s.min_free_gb == 40.5 and s.cpu_offload and s.hub_mode == "offline" and s.queue_cap == 3
+
+
+def test_where_model_files_come_from(monkeypatch):
+    """STUDIO_LOCAL_FILES_ONLY: auto (cache first, the default), true (offline), false (the old behaviour)."""
+    assert Settings.from_env({}).hub_mode == "auto"
+    for raw, expected in (("auto", "auto"), ("AUTO", "auto"), ("true", "offline"), ("1", "offline"), ("yes", "offline"),
+                          ("false", "online"), ("0", "online"), ("off", "online"), ("", "auto"), ("  ", "auto")):
+        assert Settings.from_env({"STUDIO_LOCAL_FILES_ONLY": raw}).hub_mode == expected, raw
+    with pytest.raises(ConfigError, match="STUDIO_LOCAL_FILES_ONLY.*auto, true or false"):
+        Settings.from_env({"STUDIO_LOCAL_FILES_ONLY": "sometimes"})
+
+
+def test_music_settings():
+    s = Settings.from_env({})
+    assert (s.music_model, s.music_min_free_gb, s.music_max_seconds, s.music_max_tracks, s.music_libs) == (
+        "MiniMaxAI/MiniMax-Music3", None, 300, 4, None)
+    s = Settings.from_env({"STUDIO_MUSIC_MODEL": "/models/music", "STUDIO_MUSIC_MIN_FREE_GB": "42.5",
+                           "STUDIO_MUSIC_MAX_SECONDS": "120", "STUDIO_MUSIC_MAX_TRACKS": "2", "STUDIO_MUSIC_LIBS": "/opt/music-libs"})
+    assert (s.music_model, s.music_min_free_gb, s.music_max_seconds, s.music_max_tracks, s.music_libs) == (
+        "/models/music", 42.5, 120, 2, Path("/opt/music-libs"))
+    with pytest.raises(ConfigError) as info:
+        Settings.from_env({"STUDIO_MUSIC_MAX_SECONDS": "5", "STUDIO_MUSIC_MAX_TRACKS": "9", "STUDIO_MUSIC_MIN_FREE_GB": "-3"})
+    message = str(info.value)
+    assert "STUDIO_MUSIC_MAX_SECONDS" in message and "STUDIO_MUSIC_MAX_TRACKS" in message and "STUDIO_MUSIC_MIN_FREE_GB" in message
+    assert Settings.from_env({"STUDIO_MUSIC_MAX_SECONDS": "360"}).music_max_seconds == 360  # the model's own limit
+    with pytest.raises(ConfigError, match="STUDIO_MUSIC_MAX_SECONDS"):
+        Settings.from_env({"STUDIO_MUSIC_MAX_SECONDS": "361"})
 
 
 def test_config_reports_every_problem_at_once():

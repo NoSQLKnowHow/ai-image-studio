@@ -59,3 +59,20 @@ def apply_transparent_format(prompt: str) -> str:
     if prompt[-1] not in ".!?":
         prompt += "."
     return f"{TRANSPARENT_PREFIX} {prompt} {TRANSPARENT_SUFFIX}"
+
+
+# Music (DESIGN.md §26). MiniMax-Music3 makes at most 9,000 frames at 25 a second (six minutes, from the pipeline's
+# source); `audio_duration` is only an upper bound. The text limits are in characters because the model's own limit
+# (5,000 tokens for the description and lyrics together) can only be counted with its tokenizer.
+MUSIC_FRAME_RATE = 25
+MUSIC_MAX_FRAMES = 9_000
+MUSIC_HARD_MAX_SECONDS = MUSIC_MAX_FRAMES // MUSIC_FRAME_RATE  # 360
+MUSIC_DURATION_MIN = 10
+MUSIC_DEFAULT_SECONDS = 60
+MUSIC_STEPS_MIN, MUSIC_STEPS_MAX, MUSIC_DEFAULT_STEPS = 10, 60, 30  # flow-matching steps per window (pipeline default 30)
+MUSIC_DESCRIPTION_MAX = 2_000
+MUSIC_LYRICS_MAX = 6_000
+MUSIC_FIELD_MAX = 400  # one builder field, as the page saved it (stored for Reuse, never interpreted)
+MUSIC_FIELDS_MAX = 16
+INSTRUMENTAL_LYRICS = "[Instrumental]"  # the pipeline refuses empty lyrics; this section tag is how a track gets no singing
+INSTRUMENTAL_PHRASE = "Instrumental, no vocals."

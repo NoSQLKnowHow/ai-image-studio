@@ -25,6 +25,7 @@ SAFE_METHODS = frozenset({"GET", "HEAD"})
 CSP = "; ".join([
     "default-src 'self'",
     "img-src 'self' data: blob:",
+    "media-src 'self'",
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self'",
     "connect-src 'self'",

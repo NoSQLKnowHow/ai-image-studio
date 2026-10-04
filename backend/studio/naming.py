@@ -54,6 +54,13 @@ def download_filename(
     return "_".join(parts) + ".png"
 
 
+def music_filename(*, label: str, seconds: float, seed: int, created_at: datetime) -> str:
+    """`music_<label-words>_<N>s_s<seed>_<YYYYmmdd-HHMMSS>.wav` (DESIGN.md §26.1). `seconds` is the length the model
+    really made, rounded to the nearest second."""
+    parts = ["music", slugify(label), f"{int(round(seconds))}s", f"s{seed}", created_at.strftime("%Y%m%d-%H%M%S")]
+    return "_".join(parts) + ".wav"
+
+
 def thumbnail_filename(image_filename: str) -> str:
     """The name of an image's thumbnail download: `<name>_thumb.webp` for `<name>.png`."""
     stem = image_filename[:-4] if image_filename.lower().endswith(".png") else image_filename

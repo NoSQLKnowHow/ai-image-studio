@@ -1,4 +1,4 @@
-"""The schema 1 -> 2 migration and the queries for run inputs and staged uploads (DESIGN.md §21.7)."""
+"""The schema 1 -> current migration and the queries for run inputs and staged uploads (DESIGN.md §21.7, §26.5)."""
 
 from __future__ import annotations
 
@@ -70,7 +70,7 @@ def test_a_version_1_database_is_upgraded_in_place_and_nothing_is_lost(tmp_path)
     make_v1(path)
     db = Database(path)
     try:
-        assert SCHEMA_VERSION == 2 and version(path) == "2"
+        assert SCHEMA_VERSION == 3 and version(path) == "3"
         assert "run_inputs" in tables(path)
         run = db.get_run(RUN_ID)
         assert run["prompt"] == "a lighthouse" and run["status"] == "done"
@@ -84,7 +84,7 @@ def test_the_old_database_is_copied_first_as_a_way_back(tmp_path):
     path = tmp_path / "studio.sqlite"
     make_v1(path)
     Database(path).close()
-    copy = tmp_path / "studio.sqlite.before-schema-2"
+    copy = tmp_path / "studio.sqlite.before-schema-3"
     assert copy.is_file() and version(copy) == "1" and "run_inputs" not in tables(copy)
     conn = sqlite3.connect(copy)
     try:
@@ -97,7 +97,7 @@ def test_the_old_database_is_copied_first_as_a_way_back(tmp_path):
 def test_an_existing_copy_is_never_replaced_and_a_second_start_makes_no_new_one(tmp_path):
     path = tmp_path / "studio.sqlite"
     make_v1(path)
-    copy = tmp_path / "studio.sqlite.before-schema-2"
+    copy = tmp_path / "studio.sqlite.before-schema-3"
     copy.write_bytes(b"the first, pristine copy")  # e.g. left by an earlier attempt
     Database(path).close()
     assert copy.read_bytes() == b"the first, pristine copy"
@@ -105,15 +105,15 @@ def test_an_existing_copy_is_never_replaced_and_a_second_start_makes_no_new_one(
     path2.parent.mkdir()
     make_v1(path2)
     Database(path2).close()
-    after_first = (path2.parent / "studio.sqlite.before-schema-2").read_bytes()
-    Database(path2).close()  # already version 2: nothing to copy, nothing to change
-    assert (path2.parent / "studio.sqlite.before-schema-2").read_bytes() == after_first
+    after_first = (path2.parent / "studio.sqlite.before-schema-3").read_bytes()
+    Database(path2).close()  # already the current version: nothing to copy, nothing to change
+    assert (path2.parent / "studio.sqlite.before-schema-3").read_bytes() == after_first
 
 
 def test_a_new_database_has_no_copy_and_the_current_version(tmp_path):
     path = tmp_path / "studio.sqlite"
     Database(path).close()
-    assert version(path) == "2" and {"runs", "images", "run_inputs", "meta"} <= tables(path)
+    assert version(path) == "3" and {"runs", "images", "run_inputs", "tracks", "meta"} <= tables(path)
     assert not list(tmp_path.glob("*before-schema*"))
 
 

@@ -21,15 +21,26 @@ class WorkerGone(Exception):
     pass
 
 
-def worker_env() -> dict[str, str]:
+def worker_env(settings: Optional[Settings] = None, kind: str = "image") -> dict[str, str]:
+    """The environment of a worker process. The music worker gets `STUDIO_MUSIC_LIBS` (the image's own copy of the
+    released diffusers) first on its Python path, so it never sees the pinned commit the image worker uses. Every worker
+    gets `HF_HUB_DISABLE_TELEMETRY`, and with STUDIO_LOCAL_FILES_ONLY=true the hub libraries are told to stay offline."""
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(p for p in (str(BACKEND_ROOT), env.get("PYTHONPATH", "")) if p)
+    paths = [str(BACKEND_ROOT), env.get("PYTHONPATH", "")]
+    if kind == "music" and settings is not None and settings.music_libs is not None:
+        paths.insert(0, str(settings.music_libs))
+    env["PYTHONPATH"] = os.pathsep.join(p for p in paths if p)
     env["PYTHONUNBUFFERED"] = "1"
+    env.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+    if settings is not None and settings.hub_mode == "offline":
+        env["HF_HUB_OFFLINE"] = "1"
+        env["TRANSFORMERS_OFFLINE"] = "1"
     return env
 
 
 class WorkerClient:
-    def __init__(self, settings: Settings, on_event: Callable[[dict[str, Any]], None]):
+    def __init__(self, settings: Settings, on_event: Callable[[dict[str, Any]], None], kind: str = "image"):
+        self.kind = kind  # "image" or "music": which model this worker process holds
         self._settings = settings
         self._on_event = on_event
         self._proc: Optional[asyncio.subprocess.Process] = None
@@ -40,15 +51,15 @@ class WorkerClient:
         s = self._settings
         cmd = [
             sys.executable, "-m", "studio.worker",
+            "--kind", self.kind,
             "--pipeline", s.pipeline,
             "--data-dir", str(s.data_dir),
-            "--model", s.model,
+            "--model", s.music_model if self.kind == "music" else s.model,
+            "--hub-mode", s.hub_mode,
             "--fake-step-delay-ms", str(s.fake_step_delay_ms),
         ]
         if s.cpu_offload:
             cmd.append("--cpu-offload")
-        if s.local_files_only:
-            cmd.append("--local-files-only")
         if probe:
             cmd.append("--probe")
         return cmd
@@ -63,7 +74,7 @@ class WorkerClient:
     async def start(self) -> None:
         if self.alive():
             return
-        env = worker_env()
+        env = worker_env(self._settings, self.kind)
         self._stopping = False
         self._proc = await asyncio.create_subprocess_exec(
             *self.command(),
@@ -72,7 +83,7 @@ class WorkerClient:
             env=env,
             limit=1 << 20,
         )
-        log.info("started image worker pid %s (%s pipeline)", self._proc.pid, self._settings.pipeline)
+        log.info("started %s worker pid %s (%s pipeline)", self.kind, self._proc.pid, self._settings.pipeline)
         self._reader = asyncio.create_task(self._read(self._proc), name="worker-reader")
 
     async def send(self, message: dict[str, Any]) -> None:
