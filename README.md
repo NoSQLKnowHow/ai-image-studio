@@ -16,6 +16,7 @@ can reuse and tweak prompts.
 | Version 1.5: Regenerate larger in the image viewer (built, tested with the fake pipeline; **not yet run on the Spark**) | Click an image to open the viewer: it has the same **Regenerate larger** button, which queues a new job for **that one image** (its own seed, one image) at the full size. The answer appears inside the viewer. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §24; part (e) of [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 17 is the check. |
 | Version 1.6: **the editing page** (M5b; built, tested with the fake pipeline; **the real GPU path has not been run**) | Switch to **Edit** and add up to four pictures (the **Add images** tile, drag them onto the prompt box, paste, or **Edit this** on a result). They are numbered in the order the model sees them: click a number to put "image 2" in your prompt, drag or use the arrows to reorder. Size on Auto follows one of your pictures (**Result follows image N**); Options has **Resolution** 1K or 2K, with the cost in units and a warning when an edit looks heavy. Edit cards show their numbered sources; **Reuse** and **Retry** work for edits. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §21.4 and §21.11; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 18 is the checklist, and it is also the Spark test for edits (M5c). |
 | Version 1.7: **Load model / Unload model** (built, tested with the fake pipeline; **not yet run on the Spark**) | A button beside the model pill starts loading the model **now**, so you can write your prompt while it loads instead of waiting after pressing Generate; when the model is loaded and idle the same place offers **Unload model**, which gives the memory back at once. Nothing loads by itself. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §25; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 19 is the checklist. |
+| Version 1.8: **Music, the server side** (built, tested with the fake pipeline, and the real pipeline's own code on tiny random weights; **the real music model has never run**) | `POST /api/runs` with `"mode": "music"` makes **instrumental music** (or music with lyrics) with **MiniMax-Music3**: each track is a WAV file with a note that it is machine-generated, served with range requests so a player can seek. Only **one model is in memory at a time**: a music run unloads the image model first, and a picture does the reverse. Every model now loads **from the local cache and only fetches what is missing**. **`scripts/minimax_music.py`** makes a track from a terminal, with no page: `docker compose exec studio python /app/scripts/minimax_music.py --genre "ambient" --duration 15 --out /data/try.wav`. The page for it is version 1.9. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §26; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 20 is the checklist for the real model. |
 | Still to come | The Spark test for edits (M5c), local edits (M5d), the optional prompt rewriter (M5e, only if you want it), Upscale, and the Spark smoke test together (M8). |
 | `scripts/qwen_image.py`: command-line tool for text-to-image, image editing, transparent (RGBA) output | Written and exercised with mocks only. **Not yet run on a real GPU.** |
 
@@ -324,6 +325,17 @@ first run step by step and says what each step should show.
   when it is loaded and idle) gives the memory back at once. A run you send while it loads waits for it. With
   `STUDIO_IDLE_TIMEOUT_MIN=0` Load is not offered (it would unload again at once). The same two actions are
   `POST /api/model/load` and `POST /api/model/unload`.
+- **Music (1.8):** the first load of the music model downloads about **29 GB** (up to 57 GB if the whole repository is
+  fetched) and needs `STUDIO_MUSIC_MIN_FREE_GB` (40 to start with, until measured) free; once loaded it takes about 24 GB.
+  Making music is **slow**, probably minutes for a minute of music (the Spark's memory speed sets a floor of about 1.5 s
+  of work per second of music, an estimate and not a measurement), so try 15 seconds first. A WAV is about 10.6 MB a
+  minute. The model's licence asks you to **say that music is machine-generated when you share it publicly**; read it
+  in the model repository's `LICENSE`. Settings: `STUDIO_MUSIC_MODEL`, `STUDIO_MUSIC_MIN_FREE_GB`,
+  `STUDIO_MUSIC_MAX_SECONDS` (300), `STUDIO_MUSIC_MAX_TRACKS` (4).
+- **Models load from the cache:** with `STUDIO_LOCAL_FILES_ONLY=auto` (the default) a model is loaded from the cache
+  with no network request at all, and only a load that fails because files are **missing** is tried again online (the
+  first load, or after the cache was cleared). `true` never goes online and says how to download a missing file;
+  `false` asks the hub on every load, as before 1.8, which would download an update of the model without asking.
 - **Cancel, Keep and clean-up:** **Cancel** on a card stops a queued job at once, or a running one
   within a step (images already finished stay). Runs are deleted automatically 30 days after they
   were made (`STUDIO_RETENTION_DAYS`; `0` = never) unless you press **Keep** on them, and a card
@@ -411,3 +423,22 @@ Needs a CUDA-enabled PyTorch and a `diffusers` build that includes `QwenImage21P
 ./scripts/qwen_image.py edit "Change the background to a sunset beach" --image input.png
 ./scripts/qwen_image.py generate "test" --dry-run      # shows the plan, loads nothing
 ```
+
+### Making music from a terminal (`scripts/minimax_music.py`, new in 1.8)
+
+Makes an instrumental track (or one with lyrics) with MiniMax-Music3 using the same pipeline code as the studio, with no
+web page. It needs `torch`, `transformers` and **`diffusers` 0.40.0 or newer** (the released version that has the music
+pipeline). The studio's image has all of that, so the easy way is inside the running container:
+
+```bash
+docker compose exec studio python /app/scripts/minimax_music.py --genre "ambient" --mood "slow, spacious" \
+    --instruments "soft pads and a piano" --duration 15 --out /data/try.wav          # appears in ./data/try.wav
+docker compose exec studio python /app/scripts/minimax_music.py --help               # every option
+docker compose exec studio python /app/scripts/minimax_music.py --genre "lo-fi hip hop" --bpm 80 --dry-run   # shows what would be sent
+```
+
+It loads the model from the local cache and only fetches what is missing (`--hub offline` never touches the network),
+prints a progress line for each stage, and writes a 16-bit stereo WAV that says in its file information that it is
+machine-generated. The first run downloads about 29 GB. Exit codes: 0 ok, 2 bad arguments, 3 environment problem,
+4 model load failed, 5 generation failed, 6 could not write the file, 130 interrupted (Ctrl+C stops it within a second
+or two).

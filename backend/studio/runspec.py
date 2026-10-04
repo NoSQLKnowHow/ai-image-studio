@@ -46,6 +46,9 @@ class RunOptions(BaseModel):
     shape_from: Optional[int] = None  # Edit only: 1-based number of the image the result's shape follows (Size on Auto)
     draft: bool = False  # a small, quick try of the prompt (DESIGN.md §22.2): limited by the server, runs ahead of the queue
     full: Optional[FullSize] = None  # Generate only: the size and steps this run stands in for (DESIGN.md §23.1)
+    duration: Optional[int] = None  # Music only: the most seconds of music to make; the model may stop sooner (DESIGN.md §26.3)
+    tracks: Optional[int] = None  # Music only: how many versions of the same description
+    fields: Optional[dict[str, str]] = None  # Music only: what the page's fields said, kept for Reuse and never interpreted
 
 
 class InputRef(BaseModel):
@@ -62,10 +65,11 @@ class InputRef(BaseModel):
 class RunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    mode: Literal["generate", "edit"] = "generate"
+    mode: Literal["generate", "edit", "music"] = "generate"
     prompt: str
     options: RunOptions = Field(default_factory=RunOptions)
     input_images: Optional[list[InputRef]] = None  # Edit only, in the order the model sees them
+    lyrics: Optional[str] = None  # Music only: absent, empty or blank means instrumental (DESIGN.md §26.1)
 
 
 class RunRequestError(Exception):
@@ -98,6 +102,13 @@ class ResolvedRun:
     shape_from: Optional[int] = None  # Edit with Size on Auto: the image the result follows, if one was chosen
     draft: bool = False
     full: Optional[FullSize] = None
+    lyrics: Optional[str] = None  # Music: what the user wrote, None for an instrumental track
+    duration: Optional[int] = None  # Music: seconds, an upper bound
+    fields: Optional[dict[str, str]] = None  # Music: the page's fields, for Reuse
+
+    @property
+    def instrumental(self) -> bool:
+        return self.mode == "music" and self.lyrics is None
 
     @property
     def seeds(self) -> list[int]:
@@ -105,6 +116,16 @@ class ResolvedRun:
 
     def options_snapshot(self) -> dict[str, Any]:
         """Exactly what the run used; Reuse and Retry restore from this."""
+        if self.mode == "music":
+            return {
+                "duration": self.duration,
+                "steps": self.steps,
+                "seed": self.seed,
+                "seed_was_random": self.seed_was_random,
+                "tracks": self.num_images,
+                "instrumental": self.instrumental,
+                "fields": self.fields or {},
+            }
         return {
             "width": self.width,
             "height": self.height,
@@ -123,9 +144,82 @@ class ResolvedRun:
         }
 
 
-def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
+_MUSIC_FIELD_KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+# Options that mean something for a picture and nothing for a track: sending one is a mistake the page should hear about.
+_NOT_FOR_MUSIC = ("width", "height", "num_images", "negative_prompt", "cfg_scale", "transparent", "resolution", "shape_from",
+                  "draft", "full")
+
+
+def _resolve_music(req: RunCreate, settings: Settings) -> ResolvedRun:
+    """A music run (DESIGN.md §26.3): the description, optional lyrics, and a few limits. Instrumental when the lyrics
+    are absent or blank."""
     errors: list[tuple[tuple[Any, ...], str]] = []
     opts = req.options
+    sent = opts.model_fields_set
+
+    description = req.prompt.strip()
+    if not description:
+        errors.append((("prompt",), "Describe the music."))
+    elif len(description) > P.MUSIC_DESCRIPTION_MAX:
+        errors.append((("prompt",), f"The description is {len(description)} characters; the limit is {P.MUSIC_DESCRIPTION_MAX}."))
+
+    lyrics = (req.lyrics or "").strip() or None
+    if lyrics is not None and len(lyrics) > P.MUSIC_LYRICS_MAX:
+        errors.append((("lyrics",), f"The lyrics are {len(lyrics)} characters; the limit is {P.MUSIC_LYRICS_MAX}."))
+
+    duration = opts.duration if opts.duration is not None else P.MUSIC_DEFAULT_SECONDS
+    if not P.MUSIC_DURATION_MIN <= duration <= settings.music_max_seconds:
+        errors.append((("options", "duration"), f"Must be between {P.MUSIC_DURATION_MIN} and {settings.music_max_seconds} seconds."))
+
+    tracks = opts.tracks if opts.tracks is not None else 1
+    if not 1 <= tracks <= settings.music_max_tracks:
+        errors.append((("options", "tracks"), f"Must be between 1 and {settings.music_max_tracks}."))
+
+    steps = opts.steps if "steps" in sent else P.MUSIC_DEFAULT_STEPS
+    if not P.MUSIC_STEPS_MIN <= steps <= P.MUSIC_STEPS_MAX:
+        errors.append((("options", "steps"), f"Must be between {P.MUSIC_STEPS_MIN} and {P.MUSIC_STEPS_MAX}."))
+
+    if opts.seed is not None and not 0 <= opts.seed <= P.SEED_MAX:
+        errors.append((("options", "seed"), f"Must be between 0 and {P.SEED_MAX}."))
+
+    fields = opts.fields
+    if fields is not None:
+        if len(fields) > P.MUSIC_FIELDS_MAX:
+            errors.append((("options", "fields"), f"At most {P.MUSIC_FIELDS_MAX} fields."))
+        for key, value in fields.items():
+            if not _MUSIC_FIELD_KEY.match(key):
+                errors.append((("options", "fields", key), "A field name is lowercase letters, digits and underscores."))
+            elif len(value) > P.MUSIC_FIELD_MAX:
+                errors.append((("options", "fields", key), f"At most {P.MUSIC_FIELD_MAX} characters."))
+
+    for name in _NOT_FOR_MUSIC:
+        if name in sent:
+            errors.append((("options", name), "Not used for music."))
+    if req.input_images:
+        errors.append((("input_images",), "Images are only used in Edit mode."))
+    if errors:
+        raise RunRequestError(errors)
+
+    seed_was_random = opts.seed is None
+    seed = secrets.randbelow(P.SEED_MAX - settings.music_max_tracks + 2) if seed_was_random else opts.seed
+    return ResolvedRun(
+        mode="music", prompt=description, effective_prompt=description, negative_prompt=None, width=None, height=None,
+        steps=steps, seed=seed, seed_was_random=seed_was_random, num_images=tracks, cfg_scale=None, transparent=False,
+        lyrics=lyrics, duration=duration, fields=dict(fields) if fields else None,
+    )
+
+
+def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
+    if req.mode == "music":
+        return _resolve_music(req, settings)
+    errors: list[tuple[tuple[Any, ...], str]] = []
+    opts = req.options
+    sent = opts.model_fields_set
+    for name in ("duration", "tracks", "fields"):
+        if name in sent:
+            errors.append((("options", name), "Only used for music."))
+    if req.lyrics is not None:
+        errors.append((("lyrics",), "Lyrics are only used for music."))
 
     prompt = req.prompt.strip()
     if not prompt:

@@ -6,6 +6,7 @@ Fails (exit 1) when:
 - PyTorch is not a CUDA build,
 - the backend can't import the Qwen-Image-2.1 pipeline the way the server will
   (studio.pipelines.real.import_runtime, which also catches diffusers' placeholder classes),
+- the music worker can't import the MiniMax-Music3 pipeline with its own copy of diffusers (STUDIO_MUSIC_LIBS),
 - the built web page is missing.
 No GPU is needed: builds don't get one, so whether CUDA can see a GPU is reported, not required.
 """
@@ -76,6 +77,24 @@ def main() -> int:
         notes.append(f"pipeline features: {describe_supports(pipeline_cls)}")
         notes.append("GPU visible now: " + ("yes, " + torch.cuda.get_device_name(0) if torch.cuda.is_available()
                                             else "no (expected during a build)"))
+
+    # The music worker runs with its own copy of diffusers first on its path (DESIGN.md §26.4): check it imports there.
+    music_libs = os.environ.get("STUDIO_MUSIC_LIBS", "").strip()
+    if music_libs:
+        code = ("from studio.pipelines.real_music import import_music_runtime; import diffusers; "
+                "torch, cls = import_music_runtime(); print(diffusers.__version__, cls.__name__)")
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in (music_libs, str(Path(__file__).resolve().parents[1] / "backend"),
+                                                                       os.environ.get("PYTHONPATH", "")) if p))
+        music = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+        if music.returncode:
+            problems.append("the music worker cannot import its pipeline with the diffusers in " + music_libs + ": "
+                            + (music.stderr.strip().splitlines() or ["(no message)"])[-1]
+                            + " (DESIGN.md section 26.4; docker/check_image.py prints the full error below)")
+            print("check_image: music import failed:\n" + music.stderr[-4000:], file=sys.stderr, flush=True)
+        else:
+            notes.append(f"music worker: diffusers {music.stdout.split()[0]} from {music_libs}")
+    else:
+        notes.append("STUDIO_MUSIC_LIBS is not set (outside the image?), skipped the music import check")
 
     static = Path(os.environ.get("STUDIO_STATIC_DIR", "/app/static")) / "index.html"
     if not static.is_file():

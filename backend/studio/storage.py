@@ -7,6 +7,7 @@
     <data>/thumbs/staged/<id>.webp     its thumbnail
     <data>/inputs/<run>/<position>.png the images an edit run was given: copies the run owns (position 1 = "image 1")
     <data>/thumbs/<run>/in-<position>.webp   their thumbnails (in the run's own thumbs folder, so they go with it)
+    <data>/audio/<run>/<idx>.wav       the tracks of a music run, written by the worker (DESIGN.md §26.5)
 
 All file access is by database id; paths reported by the worker are checked to be
 inside the run's own folder before they are trusted.
@@ -53,6 +54,7 @@ class Storage:
     def __init__(self, data_dir: Path):
         self.root = Path(data_dir).resolve()
         self.images = self.root / "images"
+        self.audio = self.root / "audio"
         self.thumbs = self.root / "thumbs"
         self.inputs = self.root / "inputs"
         self.staged = self.inputs / "staged"
@@ -60,7 +62,7 @@ class Storage:
 
     def ensure_layout(self) -> None:
         try:
-            for directory in (self.root, self.images, self.thumbs, self.inputs, self.staged, self.staged_thumbs):
+            for directory in (self.root, self.images, self.audio, self.thumbs, self.inputs, self.staged, self.staged_thumbs):
                 directory.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryFile(dir=self.root):
                 pass
@@ -74,6 +76,9 @@ class Storage:
 
     def run_dir(self, run_id: str) -> Path:
         return self.images / check_id(run_id)
+
+    def audio_dir(self, run_id: str) -> Path:
+        return self.audio / check_id(run_id)
 
     def rel(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root).as_posix()
@@ -91,6 +96,15 @@ class Storage:
             raise StorageError(f"Worker reported an image outside the run folder: {rel!r}")
         if not path.is_file():
             raise StorageError(f"Worker reported a missing image file: {rel!r}")
+        return path
+
+    def accept_worker_audio(self, rel: str, run_id: str) -> Path:
+        """Validate a path reported by the worker for a track: inside this run's audio folder, an existing file."""
+        path = self.abs(rel)
+        if path.parent != self.audio_dir(run_id).resolve():
+            raise StorageError(f"Worker reported a track outside the run folder: {rel!r}")
+        if not path.is_file():
+            raise StorageError(f"Worker reported a missing track file: {rel!r}")
         return path
 
     @staticmethod
@@ -121,9 +135,10 @@ class Storage:
         return self.inputs / check_id(run_id)
 
     def delete_run_files(self, run_id: str) -> None:
-        """Everything on disk that belongs to a run: its images, its inputs and all their thumbnails."""
+        """Everything on disk that belongs to a run: its images or tracks, its inputs and all their thumbnails."""
         check_id(run_id)
         shutil.rmtree(self.images / run_id, ignore_errors=True)
+        shutil.rmtree(self.audio / run_id, ignore_errors=True)
         shutil.rmtree(self.thumbs / run_id, ignore_errors=True)
         shutil.rmtree(self.inputs / run_id, ignore_errors=True)
 

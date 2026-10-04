@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Optional, Sequence
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3  # 3: runs accept mode 'music' and have lyrics; the tracks table (DESIGN.md §26.5)
 log = logging.getLogger("studio.db")
 
 _SCHEMA = """
@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at       TEXT,
     finished_at      TEXT,
     status           TEXT NOT NULL CHECK (status IN ('queued','running','done','failed','canceled')),
-    mode             TEXT NOT NULL CHECK (mode IN ('generate','edit')),
+    mode             TEXT NOT NULL CHECK (mode IN ('generate','edit','music')),
     prompt           TEXT NOT NULL,
     effective_prompt TEXT NOT NULL,
     negative_prompt  TEXT,
@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS runs (
     error_message    TEXT,
     error_hint       TEXT,
     pinned           INTEGER NOT NULL DEFAULT 0,
-    options_json     TEXT NOT NULL
+    options_json     TEXT NOT NULL,
+    lyrics           TEXT
 );
 CREATE TABLE IF NOT EXISTS images (
     id          TEXT PRIMARY KEY,
@@ -66,6 +67,20 @@ CREATE TABLE IF NOT EXISTS images (
     created_at  TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, seq);
+-- The tracks of a music run (DESIGN.md §26.5): one WAV file each, under <data>/audio/<run>/.
+CREATE TABLE IF NOT EXISTS tracks (
+    id          TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    idx         INTEGER NOT NULL,
+    seed        INTEGER NOT NULL,
+    seconds     REAL NOT NULL,
+    sample_rate INTEGER NOT NULL,
+    channels    INTEGER NOT NULL,
+    bytes       INTEGER NOT NULL,
+    path        TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tracks_run ON tracks(run_id, idx);
 CREATE INDEX IF NOT EXISTS idx_images_run ON images(run_id, idx);
 CREATE INDEX IF NOT EXISTS idx_images_staged ON images(kind, run_id, created_at);
 -- The images an edit was given, in the order the model sees them (position 1 is "image 1"). A run owns its
@@ -79,6 +94,14 @@ CREATE TABLE IF NOT EXISTS run_inputs (
     PRIMARY KEY (run_id, position)
 );
 """
+
+# Schema 3 changes the CHECK on runs.mode, which SQLite cannot alter in place, so an older database's table is rebuilt
+# (SQLite's documented way: a new table, copy, drop the old, rename). The old columns keep their values; lyrics is NULL.
+_RUNS_COLUMNS_BEFORE_3 = (
+    "seq, id, created_at, started_at, finished_at, status, mode, prompt, effective_prompt, negative_prompt, "
+    "transparent, width, height, steps, cfg_scale, seed, num_images, model_id, input_image_id, error_message, "
+    "error_hint, pinned, options_json"
+)
 
 INTERRUPTED_MESSAGE = "Interrupted by a server restart."
 
@@ -109,7 +132,9 @@ class Database:
                 )
             if previous is not None and previous < SCHEMA_VERSION:
                 self._copy_before_migration(path, previous)
-            self._conn.executescript(_SCHEMA)  # every step so far only adds tables and indexes, so this is the migration
+            self._conn.executescript(_SCHEMA)  # creates what is missing: tables and indexes of a newer schema
+            if previous is not None and previous < 3:
+                self._rebuild_runs_for_music()
             self._record_version(previous)
             self._queue_order = self._choose_queue_order()
 
@@ -154,6 +179,26 @@ class Database:
         log.warning(
             "upgrading the database from schema %d to %d; a copy of the old one is in %s "
             "(an older studio can only be run against that copy)", previous, SCHEMA_VERSION, target)
+
+    def _rebuild_runs_for_music(self) -> None:
+        """Schema 3: let `runs` hold mode 'music' (and a lyrics column). The new table is made from this module's own
+        definition, so a database migrated here and one made fresh are the same."""
+        definition = _SCHEMA[_SCHEMA.index("CREATE TABLE IF NOT EXISTS runs ("):]
+        definition = definition[:definition.index(");") + 2].replace("CREATE TABLE IF NOT EXISTS runs (", "CREATE TABLE runs_new (", 1)
+        self._conn.execute("PRAGMA foreign_keys=OFF")  # not allowed inside a transaction, and dropping runs must not cascade
+        try:
+            with self.tx() as c:
+                c.execute(definition)
+                c.execute(f"INSERT INTO runs_new ({_RUNS_COLUMNS_BEFORE_3}) SELECT {_RUNS_COLUMNS_BEFORE_3} FROM runs")
+                c.execute("DROP TABLE runs")
+                c.execute("ALTER TABLE runs_new RENAME TO runs")
+                c.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, seq)")
+                broken = c.execute("PRAGMA foreign_key_check").fetchall()
+                if broken:
+                    raise DatabaseError(f"the migration would leave {len(broken)} row(s) pointing at runs that are gone")
+        finally:
+            self._conn.execute("PRAGMA foreign_keys=ON")
+        log.info("the runs table was rebuilt for music (schema 3)")
 
     def _record_version(self, previous: Optional[int]) -> None:
         with self.tx() as c:
@@ -279,6 +324,7 @@ class Database:
             ]
             for run_id in ids:
                 c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
+                c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
                 c.execute("DELETE FROM runs WHERE id=?", (run_id,))
             return ids
 
@@ -291,6 +337,7 @@ class Database:
             if row["status"] == "running":
                 return "running"
             c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
+            c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM runs WHERE id=?", (run_id,))
             return "deleted"
 
@@ -316,6 +363,25 @@ class Database:
 
     def get_image(self, image_id: str) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM images WHERE id=?", (image_id,))
+
+    # ---------------------------------------------------------------- tracks (music)
+    def add_track(self, track: dict[str, Any]) -> None:
+        columns = ", ".join(track)
+        placeholders = ", ".join("?" for _ in track)
+        with self._lock:
+            self._conn.execute(f"INSERT INTO tracks ({columns}) VALUES ({placeholders})", tuple(track.values()))
+
+    def get_track(self, track_id: str) -> Optional[sqlite3.Row]:
+        return self._one("SELECT * FROM tracks WHERE id=?", (track_id,))
+
+    def tracks_for_runs(self, run_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+        result: dict[str, list[sqlite3.Row]] = {rid: [] for rid in run_ids}
+        if not run_ids:
+            return result
+        placeholders = ", ".join("?" for _ in run_ids)
+        for row in self._all(f"SELECT * FROM tracks WHERE run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
+            result[row["run_id"]].append(row)
+        return result
 
     # ------------------------------------------------- inputs and staged uploads
     def inputs_for_runs(self, run_ids: list[str]) -> dict[str, list[sqlite3.Row]]:

@@ -6,11 +6,12 @@ import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+import json
+from typing import Any, AsyncIterator, Literal, Optional
 
 from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel, ConfigDict
-from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.types import Scope
 
@@ -21,7 +22,7 @@ from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
 from . import inputs as inputs_mod
 from .jobs import InputStorageError, JobManager, ModelRefused, QueueFull, RunConflict, RunNotFound
-from .naming import content_disposition, download_filename, thumbnail_filename
+from .naming import content_disposition, download_filename, music_filename, thumbnail_filename
 from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
 from .serialize import parse_ts
@@ -62,6 +63,14 @@ PLACEHOLDER_HTML = """<!doctype html>
 <p>The backend is running, but the web interface has not been built. Build it with <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code> (the container image does this for you).</p>
 <p>API: <code>/api/health</code>, <code>/api/status</code>, <code>/api/capabilities</code>, <code>/api/runs</code>,
 <code>/api/events</code>.</p></body></html>"""
+
+
+class ModelChoice(BaseModel):
+    """Which model a Load or Unload is about (DESIGN.md §26.3). Without a body, Load means the image model and Unload
+    means whichever model is loaded."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    model: Literal["image", "music"]
 
 
 class RunPatch(BaseModel):
@@ -144,7 +153,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {
             "pipeline": settings.pipeline,
             "model": jobs.model_id,
-            "modes": ["generate", *(["edit"] if supports.get("edit") else [])],  # Edit only where the pipeline can
+            "modes": jobs.modes(),  # Edit only where the pipeline can edit, Music only where the music model can run
             "supports": supports,
             "aspect_ratios": {name: list(size) for name, size in P.ASPECT_RATIOS.items()},
             "defaults": {
@@ -163,27 +172,36 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "seed": {"min": 0, "max": P.SEED_MAX},
                 "cfg_scale": {"min": P.CFG_MIN, "max": P.CFG_MAX},
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
+                "music": {
+                    "duration": {"min": P.MUSIC_DURATION_MIN, "max": settings.music_max_seconds, "default": P.MUSIC_DEFAULT_SECONDS},
+                    "tracks": {"min": 1, "max": settings.music_max_tracks},
+                    "steps": {"min": P.MUSIC_STEPS_MIN, "max": P.MUSIC_STEPS_MAX, "default": P.MUSIC_DEFAULT_STEPS},
+                    "description_chars": P.MUSIC_DESCRIPTION_MAX,
+                    "lyrics_chars": P.MUSIC_LYRICS_MAX,
+                    "field_chars": P.MUSIC_FIELD_MAX,
+                },
             },
+            "music": {**jobs.music_status(), "model": jobs.model_id_for("music")},
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
         }
 
     @app.post("/api/model/load")
-    async def load_model(request: Request) -> Any:
-        """Start loading the model now, without a run (DESIGN.md §25.2)."""
+    async def load_model(request: Request, body: Optional[ModelChoice] = None) -> Any:
+        """Start loading a model now, without a run (DESIGN.md §25.2, §26.3). The image model unless one is named."""
         jobs = jobs_of(request)
         try:
-            started = await jobs.load_model()
+            started = await jobs.load_model(body.model if body else "image")
         except ModelRefused as exc:
             return _model_refused(exc)
         return JSONResponse(status_code=202 if started else 200, content=jobs.status())
 
     @app.post("/api/model/unload")
-    async def unload_model(request: Request) -> Any:
-        """Unload the model now, unless a run is using it (DESIGN.md §25.2)."""
+    async def unload_model(request: Request, body: Optional[ModelChoice] = None) -> Any:
+        """Unload the model now, unless a run is using it (DESIGN.md §25.2): the one named, or whichever is loaded."""
         jobs = jobs_of(request)
         try:
-            await jobs.unload_model()
+            await jobs.unload_model(body.model if body else None)
         except ModelRefused as exc:
             return _model_refused(exc)
         return jobs.status()
@@ -330,6 +348,36 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 )
                 headers["Content-Disposition"] = content_disposition(thumbnail_filename(name), default="thumbnail.webp")
         return Response(data, media_type="image/webp", headers=headers)
+
+    @app.get("/api/audio/{track_id}")
+    async def get_audio(track_id: str, request: Request, download: bool = False) -> Any:
+        """A track's WAV. FileResponse answers range requests, which an audio player needs to seek (DESIGN.md §26.3)."""
+        try:
+            check_id(track_id)
+        except StorageError:
+            return _error(404, "Track not found.", "not_found")
+        db: Database = request.app.state.db
+        storage: Storage = request.app.state.storage
+        track = db.get_track(track_id)
+        if track is None:
+            return _error(404, "Track not found.", "not_found")
+        try:
+            path = storage.abs(track["path"])
+        except StorageError:
+            return _error(404, "Track not found.", "not_found")
+        if not path.is_file():
+            return _error(404, "Track not found.", "not_found")
+        headers = {"Cache-Control": IMMUTABLE}
+        if download:
+            run = db.get_run(track["run_id"])
+            if run is not None:
+                try:
+                    label = (json.loads(run["options_json"]).get("fields") or {}).get("genre") or run["prompt"]
+                except ValueError:
+                    label = run["prompt"]
+                name = music_filename(label=label, seconds=track["seconds"], seed=track["seed"], created_at=parse_ts(run["created_at"]))
+                headers["Content-Disposition"] = content_disposition(name, default="music.wav")
+        return FileResponse(path, media_type="audio/wav", headers=headers)
 
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:

@@ -1,6 +1,6 @@
 # Qwen-Image Web Studio — Design Specification
 
-Living document. **Last brought up to date 2026-10-03, for version 1.7** (the number the page shows in its title).
+Living document. **Last brought up to date 2026-10-04, for version 1.8** (the number the page shows in its title).
 
 **How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, and §25 specifies **1.7**, loading the model ahead of time. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
@@ -20,8 +20,9 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.5 | Regenerate larger in the image viewer, for that one image | §24 | #15 | §17(e) not yet reported back |
 | 1.6 | **The editing page (M5b)**: Edit mode on, the reference tray, Resolution and its cost warning, edit run cards, Reuse and Retry for edits, Edit this | §21.4, §21.11 | #17 | §18 (the Spark test for edits, M5c) not yet run; **the real-GPU edit path has never run** |
 | 1.7 | **Load model / Unload model** buttons beside the model pill, so the model can be loaded while you write the prompt | §25 | #18 | §19 of `SPARK_TEST.md` not yet reported back |
+| 1.8 | **Music, the server side**: music runs, tracks and the audio route, schema 3, one model in memory at a time, the second `diffusers`, models loaded from the local cache; `scripts/minimax_music.py` makes a track from a terminal | §26, §26.11, §26.12 | (not yet pushed) | §20 of `SPARK_TEST.md` not yet reported back; **the real music model has never run** |
 
-**Tests today (1.7):** backend 384 (pytest), front end 179 (Vitest) and 75 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
+**Tests today (1.8):** backend 598 (pytest; 22 more run only where `torch` and `diffusers` 0.40.0 are installed), front end 179 (Vitest) and 75 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
 **What is left to build**, in the order proposed in §21.11:
 
@@ -31,8 +32,8 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 2 | **M5d** | Local edits: a mark-up editor and a mask editor (§21.5) | M5c (the mask convention) |
 | 3 | **M5e** | "Improve prompt", Qwen's official rewriter (§21.12 item 3) | **Your decision on R3**; only if accepted |
 | 4 | **Upscale** | "The same picture, bigger" (decision #37, §23.2) | The M5c result (editing now exists, 1.6); may be dropped if the editing model changes the picture |
-| 5 | **Music 1.8** | The server side of the Music tab: schema 3, the music worker and a fake music pipeline, tracks and the audio route, one model at a time, the second Python environment (§26.4–§26.6) | **1.7 merged** (it builds on 1.7's lock and buttons; I do not stack pull requests), and your veto or approval of §26.9 |
-| 6 | **Music 1.9** | The Music tab: fields and preview, lyrics, tracks with a player, Load/Unload per tab (§26.1) | 1.8 merged; then the Spark test, `SPARK_TEST.md` §20 (real speed, memory, how `[Instrumental]` behaves) |
+| 5 | **Music 1.8** | **Built** (§26.12): the server side of the Music tab and the command-line example | Neither pushed nor merged: 1.7 could not be published, and 1.8 is built on it. Your run of `SPARK_TEST.md` §20 (the example script on the real model) |
+| 6 | **Music 1.9** | The Music tab: fields and preview, lyrics, tracks with a player, Load/Unload per tab (§26.1) | 1.8; then the Spark test of the page |
 | 7 | **M8** | The Spark smoke test together | Everything above |
 
 **Open questions for you:** R3 (the prompt rewriter, §21.12 item 3); any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2).
@@ -101,10 +102,10 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needed the editing page (built in 1.6) and still needs a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
 | 38 | Regenerate larger in the viewer (1.5) | The single-image viewer has the **same Regenerate larger button**. It enlarges **that image only**: a new job at the full size and steps, with **that image's own seed** and **one** image (§24.1). Its confirmation, or an error, shows **inside the viewer** (§24.2) | DECIDED (the request); details PROPOSED |
 | 39 | Load the model ahead of time (1.7) | A **Load model button next to the model pill** in the header starts loading the model now, without a run, so you can work on the prompt while it loads. When the model is loaded and idle the same place offers **Unload model**, which gives the memory back at once. **No automatic warm-up** (nothing loads because you started typing): the button only (§25) | DECIDED (the request and the three choices); details PROPOSED |
-| 40 | Music tab (planned for 1.8 and 1.9) | A separate **Music** tab, beside Images, makes music with **MiniMax-Music3**. **Instrumental by default**; an **Add lyrics** switch reveals a lyrics box with the section tags (§26.1) | DECIDED (the request and your answers); details PROPOSED; **NOT built** |
-| 41 | One model in memory at a time | The music model and the image model are **never loaded together**: starting one unloads the other first (never during a run), so the Spark does not hold both next to Hermes (§26.4) | DECIDED; **NOT built** |
+| 40 | Music tab (planned for 1.8 and 1.9) | A separate **Music** tab, beside Images, makes music with **MiniMax-Music3**. **Instrumental by default**; an **Add lyrics** switch reveals a lyrics box with the section tags (§26.1) | DECIDED (the request and your answers); details PROPOSED; the server side is built (1.8), the page is 1.9 |
+| 41 | One model in memory at a time | The music model and the image model are **never loaded together**: starting one unloads the other first (never during a run), so the Spark does not hold both next to Hermes (§26.4) | DECIDED; built in 1.8 |
 | 42 | Describing the music | **Fields** (genre, mood, tempo, key, instruments and arrangement, and a voice description when lyrics are on) build the structured description the model's card recommends, shown in a preview you can edit (§26.2) | DECIDED; **NOT built** |
-| 43 | Models come from the local cache (1.8) | After the first download **neither model contacts Hugging Face again**: with `STUDIO_LOCAL_FILES_ONLY=auto` (the new default) each model is loaded from the cache, and the network is used only if files are missing from it. `true` never goes online, `false` is the old behaviour (a check of the hub on every load). Applies to the image model as well (§26.11) | DECIDED (your request); details PROPOSED; **NOT built** |
+| 43 | Models come from the local cache (1.8) | After the first download **neither model contacts Hugging Face again**: with `STUDIO_LOCAL_FILES_ONLY=auto` (the new default) each model is loaded from the cache, and the network is used only if files are missing from it. `true` never goes online, `false` is the old behaviour (a check of the hub on every load). Applies to the image model as well (§26.11) | DECIDED (your request); details PROPOSED; built in 1.8 |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -120,8 +121,9 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #37 | **Not built.** A disabled button marks the place (1.4). |
 | #38 | Yes (1.5). |
 | #39 | Yes (1.7). |
-| #43 | **Not built** (1.8). |
-| #40, #41, #42 | **Not built.** Specified in §26 (being built as 1.8, the server, and 1.9, the page). |
+| #43 | **Yes** (1.8). |
+| #41 | **Yes** (1.8). |
+| #40, #42 | **The server side in 1.8** (music runs, tracks, the audio route, the capabilities); **the page (the tab, the fields and the preview) is 1.9.** |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -253,8 +255,9 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 |---|---|---|
 | `GET /api/health` | Liveness for the container healthcheck | Always cheap; does not touch the GPU |
 | `GET /api/status` | Model state, idle countdown, queue length, system-memory figures (§9a) | Also pushed over SSE |
-| `POST /api/model/load` | **1.7:** start loading the model now, without a run (§25.2) | `202` started, `200` nothing to do; `409` `not_enough_memory` or `no_idle_time`; `503` `worker_failed` |
-| `POST /api/model/unload` | **1.7:** unload the model now (§25.2) | `200`; `409` `busy` while a run is running |
+| `GET /api/audio/{id}` | **1.8:** a music track's WAV, with HTTP range requests (an audio player needs them to seek); `?download=1` sends it as an attachment named `music_<genre-or-description-words>_<N>s_s<seed>_<YYYYmmdd-HHMMSS>.wav` (§26.3) | `404` for an unknown id or a missing file |
+| `POST /api/model/load` | **1.7:** start loading the model now, without a run (§25.2). **1.8:** an optional `{"model": "image" \| "music"}` body picks the model (§26.3) | `202` started, `200` nothing to do; `409` `not_enough_memory` or `no_idle_time`; `503` `worker_failed` |
+| `POST /api/model/unload` | **1.7:** unload the model now (§25.2). **1.8:** the optional body names the model to unload; without it, whichever is loaded | `200`; `409` `busy` while a run is running |
 | `GET /api/capabilities` | Which options the pipeline supports, and all limits and defaults | `modes` (`edit` is listed when the pipeline can edit), `supports`, `aspect_ratios`, `defaults`, `limits` (prompt length, `input_images`, `draft` {long side, steps}, `resolutions`, `upload_mb`, `edit_warn_units`, steps, images, seed, guidance, size), `queue_cap`, `device`. See below |
 | `POST /api/uploads` | Stage one reference image for an edit. **The file is the raw request body, not multipart** (§21.6) | Returns `upload_id`, `width`, `height`, `has_alpha`, `bytes`, `url`, `thumb_url`; 413 too large, 415 wrong type, 422 undecodable, 507 disk full |
 | `DELETE /api/uploads/{id}` | Take back a staged upload no run has claimed | 204; 404 for anything else |
@@ -268,6 +271,8 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `GET /api/images/{id}/thumb` | WebP thumbnail | `?download=1` sends it as an attachment named like the image with `_thumb.webp`; outputs only (§22.3) |
 | `GET /api/events` | Server-sent events | `hello` (`{status, runs}`: the status plus the newest page of runs, read after the stream subscribed, so it is a consistent starting point), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`, `shutdown` (the server is stopping; the stream then ends). A `: ping` comment every 15 s keeps proxies from closing the stream. Every connection, first or reconnect, starts from its `hello`; the client never lets an older copy of a run (a late POST response, a stale page) replace a newer one, since runs only move forward (queued → running → finished) |
 
+**Music (1.8):** `POST /api/runs` takes `mode: "music"`, `lyrics` and the options `duration`, `tracks`, `steps`, `seed` and `fields` (§26.3); a run's payload then has `tracks` (and `lyrics`) as an image run has `images`, and `/api/capabilities` has `modes` listing `music` when the music pipeline can run, `limits.music`, and `music` {`available`, `state`, `reason`, `hint`, `model`}. `worker` in the status and in `worker.state` events says which `model` (`image` or `music`) it holds.
+
 **What a run looks like in the API:** `id`, `status`, `mode`, `prompt`, `effective_prompt`, `options` (the exact snapshot of what the run used: size, steps, seed and whether it was random, images, negative prompt, guidance, transparent, `resolution`, `shape_from`, the inputs' `roles`, `draft`, `full`), `model_id`, the three timestamps, `error` (`message`, `hint`), `pinned`, `expires_at` (worked out from the creation time and `STUDIO_RETENTION_DAYS`, null when the run is kept, still queued or running, or retention is off), `queue_position`, `progress`, `canceling`, `inputs` and `images`. The upload and run-creation calls for editing are specified in full in §21.6.
 
 **Capabilities without a loaded model:** the API process can't inspect a pipeline that isn't loaded, so at start-up it runs a short GPU-free probe subprocess that imports `diffusers` and inspects `QwenImage21Pipeline.__call__` (the same idea as the CLI's early signature check). The result is cached. If the import fails the state is `unavailable` with the reason.
@@ -279,6 +284,8 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 SQLite in WAL mode; the API process is the only writer.
 
 **`runs`** (one per click): `seq` (arrival order; the queue runs in this order, drafts first, §22.2), `id`, `created_at`, `started_at`, `finished_at`, `status` (queued / running / done / failed / canceled), `mode`, `prompt`, `effective_prompt` (after the RGBA wrapper), `negative_prompt`, `transparent`, `width`, `height` (null = auto), `steps`, `cfg_scale`, `seed` (of image 0), `num_images`, `model_id`, `input_image_id` (never written; kept for compatibility, §21.7), `error_message`, `error_hint`, `pinned`, `options_json` (exact snapshot, so Reuse/Retry are faithful; it also carries `draft`, `full`, `resolution`, `shape_from` and the inputs' roles, so those needed no columns). There is no `expires_at` column: it is worked out from `created_at`.
+
+**Schema 3 (1.8, §26.5):** `runs.mode` also accepts `music` and `runs` has a `lyrics` column (the table is rebuilt by the migration, which keeps a copy of the old database as `studio.sqlite.before-schema-3`); **`tracks`** (`id`, `run_id`, `idx`, `seed`, `seconds`, `sample_rate`, `channels`, `bytes`, `path`, `created_at`) holds a music run's WAV files, which live under `<data>/audio/<run>/`.
 
 **`images`**: `id`, `run_id`, `kind` (`output` or `input`), `idx`, `seed`, `width`, `height`, `has_alpha`, `bytes`, `path`, `thumb_path`, `created_at`. Uploaded reference images are rows here too, flagged `kind = input` (this is what lets "Edit this" and uploads share one code path); one with no `run_id` is a staged upload.
 
@@ -295,6 +302,7 @@ SQLite in WAL mode; the API process is the only writer.
 - API ↔ worker: JSON lines over stdio. Commands: `load`, `run`, `cancel`, `shutdown`. Events: `hello`, `state`, `load_failed`, `run_started`, `progress`, `image_done`, `run_finished`, `run_failed`, `run_canceled`, `protocol_error`, `bye` (and `probe` for the start-up capability check). The worker reads commands in a thread of its own, so a `cancel` is heard while a run is under way (§21.11, M6).
 - **Queue order:** drafts first, then everything else in arrival order, never displacing the run in progress (§22.2).
 - The worker is started lazily when a job needs it. After the queue has been empty for the idle timeout, the API sends `shutdown` and waits for the process to exit; a job arriving mid-shutdown waits for the exit, then a fresh worker starts.
+- **1.8:** the worker program holds one of two models, `--kind image` or `--kind music` (§26.4); the API keeps one process at a time and stops the loaded one, under the same lock, before starting the other. A music job is sent as `{run_id, mode, prompt, lyrics, duration, steps, seeds, model_id}`; each finished track is reported with `track_done`, and `progress` carries a `stage` (`compose`, `render`, `finish`).
 - **1.7:** it can also be started, and told to `load`, by the page's **Load model** button, and stopped at once by **Unload model**, without a run (§25). Starting and stopping the process are done under one lock; the idle clock counts from when a load finishes.
 - The worker saves each PNG straight to the data volume and reports the path; the API validates, makes the thumbnail and writes the database row.
 - Loading follows the CLI's proven settings: `dtype=torch.bfloat16`, `.to("cuda")` (or CPU offload if configured), seed via `torch.Generator("cuda").manual_seed(seed + i)`.
@@ -356,7 +364,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 
 **Design:**
 
-- **Multi-stage build.** Node builds the React app. The final stage is `FROM nvcr.io/nvidia/pytorch:<tag>`, where `<tag>` is the newest `YY.MM-py3` (at least 25.10) that I test on the Spark, pinned exactly. `diffusers` comes from a pinned GitHub commit; other dependencies are pinned.
+- **Multi-stage build.** Node builds the React app. The final stage is `FROM nvcr.io/nvidia/pytorch:<tag>`, where `<tag>` is the newest `YY.MM-py3` (at least 25.10) that I test on the Spark, pinned exactly. `diffusers` comes from a pinned GitHub commit; other dependencies are pinned. **Since 1.8** the image also holds the released `diffusers==0.40.0` in `/opt/music-libs` (§26.4), put first on the music worker's Python path only, and the build checks that it imports.
 - **Keep NVIDIA's PyTorch.** NGC images ship NVIDIA's own PyTorch build, and a careless `pip install` can replace it with a generic wheel. The build keeps torch pinned and is checked inside the built image with `python -c "import torch; print(torch.__version__, torch.cuda.is_available())"`. (Expected NGC behaviour; verify on the Spark.)
 - **Compose service.** `runtime: nvidia` plus a GPU reservation (`deploy.resources.reservations.devices` with `driver: nvidia`, `count: all`, `capabilities: [gpu]`); `shm_size: 2gb` (`ipc: host`, as in NVIDIA's examples, is the fallback if needed); `restart: unless-stopped`; `user` set to the Spark user's UID:GID so mounted folders stay writable.
 - **Volumes.** `./data:/data` for the database and images. The Hugging Face cache is mounted at `/models` with `HF_HOME=/models`; the host side defaults to `~/.cache/huggingface`, the same cache the vLLM container uses, so nothing downloads twice.
@@ -375,7 +383,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_DATA_DIR` | `/data` | Database, images, thumbnails |
 | `HF_HOME` | `/models` | Hugging Face cache (mounted from the host, §12) |
 | `HF_TOKEN` | unset | Only if the repo is gated |
-| `STUDIO_LOCAL_FILES_ONLY` | `false` | Never touch the network |
+| `STUDIO_LOCAL_FILES_ONLY` | `auto` | **Where model files come from (§26.11).** `auto`: the local cache first, the network only if files are missing from it, so after the first download nothing is fetched again; `true`: never touch the network; `false`: ask the hub on every load (the behaviour before 1.8) |
 | `STUDIO_CPU_OFFLOAD` | `false` | Use model CPU offload |
 | `STUDIO_MIN_FREE_GB` | unset = off; `compose.yaml` sets `40` | Minimum `MemAvailable` required before loading the model (§9a). 40 is a starting estimate (about 14 GB transformer plus text encoder, VAE and activations, with headroom), to be replaced by the figure measured on the Spark. `0` turns it off |
 | `STUDIO_IDLE_TIMEOUT_MIN` | `30` | Unload the model after this idle time |
@@ -389,13 +397,18 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_DRAFT_SIZE` | `512` | **1.3:** a draft's longest side in pixels; 256–1024, a multiple of 32 (§22.2) |
 | `STUDIO_DRAFT_STEPS` | `12` | **1.3:** the most steps a draft may use; 1–100 (§22.2) |
 | `STUDIO_EDIT_WARN_UNITS` | `8` | **1.6:** the page warns that an edit is heavy above this many units (images × (resolution ÷ 1024)², so 3 images at 2K is 12); `0` = never. 8 is a guess until the Spark has measured it (§21.11, M5c) |
+| `STUDIO_MUSIC_MODEL` | `MiniMaxAI/MiniMax-Music3` | **1.8:** the music model's Hugging Face id or a local folder (§26) |
+| `STUDIO_MUSIC_MIN_FREE_GB` | unset = off; `compose.yaml` sets `40` | **1.8:** the memory check for the music model, as `STUDIO_MIN_FREE_GB` (about 24 GB loaded; 40 is an estimate) |
+| `STUDIO_MUSIC_MAX_SECONDS` | `300` | **1.8:** the longest `duration` a music run may ask for, 10–360 (the model's own limit) |
+| `STUDIO_MUSIC_MAX_TRACKS` | `4` | **1.8:** versions per music run, 1–8 |
+| `STUDIO_MUSIC_LIBS` | unset; the image sets `/opt/music-libs` | **1.8:** a folder put first on the music worker's Python path (the image's own diffusers 0.40.0) |
 | `STUDIO_STATIC_DIR` | `<repo>/frontend/dist` if built; `/app/static` in the image | The built web page (added in M2) |
 | `STUDIO_HOST` | `0.0.0.0` | Listen address inside the container (added in M1) |
 | `STUDIO_PORT` | `8080` | Listen port |
 | `STUDIO_ALLOWED_HOSTS` | empty (any) | Comma-separated host names to accept (§11; added in M1) |
 | `STUDIO_PIPELINE` | `real` | `fake` uses the test pipeline (§15) |
 | `STUDIO_FAKE_STEP_DELAY_MS` | `30` | Fake pipeline only: delay per step (added in M1) |
-| `STUDIO_FAKE_LOAD_FAIL` | unset | Fake pipeline only: simulate a model load failure (added in M1) |
+| `STUDIO_FAKE_LOAD_FAIL` | unset | Fake pipelines only: simulate a model load failure (added in M1); `once` fails only the first load (1.7) |
 | `STUDIO_FAKE_LOAD_DELAY_MS` | `200` | **1.7:** fake pipeline only: how long its "load" takes, so tests can see the loading state (§25.3) |
 | `STUDIO_TOKEN` | unset | Reserved; setting it stops the server from starting (§11) |
 
@@ -430,6 +443,7 @@ The server re-implements the size presets, RGBA wrapper, filename scheme and err
 
 Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`, `[fake:crash]` and `[fake:noise]` (stray output on stdout), optionally `@N` to target image N only, e.g. `[fake:crash@1]`. `STUDIO_FAKE_LOAD_FAIL=1` simulates a load failure. Fake images are clearly labelled "FAKE PIPELINE". (Added in M1.)
 
+- **Music (1.8):** a fake music pipeline for every automated test (a short, deterministic melody, both progress stages, Cancel, fault directives). The real pipeline's own code is checked a second way, where `torch` and `diffusers` 0.40.0 are installed (not in the plain test environment): `backend/tests/music_tiny.py` builds a **tiny random-weight copy of MiniMax-Music3** from the real `diffusers` and `transformers` classes, and the real `RealMusicPipeline` runs on it on a CPU in seconds. That proves the hooks that report progress and carry out Cancel, the shape and rate of the output and the worker around it; it cannot say anything about the real model's sound, speed or memory.
 - **Unit:** validation and limits, slug and filenames, queue ordering and cap, retention and pinning, options persistence parsing (corrupt/old localStorage).
 - **API integration:** pytest with the fake worker — every endpoint, SSE events, restart recovery, failure paths.
 - **End-to-end:** Playwright with Chromium against the running container-less stack — themes, Options persistence across reload, Reuse locking the seed, all four Edit inputs, queue cap and cancel, phone-width layout, keyboard use.
@@ -479,8 +493,9 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | 33–38, 40–47 | Scale, Draft, thumbnails, Regenerate larger, the viewer | **Automated** (a draft's queue priority and limits, the `full` record, the one-image request, the in-viewer note) |
 | 39 | Draft and scale timings on the Spark | **Spark** (`SPARK_TEST.md` §16, §17) |
 | 51–60 | Load model and Unload model | **Automated** (the server's states, the idle clock, the lock, the memory check; the page's buttons, focus, announcements, phone width). **Spark** for how long the real model takes to load and how much memory Unload gives back (`SPARK_TEST.md` §19) |
-| 61–75 | Music tab (§26.10) | **Not built** (planned: 1.8 the server, 1.9 the page); 71 also needs the **Spark** |
-| 76–77 | Models come from the local cache (§26.11) | **Not built** (1.8); the real hub's behaviour is a **Spark** question |
+| 62, 63 (server), 65, 66 (server), 67–74 | Music: the request and its limits, instrumental, tracks and the audio route, one model at a time, memory, Load and Unload by model, Cancel, Keep and expiry, migration, the note in the WAV | **Automated** (1.8, against the fake pipeline; the pipeline's hooks also against the real `diffusers` 0.40.0 code on tiny random weights); **71, and everything about how the real model sounds, behaves and how fast it is, is a Spark question** |
+| 61, 63 (page), 64, 66 (page), 75 | The Music tab itself | **Not built** (1.9) |
+| 76–77 | Models come from the local cache (§26.11) | **Automated** (the decision logic, the settings, the worker's environment, both models); what the real hub does is a **Spark** question |
 
 ## 17. Build order (PROPOSED)
 
@@ -575,6 +590,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Round 13 (2026-10-03):** the specification was merged. You asked to work on the next feature, which was **M5b, the editing page**. The decisions behind it were already made (#24–#31), so I built it to §21.4 without further questions and listed the small choices I made in §21.11 for you to veto: how pictures dropped in Generate mode are handled, where Edit this appears, that the cost warning's threshold is a setting (default 8, a guess until the Spark measures it), and the others there. Version 1.6.
 - **Round 14 (2026-10-03):** version 1.6 (the editing page) was reviewed and merged. You asked whether there could be a button that loads the model, so that you can work on the prompt instead of waiting for the load after pressing Generate. I answered that it was possible and asked three questions; you chose the button **next to the model pill in the header**, **an Unload button as well**, and **no automatic warm-up** (decision #39, specified in §25 as version 1.7). Two things the code showed me while specifying it, now in §25: the idle clock must start when the load **finishes** (and be refused for `STUDIO_IDLE_TIMEOUT_MIN=0`, where loading ahead would load and instantly unload), and the starting and stopping of the worker needs one lock so that a click cannot meet a half-stopped worker. Small choices of mine for you to veto are in §25.4.
 - **Round 15 (2026-10-04):** version 1.7 was built and tested, but could not be pushed (the push was refused as an out-of-place publication, so there is no pull request yet). You then asked whether the interface could make **music on an entirely different tab**, from the code on the **MiniMax-Music3** model card, with a focus on **instrumental** music. I read the card and the licence through a summarising tool, found that the card needs a different `diffusers` commit from the one the image worker is pinned to, and asked three questions. You chose: **instrumental by default with a lyrics box available**, **one model in memory at a time**, and **fields that build the description** (decisions #40–#42). I wrote the design (§26) and stopped, because 1.7 was unpublished. You then said to **go ahead and build 1.8 and 1.9 and to give you a usable example**. Before building I went back to the primary sources (the model repository's files, its raw licence, and the released `diffusers` 0.40.0 source), which **corrected the design**: the sound is 44.1 kHz, not 32; the music pipeline is in the released `diffusers` 0.40.0, which lacks Qwen-Image-2.1, while the image worker's commit lacks music, so two copies are needed; the lyrics may not be empty, so `[Instrumental]` is how instrumental works; and progress and Cancel are possible through hooks, so Cancel does not have to kill the worker. 1.8 (the server) and 1.9 (the page) are built on top of the unpublished 1.7, each on its own branch.
+- **Round 16 (2026-10-04):** while 1.8 was being built you asked whether the weights and the model would be **cached locally**, and said that after the first load you do not want it downloading anything if it can be avoided. I answered in writing and made it **decision #43**: `STUDIO_LOCAL_FILES_ONLY` now takes `auto` (the new default: each model loads **from the cache only**, and only a load that fails because **files are missing** is tried again online), `true` (never online) and `false` (the old behaviour, which asked the hub on every load and would have downloaded an update of tens of gigabytes), for both models (§26.11). Building 1.8 (§26.12) turned up one real bug that the tests then pinned down, and corrected the design again where the primary sources disagreed with the first reading (the two copies of `diffusers`, the lyrics that may not be empty). The command-line example you asked for was moved forward into 1.8, so there is something to run on the Spark before the page exists.
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
 ## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#32 DECIDED; details PROPOSED; M6, M5a and M5b BUILT, M5c–M5e NOT built)
@@ -1020,7 +1036,7 @@ Both need the `X-Studio-Client: 1` header like every mutation (§11). An error a
 - **One unexplained failure, reported rather than hidden.** In one full browser run (5 unstressed runs of the final code in all) the thumbnails test of 1.3 failed once, waiting for a run card; it passed alone 15 of 15 under heavy CPU load and in the 4 full runs after it, and I could not reproduce it or find a cause (the page does not show the prompt box until it has the server's capabilities, which rules out one guess). Separately, under **deliberate heavy CPU load** (four spinning processes) the 1.6 test that watches an upload at 100% before removing it can miss that moment and fail: it depends on a window of about a second, which I widened with a big picture in 1.6 and cannot make airtight. Neither touches anything 1.7 changed; I left both as they are.
 - **Not verified:** how long the real model takes to load, how much memory Load takes and Unload gives back, and whether a worker that is stopped while loading really frees its memory at once on the Spark (`SPARK_TEST.md` §19). Everything here has been checked only against the fake pipeline.
 
-## 26. Music (decisions #40–#42 DECIDED; details PROPOSED; planned and being built as 1.8 and 1.9)
+## 26. Music (decisions #40–#43 DECIDED; details PROPOSED; the server side BUILT in 1.8, the page is 1.9)
 
 You asked whether the interface can make music on an entirely different tab, with the code from the model card of **MiniMaxAI/MiniMax-Music3**, and said you want **instrumental** music. I asked three questions and you chose: instrumental by default with a lyrics box available, **one model in memory at a time**, and **fields that build the description**. You then asked me to build it as 1.8 and 1.9 with a usable example.
 
@@ -1082,8 +1098,8 @@ With lyrics on, a `Vocal Details` section (`Vocal Gender & Timbre: …`) goes be
 
 ### 26.6 Releases, and the order of work
 
-- **1.8, the server:** schema 3, the music worker kind and the fake and real pipelines, `tracks` and `GET /api/audio`, the one-model-at-a-time switching, `STUDIO_MUSIC_*` settings, the second copy of `diffusers` in the image and in `check_image.py`, and the API tests. **No visible change** except the pill naming the model.
-- **1.9, the page:** the tab bar, the Music tab (fields, preview, lyrics, duration, versions, seed, steps), track cards with the player and download, Load/Unload per tab, phone layout, the browser tests, and **a command-line example** (`scripts/minimax_music.py`) that makes a track with the real model from a terminal, without the studio.
+- **1.8, the server (built):** schema 3, the music worker kind and the fake and real pipelines, `tracks` and `GET /api/audio`, the one-model-at-a-time switching, `STUDIO_MUSIC_*` settings, the cache-first loading of both models (decision #43), the second copy of `diffusers` in the image and in `check_image.py`, the API tests, and **`scripts/minimax_music.py`**, a command-line example that makes a track with the real model (moved here from 1.9, because it needs no page and is the quickest way to try the model on the Spark). **No visible change** except that the model's name appears in `/api/status`.
+- **1.9, the page:** the tab bar, the Music tab (fields, preview, lyrics, duration, versions, seed, steps), track cards with the player and download, Load/Unload per tab, phone layout, the browser tests, and the buttons per tab.
 - **Then you run `SPARK_TEST.md` §20**, which I write with 1.9: the real model's speed per minute of music, its memory, whether `[Instrumental]` makes an instrumental track, whether "no vocals" in the description helps, and what Cancel does.
 - **Publishing.** 1.7 could not be pushed (§20, Round 15), so 1.8 and 1.9 are built on top of it, each on its own branch (`music-1.8`, `music-1.9`) so they can still become one pull request each, in order, once 1.7 is merged.
 
@@ -1151,3 +1167,20 @@ Acceptance criteria:
 
 76. With `STUDIO_LOCAL_FILES_ONLY=auto` (the default) a model is loaded with the network switched off first, and **only if that fails because files are missing** is the load tried again online; any other failure is reported at once and is not retried online. (1.8)
 77. With `true` a model is never loaded online and a missing file fails the load with an actionable message; with `false` the load is as before. The setting applies to the image and the music model alike. (1.8)
+
+### 26.12 What was built in 1.8 (the server), and what was not checked
+
+Built to §26.3–§26.5 and §26.11, plus **`scripts/minimax_music.py`**, which was planned for 1.9 and moved forward so that you have something to run on the Spark before the page exists (it uses the same pipeline class the studio uses, so it is also the quickest check of the real model).
+
+- **Music runs through the API:** `mode: "music"` with the description, optional lyrics (none = instrumental, the server sends `[Instrumental]`), duration, versions, steps, seed and the fields; limits from `STUDIO_MUSIC_MAX_SECONDS` and `STUDIO_MUSIC_MAX_TRACKS`; tracks as WAV files written by the studio's own standard-library writer (a note in each says it is machine-generated), served by `GET /api/audio/{id}` with range requests; the capabilities say whether music can run and why not.
+- **One model in memory at a time:** one worker program started for either model; a run or a Load for the other model stops the idle one first, checks free memory with the new model's own number and starts it, all under the lifecycle lock of §25.3. `worker.model` says which model the worker holds.
+- **Schema 3** (the table that holds runs is rebuilt to allow music; `tracks` is new), migrated from a copy of a database written by the real 1.7 code; the old file is kept as a copy.
+- **Models load from the cache** (decision #43, §26.11), for both models; the worker's environment sets `HF_HUB_DISABLE_TELEMETRY=1`.
+- **A second copy of `diffusers`** (0.40.0, in `/opt/music-libs`, first on the music worker's path only) in the image and in `docker/check_image.py`.
+- **Tests:** backend 598 (pytest, the fake pipeline) and 22 more that run only where `torch` and `diffusers` 0.40.0 are installed: they run **the real `diffusers` 0.40.0 music pipeline on tiny random-weight components on a CPU** (`tests/music_tiny.py`), which proves the plumbing of the real path (the frame hook and the progress bar, Cancel from inside both stages, the output shape and rate, the worker, the example script and that it puts the music libraries first on its path) without proving anything about the sound. **Mutation checks:** 122 mutants of the music server, the worker, the WAV writer, the cache logic, the real pipeline's hooks, the example script and the worker's naming. The first runs let **11 survive**; each got a test that fails with the mutant and passes without it (checked one by one), except one that is equivalent: a model name that is neither `image` nor `music` is refused twice, by the request schema and by the model manager, with the same status code. Two mistakes of mine in the *checking*, not the code, were found and corrected: the script's clean-up killed other servers' workers (which looked like a flaky Load until I found the cause), and its `git checkout` once wiped a fix I had not committed yet; the affected mutants were run again.
+
+**A bug found on the way (and fixed).** A worker that was stopped on purpose reported its exit as the current event, and the next run that was waiting took it for a crash. It showed first as a flaky Load test in 1.7 and again, in a new form, when switching models. The fix is the same in both places: the stale events are drained after the right worker is ready, inside the lock. Both have tests that failed before the fix.
+
+**A smaller thing found at the end (and fixed).** The worker client wrote "image worker" in its log lines, and the run's error message said "The image worker stopped unexpectedly" even when it was the music worker that had stopped. It now names the worker it is.
+
+**What this does not show, and only the Spark can:** whether the real model loads next to the image worker's libraries (the image build checks the import, not a run); how long it takes per second of music; its real memory; whether `[Instrumental]` alone gives a track with no singing; whether the same seed repeats; how fast Cancel stops it; how big the first download really is (the whole repository, 57 GB, or the 29 GB of components); and that nothing downloads on later loads. `SPARK_TEST.md` §20 is the checklist for all of these.

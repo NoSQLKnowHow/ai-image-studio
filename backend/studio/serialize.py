@@ -36,6 +36,21 @@ def image_payload(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def track_payload(row: sqlite3.Row) -> dict[str, Any]:
+    base = f"/api/audio/{row['id']}"
+    return {
+        "id": row["id"],
+        "idx": row["idx"],
+        "seed": row["seed"],
+        "seconds": row["seconds"],
+        "sample_rate": row["sample_rate"],
+        "channels": row["channels"],
+        "bytes": row["bytes"],
+        "url": base,
+        "download_url": f"{base}?download=1",
+    }
+
+
 def input_payload(row: sqlite3.Row) -> dict[str, Any]:
     """An image an edit was given: its place in the order the model sees them (1 = "image 1") and its role."""
     base = f"/api/images/{row['id']}"
@@ -59,6 +74,7 @@ def run_payload(
     canceling: bool = False,
     expires_at: Optional[str] = None,
     inputs: Optional[list[sqlite3.Row]] = None,
+    tracks: Optional[list[sqlite3.Row]] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -80,6 +96,8 @@ def run_payload(
         "queue_position": queue_position if row["status"] == "queued" else None,
         "progress": progress if row["status"] == "running" else None,
         "canceling": canceling and row["status"] == "running",
+        "lyrics": row["lyrics"],
         "inputs": [input_payload(item) for item in inputs or []],
         "images": [image_payload(img) for img in images],
+        "tracks": [track_payload(track) for track in tracks or []],
     }
