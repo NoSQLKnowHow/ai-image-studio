@@ -19,6 +19,7 @@ from PIL import Image
 
 from ..sysinfo import MEMORY_HINT
 from .base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, PipelineUnavailable, StepCallback, load_inputs
+from .hub import load_with_hub_mode
 
 log = logging.getLogger("studio.pipelines.real")
 
@@ -175,7 +176,7 @@ def normalize_alpha(image: Image.Image) -> Image.Image:
     return image
 
 
-def translate_load_error(exc: Exception, torch: Any, local_files_only: bool) -> PipelineError:
+def translate_load_error(exc: Exception, torch: Any, offline: bool) -> PipelineError:
     names = _names(exc)
     status = getattr(getattr(exc, "response", None), "status_code", None)
     text = str(exc).lower()
@@ -191,9 +192,10 @@ def translate_load_error(exc: Exception, torch: Any, local_files_only: bool) -> 
             hint="The folder mounted at /models must be writable by the studio's user. On the host run: "
                  "sudo chown -R $(id -u):$(id -g) <your HF cache folder>, or set HF_CACHE_DIR to a folder you own.",
         )
-    if "LocalEntryNotFoundError" in names and local_files_only:
+    if "LocalEntryNotFoundError" in names and offline:
         return PipelineLoadError("The model is not in the local cache.",
-                                 hint="Unset STUDIO_LOCAL_FILES_ONLY to let it download once.")
+                                 hint="STUDIO_LOCAL_FILES_ONLY=true never downloads. Set it to auto (or false) once, "
+                                      "so the model can be downloaded, then back if you like.")
     if names & ACCESS_NAMES or status in (401, 403):
         return PipelineLoadError(
             f"Cannot access the model on Hugging Face: {exc}",
@@ -231,10 +233,10 @@ def translate_generation_error(exc: Exception, torch: Any, edit: bool = False) -
 class RealPipeline:
     name = "real"
 
-    def __init__(self, model: str, cpu_offload: bool = False, local_files_only: bool = False):
+    def __init__(self, model: str, cpu_offload: bool = False, hub_mode: str = "auto"):
         self.model = model
         self.cpu_offload = cpu_offload
-        self.local_files_only = local_files_only
+        self.hub_mode = hub_mode  # DESIGN.md §26.11: "auto" cache first, "offline" never online, "online" as before
         self._pipe: Any = None
         self._torch: Any = None
         self._supports: dict[str, bool] = {}
@@ -242,18 +244,22 @@ class RealPipeline:
     def load(self) -> dict[str, Any]:
         torch, pipeline_cls = import_runtime()
         require_gpu(torch)
-        kwargs: dict[str, Any] = {"dtype": torch.bfloat16}
-        if self.local_files_only:
-            kwargs["local_files_only"] = True
-        log.info("loading %s (bfloat16%s)", self.model, ", model CPU offload" if self.cpu_offload else "")
+        log.info("loading %s (bfloat16%s, files: %s)", self.model, ", model CPU offload" if self.cpu_offload else "", self.hub_mode)
+
+        def fetch(offline: bool) -> Any:
+            kwargs: dict[str, Any] = {"dtype": torch.bfloat16}
+            if offline:
+                kwargs["local_files_only"] = True
+            return pipeline_cls.from_pretrained(self.model, **kwargs)
+
         try:
-            pipe = pipeline_cls.from_pretrained(self.model, **kwargs)
+            pipe = load_with_hub_mode(fetch, self.hub_mode, self.model)
             if self.cpu_offload:
                 pipe.enable_model_cpu_offload()
             else:
                 pipe.to("cuda")
         except Exception as exc:
-            raise translate_load_error(exc, torch, self.local_files_only) from exc
+            raise translate_load_error(exc, torch, self.hub_mode == "offline") from exc
         configure = getattr(pipe, "set_progress_bar_config", None)
         if callable(configure):
             configure(disable=True)  # progress is reported through the protocol instead

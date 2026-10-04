@@ -47,8 +47,16 @@ RUN cat /app/ngc-pins.txt \
 RUN pip uninstall -y torchao \
     && pip freeze > /app/pip-freeze.txt
 
+# The music worker's own copy of diffusers (DESIGN.md §26.4): the released 0.40.0 has the MiniMax-Music3 pipeline, the
+# commit above has Qwen-Image-2.1, and neither has the other's. Installed without dependencies (the image has them) into
+# a folder that only the music worker puts first on its Python path.
+COPY backend/requirements-music.txt /app/backend/
+RUN pip install --no-deps --target /opt/music-libs -r /app/backend/requirements-music.txt
+ENV STUDIO_MUSIC_LIBS=/opt/music-libs
+
 COPY backend/studio /app/backend/studio
 COPY docker/ /app/docker/
+COPY scripts/minimax_music.py /app/scripts/minimax_music.py
 COPY --from=ui /ui/dist /app/static
 
 # Fail the build now, not at the first Generate, if the stack doesn't fit together.
@@ -61,6 +69,7 @@ RUN mkdir -p /data /models && chmod 1777 /data /models
 ENV PYTHONPATH=/app/backend \
     STUDIO_DATA_DIR=/data \
     STUDIO_STATIC_DIR=/app/static \
+    HF_HUB_DISABLE_TELEMETRY=1 \
     STUDIO_HOST=0.0.0.0 \
     STUDIO_PORT=8080 \
     HF_HOME=/models \

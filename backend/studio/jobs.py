@@ -19,6 +19,8 @@ from typing import Any, Optional
 
 from . import __version__, sysinfo
 from . import inputs as inputs_mod
+from . import presets as P
+from . import wavfile
 from .config import Settings
 from .db import Database
 from .events import EventBus
@@ -29,8 +31,10 @@ from .worker_client import WorkerClient, WorkerGone, worker_env
 
 log = logging.getLogger("studio.jobs")
 
-RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "run_finished", "run_failed", "run_canceled"})
+RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "track_done", "run_finished", "run_failed", "run_canceled"})
 FAKE_MODEL_ID = "fake-pipeline"
+FAKE_MUSIC_MODEL_ID = "fake-music"
+KINDS = ("image", "music")  # the two models; only one is ever loaded (DESIGN.md §26.4)
 SHUTDOWN_MESSAGE = "Interrupted because the server was stopped."
 PROBE_TIMEOUT_SECONDS = 300  # importing torch + diffusers can be slow on a cold start
 SWEEP_INTERVAL_SECONDS = 24 * 3600  # how often old runs are expired (once at start-up, then daily)
@@ -56,6 +60,10 @@ class InputStorageError(Exception):
     """The inputs of a new run could not be copied (usually: the disk is full)."""
 
 
+class _MemoryShortfall(Exception):
+    """There is not enough free memory to load a model (the message says how much is needed)."""
+
+
 class ModelRefused(Exception):
     """Loading or unloading the model on request was not possible (DESIGN.md §25.2). `status` is the HTTP answer."""
 
@@ -70,7 +78,10 @@ class JobManager:
         self.db = db
         self.storage = storage
         self.bus = bus
-        self._worker = WorkerClient(settings, self._on_worker_event)
+        # One worker process per model, never both alive: `_worker` is the one in use (or the last one used).
+        self._clients = {kind: WorkerClient(settings, self._on_worker_event, kind) for kind in KINDS}
+        self._worker = self._clients["image"]
+        self._model: Optional[str] = None  # the model the worker state is about ("image" or "music"); None when nothing is loaded
         self._wakeup = asyncio.Event()
         self._run_events: asyncio.Queue = asyncio.Queue()
         self._current: Optional[str] = None
@@ -83,6 +94,7 @@ class JobManager:
         self._janitor_task: Optional[asyncio.Task] = None
         self._uploads_task: Optional[asyncio.Task] = None
         self._probe: dict[str, Any] = {"state": "pending"}
+        self._music_probe: dict[str, Any] = {"state": "pending"}
         self._unload_at: Optional[float] = None
         # Starting and stopping the worker process happen one at a time: a run starting it, a Load, an Unload and the
         # idle timeout. Without this a click could meet a worker that is half stopped (DESIGN.md §25.3).
@@ -124,6 +136,11 @@ class JobManager:
     # ------------------------------------------------------------ queries
     @property
     def model_id(self) -> str:
+        return self.model_id_for("image")
+
+    def model_id_for(self, kind: str) -> str:
+        if kind == "music":
+            return FAKE_MUSIC_MODEL_ID if self.settings.pipeline == "fake" else self.settings.music_model
         return FAKE_MODEL_ID if self.settings.pipeline == "fake" else self.settings.model
 
     def worker_status(self) -> dict[str, Any]:
@@ -133,6 +150,7 @@ class JobManager:
         return {
             **self._worker_state,
             "pipeline": self.settings.pipeline,
+            "model": self._model,
             "pid": self._worker.pid,
             "unload_at": unload_at,
             "idle_timeout_min": self.settings.idle_timeout_min,
@@ -150,7 +168,22 @@ class JobManager:
 
     def memory_status(self) -> dict[str, Any]:
         mem = sysinfo.memory() or {}
-        return {**mem, "min_free_gb": self.settings.min_free_gb, "worker_rss_gb": sysinfo.process_rss_gb(self._worker.pid)}
+        return {**mem, "min_free_gb": self.settings.min_free_gb, "music_min_free_gb": self.settings.music_min_free_gb,
+                "worker_rss_gb": sysinfo.process_rss_gb(self._worker.pid)}
+
+    def music_status(self) -> dict[str, Any]:
+        """Whether the music model can run here (DESIGN.md §26.3): the result of the start-up check of its libraries."""
+        probe = self._music_probe
+        error = probe.get("error") or {}
+        return {
+            "available": probe.get("state") == "done",
+            "state": probe.get("state"),
+            "reason": error.get("message"),
+            "hint": error.get("hint"),
+        }
+
+    def modes(self) -> list[str]:
+        return ["generate", *(["edit"] if self.supports().get("edit") else []), *(["music"] if self.music_status()["available"] else [])]
 
     def supports(self) -> dict[str, bool]:
         found = self._supports_found()
@@ -174,11 +207,11 @@ class JobManager:
 
     def payloads(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         ids = [r["id"] for r in rows]
-        images, inputs = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids)
+        images, inputs, tracks = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids), self.db.tracks_for_runs(ids)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
-                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]])
+                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]])
             for r in rows
         ]
 
@@ -230,8 +263,9 @@ class JobManager:
             "cfg_scale": run.cfg_scale,
             "seed": run.seed,
             "num_images": run.num_images,
-            "model_id": self.model_id,
+            "model_id": self.model_id_for("music" if run.mode == "music" else "image"),
             "options_json": json.dumps(run.options_snapshot()),
+            "lyrics": run.lyrics,
         }
         try:
             outcome = self.db.insert_run(row, self.settings.queue_cap, owned, claims)
@@ -395,19 +429,16 @@ class JobManager:
             try:
                 started_worker = False
                 async with self._lifecycle:  # not while an Unload or the idle timeout is stopping it
-                    # Anything stale goes, and only now: a worker that was being stopped while this run waited for the
-                    # lock reports its exit as the run's current event, and it must not be taken for a crash.
+                    try:
+                        started_worker = await self._prepare_worker(self._kind_of(row))
+                    except _MemoryShortfall as short:
+                        self._finish(run_id, "failed", str(short), sysinfo.MEMORY_HINT)
+                        return
+                    # Anything stale goes, and only now: a worker that was being stopped (by an Unload this run waited
+                    # for, or by `_prepare_worker` making room for the other model) reports its exit as the run's
+                    # current event, and it must not be taken for a crash. Nothing of this run's own can be here yet.
                     while not self._run_events.empty():
                         self._run_events.get_nowait()
-                    if not self._worker.alive():
-                        shortfall = self._memory_shortfall()
-                        if shortfall:
-                            self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
-                            self._finish(run_id, "failed", shortfall, sysinfo.MEMORY_HINT)
-                            return
-                        self._set_worker_state("loading")
-                        await self._worker.start()
-                        started_worker = True
                 if run_id in self._cancel_requested:  # cancelled while the worker was starting
                     if started_worker:
                         self._set_worker_state("unloaded")
@@ -415,8 +446,8 @@ class JobManager:
                     return
                 await self._worker.send({"cmd": "run", "job": self._job_for(row)})
             except (WorkerGone, OSError) as exc:
-                self._set_worker_state("error", f"Could not start the image worker: {exc}", "See the server log for details.")
-                self._finish(run_id, "failed", f"Could not start the image worker: {exc}")
+                self._set_worker_state("error", f"Could not start the {self._worker.kind} worker: {exc}", "See the server log for details.")
+                self._finish(run_id, "failed", f"Could not start the {self._worker.kind} worker: {exc}")
                 return
             await self._consume(row)
         except asyncio.CancelledError:
@@ -433,6 +464,8 @@ class JobManager:
                 self._set_worker_state("busy")
             elif kind == "progress":
                 progress = {k: event.get(k) for k in ("image", "of", "step", "steps")}
+                if event.get("stage"):  # a music run says which stage it is in (compose, render, finish)
+                    progress["stage"] = event["stage"]
                 self._progress[run_id] = progress
                 self.bus.publish("run.progress", {"id": run_id, "progress": progress})
             elif kind == "image_done":
@@ -441,6 +474,12 @@ class JobManager:
                 except Exception as exc:
                     log.exception("could not store image %s of run %s", event.get("idx"), run_id)
                     storage_error = storage_error or f"An image could not be stored: {exc}"
+            elif kind == "track_done":
+                try:
+                    await self._accept_track(row, event)
+                except Exception as exc:
+                    log.exception("could not store track %s of run %s", event.get("idx"), run_id)
+                    storage_error = storage_error or f"A track could not be stored: {exc}"
             elif kind == "run_finished":
                 if storage_error:
                     self._finish(run_id, "failed", storage_error, "Check free disk space and the server log.")
@@ -462,7 +501,7 @@ class JobManager:
                     self._set_worker_state("ready")
                 return
             elif kind == "worker_exited":
-                message = f"The image worker stopped unexpectedly (exit code {event.get('returncode')})."
+                message = f"The {event.get('kind', 'image')} worker stopped unexpectedly (exit code {event.get('returncode')})."
                 self._finish(run_id, "failed", self._with_partial(run_id, row, message), WORKER_RESTART_HINT)
                 return
 
@@ -490,9 +529,36 @@ class JobManager:
                 self.bus.publish("worker.state", self.worker_status())
 
     # ------------------------------------------------------------ load and unload on request (DESIGN.md §25)
-    async def load_model(self) -> bool:
-        """Start loading the model now, without a run. True if a load was started, False if there was nothing to do
-        (it is loading or loaded already, or a run is using it). Raises ModelRefused."""
+    @staticmethod
+    def _kind_of(row: sqlite3.Row) -> str:
+        return "music" if row["mode"] == "music" else "image"
+
+    async def _prepare_worker(self, kind: str) -> bool:
+        """Make `kind`'s worker the one that is running, starting it (and stopping the other model's, which is idle:
+        nothing calls this while a run is using it) if need be. The caller holds the lifecycle lock. True if a process
+        was started. Raises _MemoryShortfall, with the state already set to an error, if the model would not fit."""
+        if self._worker.alive() and self._model != kind:
+            log.info("unloading the %s model to make room for the %s model", self._model, kind)
+            self._unload_at = None
+            await self._worker.stop()  # its exit report sets the state to unloaded before this returns
+        self._worker = self._clients[kind]
+        if self._worker.alive():
+            return False
+        self._model = kind
+        shortfall = self._memory_shortfall(kind)
+        if shortfall:
+            self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
+            raise _MemoryShortfall(shortfall)
+        self._set_worker_state("loading")
+        await self._worker.start()
+        return True
+
+    async def load_model(self, kind: str = "image") -> bool:
+        """Start loading a model now, without a run. True if a load was started, False if there was nothing to do
+        (it is loading or loaded already, or a run is using a model). Loading one model unloads the other first.
+        Raises ModelRefused."""
+        if kind not in KINDS:
+            raise ModelRefused(422, "unknown_model", f"There is no {kind!r} model; use one of: {', '.join(KINDS)}.")
         if self.settings.idle_timeout_min <= 0:
             raise ModelRefused(409, "no_idle_time",
                                "The model unloads as soon as it is idle (STUDIO_IDLE_TIMEOUT_MIN=0), so loading it ahead of "
@@ -500,33 +566,37 @@ class JobManager:
         async with self._lifecycle:
             if self._current is not None:
                 return False
-            if self._worker.alive():
-                if self._worker_state["state"] in ("loading", "ready", "busy"):
-                    return False
-                # else a worker that is running but has no model (a load that failed, or a run canceled while it started):
-                # it is asked to load again below, and `start` leaves it be
-            else:
-                shortfall = self._memory_shortfall()
-                if shortfall:
-                    self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
-                    raise ModelRefused(409, "not_enough_memory", shortfall, sysinfo.MEMORY_HINT)
+            if self._worker.alive() and self._model == kind and self._worker_state["state"] in ("loading", "ready", "busy"):
+                return False
+            # else nothing is loaded, or the other model is (it is unloaded first), or this worker is running but has
+            # no model (a load that failed, or a run canceled while it started): it is asked to load below
+            try:
+                await self._prepare_worker(kind)
+            except _MemoryShortfall as short:
+                raise ModelRefused(409, "not_enough_memory", str(short), sysinfo.MEMORY_HINT) from short
+            except (WorkerGone, OSError) as exc:
+                message = f"Could not start the {kind} worker: {exc}"
+                self._set_worker_state("error", message, "See the server log for details.")
+                raise ModelRefused(503, "worker_failed", message, "See the server log for details.") from exc
             self._set_worker_state("loading")
             try:
-                await self._worker.start()  # does nothing for a worker that is already running
                 await self._worker.send({"cmd": "load"})
             except (WorkerGone, OSError) as exc:
-                message = f"Could not start the image worker: {exc}"
+                message = f"Could not start the {kind} worker: {exc}"
                 self._set_worker_state("error", message, "See the server log for details.")
                 raise ModelRefused(503, "worker_failed", message, "See the server log for details.") from exc
         self._wakeup.set()  # the job loop is waiting without a worker (or with a timer): let it look again
         return True
 
-    async def unload_model(self) -> bool:
-        """Unload the model now. True if a worker was stopped. Raises ModelRefused while a run is running."""
+    async def unload_model(self, kind: Optional[str] = None) -> bool:
+        """Unload the model now (only `kind`'s, if one is named). True if a worker was stopped. Raises ModelRefused
+        while a run is running."""
+        if kind is not None and kind not in KINDS:
+            raise ModelRefused(422, "unknown_model", f"There is no {kind!r} model; use one of: {', '.join(KINDS)}.")
         async with self._lifecycle:
             if self._current is not None:
                 raise ModelRefused(409, "busy", "The model is working on a run. Cancel it or wait for it to finish.")
-            if not self._worker.alive():
+            if not self._worker.alive() or (kind is not None and self._model != kind):
                 return False
             loading = self._worker_state["state"] == "loading"  # a worker that is loading hears no polite request
             self._unload_at = None
@@ -534,9 +604,9 @@ class JobManager:
         self._wakeup.set()  # drop the idle timer that was running for the worker that is gone
         return True
 
-    def _memory_shortfall(self) -> Optional[str]:
+    def _memory_shortfall(self, kind: str = "image") -> Optional[str]:
         """Fail fast (decision #19) instead of starting a load that can't fit next to Hermes."""
-        needed = self.settings.min_free_gb
+        needed = self.settings.music_min_free_gb if kind == "music" else self.settings.min_free_gb
         if needed is None:
             return None
         mem = sysinfo.memory()
@@ -544,19 +614,19 @@ class JobManager:
             log.warning("could not read free memory; skipping the pre-load memory check")
             return None
         if mem["available_gb"] < needed:
-            return (f"Not enough free memory to load the model: {mem['available_gb']:.1f} GB available, "
-                    f"{needed:g} GB required (STUDIO_MIN_FREE_GB).")
+            setting = "STUDIO_MUSIC_MIN_FREE_GB" if kind == "music" else "STUDIO_MIN_FREE_GB"
+            return (f"Not enough free memory to load the {'music ' if kind == 'music' else ''}model: "
+                    f"{mem['available_gb']:.1f} GB available, {needed:g} GB required ({setting}).")
         return None
 
-    async def _run_probe(self) -> None:
-        """Check the pipeline and GPU without loading weights, so problems show before the first job."""
-        self._probe = {"state": "running"}
+    async def _probe_subprocess(self, kind: str) -> dict[str, Any]:
+        """Run one model's start-up check in a worker process (`--probe`) and return its result."""
         result: dict[str, Any] = {}
         proc: Optional[asyncio.subprocess.Process] = None
         try:
             proc = await asyncio.create_subprocess_exec(
-                *self._worker.command(probe=True), stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, env=worker_env(), limit=1 << 20)
+                *self._clients[kind].command(probe=True), stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, env=worker_env(self.settings, kind), limit=1 << 20)
             try:
                 out, _ = await asyncio.wait_for(proc.communicate(), PROBE_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
@@ -581,6 +651,14 @@ class JobManager:
             raise
         if not result:
             result = {"ok": False, "error": {"kind": "error", "message": "The capability check produced no result.", "hint": "See the server log."}}
+        return result
+
+    async def _run_probe(self) -> None:
+        """Check each pipeline and the GPU without loading weights, so problems show before the first job. The image
+        model's result sets the worker state when it failed; the music model's only says whether the Music tab can work."""
+        self._probe = {"state": "running"}
+        self._music_probe = {"state": "running"}
+        result, music = await asyncio.gather(self._probe_subprocess("image"), self._probe_subprocess("music"))
         if result.get("ok"):
             self._probe = {"state": "done", "supports": result.get("supports") or {}, "device": result.get("device")}
             log.info("capability check passed: %s", result.get("device"))
@@ -591,14 +669,41 @@ class JobManager:
             if self._current is None and not self._worker.alive():
                 state = "unavailable" if error.get("kind") == "unavailable" else "error"
                 self._set_worker_state(state, error.get("message"), error.get("hint"))
-        self.bus.publish("capabilities.updated", {"supports": self.supports()})
+        if music.get("ok"):
+            self._music_probe = {"state": "done", "supports": music.get("supports") or {}, "device": music.get("device")}
+            log.info("music capability check passed: %s", music.get("device"))
+        else:
+            error = music.get("error") or {}
+            self._music_probe = {"state": "failed", "error": error}
+            log.warning("music capability check failed: %s", error.get("message"))
+        self.bus.publish("capabilities.updated", {"supports": self.supports(), "modes": self.modes(), "music": self.music_status()})
         self.bus.publish("worker.state", self.worker_status())
 
     def _with_partial(self, run_id: str, row: sqlite3.Row, message: str) -> str:
-        done = len(self.db.images_for_runs([run_id])[run_id])
+        music = row["mode"] == "music"
+        done = len((self.db.tracks_for_runs if music else self.db.images_for_runs)([run_id])[run_id])
         if done:
-            message += f" {done} of {row['num_images']} image(s) were finished and kept."
+            message += f" {done} of {row['num_images']} {'track(s)' if music else 'image(s)'} were finished and kept."
         return message
+
+    async def _accept_track(self, row: sqlite3.Row, event: dict[str, Any]) -> None:
+        run_id = row["id"]
+        idx = int(event["idx"])
+        path = self.storage.accept_worker_audio(str(event["path"]), run_id)
+        info = await asyncio.to_thread(wavfile.read_wav, path)  # what the file itself says: its length, rate and size
+        self.db.add_track({
+            "id": secrets.token_hex(16),
+            "run_id": run_id,
+            "idx": idx,
+            "seed": int(event["seed"]),
+            "seconds": round(info.seconds, 3),
+            "sample_rate": info.sample_rate,
+            "channels": info.channels,
+            "bytes": info.bytes,
+            "path": self.storage.rel(path),
+            "created_at": utcnow(),
+        })
+        self._publish_run(run_id)
 
     async def _accept_image(self, row: sqlite3.Row, event: dict[str, Any]) -> None:
         run_id = row["id"]
@@ -634,6 +739,17 @@ class JobManager:
         self._publish_queue()
 
     def _job_for(self, row: sqlite3.Row) -> dict[str, Any]:
+        if row["mode"] == "music":
+            return {
+                "run_id": row["id"],
+                "mode": "music",
+                "prompt": row["effective_prompt"],
+                "lyrics": row["lyrics"] or P.INSTRUMENTAL_LYRICS,  # instrumental when the user wrote none
+                "duration": json.loads(row["options_json"]).get("duration") or P.MUSIC_DEFAULT_SECONDS,
+                "steps": row["steps"],
+                "seeds": [row["seed"] + i for i in range(row["num_images"])],
+                "model_id": row["model_id"],
+            }
         inputs = self.db.inputs_for_runs([row["id"]])[row["id"]]
         return {
             "run_id": row["id"],
@@ -679,7 +795,8 @@ class JobManager:
                 log.warning("ignoring %s for run %s (current run: %s)", kind, event.get("run_id"), self._current)
         elif kind == "state":
             if event.get("state") == "ready":
-                self._worker_info = event.get("info") or {}
+                if self._worker.kind == "image":  # the music worker's info describes music, not what pictures can do
+                    self._worker_info = event.get("info") or {}
                 self._set_worker_state("busy" if self._current else "ready")
                 if self._current is None:
                     self._wakeup.set()  # a Load without a run: the idle countdown starts now
@@ -693,15 +810,16 @@ class JobManager:
                 self._wakeup.set()
         elif kind == "worker_exited":
             if event.get("expected"):
+                self._model = None
                 self._set_worker_state("unloaded")
             else:
                 self._set_worker_state(
-                    "error", f"The image worker stopped unexpectedly (exit code {event.get('returncode')}).",
+                    "error", f"The {event.get('kind', 'image')} worker stopped unexpectedly (exit code {event.get('returncode')}).",
                     WORKER_RESTART_HINT,
                 )
             if self._current is not None:
                 self._run_events.put_nowait(event)
         elif kind == "hello":
-            log.info("image worker pid %s says hello (%s pipeline)", event.get("pid"), event.get("pipeline"))
+            log.info("%s worker pid %s says hello (%s pipeline)", event.get("kind", "image"), event.get("pid"), event.get("pipeline"))
         elif kind == "protocol_error":
-            log.error("image worker reported a protocol error: %s", event.get("message"))
+            log.error("%s worker reported a protocol error: %s", self._worker.kind, event.get("message"))

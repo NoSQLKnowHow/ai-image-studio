@@ -1,6 +1,10 @@
 // JSON shapes returned by the backend (backend/studio/serialize.py, api.py, jobs.py).
 
-export type Mode = "generate" | "edit";
+/** Pictures are made in one of two modes; music (DESIGN.md §26) is a third kind of run, on its own tab. */
+export type ImageMode = "generate" | "edit";
+export type Mode = ImageMode | "music";
+/** The two models the studio can hold, one at a time (DESIGN.md §26.4). */
+export type ModelName = "image" | "music";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "canceled";
 export type WorkerState = "unloaded" | "loading" | "ready" | "busy" | "error" | "unavailable";
 
@@ -54,20 +58,22 @@ export interface RunInput {
   thumb_url: string | null;
 }
 
+export type MusicStage = "compose" | "render" | "finish";
+
 export interface Progress {
-  image: number;
+  image: number; // the picture (or the track) being made, 1-based
   of: number;
   step: number;
   steps: number;
+  stage?: MusicStage; // music only: composing (frame by frame), rendering (steps), finishing
 }
 
-export interface Run {
+/** What every run has, pictures or music. */
+interface RunBase {
   id: string;
   status: RunStatus;
-  mode: Mode;
   prompt: string;
   effective_prompt: string;
-  options: RunOptionsSnapshot;
   model_id: string;
   created_at: string;
   started_at: string | null;
@@ -78,15 +84,61 @@ export interface Run {
   queue_position: number | null;
   progress: Progress | null;
   canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
+}
+
+export interface ImageRun extends RunBase {
+  mode: ImageMode;
+  options: RunOptionsSnapshot;
+  lyrics: null;
   inputs: RunInput[]; // an edit's images, in order; empty for Generate
   images: ImageInfo[];
+  tracks: [];
 }
+
+/** One finished track of a music run (DESIGN.md §26.3). `seconds` is what the model really made. */
+export interface TrackInfo {
+  id: string;
+  idx: number;
+  seed: number;
+  seconds: number;
+  sample_rate: number;
+  channels: number;
+  bytes: number;
+  url: string;
+  download_url: string;
+}
+
+/** What a music run used (DESIGN.md §26.5). `fields` is what the page's boxes said, kept for Reuse. */
+export interface MusicOptionsSnapshot {
+  duration: number;
+  steps: number;
+  seed: number;
+  seed_was_random: boolean;
+  tracks: number;
+  instrumental: boolean;
+  fields: Record<string, string>;
+}
+
+export interface MusicRun extends RunBase {
+  mode: "music";
+  options: MusicOptionsSnapshot;
+  lyrics: string | null; // null for an instrumental track
+  inputs: [];
+  images: [];
+  tracks: TrackInfo[];
+}
+
+export type Run = ImageRun | MusicRun;
+
+export const isMusicRun = (run: Run): run is MusicRun => run.mode === "music";
+export const isImageRun = (run: Run): run is ImageRun => run.mode !== "music";
 
 export interface WorkerStatus {
   state: WorkerState;
   detail: string | null;
   hint: string | null;
   pipeline: string;
+  model: ModelName; // the model the worker holds, or last tried to load (DESIGN.md §26.3)
   pid: number | null;
   unload_at: string | null;
   idle_timeout_min: number; // 0 = unload as soon as the queue is empty, so loading ahead of time is not offered (§25)
@@ -98,12 +150,31 @@ export interface Status {
   version: string;
   worker: WorkerStatus;
   queue: { running: string | null; queued: number; cap: number };
-  memory: { total_gb?: number; available_gb?: number; min_free_gb: number | null; worker_rss_gb: number | null };
+  memory: { total_gb?: number; available_gb?: number; min_free_gb: number | null; music_min_free_gb: number | null; worker_rss_gb: number | null };
 }
 
 export interface Range {
   min: number;
   max: number;
+}
+
+/** What the music model needs from the page (DESIGN.md §26.3): the limits the server enforces. */
+export interface MusicLimits {
+  duration: Range & { default: number }; // seconds, an upper bound: the model may end a piece sooner
+  tracks: Range; // versions of one description
+  steps: Range & { default: number }; // rendering steps
+  description_chars: number;
+  lyrics_chars: number;
+  field_chars: number;
+}
+
+/** Whether the music model can run here, and if not, why (the Music tab explains it). */
+export interface MusicAvailability {
+  available: boolean;
+  state: string | null;
+  reason: string | null;
+  hint: string | null;
+  model: string;
 }
 
 export interface Capabilities {
@@ -113,7 +184,7 @@ export interface Capabilities {
   supports: { negative_prompt?: boolean; cfg_scale?: boolean; step_progress?: boolean; transparent?: boolean; edit?: boolean; multi_image?: boolean };
   aspect_ratios: Record<string, [number, number]>;
   defaults: {
-    mode: Mode;
+    mode: ImageMode;
     aspect_ratio: string;
     width: number;
     height: number;
@@ -134,7 +205,9 @@ export interface Capabilities {
     resolutions: number[]; // Edit's 1K / 2K choices (1024, 2048)
     upload_mb: number; // the largest single upload
     edit_warn_units: number; // an edit costing more units than this gets a warning; 0 = never (DESIGN.md §21.4)
+    music: MusicLimits;
   };
+  music: MusicAvailability;
   queue_cap: number;
   device: WorkerStatus["device"];
 }
@@ -154,7 +227,7 @@ export interface UploadResult {
 }
 
 export interface CreateRunBody {
-  mode: Mode;
+  mode: ImageMode;
   prompt: string;
   input_images?: InputRef[]; // Edit only, in the order the model sees them
   options: {
@@ -170,6 +243,20 @@ export interface CreateRunBody {
     full?: FullSize;
     resolution?: number; // Edit only
     shape_from?: number; // Edit only, with Size on Auto
+  };
+}
+
+/** A music run (DESIGN.md §26.3). No lyrics means an instrumental track: the server sends the [Instrumental] tag. */
+export interface CreateMusicBody {
+  mode: "music";
+  prompt: string; // the finished description
+  lyrics?: string;
+  options: {
+    duration: number;
+    tracks: number;
+    steps: number;
+    seed: number | null;
+    fields: Record<string, string>;
   };
 }
 

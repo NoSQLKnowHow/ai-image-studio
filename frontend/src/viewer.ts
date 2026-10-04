@@ -2,13 +2,13 @@
 // "image 2" of the prompt can be matched to a picture. A Generate run has results only.
 
 import type { KnownImage } from "./tray";
-import type { ImageInfo, Run, RunInput } from "./types";
+import type { ImageInfo, ImageRun, RunInput } from "./types";
 
 export type ViewerItem =
   | { kind: "source"; number: number; of: number; input: RunInput }
   | { kind: "result"; number: number; of: number; image: ImageInfo };
 
-export function viewerItems(run: Run): ViewerItem[] {
+export function viewerItems(run: ImageRun): ViewerItem[] {
   const inputs = [...run.inputs].sort((a, b) => a.position - b.position);
   return [
     ...inputs.map<ViewerItem>((input, i) => ({ kind: "source", number: i + 1, of: inputs.length, input })),
@@ -26,7 +26,7 @@ export function viewerTitle(item: ViewerItem, edit: boolean): string {
 }
 
 /** The picture being viewed, as the tray takes it ("Edit this"). */
-export function viewerKnown(run: Run, item: ViewerItem): KnownImage {
+export function viewerKnown(run: ImageRun, item: ViewerItem): KnownImage {
   const label = run.prompt.length > 40 ? `${run.prompt.slice(0, 40)}…` : run.prompt;
   if (item.kind === "source") {
     const { input } = item;

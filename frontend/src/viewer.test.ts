@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { makeRun } from "./testdata";
-import type { ImageInfo, Run, RunInput } from "./types";
+import type { ImageInfo, ImageRun, RunInput } from "./types";
 import { viewerItems, viewerKnown, viewerTitle } from "./viewer";
 
 const image = (idx: number, seed: number): ImageInfo => ({
@@ -10,8 +10,8 @@ const image = (idx: number, seed: number): ImageInfo => ({
 const input = (position: number): RunInput => ({
   position, role: "reference", id: `in${position}`, width: 600, height: 400, has_alpha: false, url: `/api/images/in${position}`, thumb_url: `/api/images/in${position}/thumb`,
 });
-const generateRun = (n: number): Run => makeRun({ images: Array.from({ length: n }, (_, i) => image(i, 100 + i)) });
-const editRun = (sources: number, results: number): Run =>
+const generateRun = (n: number): ImageRun => makeRun({ images: Array.from({ length: n }, (_, i) => image(i, 100 + i)) });
+const editRun = (sources: number, results: number): ImageRun =>
   makeRun({ mode: "edit", prompt: "put image 1 into image 2", inputs: Array.from({ length: sources }, (_, i) => input(i + 1)), images: Array.from({ length: results }, (_, i) => image(i, 500 + i)) });
 
 describe("what the viewer pages through", () => {

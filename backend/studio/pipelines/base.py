@@ -27,6 +27,31 @@ class ImageJob:
     resolution: Optional[int] = None  # Edit: 1024 or 2048; sizes every input and, on Auto, the result
 
 
+@dataclass(frozen=True)
+class MusicJob:
+    run_id: str
+    mode: str  # "music"
+    prompt: str  # the music description, as sent to the model
+    lyrics: str  # never empty: "[Instrumental]" when the track has no singing (the pipeline refuses empty lyrics)
+    duration: int  # the most seconds to make; the model may stop sooner
+    steps: int  # flow-matching steps per window
+    seeds: list[int] = field(default_factory=list)
+    model_id: str = ""
+
+
+@dataclass(frozen=True)
+class MusicResult:
+    pcm: bytes  # interleaved little-endian signed 16-bit samples
+    sample_rate: int
+    channels: int
+    seconds: float  # what was really made
+
+
+# (stage, step, total): "compose" counts audio frames, "render" counts flow-matching steps, "finish" is the last stage.
+# A callback may raise Canceled; the pipeline lets it through.
+MusicProgress = Callable[[str, int, int], None]
+
+
 class Canceled(BaseException):
     """Raised from the step callback to stop an image the user cancelled.
 

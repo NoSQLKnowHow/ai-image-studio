@@ -1,4 +1,4 @@
-import type { Run } from "./types";
+import type { ImageRun, Run } from "./types";
 
 export function timeAgo(iso: string, now: number = Date.now()): string {
   const seconds = Math.max(0, Math.round((now - Date.parse(iso)) / 1000));
@@ -37,10 +37,12 @@ export function expiryText(iso: string | null, now: number = Date.now()): string
 
 /** The note on a canceled card: what was kept. */
 export function canceledText(run: Run): string {
-  const done = run.images.length;
-  if (!done) return "Canceled before any image was finished.";
-  const total = run.options.num_images;
-  return `Canceled. ${done} of ${total} ${total === 1 ? "image" : "images"} finished and kept.`;
+  const music = run.mode === "music";
+  const done = music ? run.tracks.length : run.images.length;
+  const thing = music ? "track" : "image";
+  if (!done) return `Canceled before any ${thing} was finished.`;
+  const total = music ? run.options.tracks : run.options.num_images;
+  return `Canceled. ${done} of ${total} ${total === 1 ? thing : `${thing}s`} finished and kept.`;
 }
 
 export function untilText(iso: string | null, now: number = Date.now()): string | null {
@@ -52,14 +54,14 @@ export function untilText(iso: string | null, now: number = Date.now()): string 
 }
 
 /** "2048×2048" from the finished images, else from the requested size, else "auto". */
-export function sizeText(run: Run): string {
+export function sizeText(run: ImageRun): string {
   const img = run.images[0];
   if (img) return `${img.width}×${img.height}`;
   const { width, height } = run.options;
   return width && height ? `${width}×${height}` : "auto size";
 }
 
-export function seedText(run: Run): string {
+export function seedText(run: ImageRun): string {
   const first = run.options.seed;
   const n = run.options.num_images;
   return n > 1 ? `seeds ${first}–${first + n - 1}` : `seed ${first}`;

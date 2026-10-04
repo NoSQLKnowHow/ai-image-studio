@@ -14,6 +14,7 @@ from typing import Mapping, Optional
 PIPELINES = ("real", "fake")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
+HUB_MODES = ("auto", "offline", "online")  # STUDIO_LOCAL_FILES_ONLY: auto (cache first), true/offline, false/online (§26.11)
 
 
 class ConfigError(Exception):
@@ -41,7 +42,12 @@ class Settings:
     edit_warn_units: int = 8  # an edit costing more "units" (images x (resolution/1024)^2) gets a warning; 0 = never (DESIGN.md §21.4)
     min_free_gb: Optional[float] = None  # None = memory pre-flight check off (set after measuring, M2)
     cpu_offload: bool = False
-    local_files_only: bool = False
+    hub_mode: str = "auto"  # where model files come from (DESIGN.md §26.11): "auto" cache first, "offline" never online, "online" as before
+    music_model: str = "MiniMaxAI/MiniMax-Music3"
+    music_min_free_gb: Optional[float] = None  # like min_free_gb, for the music model (about 24 GB loaded)
+    music_max_seconds: int = 300  # the longest `duration` a run may ask for (the model's own limit is 360)
+    music_max_tracks: int = 4  # versions per music run
+    music_libs: Optional[Path] = None  # a folder put first on the music worker's Python path (the image's own diffusers 0.40.0)
     fake_step_delay_ms: int = 30
     static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
@@ -85,6 +91,20 @@ class Settings:
             if value in _FALSE:
                 return False
             errors.append(f"{name}={raw!r} is not a boolean (use true/false).")
+            return default
+
+        def hub(name: str, default: str) -> str:
+            raw = env.get(name)
+            if raw is None or raw.strip() == "":
+                return default
+            value = raw.strip().lower()
+            if value == "auto":
+                return "auto"
+            if value in _TRUE:
+                return "offline"
+            if value in _FALSE:
+                return "online"
+            errors.append(f"{name}={raw!r} must be auto, true or false.")
             return default
 
         def number(name: str, default: float, lo: float, hi: float) -> float:
@@ -150,7 +170,12 @@ class Settings:
             edit_warn_units=integer("STUDIO_EDIT_WARN_UNITS", cls.edit_warn_units, 0, 1000),
             min_free_gb=optional_float("STUDIO_MIN_FREE_GB", 0.0),
             cpu_offload=boolean("STUDIO_CPU_OFFLOAD", cls.cpu_offload),
-            local_files_only=boolean("STUDIO_LOCAL_FILES_ONLY", cls.local_files_only),
+            hub_mode=hub("STUDIO_LOCAL_FILES_ONLY", cls.hub_mode),
+            music_model=text("STUDIO_MUSIC_MODEL", cls.music_model),
+            music_min_free_gb=optional_float("STUDIO_MUSIC_MIN_FREE_GB", 0.0),
+            music_max_seconds=integer("STUDIO_MUSIC_MAX_SECONDS", cls.music_max_seconds, 10, 360),
+            music_max_tracks=integer("STUDIO_MUSIC_MAX_TRACKS", cls.music_max_tracks, 1, 8),
+            music_libs=Path(env["STUDIO_MUSIC_LIBS"]).expanduser() if env.get("STUDIO_MUSIC_LIBS", "").strip() else None,
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )

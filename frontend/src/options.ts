@@ -2,7 +2,7 @@
 // (DESIGN.md §6). Every saved field is validated on its own, so a corrupt or outdated value can
 // only ever reset that one field to its default, never break the page.
 
-import type { Capabilities, CreateRunBody, FullSize, InputRef, Mode, Range, Run } from "./types";
+import type { Capabilities, CreateRunBody, FullSize, ImageMode, ImageRun, InputRef, Mode, Range } from "./types";
 
 export const OPTIONS_KEY = "studio.options.v1";
 export const PROMPT_KEY = "studio.prompt.v1";
@@ -26,7 +26,7 @@ export interface Size {
 }
 
 export interface Options {
-  mode: Mode;
+  mode: ImageMode;
   aspect: string; // Generate's size: a preset name from the capabilities, or CUSTOM
   editAspect: string; // Edit's size: AUTO, a preset name, or CUSTOM (the width and height below are shared)
   resolution: Resolution; // Edit only: 1K or 2K
@@ -330,7 +330,7 @@ export function draftRequest(prompt: string, options: Options, caps: Capabilitie
 /** The size and steps Regenerate larger would use for this run, or null when it isn't offered: only a finished
  *  Generate run that remembers a full size bigger than itself (so not a full-size run, a failed or canceled one, or one
  *  made before version 1.4). */
-export function largerTarget(run: Run): FullSize | null {
+export function largerTarget(run: ImageRun): FullSize | null {
   const { width, height, full } = run.options;
   if (run.status !== "done" || run.mode !== "generate" || !full || !width || !height) return null;
   return isLarger(full, { width, height }) ? full : null;
@@ -339,7 +339,7 @@ export function largerTarget(run: Run): FullSize | null {
 /** Regenerate larger: the same prompt, options and seeds at the full size and steps, as an ordinary run (no draft, and
  *  no `full` of its own, so it has no button in turn). The picture will differ from the small one (DESIGN.md §23.1).
  *  Given `image` (the viewer), it enlarges that one image: its own seed and a single image (§24.1). */
-export function largerRequest(run: Run, image?: { seed: number }): CreateRunBody | null {
+export function largerRequest(run: ImageRun, image?: { seed: number }): CreateRunBody | null {
   const target = largerTarget(run);
   if (!target) return null;
   const o = run.options;
@@ -374,7 +374,7 @@ function presetAndScale(width: number, height: number, caps: Capabilities): { as
 /** Reuse: everything the run used, seed locked, so a tweaked prompt is a fair comparison (decision #11). A draft is
  *  different: its small size, few steps and seed are not what you want next, so only the prompt-side options come back
  *  and your own size, steps and seed stay as they are (DESIGN.md §22.2). */
-export function optionsFromRun(run: Run, caps: Capabilities, current: Options): Options {
+export function optionsFromRun(run: ImageRun, caps: Capabilities, current: Options): Options {
   const { width, height } = run.options;
   if (run.mode === "edit") return editOptionsFromRun(run, caps, current);
   const common = {
@@ -402,7 +402,7 @@ export function optionsFromRun(run: Run, caps: Capabilities, current: Options): 
 
 /** Reuse of an Edit run: the same options, with Size back on Auto if the run had no size, and the resolution it
  *  used; the images come back in the tray (the page does that). Seed locked, as for any Reuse (decision #11). */
-function editOptionsFromRun(run: Run, caps: Capabilities, current: Options): Options {
+function editOptionsFromRun(run: ImageRun, caps: Capabilities, current: Options): Options {
   const { width, height } = run.options;
   const match = width && height ? presetAndScale(width, height, caps) : null;
   const size = !width || !height
@@ -425,7 +425,7 @@ function editOptionsFromRun(run: Run, caps: Capabilities, current: Options): Opt
 }
 
 /** Retry: exactly the same request again, same seed included. */
-export function retryRequest(run: Run): CreateRunBody {
+export function retryRequest(run: ImageRun): CreateRunBody {
   const o = run.options;
   return {
     mode: run.mode,

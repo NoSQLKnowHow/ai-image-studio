@@ -201,7 +201,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .banner { background: var(--warning-soft); color: var(--warning); text-align: center; padding: 8px 16px; font-size: 14px; font-weight: 550; border-bottom: 1px solid var(--border); }
 
 /* ------------------------------------------------------------------ prompt card */
-.prompt-card {
+.prompt-card, .music-form {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md); padding: 14px; display: grid; gap: 10px;
 }
@@ -408,9 +408,9 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .preset-size { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 
 .field { display: grid; gap: 6px; border: 0; margin: 0; padding: 0; min-width: 0; }
-.field > label, .field > legend { font-size: 14px; font-weight: 600; color: var(--text); padding: 0; }
+.field > label, .field > legend, .field > .field-label { font-size: 14px; font-weight: 600; color: var(--text); padding: 0; }
 .field output { color: var(--accent-text); font-variant-numeric: tabular-nums; margin-left: 6px; }
-.field input[type="number"], .field textarea {
+.field input[type="number"], .field input[type="text"], .field textarea {
   width: 100%; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface);
   padding: 8px 10px; font-size: 15px;
 }
@@ -472,3 +472,64 @@ fieldset.field { gap: 8px; }
 .model-action { min-height: 32px; padding: 0 12px; font-size: 13px; border-radius: 999px; flex: none; }
 /* On a phone the button is an icon, and the decorative logo square gives its room back to the pill, so the state still reads */
 @media (max-width: 520px) { .model-action-label { display: none; } .model-action { padding: 0; width: 32px; } .brand-mark { display: none; } .pill { padding: 0 10px; gap: 6px; } .header-right { gap: 4px; } .header-inner { gap: 8px; } .theme-toggle { width: 32px; } }
+
+/* ------------------------------------------------------------------ tabs and the Music tab (DESIGN.md §26) */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: -4px; }
+.tab {
+  position: relative; display: inline-flex; align-items: center; gap: 7px; min-height: 42px; padding: 0 18px;
+  border: 0; background: none; color: var(--text-2); font-weight: 600; font-size: 15px; cursor: pointer; border-radius: 10px 10px 0 0;
+}
+.tab:hover { background: var(--surface-2); color: var(--text); }
+.tab[aria-selected="true"] { color: var(--accent-text); }
+.tab[aria-selected="true"]::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 3px; border-radius: 3px 3px 0 0; background: var(--accent); }
+.tab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulse 1.2s ease-in-out infinite; }
+.tab-panel { display: grid; gap: 16px; min-width: 0; }
+.tab-panel[hidden] { display: none; }
+
+.music-title h2, .music-unavailable h2 { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 650; }
+.music-title h2 svg, .music-unavailable h2 svg { font-size: 19px; color: var(--accent-text); }
+.music-unavailable { gap: 8px; }
+.music-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.music-wide { grid-column: 1 / -1; }
+.music-lyrics { display: grid; gap: 10px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.music-lyrics .field input[type="text"], .music-lyrics .field textarea { background: var(--surface); }
+.music-lyrics-box { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; line-height: 1.5; }
+.tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.music-description .prompt-input { font-size: 14px; field-sizing: content; min-height: 8em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.music-description-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; }
+.music-settings { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--border-strong); background: var(--surface);
+  font-size: 13px; font-weight: 600; color: var(--text-2); cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.chip:hover { background: var(--surface-2); color: var(--text); }
+.chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.music-advanced { border: 1px solid var(--border); border-radius: var(--radius); padding: 0 12px; }
+.music-advanced summary { cursor: pointer; padding: 10px 0; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.music-advanced-body { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; padding: 2px 0 14px; align-items: start; }
+.music-note { margin: 0; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--surface-2); color: var(--text-2); font-size: 13px; }
+.music-licence { margin: 0; color: var(--text-3); font-size: 12px; }
+.music-licence a { color: var(--accent-text); }
+@media (max-width: 640px) {
+  .music-grid, .music-settings, .music-advanced-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+.music-card { grid-template-columns: minmax(0, 1fr); }
+.music-mark { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 8px; background: var(--accent-soft); color: var(--accent-text); }
+.music-mark svg { font-size: 14px; }
+.run-lyrics { font-size: 13px; color: var(--text-2); }
+.run-lyrics summary { cursor: pointer; font-weight: 600; }
+.run-lyrics pre { margin: 6px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; max-height: 14em; overflow: auto; background: var(--surface-2); border-radius: var(--radius-sm); padding: 8px 10px; }
+.tracks { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.track { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.track-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; }
+.track-name { font-weight: 650; font-size: 14px; font-variant-numeric: tabular-nums; }
+.track-seed { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
+.track-head .button { margin-left: auto; }
+.track audio { width: 100%; height: 40px; }
+.phases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.phase { display: grid; gap: 4px; }
+.phase-label { font-size: 12px; font-weight: 600; color: var(--text-3); }
+@media (max-width: 520px) { .phases { grid-template-columns: minmax(0, 1fr); } .tab { flex: 1 1 0; justify-content: center; } }
+

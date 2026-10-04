@@ -463,6 +463,118 @@ header does not scroll sideways.
 
 ---
 
+## 20. Music: the model, from a terminal and through the API (new in 1.8)
+
+This section is the first time the **real MiniMax-Music3 model** runs anywhere: everything before it was checked against
+a stand-in and, for the pipeline's own code, against a tiny random-weight copy on a CPU. Expect surprises, and write
+down what you see. The Music tab (1.9) is checked at the end of this section; the model, its speed and its memory come first, with
+`scripts/minimax_music.py`, which uses the very same pipeline class the studio uses.
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.8** or later. Look at the build's check
+lines: `docker compose build 2>&1 | grep check_image` should include **`music worker: diffusers 0.40.0 from
+/opt/music-libs`** and end with `check_image: OK`. If it says PROBLEM, that message is the first thing to send back.
+**Free disk:** the music model is about 29 GB (up to 57 GB if the whole repository is fetched). Check
+`df -h ~/.cache/huggingface` (or your `HF_CACHE_DIR`) has 60 GB.
+
+**a) Download it ahead of time (optional, about 29 GB).** Press **Load model** later and the download happens then
+(the pill says *Loading…* for its whole length); or do it now, only the parts the pipeline loads:
+
+```bash
+docker compose exec studio hf download MiniMaxAI/MiniMax-Music3 --include "modular_model_index.json" "config.json" \
+  "condition_encoder/*" "language_model/*" "rvq_depth_decoder/*" "scheduler/*" "tokenizer/*" "transformer/*" "vocoder/*"
+```
+
+**Write down:** how long it took and `du -sh ~/.cache/huggingface/hub/models--MiniMaxAI--MiniMax-Music3`. (If the
+first load later downloads *more*, the pipeline fetches the whole repository: tell me, and how big.)
+
+**b) See what would be sent, loading nothing.**
+
+```bash
+docker compose exec studio python /app/scripts/minimax_music.py --genre "acoustic pop" --bpm 96 --key "C major" \
+  --mood "warm and intimate, building gently" --instruments "fingerpicked guitar and soft piano" --dry-run
+```
+
+Good: the description in the three-section layout, the lyrics `[Instrumental]`, and no model loaded.
+
+**c) A short real track (the important one).** Open a second terminal with `watch -n 2 free -h` (or `docker stats`):
+
+```bash
+docker compose exec studio python /app/scripts/minimax_music.py --genre "ambient" --mood "slow, spacious" \
+  --instruments "soft pads and a piano" --duration 15 --seed 7 --out /data/try15.wav
+```
+
+The file appears at `./data/try15.wav` on the Spark. Good: it prints *loaded in N s*, then *composing*, *rendering*,
+*finishing*, then *made N s of music in N s* and the licence reminder. **Write down:** the load time, the time to make 15
+seconds (so the seconds of work per second of music), and the **lowest "available" memory** you saw in the other
+terminal. The design's guess is at least 1.5 s of work per second of music and about 24 GB loaded (§26.7); say how far off it is.
+Then **listen**: does it sound like music, with no singing? **Is the length 15 s?** (It is only an upper bound.)
+
+**d) Longer.** The same with `--duration 60`, and if you are patient `--duration 180`. **Write down** the times: is the
+cost per second steady? How long would the 5-minute maximum take? The page shows no estimate until you tell me one.
+
+**e) Instrumental, and what helps.** Listen for any vocals in (c) and (d). Then run the same seed with your own
+description text that *leaves out* "Instrumental, no vocals." (`--prompt-file`, with the lyrics still `[Instrumental]`),
+and once more with `--lyrics "[Verse]\nla la la\n[Chorus]\nla la la"` to hear what a vocal track is. **Write down**
+whether the `[Instrumental]` tag alone is enough, whether the extra sentence changes anything, and whether the same seed
+with the same text gives the same track twice (run (c) again and compare the files with `cmp`).
+
+**f) Cancel.** Start a 60-second track and press **Ctrl+C** while it says *composing*, then while it says *rendering*.
+Good: it stops within a second or two and exits (code 130), and the next run works. **Write down** how fast it stopped.
+
+**g) No more downloading.** Run (c) again with `--hub offline`: it must work with no network use (it only reads the
+cache). Then the same through the studio, which loads from the cache by default (`STUDIO_LOCAL_FILES_ONLY=auto`):
+unplug the Spark's network (or block Hugging Face) and press the studio's load below. Good: it loads. If you
+can, watch `docker compose logs studio` for anything that looks like a download.
+
+**h) Through the studio's API (the Music tab does exactly this).**
+
+```bash
+curl -s -X POST localhost:8080/api/model/load -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' -d '{"model":"music"}'
+curl -s localhost:8080/api/status | python3 -m json.tool | grep -E '"state"|"model"|"detail"'   # until state is "ready", model "music"
+curl -s -X POST localhost:8080/api/runs -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' \
+  -d '{"mode":"music","prompt":"Global Metadata\nBasic Attributes: ambient.\nInstrumental, no vocals.","options":{"duration":15,"tracks":1}}'
+# then poll   curl -s localhost:8080/api/runs/<id>   until "status" is "done", and fetch the track:
+curl -s -o /tmp/api.wav 'localhost:8080/api/audio/<track id>?download=1' && strings /tmp/api.wav | grep machine-generated
+```
+
+Good: the music model loads, the image model is **not** loaded at the same time (`free -h` shows only one), the run
+finishes with a track, and the WAV carries the note that it is machine-generated. Then make a picture (Generate): the
+music model is unloaded first (`"model": "image"` in the status afterwards) and the memory comes back. **Write down** how
+long the switch takes in each direction.
+
+**i) The memory check.** With the music model's check at 40 GB (the default), make memory scarce as in step 12 and press
+Load for the music model: nothing starts, the message says *music model*, and nothing is left loaded.
+
+**j) The page (new in 1.9).** Update (`git pull && docker compose up -d --build`; the title should read **v1.9**) and
+open the page. **Good:** two tabs, *Images* and *Music*; the arrow keys switch between them and the choice is still
+there after a reload; the Music tab has the boxes, the description below them (try changing a box, then the
+description by hand, then *Rebuild from fields*), *Add lyrics* (off), the length shortcuts, and under the form the
+note naming MiniMax-Music3 and its licence. If the tab says *Music isn't available*, the reason and hint it shows are
+the first thing to send back.
+
+**k) A track from the page.** On the Music tab: genre *ambient*, mood *slow, spacious*, instruments *soft pads and a
+piano*, length **15 s**, then **Make music**. **Good:** the pill says *Loading music model…* (the first load is long), then
+the card shows **Composing** and **Rendering** bars in turn, then a player. **Write down** the same numbers as in (c),
+now through the page, and whether the card's *Track · 0:15* is the length you got. Play it **on the Spark's browser
+and on your phone** (the page is on your network): it should play and seek. Press *Download WAV* and check the name
+(`music_ambient_..._15s_s<seed>_<date>.wav`).
+
+**l) Cancel from the page.** Make a 60 s track and press **Cancel** while the *Composing* bar moves, then (another
+track) while *Rendering* does. **Good:** a dialog asks first; *Stop making music* turns the card to *Canceled* within a
+second or two, the model is **not** unloaded (the pill still says *Music model ready*), and the next track starts at once.
+**Write down** how long the stop took in each phase.
+
+**m) The buttons on each tab.** With the music model loaded: the Music tab offers **Unload model**, the Images tab
+offers **Load model**, whose tooltip says the music model is unloaded first. Press it. **Good:** the pill goes
+*Loading image model…* then *Image model ready*, and the memory of the music model comes back (`free -h`). Then the Music
+tab's **Load music model** swaps them back. **Write down** the time of each swap and the free memory before and after.
+
+**n) A phone.** Open the page on your phone. **Good:** the tabs, the form, the length shortcuts and a finished track
+fit the screen with no sideways scrolling, and the player and *Download WAV* are reachable. A screenshot of anything
+that does not is the most useful thing you can send.
+
+---
+
 ## Troubleshooting
 
 | You see | What to do |
@@ -496,3 +608,5 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 9. From step 17: the two times, and how different the small and the regenerated pictures are.
 10. From step 18 (the Spark test for edits, M5c): the times and memory for each case, whether the model followed "image 1" and "image 2", what it did with a transparent picture, which mask colour worked, and the numbers you suggest for the cap and the cost warning.
 11. From step 19: how long Load model takes (first time and cached), how much memory it takes and how much Unload gives back, and anything that did not match "Good".
+12. From step 20 a) to i) (the music model, the first real run): the download size and time, the load time, the seconds of work per second of music at 15, 60 and (if you can) 180 seconds, the lowest available memory, whether the track was instrumental with the tag alone, whether the same seed repeats, how fast Ctrl+C stopped it, whether anything downloaded after the first time, and anything that did not match "Good".
+13. From step 20 j) to n) (the Music tab on the Spark): the numbers from (k), (l) and (m), whether the track played and seeked on your phone, and a screenshot of anything on the phone that did not fit.

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { ApiError, api } from "./api";
 import { Header } from "./components/Header";
+import { MusicPanel } from "./components/MusicPanel";
+import { Tabs, panelId, tabId } from "./components/Tabs";
 import { ConfirmCancel, ConfirmDelete, Lightbox, cardReuseButton, type ViewerNotice } from "./components/Dialogs";
 import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { OptionsDrawer } from "./components/OptionsDrawer";
@@ -8,7 +10,8 @@ import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { Tray } from "./components/Tray";
 import { copyText, useNow, useToasts } from "./hooks";
-import type { ModelKind } from "./model";
+import type { ModelAction } from "./model";
+import { readTab, saveTab, type TabId } from "./music";
 import {
   PROMPT_KEY,
   browserStore,
@@ -28,7 +31,7 @@ import {
 } from "./options";
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
-import type { CreateRunBody, ImageInfo, Run } from "./types";
+import { isImageRun, isMusicRun, type CreateRunBody, type ImageInfo, type ImageRun, type MusicRun, type Run } from "./types";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
 import { viewerItems, viewerKnown } from "./viewer";
@@ -56,6 +59,7 @@ export default function App() {
   const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
+  const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images or Music (DESIGN.md §26.1), remembered
   const { toasts, push, dismiss } = useToasts();
   const now = useNow(30_000);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -152,13 +156,13 @@ export default function App() {
 
   // Load or unload the model from the header. The new state arrives over the event stream like every other change, so
   // the answer is not used to move the pill: it could overtake a later event and make the pill go backwards.
-  const changeModel = useCallback(async (kind: ModelKind) => {
+  const changeModel = useCallback(async ({ kind, model }: ModelAction) => {
     setModelBusy(true);
     try {
-      await (kind === "load" ? api.loadModel() : api.unloadModel());
+      await (kind === "load" ? api.loadModel(model) : api.unloadModel(model));
       return true;
     } catch (error) {
-      push("error", `Couldn't ${kind} the model: ${(error as ApiError).message}`);
+      push("error", `Couldn't ${kind} the ${model === "music" ? "music model" : "model"}: ${(error as ApiError).message}`);
       return false;
     } finally {
       setModelBusy(false);
@@ -171,7 +175,12 @@ export default function App() {
     setFormProblem(null);
   };
 
-  const reuse = (run: Run) => {
+  const changeTab = (next: TabId) => {
+    setTab(next);
+    saveTab(next, store);
+  };
+
+  const reuse = (run: ImageRun) => {
     if (!caps || !options) return;
     setPrompt(run.prompt);
     setOptions(optionsFromRun(run, caps, options));
@@ -194,7 +203,7 @@ export default function App() {
 
   // From a card the answer is a toast; from the viewer (`image` given: that one image, DESIGN.md §24) it is a note
   // inside the viewer, because the page behind a modal, toasts included, is hidden from screen readers.
-  const regenerateLarger = (run: Run, image?: ImageInfo) =>
+  const regenerateLarger = (run: ImageRun, image?: ImageInfo) =>
     once(`larger:${run.id}:${image?.id ?? "run"}`, async () => {
       const body = largerRequest(run, image);
       if (!body) return;
@@ -265,7 +274,7 @@ export default function App() {
     push("info", "Prompt filled in, and Transparent is on.");
   };
 
-  const retry = async (run: Run) => {
+  const retry = async (run: ImageRun) => {
     try {
       dispatch({ type: "runUpsert", run: await api.createRun(retryRequest(run)) });
     } catch (error) {
@@ -274,8 +283,9 @@ export default function App() {
   };
 
   const copy = async (run: Run) => {
+    const what = isMusicRun(run) ? "description" : "prompt";
     const ok = await copyText(run.prompt);
-    push(ok ? "success" : "error", ok ? "Prompt copied." : "Couldn't copy. Select the prompt text instead.");
+    push(ok ? "success" : "error", ok ? `${what[0].toUpperCase()}${what.slice(1)} copied.` : `Couldn't copy. Select the ${what} text instead.`);
   };
 
   /** Run `task` unless the same one is already under way for this run (a double click, or Enter held down). */
@@ -362,7 +372,13 @@ export default function App() {
     );
   }
 
-  const lightboxRun = lightbox ? state.runs[lightbox.runId] ?? null : null;
+  const found = lightbox ? state.runs[lightbox.runId] : undefined;
+  const lightboxRun = found && isImageRun(found) ? found : null;
+  // Each tab shows only its own runs (DESIGN.md §26.1); the queue they share is on both.
+  const imageRuns = state.order.map((id) => state.runs[id]).filter(isImageRun);
+  const musicRuns = state.order.map((id) => state.runs[id]).filter(isMusicRun);
+  const working = (run: Run) => run.status === "queued" || run.status === "running";
+  const musicAvailable = !!caps?.modes.includes("music");
   const canEdit = !!caps?.modes.includes("edit");
   const editing = options?.mode === "edit";
   const cost = caps && options ? editCost(tray.items.length, options.resolution, caps.limits.edit_warn_units) : null;
@@ -370,13 +386,15 @@ export default function App() {
   return (
     <>
       <a className="skip-link" href="#prompt">Skip to the prompt</a>
-      <Header status={status} now={now} busy={modelBusy} onModel={changeModel} />
+      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : "image"} musicAvailable={musicAvailable} onModel={changeModel} />
       <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
       <main className="app-main">
         {!caps || !options ? (
           <p className="loading" role="status">Connecting to the studio…</p>
         ) : (
           <>
+            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working) }} />
+            <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
             <PromptBar
               ref={promptRef}
               caps={caps}
@@ -424,14 +442,14 @@ export default function App() {
             <section className="timeline" aria-label="Your runs">
               {!state.runsReady ? (
                 <p className="loading" role="status">Loading your runs…</p>
-              ) : state.order.length === 0 ? (
+              ) : imageRuns.length === 0 ? (
                 <div className="empty-state">
                   <p className="empty-title">No images yet</p>
                   <p>Describe something above and press Generate. Every run lands here with its prompt and settings.</p>
                 </div>
               ) : (
-                state.order.map((id) => {
-                  const run = state.runs[id];
+                imageRuns.map((run) => {
+                  const id = run.id;
                   return (
                     <RunCard
                       key={id}
@@ -470,6 +488,25 @@ export default function App() {
               hasAlphaInput={tray.items.some((item) => item.hasAlpha)}
               onChange={changeOptions}
               onReset={() => changeOptions(defaultOptions(caps))}
+            />
+            </div>
+            <MusicPanel
+              hidden={tab !== "music"}
+              caps={caps}
+              status={status}
+              store={store}
+              runs={musicRuns}
+              runsReady={state.runsReady}
+              more={!!state.nextBefore}
+              loadingOlder={loadingOlder}
+              now={now}
+              push={push}
+              onRun={(run: MusicRun) => dispatch({ type: "runUpsert", run })}
+              onLoadOlder={() => void loadOlder()}
+              onCancel={requestCancel}
+              onToggleKeep={(run) => void toggleKeep(run)}
+              onDelete={setPendingDelete}
+              onCopy={(run) => void copy(run)}
             />
           </>
         )}

@@ -6,8 +6,13 @@ progress bars and C libraries can never corrupt the protocol channel.
 
 Commands: {"cmd": "load"} | {"cmd": "run", "job": {...}} | {"cmd": "cancel", "run_id": "..."}
           | {"cmd": "shutdown"}
-Events:   hello, state, load_failed, run_started, progress, image_done,
+Events:   hello, state, load_failed, run_started, progress, image_done, track_done,
           run_finished, run_failed, run_canceled, protocol_error, bye
+
+A worker holds one model (`--kind image` or `--kind music`, DESIGN.md §26.4). A music job is
+{"run_id", "mode": "music", "prompt", "lyrics", "duration", "steps", "seeds", "model_id"}; each finished track is
+reported with `track_done` (`idx`, `seed`, `path`, `seconds`, `sample_rate`, `channels`), and `progress` carries the
+`stage` (compose, render, finish) the pipeline is in.
 
 Commands are read by a thread of their own, so a cancel is seen while a run is under way. It
 stops the run at the next step (or before the next image, or once a model load in progress has
@@ -31,6 +36,8 @@ import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator, Optional, TextIO
+
+from . import wavfile
 
 PROTOCOL_VERSION = 1
 PROGRESS_INTERVAL = 0.25  # seconds between progress events (first and last step always sent)
@@ -81,7 +88,8 @@ def save_png(image: Any, path: Path, meta: dict[str, Any]) -> None:
 
 
 class Worker:
-    def __init__(self, pipeline: Any, data_dir: Path, emit: Emitter):
+    def __init__(self, pipeline: Any, data_dir: Path, emit: Emitter, kind: str = "image"):
+        self.kind = kind
         self.pipeline = pipeline
         self.data_dir = data_dir.resolve()
         self.emit = emit
@@ -153,7 +161,10 @@ class Worker:
 
     def run(self, job_dict: Any) -> None:
         try:
-            self._run(job_dict)
+            if self.kind == "music":
+                self._run_music(job_dict)
+            else:
+                self._run(job_dict)
         finally:
             self._canceled.clear()  # a cancel only ever concerns the run that was current
 
@@ -226,11 +237,97 @@ class Worker:
         self.emit("run_finished", run_id=job.run_id, completed=completed)
 
 
-def run_probe(pipeline: str, emit: Emitter) -> int:
+    # ------------------------------------------------------------------ music
+    def _music_progress(self, run_id: str, index: int, count: int) -> Callable[[str, int, int], None]:
+        """The callback the music pipeline calls for every frame and step. It checks for Cancel every time and reports
+        to the API when the stage changes, at the first and last step of a stage, and otherwise every PROGRESS_INTERVAL."""
+        from .pipelines import Canceled
+
+        last = 0.0
+        stage_seen = ""
+
+        def on_progress(stage: str, step: int, total: int) -> None:
+            nonlocal last, stage_seen
+            if run_id in self._canceled:  # checked on every call, however rarely progress is reported
+                raise Canceled()
+            now = time.monotonic()
+            if stage != stage_seen or step in (1, total) or now - last >= PROGRESS_INTERVAL:
+                stage_seen, last = stage, now
+                self.emit("progress", run_id=run_id, image=index + 1, of=count, step=step, steps=total, stage=stage)
+
+        return on_progress
+
+    def _run_music(self, job_dict: Any) -> None:
+        from .pipelines import Canceled, MusicJob, PipelineError
+
+        run_id = job_dict.get("run_id") if isinstance(job_dict, dict) else None
+        try:
+            job = MusicJob(**job_dict)
+            if not _RUN_ID.match(job.run_id) or not job.seeds:
+                raise ValueError("bad run_id or empty seeds")
+            if job.mode != "music" or not job.lyrics.strip() or not job.prompt.strip():
+                raise ValueError("a music job needs a description and lyrics (the tag [Instrumental] for none)")
+        except (TypeError, ValueError) as exc:
+            self.emit("run_failed", run_id=run_id, completed=0,
+                      error={"kind": "error", "message": f"Malformed job: {exc}", "hint": None})
+            return
+
+        if not self.loaded and not self.load():
+            self.emit("run_failed", run_id=job.run_id, completed=0, error=self.last_load_error)
+            return
+
+        if job.run_id in self._canceled:  # cancelled while the model was loading
+            self.emit("run_canceled", run_id=job.run_id, completed=0)
+            return
+        self.emit("run_started", run_id=job.run_id)
+        completed = 0
+        for index, seed in enumerate(job.seeds):
+            if job.run_id in self._canceled:
+                self.emit("run_canceled", run_id=job.run_id, completed=completed)
+                return
+            started = time.monotonic()
+            try:
+                made = self.pipeline.generate(job, index, seed, self._music_progress(job.run_id, index, len(job.seeds)))
+                rel = f"audio/{job.run_id}/{index}.wav"
+                wavfile.write_wav(self.data_dir / rel, made.pcm, made.sample_rate, made.channels, {
+                    "title": job.prompt.replace("\n", " ")[:80],
+                    "software": "ai-image-studio",
+                    "comment": f"Generated by {job.model_id or 'a music model'}: machine-generated music. If you share it "
+                               f"publicly, say so (the model's licence asks for that). Seed {seed}. Description: "
+                               f"{' '.join(job.prompt.split())[:600]}",
+                    "date": time.strftime("%Y-%m-%d"),
+                })
+            except Canceled:
+                log.info("run %s canceled during track %d/%d", job.run_id, index + 1, len(job.seeds))
+                self.emit("run_canceled", run_id=job.run_id, completed=completed)
+                return
+            except PipelineError as exc:
+                self.emit("run_failed", run_id=job.run_id, completed=completed, error=exc.as_dict())
+                return
+            except OSError as exc:
+                message = ("The disk is full; the track could not be saved." if exc.errno == errno.ENOSPC
+                           else f"The track could not be saved: {exc.strerror or exc}")
+                self.emit("run_failed", run_id=job.run_id, completed=completed,
+                          error={"kind": "error", "message": message, "hint": None})
+                return
+            except Exception as exc:
+                log.exception("music generation crashed")
+                self.emit("run_failed", run_id=job.run_id, completed=completed,
+                          error={"kind": "error", "message": f"{type(exc).__name__}: {exc}", "hint": None})
+                return
+            completed += 1
+            log.info("run %s track %d/%d done in %.1fs (%.1fs of music)", job.run_id, index + 1, len(job.seeds),
+                     time.monotonic() - started, made.seconds)
+            self.emit("track_done", run_id=job.run_id, idx=index, seed=seed, path=rel, seconds=made.seconds,
+                      sample_rate=made.sample_rate, channels=made.channels)
+        self.emit("run_finished", run_id=job.run_id, completed=completed)
+
+
+def run_probe(pipeline: str, emit: Emitter, kind: str = "image") -> int:
     from .pipelines import PipelineError, probe_pipeline
 
     try:
-        result = probe_pipeline(pipeline)
+        result = probe_pipeline(pipeline, kind)
     except PipelineError as exc:
         if exc.__cause__ is not None:  # the full story, for `docker compose logs`
             log.error("capability check failed: %s", exc.message, exc_info=exc.__cause__)
@@ -293,11 +390,13 @@ def read_commands(lines: Iterable[str], commands: "queue.Queue[Optional[dict[str
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m studio.worker")
+    parser.add_argument("--kind", choices=["image", "music"], default="image", help="which model this worker holds")
     parser.add_argument("--pipeline", choices=["fake", "real"], required=True)
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--cpu-offload", action="store_true")
-    parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument("--hub-mode", choices=["auto", "offline", "online"], default="auto",
+                        help="where model files come from: the cache first, only the cache, or the hub as before")
     parser.add_argument("--fake-step-delay-ms", type=int, default=30)
     parser.add_argument("--probe", action="store_true", help="report capabilities without loading weights, then exit")
     args = parser.parse_args(argv)
@@ -310,14 +409,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     emit = Emitter(protocol)
 
     if args.probe:
-        return run_probe(args.pipeline, emit)
+        return run_probe(args.pipeline, emit, args.kind)
 
     from .pipelines import make_pipeline
 
     pipeline = make_pipeline(args.pipeline, model=args.model, cpu_offload=args.cpu_offload,
-                             local_files_only=args.local_files_only, fake_step_delay_ms=args.fake_step_delay_ms)
-    worker = Worker(pipeline, Path(args.data_dir), emit)
-    emit("hello", pid=os.getpid(), pipeline=args.pipeline, protocol=PROTOCOL_VERSION)
+                             hub_mode=args.hub_mode, fake_step_delay_ms=args.fake_step_delay_ms, kind=args.kind)
+    worker = Worker(pipeline, Path(args.data_dir), emit, kind=args.kind)
+    emit("hello", pid=os.getpid(), pipeline=args.pipeline, kind=args.kind, protocol=PROTOCOL_VERSION)
 
     commands: "queue.Queue[Optional[dict[str, Any]]]" = queue.Queue()
     threading.Thread(target=read_commands, args=(stdin_lines(), commands, worker, emit), name="commands", daemon=True).start()

@@ -1,10 +1,10 @@
 // Fixtures for unit tests, shaped like the real API responses.
-import type { Capabilities, Run, Status } from "./types";
+import type { Capabilities, ImageRun, MusicRun, Status } from "./types";
 
 export const CAPS: Capabilities = {
   pipeline: "fake",
   model: "fake-pipeline",
-  modes: ["generate", "edit"],
+  modes: ["generate", "edit", "music"],
   supports: { negative_prompt: true, cfg_scale: true, step_progress: true, transparent: true, edit: true, multi_image: true },
   aspect_ratios: {
     "1:1": [2048, 2048], "4:3": [2400, 1792], "3:4": [1792, 2400], "3:2": [2528, 1696],
@@ -23,13 +23,22 @@ export const CAPS: Capabilities = {
     resolutions: [1024, 2048],
     upload_mb: 20,
     edit_warn_units: 8,
+    music: {
+      duration: { min: 10, max: 300, default: 60 },
+      tracks: { min: 1, max: 4 },
+      steps: { min: 10, max: 60, default: 30 },
+      description_chars: 2000,
+      lyrics_chars: 6000,
+      field_chars: 400,
+    },
   },
+  music: { available: true, state: "done", reason: null, hint: null, model: "fake-music" },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },
 };
 
 let counter = 0;
-export function makeRun(overrides: Partial<Run> = {}): Run {
+export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
   counter += 1;
   return {
     id: overrides.id ?? `run${String(counter).padStart(4, "0")}`,
@@ -48,15 +57,46 @@ export function makeRun(overrides: Partial<Run> = {}): Run {
     queue_position: null,
     progress: null,
     canceling: false,
+    lyrics: null,
     inputs: [],
     images: [],
+    tracks: [],
+    ...overrides,
+  };
+}
+
+let musicCounter = 0;
+/** A music run as the server sends it (DESIGN.md §26.3, §26.5): an instrumental track unless `lyrics` is given. */
+export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
+  musicCounter += 1;
+  return {
+    id: overrides.id ?? `music${String(musicCounter).padStart(4, "0")}`,
+    status: "done",
+    mode: "music",
+    prompt: "Global Metadata\nBasic Attributes: ambient.\nInstrumental, no vocals.",
+    effective_prompt: "Global Metadata\nBasic Attributes: ambient.\nInstrumental, no vocals.",
+    options: { duration: 60, steps: 30, seed: 7, seed_was_random: false, tracks: 1, instrumental: true, fields: { genre: "ambient" } },
+    model_id: "fake-music",
+    created_at: `2026-10-02T11:00:${String(musicCounter % 60).padStart(2, "0")}.000Z`,
+    started_at: null,
+    finished_at: null,
+    error: null,
+    pinned: false,
+    expires_at: null,
+    queue_position: null,
+    progress: null,
+    canceling: false,
+    lyrics: null,
+    inputs: [],
+    images: [],
+    tracks: [],
     ...overrides,
   };
 }
 
 export const STATUS: Status = {
-  version: "1.7",
-  worker: { state: "ready", detail: null, hint: null, pipeline: "fake", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
+  version: "1.9",
+  worker: { state: "ready", detail: null, hint: null, pipeline: "fake", model: "image", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10 },
-  memory: { total_gb: 119, available_gb: 80, min_free_gb: null, worker_rss_gb: null },
+  memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },
 };

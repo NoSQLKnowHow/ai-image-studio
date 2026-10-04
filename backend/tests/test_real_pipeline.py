@@ -151,7 +151,7 @@ def job(**extra) -> ImageJob:
 
 def loaded(monkeypatch, **fake_options) -> tuple[RealPipeline, Fakes]:
     fakes = Fakes(monkeypatch, **fake_options)
-    pipe = RealPipeline("Qwen/Qwen-Image-2.1")
+    pipe = RealPipeline("Qwen/Qwen-Image-2.1", hub_mode="online")  # exactly the arguments, whatever the cache mode would add
     pipe.load()
     return pipe, fakes
 
@@ -232,7 +232,7 @@ def test_load_uses_bfloat16_on_the_gpu_and_silences_progress_bars(monkeypatch):
 
 def test_load_options(monkeypatch):
     fakes = Fakes(monkeypatch)
-    RealPipeline("/models/qwen", cpu_offload=True, local_files_only=True).load()
+    RealPipeline("/models/qwen", cpu_offload=True, hub_mode="offline").load()
     assert fakes.load_kwargs == ("/models/qwen", {"dtype": "torch.bfloat16", "local_files_only": True})
     assert fakes.moved == ["offload"]
 
@@ -258,7 +258,7 @@ def _named(name: str, base=Exception, **attrs):
 def test_load_errors_carry_actionable_hints(monkeypatch, exc, local_only, kind, fragment):
     Fakes(monkeypatch, load_exc=exc)
     with pytest.raises(kind) as info:
-        RealPipeline("Qwen/Qwen-Image-2.1", local_files_only=local_only).load()
+        RealPipeline("Qwen/Qwen-Image-2.1", hub_mode="offline" if local_only else "online").load()
     assert fragment in (info.value.hint or "") + info.value.message
 
 
