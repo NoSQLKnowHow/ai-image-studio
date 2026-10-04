@@ -31,7 +31,9 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 2 | **M5d** | Local edits: a mark-up editor and a mask editor (§21.5) | M5c (the mask convention) |
 | 3 | **M5e** | "Improve prompt", Qwen's official rewriter (§21.12 item 3) | **Your decision on R3**; only if accepted |
 | 4 | **Upscale** | "The same picture, bigger" (decision #37, §23.2) | The M5c result (editing now exists, 1.6); may be dropped if the editing model changes the picture |
-| 5 | **M8** | The Spark smoke test together | Everything above |
+| 5 | **Music 1.8** | The server side of the Music tab: schema 3, the music worker and a fake music pipeline, tracks and the audio route, one model at a time, the second Python environment (§26.4–§26.6) | **1.7 merged** (it builds on 1.7's lock and buttons; I do not stack pull requests), and your veto or approval of §26.9 |
+| 6 | **Music 1.9** | The Music tab: fields and preview, lyrics, tracks with a player, Load/Unload per tab (§26.1) | 1.8 merged; then the Spark test, `SPARK_TEST.md` §20 (real speed, memory, how `[Instrumental]` behaves) |
+| 7 | **M8** | The Spark smoke test together | Everything above |
 
 **Open questions for you:** R3 (the prompt rewriter, §21.12 item 3); any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2).
 
@@ -99,6 +101,9 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needed the editing page (built in 1.6) and still needs a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
 | 38 | Regenerate larger in the viewer (1.5) | The single-image viewer has the **same Regenerate larger button**. It enlarges **that image only**: a new job at the full size and steps, with **that image's own seed** and **one** image (§24.1). Its confirmation, or an error, shows **inside the viewer** (§24.2) | DECIDED (the request); details PROPOSED |
 | 39 | Load the model ahead of time (1.7) | A **Load model button next to the model pill** in the header starts loading the model now, without a run, so you can work on the prompt while it loads. When the model is loaded and idle the same place offers **Unload model**, which gives the memory back at once. **No automatic warm-up** (nothing loads because you started typing): the button only (§25) | DECIDED (the request and the three choices); details PROPOSED |
+| 40 | Music tab (planned for 1.8 and 1.9) | A separate **Music** tab, beside Images, makes music with **MiniMax-Music3**. **Instrumental by default**; an **Add lyrics** switch reveals a lyrics box with the section tags (§26.1) | DECIDED (the request and your answers); details PROPOSED; **NOT built** |
+| 41 | One model in memory at a time | The music model and the image model are **never loaded together**: starting one unloads the other first (never during a run), so the Spark does not hold both next to Hermes (§26.4) | DECIDED; **NOT built** |
+| 42 | Describing the music | **Fields** (genre, mood, tempo, key, instruments and arrangement, and a voice description when lyrics are on) build the structured description the model's card recommends, shown in a preview you can edit (§26.2) | DECIDED; **NOT built** |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -114,6 +119,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #37 | **Not built.** A disabled button marks the place (1.4). |
 | #38 | Yes (1.5). |
 | #39 | Yes (1.7). |
+| #40, #41, #42 | **Not built.** Specified in §26 (planned as 1.8, the server, and 1.9, the page). |
 
 ## 4. Architecture (DECIDED: separate worker process)
 
@@ -454,7 +460,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 17. On the Spark, `docker compose up` from a clean checkout starts the server with a green healthcheck, and data persists across recreating the container.
 18. With too little free memory, the pre-flight check fails the job immediately with an actionable message (Retry works once memory is free), and the machine is not pushed into swap.
 
-**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3), 48–50 (§21.13) and 51–60 (§25.5). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
+**Version 2 adds criteria 19–32** (§21.10), and the later releases 33–47 (§22.4, §23.3, §24.3), 48–50 (§21.13) 51–60 (§25.5) and 61–75 (§26.10, music, not built). Criterion 7 ("Edit works via file picker, drag-and-drop, paste and 'Edit this'") is replaced by 19–27, which cover several images.
 
 **Where each criterion stands (1.7).** "Automated" means a test passes against the fake pipeline; "Spark" means it needs the real machine and has not been reported back to me.
 
@@ -471,6 +477,7 @@ Faults are injected per run with prompt directives: `[fake:error]`, `[fake:oom]`
 | 33–38, 40–47 | Scale, Draft, thumbnails, Regenerate larger, the viewer | **Automated** (a draft's queue priority and limits, the `full` record, the one-image request, the in-viewer note) |
 | 39 | Draft and scale timings on the Spark | **Spark** (`SPARK_TEST.md` §16, §17) |
 | 51–60 | Load model and Unload model | **Automated** (the server's states, the idle clock, the lock, the memory check; the page's buttons, focus, announcements, phone width). **Spark** for how long the real model takes to load and how much memory Unload gives back (`SPARK_TEST.md` §19) |
+| 61–75 | Music tab (§26.10) | **Not built** (planned: 1.8 the server, 1.9 the page); 71 also needs the **Spark** |
 
 ## 17. Build order (PROPOSED)
 
@@ -564,6 +571,7 @@ These were opened and read in full, not taken from search results. The announcem
 - **Round 12 (2026-10-03):** version 1.5 was reviewed and merged. You asked what features remain, and then for this specification to be brought up to date with everything built and changed so far. That is this revision. **No behaviour changed.** I read the whole document against the code and corrected what had drifted: the header and a new "Status at a glance" with the release history and what is left; decision #32's list of version numbers; a table of which decisions are built; the screen and run-card descriptions (Draft, Scale, Cancel, Regenerate larger, the viewer); the API, data-model, worker-protocol, layout and configuration tables (including `STUDIO_DRAFT_SIZE` and `STUDIO_DRAFT_STEPS`, which were missing); a table of where each acceptance criterion stands; the build order and its progress; the open items; and stale statements such as "upscaling stays out" (§21.12), which decision #37 had superseded.
 - **Round 13 (2026-10-03):** the specification was merged. You asked to work on the next feature, which was **M5b, the editing page**. The decisions behind it were already made (#24–#31), so I built it to §21.4 without further questions and listed the small choices I made in §21.11 for you to veto: how pictures dropped in Generate mode are handled, where Edit this appears, that the cost warning's threshold is a setting (default 8, a guess until the Spark measures it), and the others there. Version 1.6.
 - **Round 14 (2026-10-03):** version 1.6 (the editing page) was reviewed and merged. You asked whether there could be a button that loads the model, so that you can work on the prompt instead of waiting for the load after pressing Generate. I answered that it was possible and asked three questions; you chose the button **next to the model pill in the header**, **an Unload button as well**, and **no automatic warm-up** (decision #39, specified in §25 as version 1.7). Two things the code showed me while specifying it, now in §25: the idle clock must start when the load **finishes** (and be refused for `STUDIO_IDLE_TIMEOUT_MIN=0`, where loading ahead would load and instantly unload), and the starting and stopping of the worker needs one lock so that a click cannot meet a half-stopped worker. Small choices of mine for you to veto are in §25.4.
+- **Round 15 (2026-10-04):** version 1.7 was built and tested, but could not be pushed (the push was refused as an out-of-place publication, so there is no pull request yet). You then asked whether the interface could make **music on an entirely different tab**, from the code on the **MiniMax-Music3** model card, with a focus on **instrumental** music. I read the card and the licence, found that the card needs a different `diffusers` commit from the one the image worker is pinned to, and asked three questions. You chose: **instrumental by default with a lyrics box available**, **one model in memory at a time**, and **fields that build the description** (decisions #40–#42). I did **not** build anything: music would be built on top of 1.7, which is not published, and I do not stack pull requests. §26 is the design, with a list of what I could not find out from my sandbox (§26.7) and small choices for you to veto (§26.9). Planned as 1.8 (the server) and 1.9 (the page).
 - **Repository (2026-09-30):** you asked that nothing for this project be written to `LiveLabs-Image-Dev` and that it get its own repository. Decided: private, personal account; first called `dgx-spark-image-studio`, renamed `ai-image-studio` the same day. You created it on GitHub and it was attached to my session. The earlier commits (CLI script, design spec) were replayed into it with their messages intact and removed from the LiveLabs clone.
 
 ## 21. Version 2: editing with several images, and run housekeeping (decisions #24–#32 DECIDED; details PROPOSED; M6, M5a and M5b BUILT, M5c–M5e NOT built)
@@ -1008,3 +1016,98 @@ Both need the `X-Studio-Client: 1` header like every mutation (§11). An error a
 - **Mutation checks: 60 deliberate breakages (28 in the server, 13 in the offer rule, 19 in the page and its styles).** The first run caught 54, found one that did not compile, and let 5 through. Four of those were real gaps in my tests, now closed by new tests (the idle timeout stopping the worker without the lock; a worker that cannot be started; the "Unloading the model…" announcement and the disabled button while the request is on its way; a stale request speaking for a load that a run later caused, which first escaped because my assertion retried until the stale text had gone away, so it now reads once). The fifth is **equivalent**: `"busy"` in the list of states for which Load does nothing is also covered by the check that no run is current, so removing it changes nothing anyone can see. After the fixes **59 of the 60 are caught** and that one is equivalent. I dropped one mutant (swapped icons) as untestable: the icons are decorative and hidden from screen readers.
 - **One unexplained failure, reported rather than hidden.** In one full browser run (5 unstressed runs of the final code in all) the thumbnails test of 1.3 failed once, waiting for a run card; it passed alone 15 of 15 under heavy CPU load and in the 4 full runs after it, and I could not reproduce it or find a cause (the page does not show the prompt box until it has the server's capabilities, which rules out one guess). Separately, under **deliberate heavy CPU load** (four spinning processes) the 1.6 test that watches an upload at 100% before removing it can miss that moment and fail: it depends on a window of about a second, which I widened with a big picture in 1.6 and cannot make airtight. Neither touches anything 1.7 changed; I left both as they are.
 - **Not verified:** how long the real model takes to load, how much memory Load takes and Unload gives back, and whether a worker that is stopped while loading really frees its memory at once on the Spark (`SPARK_TEST.md` §19). Everything here has been checked only against the fake pipeline.
+
+## 26. Music (decisions #40–#42 DECIDED; details PROPOSED; NOT BUILT; planned as 1.8 and 1.9)
+
+You asked whether the interface can make music on an entirely different tab, with the code from the model card of **MiniMaxAI/MiniMax-Music3**, and said you want **instrumental** music. I read the card and the licence (§26.8 says how much to trust that), asked three questions, and you chose: instrumental by default with a lyrics box available, **one model in memory at a time**, and **fields that build the description**. This section is the design. **Nothing is built**, and nothing of it has been run: there is no GPU here, and the model's behaviour (speed, memory, how it takes `[Instrumental]`) is only known from the card.
+
+### 26.1 What you will see
+
+- **Two tabs under the header, Images and Music.** Images is the studio as it is today (Generate and Edit). Music is new. The choice is remembered, the tabs are reached and switched with the keyboard (arrow keys), and each tab shows **only its own history**: the Music tab lists tracks, the Images tab lists pictures. The queue is shared (one GPU, one run at a time), and a run waiting behind another says so on either tab.
+- **Describe the music with fields.** *Genre*, *Mood* (the emotional arc, e.g. "warm and intimate, building gently"), *Tempo* (BPM), *Key*, and *Instruments and arrangement* (e.g. "fingerpicked guitar and soft piano; brushed drums and upright bass enter in the second half"). As you type, a **preview** shows the finished text in the format the card recommends ("Genre: acoustic pop. BPM: 96. Key: C major. …"). **The preview is editable**: once you change it by hand the fields stop overwriting it, and *Rebuild from fields* puts it back. With **Add lyrics** on, a *Voice* field appears too ("soft female lead, close and breathy").
+- **Instrumental is the default.** With **Add lyrics** off the studio sends the `[Instrumental]` tag as the lyrics and adds "Instrumental, no vocals." to the description, so a track has no singing. **Add lyrics** reveals a lyrics box with buttons that insert the section tags the card lists (`[Intro]`, `[Verse]`, `[Pre-Chorus]`, `[Chorus]`, `[Post-Chorus]`, `[Bridge]`, `[Solo]`, `[Instrumental]`, `[Outro]`) at the caret.
+- **Length and versions.** *Duration* from 10 seconds to the server's maximum (default **60**, the card's own example; maximum **300**, below the model's limit of about 360), and *Versions* (1 to 4 different tracks from the same description, seeds base … base+N−1, as for pictures). **Seed** is random by default, with *Lock seed* and *Reuse*, as for pictures.
+- **Each track is a card with a player.** A normal audio player (play, pause, seek), the description and settings, **Download WAV** (named like `music_acoustic-pop_60s_s7_20261004-141502.wav`), and the buttons a picture card has: **Reuse** (brings back the fields, the preview text, the lyrics and the seed), **Keep**, **Delete**, **Cancel** while queued or running, **Retry** after a failure. Auto-expiry applies to tracks as to pictures. While a track is being made the card shows the time spent so far; it **cannot show a percentage** unless the pipeline reports its progress (§26.7).
+- **A reminder, since the licence asks for it.** The Music tab says that the licence requires saying that music is machine-generated when you share it publicly, and every WAV carries a note in its file information ("Generated by MiniMax-Music3 …") with the description used.
+- **Load model and Unload model** (1.7) sit beside the pill on both tabs and act on **that tab's model**. The pill says which model it is talking about (*Image model ready*, *Music model loading…*).
+
+### 26.2 The description (decision #42)
+
+The card's "structured caption" has global metadata (genre, BPM, key, scale, emotional progression), vocal details, and arrangement (instruments, how sections evolve, percussion, textures). The builder assembles sentences in the card's own order and wording ("Genre: …. BPM: …. Key: …. <mood>. Vocals: …. Arrangement: ….") and leaves out any field you leave empty. The fields are saved with the run so Reuse can restore them; the server stores them and sends only the finished text. Limits: the model accepts at most **5,000 tokens** of text; the studio limits the description to 2,000 characters and the lyrics to 6,000 and says so by field, since it cannot count the model's tokens without loading it.
+
+### 26.3 API (additions to §7 and §21.6)
+
+- `POST /api/runs` takes **`mode: "music"`** with `prompt` (the finished description), optional `lyrics` (absent, empty or only whitespace means **instrumental**; the server then sends `[Instrumental]`), and `options`: `duration` (seconds), `seed`, **`tracks`** (1 to `STUDIO_MUSIC_MAX_TRACKS`, default 4; it takes the place of `num_images`) and `fields` (an object of short strings, stored for Reuse and not interpreted). The same field errors as for pictures (`422`, naming the field), `429` when the queue is full.
+- **`GET /api/audio/{id}`** returns the WAV, **with HTTP range requests** (a player cannot seek without them); `?download=1` sends it as an attachment with the filename above. A run's payload has **`tracks`** (`id`, `idx`, `seed`, `seconds`, `sample_rate`, `bytes`, `url`, `download_url`) as an image run has `images`.
+- **`GET /api/capabilities`** lists `music` in `modes` exactly when the music pipeline can run (the fake one always can), and gives `limits.music` (`duration` {min, max, default}, `tracks` max, the text limits).
+- **`POST /api/model/load` and `/unload`** (§25.2) take an optional `{"model": "image" | "music"}`; without it, the image model, as before. `GET /api/status` and the `worker.state` event say **which model** the worker holds (`worker.model`).
+- Nothing else changes: `run.*` events, cancel, Keep and delete work on a music run as on any run.
+
+### 26.4 One model at a time (decision #41), and the worker
+
+- **The worker process is the same program started for a different model.** `python -m studio.worker --kind music` loads MiniMax-Music3, `--kind image` loads Qwen-Image as now; the JSON-lines protocol (§9) is the same, with the job carrying the description, lyrics, duration and seeds, and `image_done` replaced for music by **`track_done`** (`idx`, `seed`, `path`, `seconds`, `sample_rate`). The API holds **one** worker at a time.
+- **Switching.** When the next run (or a Load) needs the other model, the API, under the lock of §25.3, stops the loaded worker, **checks free memory** (the stopped model's memory now counts), and starts the other. It **never does this while a run is running**; a queued run of the other kind waits its turn in the queue, which stays first-in, first-out (drafts first), so a music run between two pictures costs two model loads. (Grouping runs by model to avoid that is an idea, not planned.)
+- **The memory check** is the same rule with its own number: `STUDIO_MUSIC_MIN_FREE_GB` (default **40**, an unmeasured starting estimate like the image one: the card says about 22 to 24 GB for the model). If the check fails the run (or the Load) fails with the same message and hint as for pictures, and nothing is left loading. **Note the order:** the other model has already been unloaded by then, so a failed music load leaves nothing loaded.
+- **The idle timeout and Unload** apply to whichever model is loaded.
+- **Settings** (to be added to §13 when built): `STUDIO_MUSIC_MODEL` (default `MiniMaxAI/MiniMax-Music3`), `STUDIO_MUSIC_MIN_FREE_GB` (40), `STUDIO_MUSIC_MAX_SECONDS` (300, up to 360), `STUDIO_MUSIC_MAX_TRACKS` (4) and `STUDIO_MUSIC_PYTHON` (set by the image).
+- **A separate Python environment for the music worker.** The model's card installs `diffusers` from the commit `dafe3733fcfdbf3c48915fe77be3aef65b5d6a2d` (not a release), and the image worker is pinned to a different commit (`578c9b2c…`, §12). I could not check from my sandbox whether one commit serves both, so the design does not depend on it: the container image gets a second environment, **`/opt/music-venv`**, made with `--system-site-packages` (so it shares NVIDIA's PyTorch, and the pins that keep NVIDIA's builds apply to it) and holding the music `diffusers` commit, `transformers`, `accelerate` and `soundfile`. The music worker is started with that environment's Python (`STUDIO_MUSIC_PYTHON`, set by the image). `docker/check_image.py` imports the music pipeline there too, so a broken music environment fails the build, not the first track. Without it (a development machine, the tests) the **fake** pipeline needs nothing.
+- **The fake music pipeline** (for every automated test): the same description, lyrics, duration and seed always produce the same short **tone-and-noise WAV** of the requested length (shorter than real time, so tests are quick), with directives like `[fake:error]` as for pictures. As with pictures, it proves the plumbing, not the music.
+
+### 26.5 Data (schema version 3)
+
+- **`runs`** accepts `mode = 'music'`. The table has a `CHECK` on `mode` that SQLite cannot change in place, so the migration **rebuilds the table**; the old database is copied first and the migration is checked against a database written by the real 1.7 code, as schema 2 was (§21.7). Music settings (the fields, `duration`, `tracks`, whether it was instrumental) are in `options_json`, the finished description is in `prompt`/`effective_prompt`, and the lyrics get a nullable column. Columns that mean nothing for music (size, steps, guidance) are stored as for a run that has none.
+- **`tracks`** (new, like `images`): `id`, `run_id` (cascades with the run), `idx`, `seed`, `seconds`, `sample_rate`, `channels`, `bytes`, `path`, `created_at`.
+- **Files:** `<data>/audio/<run>/<idx>.wav`, written by the worker (atomically, with the file information note), checked by the API to be inside the run's own folder before it is trusted, as for pictures. Deleting a run or expiring it removes its audio.
+- **Size to plan for:** a 32 kHz, 16-bit stereo WAV is about **7.7 MB a minute**, so a 5-minute track is about 38 MB and four of them 150 MB. With 30-day retention a busy month is gigabytes; **Keep** and the retention setting apply as before. (FLAC or MP3 downloads would be smaller; not planned.)
+
+### 26.6 Releases, and the order of work
+
+- **1.8, the server:** schema 3, the music worker kind and the fake pipeline, `tracks` and `GET /api/audio`, the one-model-at-a-time switching, `STUDIO_MUSIC_*` settings, the second environment in the image and in `check_image.py`, and the API tests. **No visible change** except the pill naming the model.
+- **1.9, the page:** the tab bar, the Music tab (fields, preview, lyrics, duration, versions, seed), track cards with the player and download, Load/Unload per tab, phone layout, and the browser tests.
+- **Then you run `SPARK_TEST.md` §20**, which I will write with 1.9: the real model's speed per minute of music, its memory, whether `[Instrumental]` makes an instrumental track and whether an empty lyrics box would too, whether "no vocals" in the description helps, and what Cancel does.
+- **These wait for 1.7 to be merged**, since music builds on its lock and buttons and I do not stack pull requests. Each of 1.8 and 1.9 is its own pull request and I stop after each for your review (decision #22).
+
+### 26.7 What I could not find out from here (all to be settled before or during 1.8)
+
+These are **unknown**, not assumed:
+
+1. **Whether the pipeline reports progress or can be stopped between steps.** The card says nothing. Until I can read the pipeline's source at the pinned commit, the plan is: **Cancel of a queued track is immediate; Cancel of a running track stops the worker process** (the card says *Canceled*, and the next run loads the model again, which costs the load time). If the pipeline has a step callback, Cancel will stop between steps as for pictures, and the card will show a percentage.
+2. **Whether the model's repository needs `trust_remote_code`** (running code from the repository). The card's example does not pass it, so I expect not; 1.8 must check, and I will not enable it without telling you.
+3. **The download size.** The card's metadata says F32 weights; for about 11 billion parameters that would be about **44 GB on disk** (22 GB in bfloat16 once loaded). Check free disk before the first load.
+4. **Which `transformers` version** the music commit needs (the card says only "transformers"), and so whether the second environment resolves with NVIDIA's pins. The Spark build will show.
+5. **Speed.** The card gives no timing. I will not put an estimate on the page until you have measured one.
+6. **Instrumental by tag or by empty lyrics.** The card lists `[Instrumental]` among the section tags; one reading of the card said an empty lyrics field also gives instrumental music, another said it does not say. The default is the tag, and §20 of the Spark checklist compares.
+7. **The exact pipeline arguments** beyond those in the card's example (for instance a `max_new_tokens` limit, which the card mentions as the audio-frame limit at 25 frames a second, 9,000 at most).
+8. **How the real output looks as an array:** the card's example does `audio.T.float().cpu().numpy()` for `soundfile`, which says (channels, samples), 32 kHz.
+
+### 26.8 The licence, and how much to trust my reading of it
+
+The model is under the **MiniMax-Music3 Community License**. My reading, through a tool that summarises pages, so **please read the `LICENSE` file yourself** (as you did for Qwen, §18 item 2): personal use, including generating audio for yourself, is permitted; sharing machine-made content publicly requires **saying clearly that it is machine-generated**; there are the usual acceptable-use rules (no deepfakes of real people without consent, no content aimed at minors, no military use, and so on); and a product with more than **US$20 million** of yearly revenue needs written permission from MiniMax. The studio's reminder and the note in each WAV (§26.1) are there for the disclosure rule; they do not make a track safe to publish.
+
+### 26.9 Small choices I made (tell me if you want any changed)
+
+- **Separate history per tab**, not one mixed list.
+- **Defaults: 60 seconds, a 300-second maximum, up to 4 versions.** Longer takes longer by an unknown amount; the maximum and the versions limit are settings.
+- **Cancel of a running track stops the worker** unless the pipeline allows better (§26.7 item 1).
+- **WAV only**, as in the card's example.
+- **The note written into each WAV**, and the licence reminder on the tab.
+- **A 2,000-character description limit and 6,000 for lyrics**, because the real limit is in the model's tokens.
+- **No "Draft" (short try) for music yet.** A 15-second try of a description would be the equivalent of the picture Draft (§22.2); it is an idea, not planned.
+
+### 26.10 Acceptance criteria (continue §25.5)
+
+61. The page has **Images** and **Music** tabs, reachable and switchable with the keyboard, remembered across a reload, and each shows only its own runs. (1.9)
+62. **Music** is offered exactly when the music pipeline can run: the capabilities' `modes` lists `music` if and only if it can. (1.8)
+63. A music run with **no lyrics** is instrumental: the server sends `[Instrumental]` and the description ends with "Instrumental, no vocals." With **Add lyrics** on the lyrics are sent as written, and the Voice field exists only then. (1.8, 1.9)
+64. The fields **build the description** in the card's order and wording and leave out empty ones; editing the preview by hand stops the fields overwriting it until *Rebuild from fields*; **Reuse** restores the fields, the text, the lyrics and the seed. (1.9)
+65. **Duration** and **versions** are limited by the server (defaults 60 s and 4, maximums `STUDIO_MUSIC_MAX_SECONDS` and `STUDIO_MUSIC_MAX_TRACKS`); an out-of-range value is refused, naming the field. (1.8)
+66. A finished music run shows an **audio player per track** that can seek (range requests), and **Download WAV** with a meaningful filename. (1.8, 1.9)
+67. **Only one model is in memory.** A music run while the image model is loaded stops it first and loads the music model, and the reverse; never while a run is running; the pill says which model. (1.8)
+68. Every load makes the **memory check** with its own number; with too little free memory the run or the Load fails with the actionable message and **nothing is left loading**. (1.8)
+69. **Load model and Unload model** on each tab act on that tab's model. (1.8, 1.9)
+70. **Cancel**: a queued music run is canceled at once; a running one is stopped (by stopping the worker unless the pipeline offers a step stop) and the card says *Canceled*; the next run loads the model again. (1.8)
+71. The same description, lyrics, duration and seed give the same track with the **fake** pipeline. For the real model whether they do is a **Spark** question. (1.8; Spark)
+72. **Keep, Delete, auto-expiry, Retry** and surviving a restart work for music runs; deleting or expiring a run removes its audio. (1.8)
+73. An **existing database migrates** to schema 3 without losing a run, an image or an input, and the old file is kept as a copy. (1.8)
+74. The **licence reminder** is on the Music tab, and every WAV carries the machine-generated note. (1.8, 1.9)
+75. On a **phone** the tab bar and the Music tab fit with no sideways scroll, the player and its buttons stay on screen. (1.9)
