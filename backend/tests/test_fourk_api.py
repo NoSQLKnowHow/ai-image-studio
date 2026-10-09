@@ -119,6 +119,7 @@ def test_the_download_is_named_like_the_image_with_the_4k_size(client):
     make(client, image, 201)
     plain = client.get(f"/api/images/{image['id']}/4k")
     assert "content-disposition" not in plain.headers
+    assert "immutable" in plain.headers["cache-control"]  # an image id always means the same file
     named = client.get(f"/api/images/{image['id']}/4k?download=1")
     header = named.headers["content-disposition"]
     assert header.startswith("attachment;") and "3840x2160" in header and ".png" in header
@@ -161,6 +162,16 @@ def test_a_picture_that_is_not_16_9_is_refused_with_the_reason(client):
     assert response.status_code == 422
     assert response.json()["code"] == "not_4k_eligible" and "16:9" in response.json()["detail"]
     assert not list(client.app.state.storage.images.rglob("*-4k.png"))
+
+
+def test_an_ineligible_picture_is_refused_before_any_file_work(client, monkeypatch):
+    square = wait_for(client, create_run(client, "square")["id"])["images"][0]
+
+    def boom(src, dst):
+        raise AssertionError("the file was opened for a picture the stored size already rules out")
+
+    monkeypatch.setattr(fourk, "make_4k", boom)
+    assert make(client, square).status_code == 422
 
 
 def test_a_16_9_picture_that_is_too_small_says_so(client):
@@ -247,7 +258,13 @@ def test_overlapping_requests_make_one_file_and_only_one_of_them_made_it(client,
     async def both():
         return await asyncio.gather(jobs.make_4k(image_id), jobs.make_4k(image_id), jobs.make_4k(image_id))
 
+    sub = client.app.state.bus.subscribe()
     results = client.portal.call(both)
+    events = []
+    while not sub.queue.empty():
+        events.append(sub.queue.get_nowait())
+    client.app.state.bus.unsubscribe(sub)
+    assert len([name for name, _ in events if name == "run.updated"]) == 1  # one announcement, not one per caller
     assert len(calls) == 1
     assert sorted(made for _, made in results) == [False, False, True]
     assert len({r["images"][0]["four_k"]["bytes"] for r, _ in results}) == 1

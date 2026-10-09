@@ -162,6 +162,20 @@ def test_the_trim_is_the_same_on_both_sides(tmp_path):
     assert abs(red - green) <= 2
 
 
+def test_the_resampling_is_one_lanczos_pass_over_the_trim_box_and_nothing_else(tmp_path):
+    """Exactly what Pillow gives for a single resize of that box: not a trim followed by a resize (two passes), and not a
+    cheaper filter. Fine detail is what tells a Lanczos pass from a bilinear one."""
+    from PIL import ImageChops
+
+    src = stripes(tmp_path / "0.png")
+    with Image.open(src) as picture:
+        expected = picture.convert("RGB").resize((3840, 2160), Image.Resampling.LANCZOS, box=plan_4k(2752, 1536).box)
+    made = Image.open(make_4k(src, tmp_path / "0-4k.png")).convert("RGB")
+    assert ImageChops.difference(expected, made).getbbox() is None
+    bilinear = Image.open(src).convert("RGB").resize((3840, 2160), Image.Resampling.BILINEAR, box=plan_4k(2752, 1536).box)
+    assert ImageChops.difference(bilinear, made).getbbox() is not None  # and the check can tell the filters apart
+
+
 def test_a_picture_that_needs_no_trim_is_only_enlarged(tmp_path):
     out = Image.open(make_4k(stripes(tmp_path / "0.png", 2560, 1440), tmp_path / "0-4k.png"))
     assert out.size == (3840, 2160)
@@ -237,15 +251,18 @@ def test_a_result_is_written_whole_or_not_at_all(tmp_path):
     """The destination appears only by a rename of a finished file: while the encoder is running there is no file at it."""
     src = stripes(tmp_path / "0.png")
     seen: list[bool] = []
+    levels: list[int] = []
     real_save = Image.Image.save
 
     def watching(self, fp, *args, **kwargs):
         seen.append((tmp_path / "0-4k.png").exists())
+        levels.append(kwargs.get("compress_level"))
         return real_save(self, fp, *args, **kwargs)
 
     with mock.patch.object(Image.Image, "save", watching):
         make_4k(src, tmp_path / "0-4k.png")
     assert seen == [False] and (tmp_path / "0-4k.png").is_file()
+    assert levels == [fourk.PNG_LEVEL]  # the fast encoder level is really the one used
     assert [p.name for p in tmp_path.glob("*.part")] == []
 
 
