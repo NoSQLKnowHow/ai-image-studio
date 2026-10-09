@@ -17,16 +17,17 @@ from datetime import datetime, timedelta, timezone
 from contextlib import suppress
 from typing import Any, Optional
 
-from . import __version__, sysinfo
+from . import __version__, fourk, sysinfo
 from . import inputs as inputs_mod
 from . import presets as P
 from . import wavfile
 from .config import Settings
 from .db import Database
 from .events import EventBus
+from .fourk import can_4k
 from .runspec import ResolvedRun, RunRequestError
 from .serialize import format_ts, parse_ts, run_payload, utcnow
-from .storage import Storage
+from .storage import Storage, StorageError
 from .worker_client import WorkerClient, WorkerGone, worker_env
 
 log = logging.getLogger("studio.jobs")
@@ -54,6 +55,10 @@ class RunNotFound(Exception):
 
 class RunConflict(Exception):
     pass
+
+
+class ImageNotFound(Exception):
+    """No such result image, or its file is gone."""
 
 
 class InputStorageError(Exception):
@@ -87,6 +92,7 @@ class JobManager:
         self._current: Optional[str] = None
         self._progress: dict[str, dict[str, Any]] = {}
         self._cancel_requested: set[str] = set()  # running runs the user has asked to stop
+        self._making_4k: dict[str, asyncio.Future] = {}  # image id -> the build in progress (DESIGN.md §27.3)
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
@@ -209,11 +215,25 @@ class JobManager:
         ids = [r["id"] for r in rows]
         images, inputs, tracks = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids), self.db.tracks_for_runs(ids)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
+        four_k = self._four_k_files([image for run_id in ids for image in images[run_id]])
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
-                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]])
+                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k)
             for r in rows
         ]
+
+    def _four_k_files(self, images: list[sqlite3.Row]) -> dict[str, int]:
+        """The size of the 4K copy of each image that has one (DESIGN.md §27.3). Only pictures Make 4K is offered for
+        can have one, so only those are looked for: the file's existence is the whole record, there is no database row."""
+        found: dict[str, int] = {}
+        for image in images:
+            if not can_4k(image["width"], image["height"]):
+                continue
+            try:
+                found[image["id"]] = self.storage.four_k_path(image["path"]).stat().st_size
+            except (OSError, StorageError):
+                pass
+        return found
 
     def expires_at(self, row: sqlite3.Row) -> Optional[str]:
         """When the run will be deleted, or None if it never will be (kept, still pending, or expiry off)."""
@@ -341,6 +361,43 @@ class JobManager:
         if not self.db.set_pinned(run_id, pinned):
             raise RunNotFound(run_id)
         self._publish_run(run_id)
+
+    async def make_4k(self, image_id: str) -> tuple[dict[str, Any], bool]:
+        """Make the 4K copy of a result image if it has none (DESIGN.md §27). Returns the updated run and whether this
+        call made the file. Raises ImageNotFound, fourk.NotEligible (before any file work, from the stored size), or
+        the OSError of a full disk. Requests for one image that overlap share one build: the file is made once."""
+        image = self.db.get_image(image_id)
+        if image is None or image["kind"] != "output" or image["run_id"] is None:
+            raise ImageNotFound(image_id)
+        fourk.plan_4k(image["width"], image["height"])  # NotEligible, with the reason, before touching any file
+        build = self._making_4k.get(image_id)
+        first = build is None
+        if build is None:
+            build = asyncio.ensure_future(asyncio.to_thread(self._build_4k, image))
+            self._making_4k[image_id] = build
+            # Whoever asked first may go away (a closed tab) while the thread still runs; its outcome is still collected.
+            build.add_done_callback(lambda done: (self._making_4k.pop(image_id, None), done.cancelled() or done.exception()))
+        made = await asyncio.shield(build)
+        if first and made:
+            self._publish_run(image["run_id"])  # other open pages show Download 4K
+        payload = self.payload(image["run_id"])
+        if payload is None:  # the run was deleted while the file was being made
+            raise ImageNotFound(image_id)
+        return payload, first and made
+
+    def _build_4k(self, image: sqlite3.Row) -> bool:
+        """In a thread: make the file unless it is already there. True if it was made now."""
+        try:
+            source, target = self.storage.abs(image["path"]), self.storage.four_k_path(image["path"])
+        except StorageError as exc:
+            raise ImageNotFound(image["id"]) from exc
+        if target.is_file():
+            return False
+        try:
+            fourk.make_4k(source, target)
+        except FileNotFoundError as exc:  # the original is gone: its run was deleted under us
+            raise ImageNotFound(image["id"]) from exc
+        return True
 
     async def delete(self, run_id: str) -> None:
         result = self.db.delete_run(run_id)

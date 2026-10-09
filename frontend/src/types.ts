@@ -34,6 +34,15 @@ export interface FullSize {
   steps: number;
 }
 
+/** The 4K copy of an image, once made (DESIGN.md §27). It is a file beside the image, so it is just a size and a link. */
+export interface FourK {
+  width: number;
+  height: number;
+  bytes: number;
+  url: string;
+  download_url: string;
+}
+
 export interface ImageInfo {
   id: string;
   idx: number;
@@ -44,6 +53,8 @@ export interface ImageInfo {
   url: string;
   thumb_url: string | null;
   download_url: string;
+  can_4k: boolean; // the server's rule for whether Make 4K is offered for this picture (DESIGN.md §27.3)
+  four_k: FourK | null; // its 4K copy, once made
 }
 
 /** An image an edit was given: its place in the order the model sees them (1 = "image 1"). */

@@ -5,7 +5,7 @@ import { viewerItems, viewerKnown, viewerTitle } from "./viewer";
 
 const image = (idx: number, seed: number): ImageInfo => ({
   id: `img${idx}`, idx, seed, width: 1024, height: 768, has_alpha: idx === 1, url: `/api/images/img${idx}`, thumb_url: `/api/images/img${idx}/thumb`,
-  download_url: `/api/images/img${idx}?download=1`,
+  download_url: `/api/images/img${idx}?download=1`, can_4k: false, four_k: null,
 });
 const input = (position: number): RunInput => ({
   position, role: "reference", id: `in${position}`, width: 600, height: 400, has_alpha: false, url: `/api/images/in${position}`, thumb_url: `/api/images/in${position}/thumb`,

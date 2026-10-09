@@ -7,6 +7,8 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from .fourk import TARGET_HEIGHT, TARGET_WIDTH, can_4k
+
 
 def utcnow() -> str:
     return format_ts(datetime.now(timezone.utc))
@@ -21,7 +23,9 @@ def format_ts(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def image_payload(row: sqlite3.Row) -> dict[str, Any]:
+def image_payload(row: sqlite3.Row, four_k_bytes: Optional[int] = None) -> dict[str, Any]:
+    """`can_4k` is the server's rule for whether Make 4K is offered (DESIGN.md §27.3); `four_k` is the 4K copy if one has been
+    made (`four_k_bytes` is the size of its file), else None."""
     base = f"/api/images/{row['id']}"
     return {
         "id": row["id"],
@@ -33,6 +37,14 @@ def image_payload(row: sqlite3.Row) -> dict[str, Any]:
         "url": base,
         "thumb_url": f"{base}/thumb" if row["thumb_path"] else None,
         "download_url": f"{base}?download=1",
+        "can_4k": can_4k(row["width"], row["height"]),
+        "four_k": None if four_k_bytes is None else {
+            "width": TARGET_WIDTH,
+            "height": TARGET_HEIGHT,
+            "bytes": four_k_bytes,
+            "url": f"{base}/4k",
+            "download_url": f"{base}/4k?download=1",
+        },
     }
 
 
@@ -75,6 +87,7 @@ def run_payload(
     expires_at: Optional[str] = None,
     inputs: Optional[list[sqlite3.Row]] = None,
     tracks: Optional[list[sqlite3.Row]] = None,
+    four_k: Optional[dict[str, int]] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -98,6 +111,6 @@ def run_payload(
         "canceling": canceling and row["status"] == "running",
         "lyrics": row["lyrics"],
         "inputs": [input_payload(item) for item in inputs or []],
-        "images": [image_payload(img) for img in images],
+        "images": [image_payload(img, (four_k or {}).get(img["id"])) for img in images],
         "tracks": [track_payload(track) for track in tracks or []],
     }

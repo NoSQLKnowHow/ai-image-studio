@@ -13,6 +13,7 @@ from fastapi import FastAPI, Query, Request
 from pydantic import BaseModel, ConfigDict
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from PIL import UnidentifiedImageError
 from starlette.types import Scope
 
 from . import __version__
@@ -20,8 +21,9 @@ from . import presets as P
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
+from .fourk import TARGET_HEIGHT, TARGET_WIDTH, NotEligible
 from . import inputs as inputs_mod
-from .jobs import InputStorageError, JobManager, ModelRefused, QueueFull, RunConflict, RunNotFound
+from .jobs import ImageNotFound, InputStorageError, JobManager, ModelRefused, QueueFull, RunConflict, RunNotFound
 from .naming import content_disposition, download_filename, music_filename, thumbnail_filename
 from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
@@ -348,6 +350,44 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 )
                 headers["Content-Disposition"] = content_disposition(thumbnail_filename(name), default="thumbnail.webp")
         return Response(data, media_type="image/webp", headers=headers)
+
+    @app.post("/api/images/{image_id}/4k")
+    async def make_image_4k(image_id: str, request: Request) -> Any:
+        """Make the 4K copy of a result image (DESIGN.md §27): `201` with the updated run when this call made it, `200`
+        when it was there already. It is CPU work in this process, off the event loop; the GPU worker is not involved."""
+        try:
+            run, made = await jobs_of(request).make_4k(image_id)
+        except (StorageError, ImageNotFound):
+            return _error(404, "Image not found.", "not_found")
+        except NotEligible as exc:
+            return _error(422, str(exc), "not_4k_eligible")
+        except UnidentifiedImageError:
+            return _error(422, "The picture file could not be read.", "unreadable")
+        except OSError as exc:
+            return _error(507, f"The 4K picture could not be saved: {exc.strerror or exc}", "storage_full")
+        return JSONResponse(status_code=201 if made else 200, content=run)
+
+    @app.get("/api/images/{image_id}/4k")
+    async def get_image_4k(image_id: str, request: Request, download: bool = False) -> Any:
+        """The 4K copy of a result image, once it has been made; `?download=1` names it like the image, with 3840x2160."""
+        db: Database = request.app.state.db
+        storage: Storage = request.app.state.storage
+        image = db.get_image(image_id)
+        if image is None or image["kind"] != "output":
+            return _error(404, "Image not found.", "not_found")
+        try:
+            data = await asyncio.to_thread(storage.four_k_path(image["path"]).read_bytes)
+        except (StorageError, FileNotFoundError, IsADirectoryError):
+            return _error(404, "No 4K copy of this image has been made yet.", "not_found")
+        headers = {"Cache-Control": IMMUTABLE}
+        run = db.get_run(image["run_id"]) if download else None
+        if run is not None:
+            name = download_filename(
+                mode=run["mode"], prompt=run["prompt"], width=TARGET_WIDTH, height=TARGET_HEIGHT,
+                seed=image["seed"], created_at=parse_ts(run["created_at"]), transparent=bool(run["transparent"]),
+            )
+            headers["Content-Disposition"] = content_disposition(name)
+        return Response(data, media_type="image/png", headers=headers)
 
     @app.get("/api/audio/{track_id}")
     async def get_audio(track_id: str, request: Request, download: bool = False) -> Any:

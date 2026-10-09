@@ -101,5 +101,7 @@ export const api = {
   keepRun: (id: string, pinned: boolean) =>
     request<Run>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ pinned }) }),
   deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // Make the 4K copy of a result image (DESIGN.md §27). The answer is the whole run, as for Keep: its image now has `four_k`.
+  makeFourK: (imageId: string) => request<ImageRun>(`/api/images/${encodeURIComponent(imageId)}/4k`, { method: "POST" }),
   deleteUpload: (id: string) => request<void>(`/api/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

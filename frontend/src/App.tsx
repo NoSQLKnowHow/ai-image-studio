@@ -9,6 +9,7 @@ import { OptionsDrawer } from "./components/OptionsDrawer";
 import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { Tray } from "./components/Tray";
+import { fourKFailedText, fourKMadeText } from "./fourk";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -57,6 +58,7 @@ export default function App() {
   const [pendingDelete, setPendingDelete] = useState<Run | null>(null);
   const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
   const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
+  const [making4k, setMaking4k] = useState<ReadonlySet<string>>(new Set()); // images whose 4K copy is being made (DESIGN.md §27)
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
   const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images or Music (DESIGN.md §26.1), remembered
@@ -215,6 +217,29 @@ export default function App() {
       } catch (error) {
         const err = error as ApiError;
         tell("error", err.status === 429 ? err.message : `Couldn't regenerate: ${err.message}`);
+      }
+    });
+
+  // Make the 4K copy of one result image (DESIGN.md §27). The answer is the run, with the image's `four_k` filled in. As for
+  // Regenerate larger, the answer is a toast on a card and a note inside the viewer when it is open when the answer comes.
+  const make4k = (image: ImageInfo) =>
+    once(`4k:${image.id}`, async () => {
+      const tell = (kind: "info" | "error", text: string) =>
+        lightboxOpen.current ? setLightbox((current) => (current ? { ...current, notice: { kind, text } } : current)) : push(kind, text);
+      setMaking4k((current) => new Set(current).add(image.id));
+      try {
+        const run = await api.makeFourK(image.id);
+        dispatch({ type: "runUpsert", run });
+        tell("info", fourKMadeText(run.images.find((candidate) => candidate.id === image.id) ?? image));
+      } catch (error) {
+        const err = error as ApiError;
+        tell("error", fourKFailedText(err.status, err.message));
+      } finally {
+        setMaking4k((current) => {
+          const next = new Set(current);
+          next.delete(image.id);
+          return next;
+        });
       }
     });
 
@@ -457,8 +482,10 @@ export default function App() {
                       now={now}
                       workerState={status?.worker.state ?? null}
                       canEdit={canEdit}
+                      making4k={making4k}
                       onReuse={() => reuse(run)}
                       onRegenerateLarger={() => void regenerateLarger(run)}
+                      onMake4K={(image) => void make4k(image)}
                       onEditThis={() => {
                         const result = viewerItems(run).find((item) => item.kind === "result");
                         if (result) editThis(viewerKnown(run, result), false);
@@ -516,6 +543,8 @@ export default function App() {
         index={lightbox?.index ?? 0}
         notice={lightbox?.notice ?? null}
         canEdit={canEdit}
+        making4k={making4k}
+        onMake4K={(image) => void make4k(image)}
         onEditThis={(image) => editThis(image, true)}
         onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
         onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}

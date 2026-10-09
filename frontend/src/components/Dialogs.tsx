@@ -5,6 +5,7 @@ import { largerTarget } from "../options";
 import type { KnownImage } from "../tray";
 import type { ImageInfo, ImageRun, Run } from "../types";
 import { viewerItems, viewerKnown, viewerTitle } from "../viewer";
+import { FourKButton } from "./FourKButton";
 import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EditIcon, EnlargeIcon } from "./icons";
 
 /** What the viewer says about a request made from it. The page behind a modal, toasts included, is hidden from
@@ -14,13 +15,15 @@ export interface ViewerNotice {
   text: string;
 }
 
-export function Lightbox({ run, index, notice, canEdit, onIndex, onRegenerateLarger, onEditThis, onClose }: {
+export function Lightbox({ run, index, notice, canEdit, making4k, onIndex, onRegenerateLarger, onMake4K, onEditThis, onClose }: {
   run: ImageRun | null;
   index: number;
   notice: ViewerNotice | null;
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
+  making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   onIndex: (index: number) => void;
   onRegenerateLarger: (image: ImageInfo) => void;
+  onMake4K: (image: ImageInfo) => void;
   onEditThis: (image: KnownImage) => boolean; // whether it was added (the tray may be full)
   onClose: () => void;
 }) {
@@ -70,6 +73,7 @@ export function Lightbox({ run, index, notice, canEdit, onIndex, onRegenerateLar
                     </button>
                   )}
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
+                  {result && <FourKButton image={result} making={making4k.has(result.id)} className="button small" onMake={() => onMake4K(result)} />}
                   {result?.thumb_url && (
                     <a className="button small" href={`${result.thumb_url}?download=1`} download
                       title="A small copy of this image (WebP, 512 px on the long side)"><DownloadIcon /> Thumbnail</a>
