@@ -100,13 +100,14 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 34 | Draft (1.3) | A **Draft button** makes a small, fast version of the prompt (512 px on the long side, 12 steps) to try the wording before a long run. Drafts jump ahead of waiting full-size runs (never the one running). The full-size image will look different, even with the same seed (§22.2) | DECIDED |
 | 35 | Thumbnails (1.3) | Every image gets a small **thumbnail you can download** (WebP, 512 px on the long side, transparency kept), from the run card and from the viewer (§22.3) | DECIDED |
 | 36 | Regenerate larger (1.4) | A finished run made **smaller than the size you had selected** (a draft, or a 25 / 50 / 75% run) gets a **Regenerate larger** button: the same prompt, seed and image count sent again at the **full size you had selected, with the steps you had selected**. The run remembers that size, so it works from the history. It will look different from the small image (§23.1) | DECIDED |
-| 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needed the editing page (built in 1.6) and still needs a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2) | DECIDED (the plan); the feature is PROPOSED |
+| 37 | Upscale (planned) | **The same picture, just bigger**, as a second button beside Regenerate larger. **Not built**: it needed the editing page (built in 1.6) and still needs a Spark test of whether the editing model can refine an image at 2K without changing it. The button is shown disabled until then (§23.2). **Superseded by #44** (§27.7): Edit mode cannot go past 2K, so the plan is dropped and the disabled button removed | DECIDED (the plan); **SUPERSEDED by #44** |
 | 38 | Regenerate larger in the viewer (1.5) | The single-image viewer has the **same Regenerate larger button**. It enlarges **that image only**: a new job at the full size and steps, with **that image's own seed** and **one** image (§24.1). Its confirmation, or an error, shows **inside the viewer** (§24.2) | DECIDED (the request); details PROPOSED |
 | 39 | Load the model ahead of time (1.7) | A **Load model button next to the model pill** in the header starts loading the model now, without a run, so you can work on the prompt while it loads. When the model is loaded and idle the same place offers **Unload model**, which gives the memory back at once. **No automatic warm-up** (nothing loads because you started typing): the button only (§25) | DECIDED (the request and the three choices); details PROPOSED |
 | 40 | Music tab (built in 1.8 and 1.9) | A separate **Music** tab, beside Images, makes music with **MiniMax-Music3**. **Instrumental by default**; an **Add lyrics** switch reveals a lyrics box with the section tags (§26.1) | DECIDED (the request and your answers); details PROPOSED; the server side is built (1.8) and so is the page (1.9) |
 | 41 | One model in memory at a time | The music model and the image model are **never loaded together**: starting one unloads the other first (never during a run), so the Spark does not hold both next to Hermes (§26.4) | DECIDED; built in 1.8 |
 | 42 | Describing the music | **Fields** (genre, mood, tempo, key, instruments and arrangement, and a voice description when lyrics are on) build the structured description the model's card recommends, shown in a preview you can edit (§26.2) | DECIDED; **NOT built** |
 | 43 | Models come from the local cache (1.8) | After the first download **neither model contacts Hugging Face again**: with `STUDIO_LOCAL_FILES_ONLY=auto` (the new default) each model is loaded from the cache, and the network is used only if files are missing from it. `true` never goes online, `false` is the old behaviour (a check of the hub on every load). Applies to the image model as well (§26.11) | DECIDED (your request); details PROPOSED; built in 1.8 |
+| 44 | Make 4K (1.10) | You asked for the final output to be **at least 4K at 16:9**. A **Make 4K** button on every picture that is 16:9 (within 2%) makes a **3840×2160 PNG** from it, **beside the original**: trimmed to exactly 16:9 and enlarged with a standard resize (route A). The model cannot make 3840×2160 itself (2160 is not a multiple of 32). A **dedicated upscaler model** (route B) follows once a Spark probe shows one runs there; making 4K **directly** with the model (route C) is an experiment, not a feature. On demand, not automatic; the original stays (§27) | DECIDED (your requirement and the three choices: on demand, trim not stretch, keep both); details PROPOSED; route A built in 1.10 |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -119,7 +120,8 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #32 | In effect. |
 | #33, #34, #35 | Yes (1.3). |
 | #36 | Yes (1.4). |
-| #37 | **Not built.** A disabled button marks the place (1.4). |
+| #37 | **Superseded by #44.** A disabled button marked the place (1.4); 1.10 removes it. |
+| #44 | **Route A: yes** (1.10). Route B (an upscaler model) waits for the Spark probe; route C is an experiment. |
 | #38 | Yes (1.5). |
 | #39 | Yes (1.7). |
 | #43 | **Yes** (1.8). |
@@ -904,7 +906,9 @@ Draft time and quality at the defaults; a 100% / 50% / 25% run of the same promp
 - **When it is shown.** On a **done** run with a record whose full size is larger than the run's size. Not on a full-size run, nor on a failed or canceled one (those have Retry).
 - **Server.** `options.full` is accepted on Generate runs only, validated as a size (multiples of 32, 256–4096 per side, within the pixel limit, steps in range), and refused unless it is larger than the run in at least one side and smaller in neither. It is stored and returned with the run and used for nothing else by the server.
 
-### 23.2 Upscale (decision #37, planned and not built)
+### 23.2 Upscale (decision #37, planned and not built) — SUPERSEDED by §27 (decision #44)
+
+*Kept as the record of the plan. Edit mode cannot take a picture past about 2K, which is why §27 replaces it with Make 4K.*
 
 - **What it would be.** A second button, **Upscale**, that keeps *your picture* and makes it bigger, which Regenerate larger cannot do. The model has no upscaler, so the attempt would be an **edit run with the small image as its only input**, at Resolution 2K, asking for the same image in finer detail. [Unconfirmed: whether the editing model leaves the picture recognisably the same, how much detail it adds, and what it costs in time and memory. Nobody has tried it.]
 - **Why it waits.** It needed the editing page (built in 1.6), and it still needs a test on the Spark (M5c) before it is worth a button. If the test shows it does not work well, I will say so and drop it rather than ship a button that disappoints.
@@ -1204,3 +1208,63 @@ Built to §26.1, with these details, which the spec left open (tell me which you
 **A thing the browser tests caught in their own wording, not in the page:** the 1.7 tests asserted the old pill and announcement text (*Model ready*), which now names the model; they were updated. And one browser test was thrown off by a **mutation-testing script of mine that killed every worker process on the machine** (`pkill` by name): a reminder to kill only what a test started.
 
 **Not checked, because only the Spark can:** how the page feels with real waits (a track that takes ten minutes), and how the player behaves on a phone over your network.
+
+## 27. Version 1.10: Make 4K (decision #44 DECIDED; details PROPOSED; route A built in 1.10, route B and C not built)
+
+You asked for the final output to be **at least 4K at 16:9**. I read that as **3840×2160** (UHD). DCI 4K, 4096×2160, is not 16:9; say so if you meant it.
+
+### 27.1 What the model can and cannot do (checked in the code and the model's own pages)
+
+- **It cannot make 3840×2160 directly, even with the pixel limit lifted.** Both sides must be multiples of 32 (the pipeline rounds a size down to the grid), and 2160 is 67.5 × 32: it would make 3840×2144. The sizes it can make that are exactly 16:9 are 2048×1152, 2560×1440, 3072×1728, 3584×2016 and 4096×2304; 3840×2160 is not among them. A direct route still needs a trim of 16 pixels.
+- **Its own 16:9 size is not exactly 16:9.** The model card's preset is 2752×1536 (4.23 MP), a ratio of 1.7917 against 1.7778: 0.8% too wide.
+- **3840×2160 is 8.29 MP**, twice that preset and 1.84 times the studio's own limit of 4.5 MP. That limit is my guess at a safe size (§18 item 7): the pipeline has **no maximum** (the source at the pinned commit checks only the multiple of 32), and the position tables of the transformer reach far beyond 4096 pixels. What the model card says is only that it "natively supports 2K resolution". Nobody has published what it does above that.
+- **The Edit-mode Upscale of §23.2 cannot meet this.** Edit's Resolution is 1K or 2K, so its result stays near 4 MP.
+
+### 27.2 Three routes
+
+| Route | What it does | State |
+|---|---|---|
+| **A. Resize** | Generate at 2752×1536, trim to exactly 16:9, enlarge to 3840×2160 with a standard resize (Lanczos). No new model, no GPU | **Built in 1.10** (§27.3) |
+| **B. An upscaler model** | The same, but the enlarging is done by a super-resolution network (an ESRGAN-class model loaded with `spandrel`, which is pure Python and so has no ARM64 build problem). It adds plausible detail; a resize cannot | **Not built.** `scripts/upscale_probe.py` (built in 1.10) is run once on the Spark to show that one loads and runs there, and how long it takes; the feature is specified after that (§27.5) |
+| **C. Directly** | Raise the pixel limit and generate about 3840×2176, then trim 16 pixels | **An experiment, not a feature.** It needs a setting for the pixel limit (offered, not built). It is untested territory for the model: twice the tokens of 2K (32,640 against 16,384), about four times the attention work, no tiling in the image decoder, and composition may break up (§27.6) |
+
+### 27.3 Route A: what 1.10 does
+
+- **Where it is offered.** On a **result image** (never a source) of a Generate or Edit run, in the **viewer** for every such image and on the **card** for a run with one image (as Download and Thumbnail are). The rule is the server's, sent with each image as `can_4k`, so the page does not repeat it:
+  - the shape is within **2%** of 16:9 (the model's own 2752×1536 is 0.8% off; 3:2, 4:3 and square are not offered);
+  - after the trim below, the width is **at least 1920** (a bigger enlargement than 2× is a blurry picture, not a 4K one) and **under 3840** (an image that is already 4K has nothing to be made).
+- **The trim.** The long side is cut to exactly 16:9, **equally from both ends, with no stretching** (for 2752×1536 that is 21.3 pixels of width, 10.7 from each side). The cut is a fractional box handed to the resize, so the picture is resampled **once**.
+- **The result.** A **3840×2160 PNG**, resampled with Lanczos in that one pass; transparency is kept; the PNG text of the original (prompt, seed, steps, model) is kept and one line is added saying how this file was made. It is encoded at PNG level 1: measured here, 0.6 s against 2.6 s at the default level for a file about 12% larger (14.1 MB against 16.0 MB for a 2752×1536 test picture with fine texture). The resize itself took 0.15 s. These are this sandbox's times, not the Spark's.
+- **Where it lives.** `<data>/images/<run>/<idx>-4k.png`, **beside the original**, which is never touched. There is **no database change** (schema stays 3): a 4K file "exists" when its file does. It goes when the run goes (delete, auto-expiry), is covered by Keep, and is made atomically (a `.part` file, then a rename). It is made once: asking again returns the one that is there.
+- **The API (§7).** `POST /api/images/{id}/4k` makes it (`201`) or finds it (`200`) and returns the **updated run**, as Keep does; `GET /api/images/{id}/4k` sends it, with `?download=1` for an attachment named like the image with `3840x2160` in it. Every result image in a run's payload gains `can_4k` and `four_k` (`null`, or its `width`, `height`, `bytes`, `url`, `download_url`), so a reload, a restart or another open tab shows the button that applies. Other tabs learn of it from a `run.updated` event. Errors: `404` for an unknown image or one that is not a result, `422` `not_4k_eligible` with the reason in words, `507` when the disk is full (no partial file is left).
+- **No queue, no GPU.** It is a few seconds of CPU work in the API process, off the event loop, so it works **while a run is generating**. Two requests at once make one file.
+- **The page.** *Make 4K* becomes *Making 4K…* and then *Download 4K* with its size in the tooltip. The tooltip says what it does and what it does not: *Trims the picture to exactly 16:9 and enlarges it to 3840×2160 with a standard resize. It makes the picture bigger, not sharper: no detail is added.* The answer is a toast on a card and a note **inside the viewer** when made there (§24.2). The disabled **Upscale** placeholder of 1.4 is **removed**: Make 4K does its job.
+
+### 27.4 What route A does not do
+
+It adds no detail. At a factor of 1.4 (2752 to 3840 wide) I expect it to look fine on a screen, but I have not measured that, and an upscaler (route B) is the answer if it does not. It is not offered for other shapes, for drafts or for small images, and it does not change the picture you generated, so a 4K file and its original differ in size only.
+
+### 27.5 Route B: how it would join (not built)
+
+`scripts/upscale_probe.py` installs nothing by itself: run it in the container (`pip install spandrel` there first, as its output tells you), give it a picture and a model file, and it reports whether the model loads, which device it ran on, how long it took, and the memory it needed. The ESRGAN-class models I know of are small (tens of megabytes), so they fit next to whichever model is loaded; whether to keep them in the worker or to give them a worker of their own is decided from the probe. Make 4K would then offer the upscaler for the 2× step and a Lanczos reduction to exactly 3840×2160 (detail comes from the network, exactness from the reduction). **Open:** which model, its licence (each has its own), and whether a network's invented detail is what you want in a face. The probe cannot be run from my sandbox; `SPARK_TEST.md` §21 is its checklist.
+
+### 27.6 Route C: what to watch if you try it
+
+Memory (no tiling in the decode step), time, and above all whether the picture holds together. The comparison that matters is the same prompt through A and through C at 3840×2176; I suggest 2560×1440 first, which is an exactly-16:9 size inside the model's reach.
+
+### 27.7 Decision #37 is superseded
+
+Upscale through Edit mode is dropped from the plan: its ceiling is near 2K, it would need a Spark test nobody has run, and it could change the picture. The disabled button goes with it. If the Spark shows Edit can *refine* a picture without changing it, that can come back as its own feature.
+
+### 27.8 Acceptance criteria (continue §26.11)
+
+78. A result image within 2% of 16:9 whose trimmed width is from 1920 to 3839 gets **Make 4K** in the viewer (and on the card, for a run with one image). Sources, other shapes, narrower images and images already 4K do not, and the server says which with `can_4k`. (1.10)
+79. Make 4K produces **exactly 3840×2160**, trimmed to exactly 16:9 equally from both ends without stretching, resampled once, with transparency kept; the original file is not changed. (1.10)
+80. The file sits **beside the original**, is made once (a second request returns it with `200`), is still there after a reload and a restart, shows as **Download 4K**, and goes when the run is deleted or expires. (1.10)
+81. The download is named like the image with `3840x2160`; its PNG text is the original's plus one line. (1.10)
+82. A request for an ineligible image is refused with `422` and the reason; an unknown image or a source is `404`; a full disk is `507` and leaves no partial file. (1.10)
+83. Two requests at once make **one** file; other open pages learn of it by `run.updated`. (1.10)
+84. It works while a run is generating and does not touch the worker. (1.10)
+85. The disabled **Upscale** button is gone from cards and from the viewer. (1.10)
+86. On a **phone** the viewer's bar, with the new button, fits with no sideways scroll. (1.10)
+87. **Spark:** the time and size of a real 4K file, and how it looks next to the original (`SPARK_TEST.md` §21). (Spark)
