@@ -139,6 +139,8 @@ def test_a_staged_upload_that_no_run_owns_is_not_part_of_the_history_and_has_no_
     staged = stage(client, image_bytes(size=(2048, 2048)))
     assert client.post(f"/api/images/{staged['upload_id']}/4k").status_code == 404
     assert client.get(f"/api/images/{staged['upload_id']}/4k").status_code == 404
+    # and it was refused before any work: nothing was made, so no file is left in the staging folder for nothing to clean up
+    assert not list(client.app.state.storage.root.rglob("*-4k.png"))
 
 
 def test_a_damaged_leftover_copy_is_made_again(client):

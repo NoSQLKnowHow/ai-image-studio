@@ -591,11 +591,24 @@ equally from both sides), with nothing stretched (circles stay round). It will b
 no detail was added. **Write down what you think**: fine for how you will use it, or soft enough that an upscaler
 (step i) is worth building. Faces, text and fine textures are where it shows.
 
-**c) Where it is not offered.** A 1:1, 4:3 or 3:2 picture has no Make 4K. Neither has a Draft or a small 16:9
-picture (under 1920 wide). A run with several pictures has no button on its card; open one in the viewer and it
-is there, for that picture only.
+**c) Other shapes, and where it is not offered.** Make a **1:1** picture (the default 2048×2048) and press Make 4K: the
+tooltip says *3840×3840* and **Good** is a 3840×3840 file with nothing cut off (it is big: about 15 MP; **write down the
+seconds and the file size**). A 4:3 or 3:2 picture works too (3840 wide, in proportion). A **Draft**, or any picture
+that would need more than a doubling (anything under 1920×1080 or 1920×1920), has no Make 4K, and neither has one
+that is already 4K. A run with several pictures has no button on its card; open one in the viewer and it is there,
+for that picture only. **Pictures you made before updating** have the button too, if they qualify (open an old one).
 
-**d) While a picture is being made.** Start a long run, and press Make 4K on an older 16:9 picture while it runs.
+**c2) An edit's source images.** Open an edit run's card and click one of its source thumbnails: the viewer has **Make 4K**
+for it (if it is big enough), and the copy is for the source, not the result. Use the arrow keys to see that the result has
+its own button.
+
+**c3) A picture from your computer.** Press **Upscale a picture…** above your runs and choose a PNG, a JPEG and a WebP
+in turn (try a **phone photo**: it should come back upright, whatever way it was held). **Good:** a download starts at once,
+named `upscale_<file name>_<size>_<time>.png`, and no card appears. Try a tiny picture and a 4K one: each is refused with
+the reason, in words. Try a PNG with transparency: the copy is still transparent. **Write down** the time for a
+photo of about 12 MP (the server's CPU does the work).
+
+**d) While a picture is being made.** Start a long run, and press Make 4K on an older picture while it runs.
 **Good:** it works at once. **Write down** whether the running job slowed down (the steps per second in the logs).
 
 **e) It stays.** Reload the page: **Download 4K** is still there. `docker compose restart`: still there. Delete the
@@ -665,4 +678,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 11. From step 19: how long Load model takes (first time and cached), how much memory it takes and how much Unload gives back, and anything that did not match "Good".
 12. From step 20 a) to i) (the music model, the first real run): the download size and time, the load time, the seconds of work per second of music at 15, 60 and (if you can) 180 seconds, the lowest available memory, whether the track was instrumental with the tag alone, whether the same seed repeats, how fast Ctrl+C stopped it, whether anything downloaded after the first time, and anything that did not match "Good".
 13. From step 20 j) to n) (the Music tab on the Spark): the numbers from (k), (l) and (m), whether the track played and seeked on your phone, and a screenshot of anything on the phone that did not fit.
-14. From step 21 (Make 4K): the seconds and the file size from (a), what you thought of the picture in (b), whether a running job slowed down in (d), and anything that did not match "Good". From (i), if you ran it: the whole probe output and which of the two 4K files looks better to you, and where.
+14. From step 21 (Make 4K): the seconds and the file size from (a) and for a square in (c), what you thought of the picture in (b), whether the rotation of a phone photo and the refusals in (c3) were right, the time for a 12 MP photo in (c3), whether a running job slowed down in (d), and anything that did not match "Good". From (i), if you ran it: the whole probe output and which of the two 4K files looks better to you, and where.
