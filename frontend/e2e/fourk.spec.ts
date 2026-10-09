@@ -332,7 +332,7 @@ test("an edit's source image can be made 4K in the viewer, and downloaded", asyn
   const link = download4k(v);
   await expect(link).toBeVisible();
   const file = await page.request.get((await link.getAttribute("href"))!);
-  expect(file.headers()["content-disposition"]).toMatch(/source-1_put-dog-beach_3840x3840_/);
+  expect(file.headers()["content-disposition"]).toMatch(/source-1_put-dog-beach-[a-z0-9]+_3840x3840_/);
   expect(pngSize(await file.body())).toEqual([3840, 3840]);
   await page.keyboard.press("ArrowRight"); // the result is its own picture: no copy yet
   await expect(v.locator(".lightbox-title")).toContainText("Result 1 of 1");

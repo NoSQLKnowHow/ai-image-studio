@@ -124,6 +124,7 @@ def test_further_than_two_percent_from_16_9_is_scaled_to_cover_the_frame_and_not
     (1792, 2400, (2867, 3840)),   # 3:4 upright
     (1696, 2528, (2576, 3840)),   # 2:3 upright
     (1920, 1920, (3840, 3840)),   # exactly 2x
+    (2400, 1781, (3840, 2850)),   # 2849.6: rounded to the nearest pixel, not cut off
     (3000, 2200, (3840, 2816)),   # the short side is already past 2160 but the long one is not 3840
     (3840, 2000, (4147, 2160)),   # the long side is 4K already; the short one is not, so it grows to 2160
 ])
@@ -438,6 +439,11 @@ def test_a_file_that_is_not_a_png_has_no_size(tmp_path):
     broken = bytearray(good.read_bytes()); broken[12:16] = b"IDAT"  # the first chunk must be the header
     (tmp_path / "broken.png").write_bytes(bytes(broken))
     assert file_size(tmp_path / "broken.png") is None
+    unsigned = bytearray(good.read_bytes()); unsigned[:8] = b"NOTAPNG!"  # a header in the right place, but not a PNG's signature
+    (tmp_path / "unsigned.png").write_bytes(bytes(unsigned))
+    assert file_size(tmp_path / "unsigned.png") is None
+    (tmp_path / "cut.png").write_bytes(good.read_bytes()[:22])  # signature, length and the name IHDR, but not all of the size
+    assert file_size(tmp_path / "cut.png") is None
 
 
 # ------------------------------------------------------------------ download names
