@@ -44,8 +44,9 @@ def plan_4k(width: int, height: int) -> Plan:
         raise NotEligible("This picture has no size.")
     if abs(width * 9 - height * 16) * 100 > TOLERANCE_PERCENT * height * 16:  # integers: exact, and 2.000% is allowed
         raise NotEligible(f"Make 4K is for 16:9 pictures; this one is {width}×{height}.")
-    # Integer comparisons and exact multiples of 1/16 where possible, so an exactly-16:9 picture keeps all of itself
-    # and the box never sticks out by a rounding error (Pillow refuses a box larger than the picture).
+    # Integer comparisons and exact arithmetic, so an exactly-16:9 picture keeps all of itself and the box never sticks out
+    # of the picture (Pillow refuses a box larger than the picture): in the tall branch every figure is a multiple of 1/16,
+    # which floats hold exactly; in the wide branch the box ends at least 1/9 of a pixel inside, far more than a rounding error.
     if width * 9 > height * 16:  # too wide: cut equally from the left and the right
         kept_w, kept_h = height * 16 / 9, float(height)
         left, top = (width - kept_w) / 2, 0.0
@@ -58,7 +59,7 @@ def plan_4k(width: int, height: int) -> Plan:
             f"at least {MIN_TRIMMED_WIDTH} pixels wide, and this one is {int(kept_w)}.")
     if kept_w >= TARGET_WIDTH:
         raise NotEligible("This picture is already 4K or bigger.")
-    return Plan((left, top, min(float(width), left + kept_w), min(float(height), top + kept_h)), kept_w, kept_h)
+    return Plan((left, top, left + kept_w, top + kept_h), kept_w, kept_h)
 
 
 def can_4k(width: int, height: int) -> bool:

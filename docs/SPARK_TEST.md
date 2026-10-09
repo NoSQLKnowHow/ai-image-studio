@@ -575,6 +575,61 @@ that does not is the most useful thing you can send.
 
 ---
 
+## 21. Make 4K, and the upscaler probe (new in 1.10)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.10** (reload with Ctrl+Shift+R).
+There is no database change. You need a 16:9 picture: Options, size **16:9** (2752×1536), generate one at the usual
+steps. A 4K copy is a file next to the picture, so `ls -l data/images/<run>/` shows it.
+
+**a) Make 4K.** On the card of a 16:9 picture press **Make 4K**. Good: the button says *Making 4K…* for a few
+seconds, a note says *The 4K copy is ready: 3840×2160, N MB*, and the button becomes **Download 4K**. **Write down how
+many seconds it took** (the Spark's CPU, not mine) **and the file size**. `ls -l` shows `0.png` and `0-4k.png`.
+
+**b) Look at it.** Download the 4K copy and the original. Open the 4K copy at 100% and the original at 140% in a
+viewer you trust. **Good:** the same picture, trimmed by a sliver at the sides (about 21 pixels of the 2752 wide, taken
+equally from both sides), with nothing stretched (circles stay round). It will be **softer than a real 4K picture**:
+no detail was added. **Write down what you think**: fine for how you will use it, or soft enough that an upscaler
+(step i) is worth building. Faces, text and fine textures are where it shows.
+
+**c) Where it is not offered.** A 1:1, 4:3 or 3:2 picture has no Make 4K. Neither has a Draft or a small 16:9
+picture (under 1920 wide). A run with several pictures has no button on its card; open one in the viewer and it
+is there, for that picture only.
+
+**d) While a picture is being made.** Start a long run, and press Make 4K on an older 16:9 picture while it runs.
+**Good:** it works at once. **Write down** whether the running job slowed down (the steps per second in the logs).
+
+**e) It stays.** Reload the page: **Download 4K** is still there. `docker compose restart`: still there. Delete the
+run: `ls data/images/` no longer has its folder, and the 4K file went with it.
+
+**f) Transparency.** Make a 16:9 picture with **Transparent** on and press Make 4K. **Good:** the 4K copy is still
+transparent (open it on a coloured background).
+
+**g) A phone.** In the viewer on your phone the buttons wrap onto a second row; nothing runs off the screen.
+
+**h) The numbers.** The model cannot make 3840×2160 itself (2160 is not a multiple of 32), so there is nothing to
+compare this against. If you want to try **making a bigger picture directly** (route C in `docs/DESIGN.md` §27.6), tell me:
+that needs a setting for the pixel limit, which I have not built.
+
+**i) The upscaler probe (route B, optional but it decides what comes next).** It checks that an ESRGAN-class model
+runs on the Spark's GPU, and it makes two 4K files to compare. Nothing in the studio uses it.
+
+1. On the Spark, download the model into the cache folder the container sees as `/models`:
+   `mkdir -p ~/.cache/huggingface/upscalers && curl -L -o ~/.cache/huggingface/upscalers/RealESRGAN_x2plus.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth`.
+   It is 67,061,725 bytes. When I downloaded it (2026-10-09) its SHA-256 was `49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb` (`sha256sum` it); the project does not publish a checksum that I found, so
+   a different one means only that the file has changed. The code is BSD-3-Clause; read the model's terms yourself.
+2. `docker compose cp scripts/upscale_probe.py studio:/tmp/upscale_probe.py`, then `docker compose exec studio pip install --user spandrel`.
+3. A quick check: `docker compose exec studio python /tmp/upscale_probe.py --model /models/upscalers/RealESRGAN_x2plus.pth --crop 512x288`. **Good:** it prints the GPU, `ESRGAN, x2`, a tile time and `PROBE OK`.
+4. The real one, on a 16:9 picture the studio made: `... --image /data/images/<run>/0.png --out /data/upscale-probe`.
+   Then try `--dtype bf16`. The results are in `data/upscale-probe/`: put `4k-lanczos.png` (what Make 4K makes) and
+   `4k-from-model.png` side by side at 100%.
+
+**Send back:** the whole output of the probe, including the last line and the **GPU** line (it says whether it used the
+GPU and which compute capability), the tile times, the peak GPU memory and the memory figures; whether the same run
+with `--dtype bf16` was faster and looked the same; and above all **which of the two 4K files looks better to you and
+where** (faces, text, foliage). If `pip install` or the run fails, paste the error: that is the answer I am looking for.
+
+---
+
 ## Troubleshooting
 
 | You see | What to do |
@@ -610,3 +665,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 11. From step 19: how long Load model takes (first time and cached), how much memory it takes and how much Unload gives back, and anything that did not match "Good".
 12. From step 20 a) to i) (the music model, the first real run): the download size and time, the load time, the seconds of work per second of music at 15, 60 and (if you can) 180 seconds, the lowest available memory, whether the track was instrumental with the tag alone, whether the same seed repeats, how fast Ctrl+C stopped it, whether anything downloaded after the first time, and anything that did not match "Good".
 13. From step 20 j) to n) (the Music tab on the Spark): the numbers from (k), (l) and (m), whether the track played and seeked on your phone, and a screenshot of anything on the phone that did not fit.
+14. From step 21 (Make 4K): the seconds and the file size from (a), what you thought of the picture in (b), whether a running job slowed down in (d), and anything that did not match "Good". From (i), if you ran it: the whole probe output and which of the two 4K files looks better to you, and where.

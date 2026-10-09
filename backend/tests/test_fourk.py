@@ -64,6 +64,23 @@ def test_whatever_is_kept_is_exactly_16_9_and_inside_the_picture_over_a_sweep_of
             assert left == pytest.approx(width - right, abs=1e-9) and top == pytest.approx(height - bottom, abs=1e-9)
 
 
+def test_the_box_is_inside_the_picture_for_every_eligible_size_in_range():
+    """There is no clamp on the box, because none is needed (the arithmetic is exact in the tall branch and the wide branch
+    ends at least 1/9 pixel inside). This is that argument checked on every size, not a sample: Pillow refuses a box that
+    sticks out, so one failure here would be an error on the page."""
+    checked = 0
+    for height in range(1000, 2200):
+        for width in range(int(height * 16 / 9 * 0.979), int(height * 16 / 9 * 1.021) + 2):  # the 2% band, with a margin
+            try:
+                plan = plan_4k(width, height)
+            except NotEligible:
+                continue
+            left, top, right, bottom = plan.box
+            assert 0 <= left < right <= width and 0 <= top < bottom <= height, (width, height, plan.box)
+            checked += 1
+    assert checked > 50_000  # it really did look at a great many sizes (and the band's edges are refused, not skipped)
+
+
 # ------------------------------------------------------------------ the 2% boundary (inclusive, exact)
 @pytest.mark.parametrize("width", [2091, 2133, 2175, 2176])
 def test_within_two_percent_of_16_9_is_offered(width):
@@ -133,7 +150,8 @@ def stripes(path: Path, width=2752, height=1536, **save) -> Path:
 def line_centre(img: Image.Image, y: int = 500) -> float:
     """Where the white line is, in pixel-edge coordinates: the middle of the columns that are white (min channel high).
     The stripes' other colours have a zero channel, so only the line counts."""
-    weights = [min(img.convert("RGB").getpixel((x, y))) for x in range(img.width)]
+    rgb = img.convert("RGB")  # once, not once per column
+    weights = [min(rgb.getpixel((x, y))) for x in range(rgb.width)]
     return sum((x + 0.5) * w for x, w in enumerate(weights)) / sum(weights)
 
 

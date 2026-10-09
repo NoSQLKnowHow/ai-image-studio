@@ -1,8 +1,8 @@
 # Qwen-Image Web Studio — Design Specification
 
-Living document. **Last brought up to date 2026-10-04, for version 1.8** (the number the page shows in its title).
+Living document. **Last brought up to date 2026-10-09, for version 1.10** (the number the page shows in its title).
 
-**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, and §25 specifies **1.7**, loading the model ahead of time. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
+**How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, §25 specifies **1.7**, loading the model ahead of time, §26 specifies **1.8 and 1.9**, music, and §27 specifies **1.10**, Make 4K. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
 Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSED** = an implementation detail that you chose not to review line by line; I will go with it unless you object, and you can challenge any of it at any time. **OPEN** = needs an answer. **BUILT** says something is in the code on `main`; it does not say it has run on the Spark (the "Spark" column below says that).
 
@@ -20,8 +20,9 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.5 | Regenerate larger in the image viewer, for that one image | §24 | #15 | §17(e) not yet reported back |
 | 1.6 | **The editing page (M5b)**: Edit mode on, the reference tray, Resolution and its cost warning, edit run cards, Reuse and Retry for edits, Edit this | §21.4, §21.11 | #17 | §18 (the Spark test for edits, M5c) not yet run; **the real-GPU edit path has never run** |
 | 1.7 | **Load model / Unload model** buttons beside the model pill, so the model can be loaded while you write the prompt | §25 | #18 | §19 of `SPARK_TEST.md` not yet reported back |
-| 1.8 | **Music, the server side**: music runs, tracks and the audio route, schema 3, one model in memory at a time, the second `diffusers`, models loaded from the local cache; `scripts/minimax_music.py` makes a track from a terminal | §26, §26.11, §26.12 | (not yet pushed) | §20 of `SPARK_TEST.md` not yet reported back; **the real music model has never run** |
-| 1.9 | **Music, the page**: the Images and Music tabs; the Music tab (the fields and the editable description, Add lyrics with the section tags, length, versions, seed and steps); track cards with a player; a model pill and a Load/Unload button that name and act on the open tab's model | §26.1, §26.13 | (not yet pushed) | the page's part of §20 of `SPARK_TEST.md` not yet reported back; **the real music model has never run** |
+| 1.8 | **Music, the server side**: music runs, tracks and the audio route, schema 3, one model in memory at a time, the second `diffusers`, models loaded from the local cache; `scripts/minimax_music.py` makes a track from a terminal | §26, §26.11, §26.12 | #20, #22 | §20 of `SPARK_TEST.md` not yet reported back; **the real music model has never run** |
+| 1.9 | **Music, the page**: the Images and Music tabs; the Music tab (the fields and the editable description, Add lyrics with the section tags, length, versions, seed and steps); track cards with a player; a model pill and a Load/Unload button that name and act on the open tab's model | §26.1, §26.13 | #21, #22 | the page's part of §20 of `SPARK_TEST.md` not yet reported back; **the real music model has never run** |
+| 1.10 | **Make 4K**: a button on every 16:9 picture makes a 3840×2160 PNG beside the original (trimmed to exactly 16:9 and enlarged with a standard resize); the disabled Upscale button is removed; `scripts/upscale_probe.py` probes whether an upscaler model runs on the Spark | §27 | (this release) | §21 of `SPARK_TEST.md` not yet reported back; **the upscaler probe has never run on the Spark** |
 
 **Tests today (1.9):** backend 598 (pytest; 22 more run only where `torch` and `diffusers` 0.40.0 are installed), front end 257 (Vitest) and 98 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
@@ -32,9 +33,9 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1 | **M5c** | The Spark test for edits (`SPARK_TEST.md` §18, on the page; §15 is the same through the API): whether "image 1" in a prompt works, alpha inputs, mask polarity and size, memory and time; sets the cap's default and the cost warning's threshold | You, on the Spark |
 | 2 | **M5d** | Local edits: a mark-up editor and a mask editor (§21.5) | M5c (the mask convention) |
 | 3 | **M5e** | "Improve prompt", Qwen's official rewriter (§21.12 item 3) | **Your decision on R3**; only if accepted |
-| 4 | **Upscale** | "The same picture, bigger" (decision #37, §23.2) | The M5c result (editing now exists, 1.6); may be dropped if the editing model changes the picture |
-| 5 | **Music 1.8** | **Built** (§26.12): the server side of the Music tab and the command-line example | Neither pushed nor merged: 1.7 could not be published, and 1.8 is built on it. Your run of `SPARK_TEST.md` §20 (the example script on the real model) |
-| 6 | **Music 1.9** | **Built** (§26.13): the Music tab, with the fields and preview, lyrics, tracks with a player, and Load/Unload per tab | Neither pushed nor merged (1.7 first, then 1.8). Your run of `SPARK_TEST.md` §20, including the page |
+| 4 | **An upscaler model** for Make 4K (route B, §27.5) | Real added detail instead of a plain resize; replaces the Edit-mode Upscale of decision #37, which is dropped | Your run of `scripts/upscale_probe.py` on the Spark (`SPARK_TEST.md` §21 i), then a choice of model and its licence |
+| 5 | **Music 1.8** | **Built and merged** (#20, #22; §26.12): the server side of the Music tab and the command-line example | Your run of `SPARK_TEST.md` §20 (the example script on the real model) |
+| 6 | **Music 1.9** | **Built and merged** (#21, #22; §26.13): the Music tab, with the fields and preview, lyrics, tracks with a player, and Load/Unload per tab | Your run of `SPARK_TEST.md` §20, including the page |
 | 7 | **M8** | The Spark smoke test together | Everything above |
 
 **Open questions for you:** R3 (the prompt rewriter, §21.12 item 3); any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2).
@@ -57,7 +58,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 **PROPOSED — out of scope for v1**
 - User accounts / login (an optional shared-token hook is reserved, §11)
 - Choosing between multiple models
-- Masks / inpainting (**now planned for version 2, §21.5**), LoRAs. **Upscaling** is planned as a button that waits for the editing page (decision #37, §23.2)
+- Masks / inpainting (**now planned for version 2, §21.5**), LoRAs. **Upscaling**: **Make 4K** (§27, 1.10) resizes a 16:9 picture to 3840×2160, and an upscaler model is being probed (§27.5)
 - LLM-based prompt rewriting (**an optional step is proposed and awaits your decision: R3, §21.12 item 3**)
 
 ## 3. Decision log
@@ -170,10 +171,10 @@ Consequences of the decisions:
 │ ┌──────┐ [Done] [Draft]            just now                  │  run card
 │ │ img  │ "Halloween town at dawn…"                           │
 │ └──────┘ 1024×1024 · 40 steps · seed 42 · 31s                │
-│          [Reuse] [Regenerate larger] [Upscale ⊘] [Download]   │
+│          [Reuse] [Regenerate larger] [Download] [Make 4K]     │
 │          [Thumbnail] [Copy prompt] [Keep] [Edit this] [🗑]     │
 └─────────────────────────────────────────────────────────────┘
-        ⊘ = shown but disabled: Upscale is not built yet (§23.2)
+        Make 4K: on a card with one picture that is 16:9 (§27)
 ```
 
 - The title shows the **version** (`AI Image Studio v1.5`), as does the browser tab. It comes from the server (`studio.__version__`, the one place it is set), so it tells you which build is actually running; on a phone it sits under the title. `index.html` is sent with `Cache-Control: no-cache` (revalidated on every load) and the hashed files under `/assets/` are cached for good, so a rebuilt page appears on the next reload.
@@ -209,11 +210,11 @@ Consequences of the decisions:
 - Shows: the prompt (collapsed after a few lines, expandable), the negative prompt if used, and a meta line: the **size the run actually used** (a 50% run shows "1024×1024", not the percentage; the "(50%)" appears only in the Options summary), steps, seed(s), guidance, and how long it took. For an Edit run it also shows the numbered source thumbnails above the result, and its meta line starts with the number of images and gives the resolution ("3 images · 1024×1024 · 1K · 40 steps", §21.4). A card shows **"Will be deleted in N days. Press Keep to save it."** when fewer than 7 remain (§5.6).
 - Running cards show progress: image i of N and, with the per-step callback, step k of T; otherwise a spinner with elapsed time. A canceled card says how many images finished and were kept.
 - Failed cards show the error message, its hint and a **Retry** button (resubmits the stored options, a draft as a draft).
-- Click an image → the **viewer** (lightbox): the full image, its seed and size, **Download**, **Thumbnail** (§22.3) and, where the card has it, **Regenerate larger** for that one image (§24); the arrow keys and buttons page through a batch (and through an edit's source images and then its results).
+- Click an image → the **viewer** (lightbox): the full image, its seed and size, **Download**, **Make 4K** and then **Download 4K** for a 16:9 picture (§27), **Thumbnail** (§22.3) and, where the card has it, **Regenerate larger** for that one image (§24); the arrow keys and buttons page through a batch (and through an edit's source images and then its results).
 - Actions (shown as they apply):
   - **Cancel** on a queued or running card (§5.5a); a running one asks first.
   - **Reuse**: loads the prompt and options into the bar and drawer, **Lock seed on**, and the run's size as a preset and scale where it is exactly one (§22.1); for a **draft** it loads only the prompt-side options and leaves your size, steps and seed (§22.2). It switches the mode toggle to the run's mode, and for an edit brings its images back into the tray, in order (§21.4).
-  - **Regenerate larger** (and a disabled **Upscale**) on a finished run made smaller than selected (§23).
+  - **Regenerate larger** on a finished run made smaller than selected (§23); **Make 4K**, then **Download 4K**, on a run with one picture that is 16:9 (§27).
   - **Download** (one image) or **Download…** (opens the viewer to choose), **Thumbnail** (one image), **Copy prompt**.
   - **Keep** (exempt from auto-expiry; a toggle), **Edit this** (on a result with one image: it adds the picture to the tray and switches to Edit; for a batch, open the image in the viewer, which has it for any image, §21.4), **Delete** (with confirmation; refused while it is running).
 - Cards update live in every open browser (server-sent events).
@@ -250,7 +251,7 @@ The prompt lives in the prompt bar, max 8000 characters (env var). Mode is the t
 
 **Not per-run (server configuration):** model id/path, idle timeout, CPU offload, queue cap, retention days, storage path, port, upload limits (§13).
 
-## 7. API (PROPOSED; this table is the API as built in 1.5)
+## 7. API (PROPOSED; this table is the API as built in 1.10)
 
 All under `/api`. JSON unless noted. Mutating requests require the header `X-Studio-Client: 1` (see §11).
 
@@ -272,11 +273,13 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 | `DELETE /api/runs/{id}` | Delete run and files | 409 if running (cancel first) |
 | `GET /api/images/{id}` | Full PNG | `?download=1` sets a meaningful filename (below) |
 | `GET /api/images/{id}/thumb` | WebP thumbnail | `?download=1` sends it as an attachment named like the image with `_thumb.webp`; outputs only (§22.3) |
+| `POST /api/images/{id}/4k` | **1.10:** make the 4K copy of a result image: a 3840×2160 PNG beside the original (§27.3) | `201` with the updated run when it was made now, `200` when it was already there; `404` for an unknown image or one that is not a result; `422` `not_4k_eligible` (not 16:9, too small, already 4K: the reason is in `detail`) or `unreadable`; `507` `storage_full`, leaving no partial file |
+| `GET /api/images/{id}/4k` | **1.10:** the 4K copy, once made; `?download=1` sends it as an attachment named like the image with `3840x2160` in it | `404` if it has not been made |
 | `GET /api/events` | Server-sent events | `hello` (`{status, runs}`: the status plus the newest page of runs, read after the stream subscribed, so it is a consistent starting point), `run.created`, `run.updated` (full run), `run.progress` (step progress), `run.deleted`, `queue.updated` (positions), `worker.state`, `overflow`, `shutdown` (the server is stopping; the stream then ends). A `: ping` comment every 15 s keeps proxies from closing the stream. Every connection, first or reconnect, starts from its `hello`; the client never lets an older copy of a run (a late POST response, a stale page) replace a newer one, since runs only move forward (queued → running → finished) |
 
 **Music (1.8):** `POST /api/runs` takes `mode: "music"`, `lyrics` and the options `duration`, `tracks`, `steps`, `seed` and `fields` (§26.3); a run's payload then has `tracks` (and `lyrics`) as an image run has `images`, and `/api/capabilities` has `modes` listing `music` when the music pipeline can run, `limits.music`, and `music` {`available`, `state`, `reason`, `hint`, `model`}. `worker` in the status and in `worker.state` events says which `model` (`image` or `music`) it holds.
 
-**What a run looks like in the API:** `id`, `status`, `mode`, `prompt`, `effective_prompt`, `options` (the exact snapshot of what the run used: size, steps, seed and whether it was random, images, negative prompt, guidance, transparent, `resolution`, `shape_from`, the inputs' `roles`, `draft`, `full`), `model_id`, the three timestamps, `error` (`message`, `hint`), `pinned`, `expires_at` (worked out from the creation time and `STUDIO_RETENTION_DAYS`, null when the run is kept, still queued or running, or retention is off), `queue_position`, `progress`, `canceling`, `inputs` and `images`. The upload and run-creation calls for editing are specified in full in §21.6.
+**What a run looks like in the API:** `id`, `status`, `mode`, `prompt`, `effective_prompt`, `options` (the exact snapshot of what the run used: size, steps, seed and whether it was random, images, negative prompt, guidance, transparent, `resolution`, `shape_from`, the inputs' `roles`, `draft`, `full`), `model_id`, the three timestamps, `error` (`message`, `hint`), `pinned`, `expires_at` (worked out from the creation time and `STUDIO_RETENTION_DAYS`, null when the run is kept, still queued or running, or retention is off), `queue_position`, `progress`, `canceling`, `inputs` and `images`. Each image has `can_4k` (the server's rule for whether Make 4K is offered, §27.3) and `four_k` (its 4K copy, or null). The upload and run-creation calls for editing are specified in full in §21.6.
 
 **Capabilities without a loaded model:** the API process can't inspect a pipeline that isn't loaded, so at start-up it runs a short GPU-free probe subprocess that imports `diffusers` and inspects `QwenImage21Pipeline.__call__` (the same idea as the CLI's early signature check). The result is cached. If the import fails the state is `unavailable` with the reason.
 
@@ -294,7 +297,7 @@ SQLite in WAL mode; the API process is the only writer.
 
 **`run_inputs`** (since schema 2, §21.7): the ordered inputs of an edit. **`meta`**: the schema version (now 2).
 
-**Files** under the data volume: `images/<run>/<idx>.png`, `thumbs/<run>/<idx>.webp`, `inputs/staged/<id>.png` (uploads waiting; re-encoded to PNG) and `inputs/<run>/<position>.png` (what a run owns), their thumbnails under `thumbs/staged/` and `thumbs/<run>/in-<position>.webp`, `studio.sqlite`, and once after the upgrade to schema 2 `studio.sqlite.before-schema-2` (§21.7). All file access is by database id; client-supplied filenames are never used in paths.
+**Files** under the data volume: `images/<run>/<idx>.png`, `images/<run>/<idx>-4k.png` (a 4K copy, made on request, §27: no database row, it goes with the run), `thumbs/<run>/<idx>.webp`, `inputs/staged/<id>.png` (uploads waiting; re-encoded to PNG) and `inputs/<run>/<position>.png` (what a run owns), their thumbnails under `thumbs/staged/` and `thumbs/<run>/in-<position>.webp`, `studio.sqlite`, and once after the upgrade to schema 2 `studio.sqlite.before-schema-2` (§21.7). All file access is by database id; client-supplied filenames are never used in paths.
 
 **Version 2** added the `run_inputs` table and a schema migration (1.2): §21.7.
 
@@ -534,7 +537,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
   - **1.5 (#15):** Regenerate larger in the viewer; a flaky test of mine fixed at its cause. Backend 360, Vitest 90, Playwright 34.
   - **1.6 (#17):** M5b, the editing page (§21.11). Backend 363, Vitest 169, Playwright 68.
   - **1.7 (#18):** Load model and Unload model (§25). Backend 384, Vitest 179, Playwright 75.
-- **Left to build:** M5c (the Spark test for edits), M5d (local edits), M5e (only if R3 is accepted), Upscale (decision #37) and M8, the Spark smoke test together. The table in "Status at a glance" (top of this document) says what each waits on.
+- **Left to build:** M5c (the Spark test for edits), M5d (local edits), M5e (only if R3 is accepted), an upscaler model for Make 4K (§27.5) and M8, the Spark smoke test together. The table in "Status at a glance" (top of this document) says what each waits on.
 
 ## 18. Open items and facts to verify
 
@@ -550,7 +553,7 @@ Each milestone is committed separately. **After each milestone I stop, report wh
 10. **NVIDIA's pages were unreachable** — docs.nvidia.com and build.nvidia.com are blocked from my sandbox, so §9a and §12 rest on search summaries and community posts. Before building, compare them with the current Container Runtime, NGC and Hermes playbook pages.
 11. **Two quirks of the CLI script** (`scripts/qwen_image.py`, deliberately left as is): its size warning uses a multiple-of-16 rule, but the pipeline requires 32; and it flattens an RGBA input to RGB, while the pipeline's image encoder reads all four channels (§21.2 point 5). The studio does neither.
 12. **The Spark checks for 1.1 to 1.7 have not been reported back** (`docs/SPARK_TEST.md` §14–§19): how fast a cancel takes effect mid-step at 2K and what it does to memory; real edits, through the API (§15) and now on the page (§18) (none of the real-GPU edit path has ever run); the time and look of drafts and of 50% / 25% runs; how different a regenerated image is from the small one; and how long Load model takes with the real weights and how much memory Unload gives back. Until they are, those releases are verified only against the fake pipeline.
-13. **Model behaviours nobody has confirmed** (§21.2 [unconfirmed], §22.1): that a prompt can refer to images by number; the mask convention (which colour means "edit here", and whether the mask must match the original's size); that the same prompt and seed at a larger size gives a different picture (assumed from how latent diffusion models behave; it is the reason Regenerate larger warns you); and whether the editing model can enlarge an image without changing it (decides Upscale, #37).
+13. **Model behaviours nobody has confirmed** (§21.2 [unconfirmed], §22.1): that a prompt can refer to images by number; the mask convention (which colour means "edit here", and whether the mask must match the original's size); that the same prompt and seed at a larger size gives a different picture (assumed from how latent diffusion models behave; it is the reason Regenerate larger warns you); and whether the editing model can enlarge an image without changing it (it decided Upscale, #37, which §27.7 dropped).
 14. **R3, the optional prompt rewriter, awaits your decision** (§21.12 item 3). Only M5e depends on it.
 15. **The edit cost warning's threshold is a guess** (`STUDIO_EDIT_WARN_UNITS`, default 8, §21.11 M5b): the Spark test (M5c) should replace it with a measured one, together with the default cap of 4 images.
 
@@ -1236,17 +1239,23 @@ You asked for the final output to be **at least 4K at 16:9**. I read that as **3
 - **The trim.** The long side is cut to exactly 16:9, **equally from both ends, with no stretching** (for 2752×1536 that is 21.3 pixels of width, 10.7 from each side). The cut is a fractional box handed to the resize, so the picture is resampled **once**.
 - **The result.** A **3840×2160 PNG**, resampled with Lanczos in that one pass; transparency is kept; the PNG text of the original (prompt, seed, steps, model) is kept and one line is added saying how this file was made. It is encoded at PNG level 1: measured here, 0.6 s against 2.6 s at the default level for a file about 12% larger (14.1 MB against 16.0 MB for a 2752×1536 test picture with fine texture). The resize itself took 0.15 s. These are this sandbox's times, not the Spark's.
 - **Where it lives.** `<data>/images/<run>/<idx>-4k.png`, **beside the original**, which is never touched. There is **no database change** (schema stays 3): a 4K file "exists" when its file does. It goes when the run goes (delete, auto-expiry), is covered by Keep, and is made atomically (a `.part` file, then a rename). It is made once: asking again returns the one that is there.
-- **The API (§7).** `POST /api/images/{id}/4k` makes it (`201`) or finds it (`200`) and returns the **updated run**, as Keep does; `GET /api/images/{id}/4k` sends it, with `?download=1` for an attachment named like the image with `3840x2160` in it. Every result image in a run's payload gains `can_4k` and `four_k` (`null`, or its `width`, `height`, `bytes`, `url`, `download_url`), so a reload, a restart or another open tab shows the button that applies. Other tabs learn of it from a `run.updated` event. Errors: `404` for an unknown image or one that is not a result, `422` `not_4k_eligible` with the reason in words, `507` when the disk is full (no partial file is left).
+- **The API (§7).** `POST /api/images/{id}/4k` makes it (`201`) or finds it (`200`) and returns the **updated run**, as Keep does; `GET /api/images/{id}/4k` sends it, with `?download=1` for an attachment named like the image with `3840x2160` in it. Every result image in a run's payload gains `can_4k` and `four_k` (`null`, or its `width`, `height`, `bytes`, `url`, `download_url`), so a reload, a restart or another open tab shows the button that applies. Other tabs learn of it from a `run.updated` event. Errors: `404` for an unknown image or one that is not a result, `422` `not_4k_eligible` with the reason in words (or `unreadable` when the picture's file is damaged), `507` when the disk is full (no partial file is left).
 - **No queue, no GPU.** It is a few seconds of CPU work in the API process, off the event loop, so it works **while a run is generating**. Two requests at once make one file.
-- **The page.** *Make 4K* becomes *Making 4K…* and then *Download 4K* with its size in the tooltip. The tooltip says what it does and what it does not: *Trims the picture to exactly 16:9 and enlarges it to 3840×2160 with a standard resize. It makes the picture bigger, not sharper: no detail is added.* The answer is a toast on a card and a note **inside the viewer** when made there (§24.2). The disabled **Upscale** placeholder of 1.4 is **removed**: Make 4K does its job.
+- **The page.** *Make 4K* becomes *Making 4K…* and then *Download 4K* with its size in the tooltip. The tooltip says what it does and what it does not: *Trims the picture to exactly 16:9 and enlarges it to 3840×2160 with a standard resize. It makes the picture bigger, not sharper: no detail is added.* The answer is a toast on a card and a note **inside the viewer** when made there (§24.2). While it is being made the button stays the same button (*Making 4K…*, `aria-disabled`, so a keyboard user keeps their place and a second press does nothing); when it is done it is replaced by the *Download 4K* link, and **focus goes to that link** if the person had pressed Make 4K and focus was lost (on the page, or on the viewer itself). A person who moved on to something else while it was being made keeps their place. A failure is said in the server's own words after *Couldn't make 4K:*, and the button stays so that it can be tried again. The disabled **Upscale** placeholder of 1.4 is **removed**: Make 4K does its job.
 
 ### 27.4 What route A does not do
 
 It adds no detail. At a factor of 1.4 (2752 to 3840 wide) I expect it to look fine on a screen, but I have not measured that, and an upscaler (route B) is the answer if it does not. It is not offered for other shapes, for drafts or for small images, and it does not change the picture you generated, so a 4K file and its original differ in size only.
 
-### 27.5 Route B: how it would join (not built)
+### 27.5 Route B: the probe, and how an upscaler would join (feature not built)
 
-`scripts/upscale_probe.py` installs nothing by itself: run it in the container (`pip install spandrel` there first, as its output tells you), give it a picture and a model file, and it reports whether the model loads, which device it ran on, how long it took, and the memory it needed. The ESRGAN-class models I know of are small (tens of megabytes), so they fit next to whichever model is loaded; whether to keep them in the worker or to give them a worker of their own is decided from the probe. Make 4K would then offer the upscaler for the 2× step and a Lanczos reduction to exactly 3840×2160 (detail comes from the network, exactness from the reduction). **Open:** which model, its licence (each has its own), and whether a network's invented detail is what you want in a face. The probe cannot be run from my sandbox; `SPARK_TEST.md` §21 is its checklist.
+**The probe, `scripts/upscale_probe.py` (built in 1.10).** It loads one model with `spandrel`, upscales a picture in tiles with a little context around each, and reports the device, the time and the memory. For a 16:9 picture it also writes the 4K file Make 4K makes today and a 4K file made from the model's output (trimmed by the same box, scaled), to compare. The ×2 model needs sizes in multiples of 4, so each tile is padded for the model and cut back; the cores of the tiles are all that is kept, so they join without seams. It needs `spandrel`, which the image does not contain: the script is copied into the running container (`docker compose cp`) and `pip install --user spandrel` is run there, so nothing is added to the image and nothing lasts past the container. (The image's `.dockerignore` currently excludes `scripts/`, which the fix on the `local-model-folder` branch deals with; this release does not depend on it.)
+
+**What I could check here.** With the real `RealESRGAN_x2plus.pth` (67,061,725 bytes; the checksum is in `SPARK_TEST.md` §21): `spandrel` 0.4.2 loads it as an ESRGAN ×2 network of 16.7 million parameters that supports fp16 and bfloat16 and needs input sizes in multiples of 4; the probe ran it end to end on a CPU (a 512×288 crop took 14 s there) and its output is a clean, seamless upscale. Its tiling is tested against stand-in models (a tiled result equals the whole-picture result exactly when the overlap covers the model's reach, and differs without overlap, so the test can fail).
+
+**What only the Spark can show:** that it runs on the GB10 (`sm_121`) with NVIDIA's PyTorch (2.9 in the 25.10 container), how long a whole 2752×1536 picture takes, how much memory it holds, and whether bf16 is as good. One source I read, a blog post about a video pipeline in ComfyUI, says Real-ESRGAN x2plus ran on a DGX Spark (316 s to upscale 362 frames from 960×540 to 1080p); it used a pip-installed PyTorch 2.13 with CUDA 13, not NVIDIA's container this studio uses, so it is encouraging and not proof.
+
+**How it would join Make 4K.** The ESRGAN-class models I know of are small (tens of megabytes), so they fit next to whichever model is loaded; whether to keep one in the worker or give it a worker of its own is decided from the probe. Make 4K would offer the upscaler for the 2× step and a Lanczos reduction to exactly 3840×2160 (the detail comes from the network, the exactness from the reduction). An upscaler cannot be applied to the transparent channel; that would be resized as now. **Open:** which model, its licence (each has its own), and whether a network's invented detail is what you want in a face.
 
 ### 27.6 Route C: what to watch if you try it
 
