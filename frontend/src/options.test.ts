@@ -578,7 +578,7 @@ describe("editing: the request", () => {
 
 describe("editing: Reuse, Retry and the summary", () => {
   const input = (position: number, id = `in${position}`) => ({
-    position, role: "reference" as const, id, width: 600, height: 400, has_alpha: false, url: `/api/images/${id}`, thumb_url: `/api/images/${id}/thumb`,
+    position, role: "reference" as const, id, width: 600, height: 400, has_alpha: false, url: `/api/images/${id}`, thumb_url: `/api/images/${id}/thumb`, can_4k: false, four_k_size: null, four_k: null,
   });
   const editRun = (options: Partial<ImageRun["options"]> = {}, extra: Partial<ImageRun> = {}): ImageRun =>
     makeRun({

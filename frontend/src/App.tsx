@@ -8,8 +8,9 @@ import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { OptionsDrawer } from "./components/OptionsDrawer";
 import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
+import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
-import { fourKFailedText, fourKMadeText } from "./fourk";
+import { fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -32,7 +33,7 @@ import {
 } from "./options";
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
-import { isImageRun, isMusicRun, type CreateRunBody, type ImageInfo, type ImageRun, type MusicRun, type Run } from "./types";
+import { isImageRun, isMusicRun, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Run } from "./types";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
 import { viewerItems, viewerKnown } from "./viewer";
@@ -59,6 +60,7 @@ export default function App() {
   const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
   const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
   const [making4k, setMaking4k] = useState<ReadonlySet<string>>(new Set()); // images whose 4K copy is being made (DESIGN.md §27)
+  const [upscaling, setUpscaling] = useState(false); // a picture from the computer is being upscaled (DESIGN.md §27.9)
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
   const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images or Music (DESIGN.md §26.1), remembered
@@ -222,7 +224,7 @@ export default function App() {
 
   // Make the 4K copy of one result image (DESIGN.md §27). The answer is the run, with the image's `four_k` filled in. As for
   // Regenerate larger, the answer is a toast on a card and a note inside the viewer when it is open when the answer comes.
-  const make4k = (image: ImageInfo) =>
+  const make4k = (image: FourKTarget) =>
     once(`4k:${image.id}`, async () => {
       const tell = (kind: "info" | "error", text: string) =>
         lightboxOpen.current ? setLightbox((current) => (current ? { ...current, notice: { kind, text } } : current)) : push(kind, text);
@@ -230,7 +232,7 @@ export default function App() {
       try {
         const run = await api.makeFourK(image.id);
         dispatch({ type: "runUpsert", run });
-        tell("info", fourKMadeText(run.images.find((candidate) => candidate.id === image.id) ?? image));
+        tell("info", fourKMadeText([...run.images, ...run.inputs].find((candidate) => candidate.id === image.id) ?? image));
       } catch (error) {
         const err = error as ApiError;
         tell("error", fourKFailedText(err.status, err.message));
@@ -240,6 +242,21 @@ export default function App() {
           next.delete(image.id);
           return next;
         });
+      }
+    });
+
+  // A picture from this computer: sent, made 4K and saved as a download. Nothing is added to the history (DESIGN.md §27.9).
+  const upscalePicture = (file: File) =>
+    once("upscale-picture", async () => {
+      setUpscaling(true);
+      try {
+        const picture = await api.upscalePicture(file);
+        saveBlob(picture.blob, picture.filename);
+        push("success", upscaledText(file.name, picture));
+      } catch (error) {
+        push("error", upscaleFailedText(file.name, (error as ApiError).message));
+      } finally {
+        setUpscaling(false);
       }
     });
 
@@ -464,6 +481,7 @@ export default function App() {
               onDraft={() => void submitDraft()}
             />
             <QueueBar status={status} />
+            <UpscalePicture busy={upscaling} onPick={(file) => void upscalePicture(file)} />
             <section className="timeline" aria-label="Your runs">
               {!state.runsReady ? (
                 <p className="loading" role="status">Loading your runs…</p>

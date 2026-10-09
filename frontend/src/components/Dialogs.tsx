@@ -3,7 +3,7 @@ import { useEffect } from "react";
 import { useReturnFocus } from "../hooks";
 import { largerTarget } from "../options";
 import type { KnownImage } from "../tray";
-import type { ImageInfo, ImageRun, Run } from "../types";
+import type { FourKTarget, ImageInfo, ImageRun, Run } from "../types";
 import { viewerItems, viewerKnown, viewerTitle } from "../viewer";
 import { FourKButton } from "./FourKButton";
 import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EditIcon, EnlargeIcon } from "./icons";
@@ -23,7 +23,7 @@ export function Lightbox({ run, index, notice, canEdit, making4k, onIndex, onReg
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   onIndex: (index: number) => void;
   onRegenerateLarger: (image: ImageInfo) => void;
-  onMake4K: (image: ImageInfo) => void;
+  onMake4K: (image: FourKTarget) => void;
   onEditThis: (image: KnownImage) => boolean; // whether it was added (the tray may be full)
   onClose: () => void;
 }) {
@@ -73,7 +73,7 @@ export function Lightbox({ run, index, notice, canEdit, making4k, onIndex, onReg
                     </button>
                   )}
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
-                  {result && <FourKButton image={result} making={making4k.has(result.id)} className="button small" onMake={() => onMake4K(result)} />}
+                  {shown && <FourKButton image={shown} making={making4k.has(shown.id)} className="button small" onMake={() => onMake4K(shown)} />}
                   {result?.thumb_url && (
                     <a className="button small" href={`${result.thumb_url}?download=1`} download
                       title="A small copy of this image (WebP, 512 px on the long side)"><DownloadIcon /> Thumbnail</a>

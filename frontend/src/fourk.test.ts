@@ -1,23 +1,26 @@
-import { describe, expect, it } from "vitest";
-import { MAKE_4K_TITLE, fourKControl, fourKFailedText, fourKMadeText, megabytes } from "./fourk";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  filenameFromDisposition, fourKControl, fourKFailedText, fourKMadeText, makeTitle, megabytes, saveBlob, upscaleFailedText, upscaledText,
+} from "./fourk";
 import { initialState, reducer } from "./store";
 import { makeRun } from "./testdata";
-import type { FourK, ImageInfo } from "./types";
+import type { FourK, FourKSize, FourKTarget, ImageInfo } from "./types";
 
+const FRAME: FourKSize = { width: 3840, height: 2160, trimmed: true };
+const SQUARE: FourKSize = { width: 3840, height: 3840, trimmed: false };
 const COPY: FourK = { width: 3840, height: 2160, bytes: 14_100_000, url: "/api/images/i1/4k", download_url: "/api/images/i1/4k?download=1" };
 const image = (extra: Partial<ImageInfo> = {}): ImageInfo => ({
   id: "i1", idx: 0, seed: 7, width: 2752, height: 1536, has_alpha: false, url: "/api/images/i1", thumb_url: "/api/images/i1/thumb",
-  download_url: "/api/images/i1?download=1", can_4k: true, four_k: null, ...extra,
+  download_url: "/api/images/i1?download=1", can_4k: true, four_k_size: FRAME, four_k: null, ...extra,
 });
 
 describe("which control a picture gets (DESIGN.md §27.3)", () => {
-  it("Make 4K when the server offers it and there is no copy yet", () => {
-    expect(fourKControl(image(), false)).toEqual({ kind: "make", label: "Make 4K", title: MAKE_4K_TITLE });
+  it("Make 4K when the server offers it and there is no copy yet, with a tooltip that says what it will make", () => {
+    expect(fourKControl(image(), false)).toEqual({ kind: "make", label: "Make 4K", title: makeTitle(FRAME) });
   });
 
   it("Making 4K… while the request is under way", () => {
-    const control = fourKControl(image(), true);
-    expect(control).toMatchObject({ kind: "making", label: "Making 4K…" });
+    expect(fourKControl(image(), true)).toMatchObject({ kind: "making", label: "Making 4K…" });
   });
 
   it("Download 4K once the copy exists, with its size in the tooltip", () => {
@@ -28,27 +31,40 @@ describe("which control a picture gets (DESIGN.md §27.3)", () => {
   });
 
   it("an existing copy is offered even when the server no longer offers Make 4K, and even while another is being made", () => {
-    expect(fourKControl(image({ can_4k: false, four_k: COPY }), false)?.kind).toBe("download");
+    expect(fourKControl(image({ can_4k: false, four_k_size: null, four_k: COPY }), false)?.kind).toBe("download");
     expect(fourKControl(image({ four_k: COPY }), true)?.kind).toBe("download");
   });
 
   it("nothing when the server does not offer it: the page repeats no rule of its own", () => {
-    expect(fourKControl(image({ can_4k: false }), false)).toBeNull();
-    expect(fourKControl(image({ can_4k: false }), true)).toBeNull();
-    // the shape is 16:9 but the server says no (too small, say): the page believes the server
-    expect(fourKControl(image({ width: 1536, height: 864, can_4k: false }), false)).toBeNull();
+    expect(fourKControl(image({ can_4k: false, four_k_size: null }), false)).toBeNull();
+    expect(fourKControl(image({ can_4k: false, four_k_size: null }), true)).toBeNull();
+    // 16:9, but the server says no (too small, say): the page believes the server
+    expect(fourKControl(image({ width: 1536, height: 864, can_4k: false, four_k_size: null }), false)).toBeNull();
     // and the reverse: a shape the page would never guess at is offered if the server says so
-    expect(fourKControl(image({ width: 2000, height: 2000, can_4k: true }), false)?.kind).toBe("make");
+    expect(fourKControl(image({ width: 2048, height: 2048, can_4k: true, four_k_size: SQUARE }), false)?.kind).toBe("make");
+  });
+
+  it("an edit's source is a picture like any other: the same control, from the same three fields", () => {
+    const source: FourKTarget = { id: "in1", can_4k: true, four_k_size: SQUARE, four_k: null };
+    expect(fourKControl(source, false)).toMatchObject({ kind: "make", title: makeTitle(SQUARE) });
+    expect(fourKControl({ ...source, four_k: { ...COPY, width: 3840, height: 3840, download_url: "/api/images/in1/4k?download=1" } }, false))
+      .toMatchObject({ kind: "download", href: "/api/images/in1/4k?download=1", title: "The 4K copy: 3840×3840 PNG, 14.1 MB" });
   });
 });
 
 describe("the words", () => {
-  it("the tooltip says what it does and what it does not do", () => {
-    expect(MAKE_4K_TITLE).toContain("exactly 16:9");
-    expect(MAKE_4K_TITLE).toContain("3840×2160");
-    expect(MAKE_4K_TITLE).toContain("standard resize");
-    expect(MAKE_4K_TITLE).toContain("bigger, not sharper");
-    expect(MAKE_4K_TITLE).toContain("no detail is added");
+  it("the tooltip names the size it will make and, for a 16:9 picture, the trim", () => {
+    expect(makeTitle(FRAME)).toBe("Make a 3840×2160 copy of this picture, trimmed to exactly 16:9, with a standard resize. It makes the picture bigger, not sharper: no detail is added.");
+    expect(makeTitle(SQUARE)).toBe("Make a 3840×3840 copy of this picture with a standard resize. It makes the picture bigger, not sharper: no detail is added.");
+    expect(makeTitle({ width: 3840, height: 2160, trimmed: false })).not.toContain("trimmed");
+  });
+
+  it("an upright 9:16 picture is trimmed to 9:16, not 16:9", () => {
+    expect(makeTitle({ width: 2160, height: 3840, trimmed: true })).toContain("trimmed to exactly 9:16");
+  });
+
+  it("with no size to name it still says what it does and does not do", () => {
+    expect(makeTitle(null)).toBe("Make a 4K copy of this picture with a standard resize. It makes the picture bigger, not sharper: no detail is added.");
   });
 
   it("megabytes are decimal, with one decimal place", () => {
@@ -69,6 +85,56 @@ describe("the words", () => {
     expect(fourKFailedText(507, "The 4K picture could not be saved: No space left on device")).toContain("No space left on device");
     expect(fourKFailedText(0, "Can't reach the studio server.")).toBe("Couldn't make 4K: Can't reach the studio server.");
     expect(fourKFailedText(404, "Image not found.")).toBe("That picture no longer exists, so there is nothing to make 4K from.");
+  });
+});
+
+describe("a picture from the computer (DESIGN.md §27.9)", () => {
+  it("the file name comes from the UTF-8 form of the header when there is one", () => {
+    const real = `attachment; filename="upscale_dog_3840x2160_20261009-181500.png"; filename*=UTF-8''upscale_dog_3840x2160_20261009-181500.png`;
+    expect(filenameFromDisposition(real)).toBe("upscale_dog_3840x2160_20261009-181500.png");
+    expect(filenameFromDisposition(`attachment; filename="upscale__3840x2160_x.png"; filename*=UTF-8''upscale_%E5%86%99%E7%9C%9F_3840x2160_x.png`))
+      .toBe("upscale_写真_3840x2160_x.png");
+  });
+
+  it("and from the plain form when that is all there is, or when the escapes are broken", () => {
+    expect(filenameFromDisposition('attachment; filename="plain name.png"')).toBe("plain name.png");
+    expect(filenameFromDisposition("attachment; filename=unquoted.png")).toBe("unquoted.png");
+    expect(filenameFromDisposition(`attachment; filename="fallback.png"; filename*=UTF-8''bad%E0%A4%A.png`)).toBe("fallback.png");
+  });
+
+  it("no header, or none with a name, gives nothing, so the page can use its own", () => {
+    expect(filenameFromDisposition(null)).toBeNull();
+    expect(filenameFromDisposition("")).toBeNull();
+    expect(filenameFromDisposition("attachment")).toBeNull();
+  });
+
+  it("what is said when it worked, and when it did not", () => {
+    expect(upscaledText("dog.jpg", { width: 3840, height: 2160, blob: { size: 12_345_678 } }))
+      .toBe("Upscaled dog.jpg to 3840×2160 (12.3 MB). Your download has started.");
+    expect(upscaleFailedText("dog.jpg", "This picture is already 4K or bigger.")).toBe("Couldn't upscale dog.jpg: This picture is already 4K or bigger.");
+  });
+
+  describe("saving the blob", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    it("clicks a link with the name and the blob's address, and lets the address go afterwards", () => {
+      vi.useFakeTimers();
+      const created = vi.fn(() => "blob:studio-1");
+      const revoked = vi.fn();
+      vi.stubGlobal("URL", { ...URL, createObjectURL: created, revokeObjectURL: revoked });
+      const seen: { href: string; download: string }[] = [];
+      vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+        seen.push({ href: this.href, download: this.download });
+      });
+      saveBlob(new Blob(["x"], { type: "image/png" }), "upscale_dog_3840x2160_x.png");
+      expect(seen).toEqual([{ href: "blob:studio-1", download: "upscale_dog_3840x2160_x.png" }]);
+      expect(document.querySelector("a[download]")).toBeNull(); // the temporary link is gone
+      expect(revoked).not.toHaveBeenCalled(); // not before the browser has taken it
+      vi.advanceTimersByTime(10_001);
+      expect(revoked).toHaveBeenCalledWith("blob:studio-1");
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
   });
 });
 

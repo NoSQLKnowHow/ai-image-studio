@@ -21,13 +21,14 @@ from . import presets as P
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
-from .fourk import TARGET_HEIGHT, TARGET_WIDTH, NotEligible
+from . import fourk as fourk_mod
+from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import ImageNotFound, InputStorageError, JobManager, ModelRefused, QueueFull, RunConflict, RunNotFound
-from .naming import content_disposition, download_filename, music_filename, thumbnail_filename
+from .naming import content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename
 from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
-from .serialize import parse_ts
+from .serialize import parse_ts, utcnow
 from .storage import Storage, StorageError, check_id
 
 log = logging.getLogger("studio.api")
@@ -82,6 +83,23 @@ class RunPatch(BaseModel):
     pinned: bool
 
 
+UPSCALE_AT_ONCE = 2  # pictures being made through POST /api/upscale at the same moment
+
+
+def _png_size(data: bytes) -> Optional[tuple[int, int]]:
+    """The width and height in a PNG's header, or None if `data` does not start like one."""
+    if len(data) < 24 or data[:8] != fourk_mod.PNG_SIGNATURE or data[12:16] != b"IHDR":
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def _upscale_bytes(data: bytes) -> tuple[bytes, fourk_mod.Plan]:
+    """A file from outside, checked as an upload is and made 4K, as PNG bytes. Synchronous: callers run it in a thread."""
+    picture = inputs_mod.decode_upload(data)
+    result, text, plan = fourk_mod.render_4k(picture)
+    return fourk_mod.encode_png(result, text), plan
+
+
 def _error(status: int, detail: str, code: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"detail": detail, "code": code})
 
@@ -113,6 +131,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         await jobs.start()
         app.state.settings, app.state.db, app.state.storage, app.state.bus, app.state.jobs = (
             settings, db, storage, bus, jobs)
+        app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
         log.info("AI Image Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
         try:
             yield
@@ -220,11 +239,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except InputStorageError as exc:
             return _error(507, str(exc), "storage_full")
 
-    @app.post("/api/uploads", status_code=201)
-    async def upload_image(request: Request) -> Any:
-        """Stage one image for an edit. The file itself is the request body (not multipart: one image per call, the
-        size can be capped while it streams in, and `curl --data-binary @photo.jpg` is all it takes). The type is
-        decided by decoding it, never by the Content-Type header."""
+    async def read_limited_body(request: Request) -> Any:
+        """The request body as bytes, or the 413 response when it is larger than STUDIO_MAX_UPLOAD_MB (refused from the declared
+        length when there is one, and while it streams in when there is not). Used by uploads and by Upscale a picture."""
         limit = settings.max_upload_mb * 1024 * 1024
         too_big = _error(413, f"The file is larger than {settings.max_upload_mb} MB.", "too_large")
         declared = request.headers.get("content-length", "")
@@ -235,8 +252,18 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             data += chunk
             if len(data) > limit:
                 return too_big
+        return bytes(data)
+
+    @app.post("/api/uploads", status_code=201)
+    async def upload_image(request: Request) -> Any:
+        """Stage one image for an edit. The file itself is the request body (not multipart: one image per call, the
+        size can be capped while it streams in, and `curl --data-binary @photo.jpg` is all it takes). The type is
+        decided by decoding it, never by the Content-Type header."""
+        data = await read_limited_body(request)
+        if isinstance(data, JSONResponse):
+            return data
         try:
-            return await asyncio.to_thread(inputs_mod.store_upload, request.app.state.db, request.app.state.storage, bytes(data))
+            return await asyncio.to_thread(inputs_mod.store_upload, request.app.state.db, request.app.state.storage, data)
         except inputs_mod.UploadError as exc:
             return _error(exc.status, exc.message, {413: "too_large", 415: "unsupported_type"}.get(exc.status, "unreadable"))
         except OSError as exc:
@@ -369,11 +396,12 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.get("/api/images/{image_id}/4k")
     async def get_image_4k(image_id: str, request: Request, download: bool = False) -> Any:
-        """The 4K copy of a result image, once it has been made; `?download=1` names it like the image, with 3840x2160."""
+        """The 4K copy of a picture the studio holds (a result, or an edit's source), once it has been made; `?download=1`
+        names it like the picture, with the copy's own size."""
         db: Database = request.app.state.db
         storage: Storage = request.app.state.storage
         image = db.get_image(image_id)
-        if image is None or image["kind"] != "output":
+        if image is None or image["run_id"] is None:
             return _error(404, "Image not found.", "not_found")
         try:
             data = await asyncio.to_thread(storage.four_k_path(image["path"]).read_bytes)
@@ -382,12 +410,39 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         headers = {"Cache-Control": IMMUTABLE}
         run = db.get_run(image["run_id"]) if download else None
         if run is not None:
-            name = download_filename(
-                mode=run["mode"], prompt=run["prompt"], width=TARGET_WIDTH, height=TARGET_HEIGHT,
-                seed=image["seed"], created_at=parse_ts(run["created_at"]), transparent=bool(run["transparent"]),
-            )
+            width, height = _png_size(data) or (image["width"], image["height"])
+            if image["kind"] == "input":
+                name = source_filename(prompt=run["prompt"], position=db.input_position(image_id) or 0, width=width, height=height,
+                                       created_at=parse_ts(run["created_at"]))
+            else:
+                name = download_filename(
+                    mode=run["mode"], prompt=run["prompt"], width=width, height=height,
+                    seed=image["seed"], created_at=parse_ts(run["created_at"]), transparent=bool(run["transparent"]),
+                )
             headers["Content-Disposition"] = content_disposition(name)
         return Response(data, media_type="image/png", headers=headers)
+
+    @app.post("/api/upscale")
+    async def upscale_picture(request: Request, name: str = Query("", max_length=255)) -> Any:
+        """Make the 4K copy of a picture from the person's computer (DESIGN.md §27.9). The file is the request body, as for an
+        upload; the answer is the PNG, to be saved by the page. Nothing is stored: there is no run, no file and no history."""
+        data = await read_limited_body(request)
+        if isinstance(data, JSONResponse):
+            return data
+        async with request.app.state.upscale_slots:  # at most two at a time: each is a few seconds of CPU and tens of MB
+            try:
+                png, plan = await asyncio.to_thread(_upscale_bytes, data)
+            except inputs_mod.UploadError as exc:
+                return _error(exc.status, exc.message, {413: "too_large", 415: "unsupported_type"}.get(exc.status, "unreadable"))
+            except NotEligible as exc:
+                return _error(422, str(exc), "not_4k_eligible")
+            except OSError as exc:
+                return _error(507, f"The picture could not be made: {exc.strerror or exc}", "storage_full")
+        filename = upscale_filename(name=name, width=plan.out_width, height=plan.out_height, created_at=parse_ts(utcnow()))
+        return Response(png, media_type="image/png", headers={
+            "Content-Disposition": content_disposition(filename), "Cache-Control": "no-store",
+            "X-Output-Size": f"{plan.out_width}x{plan.out_height}",
+        })
 
     @app.get("/api/audio/{track_id}")
     async def get_audio(track_id: str, request: Request, download: bool = False) -> Any:

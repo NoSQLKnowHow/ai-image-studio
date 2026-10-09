@@ -24,7 +24,6 @@ from . import wavfile
 from .config import Settings
 from .db import Database
 from .events import EventBus
-from .fourk import can_4k
 from .runspec import ResolvedRun, RunRequestError
 from .serialize import format_ts, parse_ts, run_payload, utcnow
 from .storage import Storage, StorageError
@@ -215,22 +214,24 @@ class JobManager:
         ids = [r["id"] for r in rows]
         images, inputs, tracks = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids), self.db.tracks_for_runs(ids)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
-        four_k = self._four_k_files([image for run_id in ids for image in images[run_id]])
+        four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *inputs[run_id])])
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
                         r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k)
             for r in rows
         ]
 
-    def _four_k_files(self, images: list[sqlite3.Row]) -> dict[str, int]:
-        """The size of the 4K copy of each image that has one (DESIGN.md §27.3). Only pictures Make 4K is offered for
-        can have one, so only those are looked for: the file's existence is the whole record, there is no database row."""
-        found: dict[str, int] = {}
-        for image in images:
-            if not can_4k(image["width"], image["height"]):
-                continue
+    def _four_k_files(self, rows: list[sqlite3.Row]) -> dict[str, dict[str, int]]:
+        """The 4K copy of each picture that has one (DESIGN.md §27.3): its file's size in bytes and its width and height, read
+        from the file's header. The file's existence is the whole record, there is no database row. Every picture is looked
+        for, not only the ones the rule offers now, so a copy made under an earlier rule is still shown."""
+        found: dict[str, dict[str, int]] = {}
+        for row in rows:
             try:
-                found[image["id"]] = self.storage.four_k_path(image["path"]).stat().st_size
+                path = self.storage.four_k_path(row["path"])
+                size = fourk.file_size(path)
+                if size is not None:
+                    found[row["id"]] = {"bytes": path.stat().st_size, "width": size[0], "height": size[1]}
             except (OSError, StorageError):
                 pass
         return found
@@ -367,7 +368,7 @@ class JobManager:
         call made the file. Raises ImageNotFound, fourk.NotEligible (before any file work, from the stored size), or
         the OSError of a full disk. Requests for one image that overlap share one build: the file is made once."""
         image = self.db.get_image(image_id)
-        if image is None or image["kind"] != "output" or image["run_id"] is None:
+        if image is None or image["run_id"] is None:  # an image no run owns (a staged upload) is not part of the history
             raise ImageNotFound(image_id)
         fourk.plan_4k(image["width"], image["height"])  # NotEligible, with the reason, before touching any file
         build = self._making_4k.get(image_id)
@@ -391,7 +392,7 @@ class JobManager:
             source, target = self.storage.abs(image["path"]), self.storage.four_k_path(image["path"])
         except StorageError as exc:
             raise ImageNotFound(image["id"]) from exc
-        if target.is_file():
+        if fourk.file_size(target) is not None:  # there already, and a real PNG (a damaged leftover is made again)
             return False
         try:
             fourk.make_4k(source, target)

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
-import type { ImageInfo, ImageRun, WorkerState } from "../types";
+import type { FourKTarget, ImageRun, WorkerState } from "../types";
 import { FourKButton } from "./FourKButton";
 import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 
@@ -13,7 +13,7 @@ interface Props {
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   onReuse: () => void;
   onRegenerateLarger: () => void;
-  onMake4K: (image: ImageInfo) => void;
+  onMake4K: (image: FourKTarget) => void;
   onEditThis: () => void;
   onRetry: () => void;
   onCancel: () => void;

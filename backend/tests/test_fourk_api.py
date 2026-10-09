@@ -1,5 +1,6 @@
-"""Make 4K through the API (DESIGN.md §27.3; criteria 78-86): the routes, the payload fields, what is kept, and what
-goes wrong. Pictures come from the fake pipeline at real 16:9 sizes."""
+"""Make 4K through the API (DESIGN.md §27.3, §27.9; criteria 78-86, 88-89): the routes, the payload fields, what is kept, and
+what goes wrong, for results and for an edit's sources. Pictures come from the fake pipeline at real sizes. (The route that
+takes a picture from the computer is in test_upscale_route.py.)"""
 
 from __future__ import annotations
 
@@ -40,11 +41,42 @@ def test_a_16_9_result_says_it_can_be_made_4k_and_has_no_4k_copy_yet(client):
     assert image["can_4k"] is True and image["four_k"] is None
 
 
-def test_other_shapes_and_small_pictures_say_they_cannot(client):
-    square = wait_for(client, create_run(client, "square")["id"])["images"][0]
+def test_small_pictures_say_they_cannot(client):
+    tiny = wait_for(client, create_run(client, "tiny")["id"])["images"][0]  # 256x256: a 15x enlargement
     small_wide = wait_for(client, create_run(client, "draft", width=1536, height=864, steps=2)["id"])["images"][0]
-    assert square["can_4k"] is False and square["four_k"] is None
-    assert small_wide["can_4k"] is False  # 1536x864 is exactly 16:9, but under 1920 wide
+    for image in (tiny, small_wide):  # 1536x864 is exactly 16:9, but 2.5x
+        assert image["can_4k"] is False and image["four_k_size"] is None and image["four_k"] is None
+
+
+def test_what_make_4k_would_make_is_in_the_payload_for_any_shape(client):
+    sizes = {}
+    for width, height in ((2560, 1440), (2752, 1536), (2048, 2048), (2400, 1792), (1536, 2752)):
+        image = wait_for(client, create_run(client, f"{width}x{height}", width=width, height=height, steps=2)["id"])["images"][0]
+        sizes[(width, height)] = (image["can_4k"], image["four_k_size"])
+    assert sizes[(2560, 1440)] == (True, {"width": 3840, "height": 2160, "trimmed": False})
+    assert sizes[(2752, 1536)] == (True, {"width": 3840, "height": 2160, "trimmed": True})
+    assert sizes[(2048, 2048)] == (True, {"width": 3840, "height": 3840, "trimmed": False})
+    assert sizes[(2400, 1792)] == (True, {"width": 3840, "height": 2867, "trimmed": False})
+    assert sizes[(1536, 2752)] == (True, {"width": 2160, "height": 3840, "trimmed": True})
+
+
+def test_a_square_result_makes_a_3840_by_3840_copy_and_says_so_in_its_payload_and_its_download_name(client):
+    run = wait_for(client, create_run(client, "a square harbour", width=2048, height=2048, steps=2)["id"])
+    updated = make(client, run["images"][0], 201).json()["images"][0]
+    assert (updated["four_k"]["width"], updated["four_k"]["height"]) == (3840, 3840)
+    served = client.get(updated["four_k"]["url"] + "?download=1")
+    assert Image.open(io.BytesIO(served.content)).size == (3840, 3840)
+    assert "3840x3840" in served.headers["content-disposition"] and "3840x2160" not in served.headers["content-disposition"]
+
+
+def test_a_pictures_4k_size_comes_from_its_file_not_from_the_rule_of_the_day(client, monkeypatch):
+    """A copy made under an earlier rule is still shown, with its own size, even if the rule would no longer offer it."""
+    run = wide_run(client)
+    made = make(client, run["images"][0], 201).json()["images"][0]["four_k"]
+    monkeypatch.setattr("studio.serialize.plan_or_none", lambda width, height: None)
+    shown = client.get(f"/api/runs/{run['id']}").json()["images"][0]
+    assert shown["can_4k"] is False and shown["four_k_size"] is None
+    assert shown["four_k"] == made
 
 
 def test_every_run_in_the_listing_carries_the_fields(client):
@@ -53,12 +85,69 @@ def test_every_run_in_the_listing_carries_the_fields(client):
         assert all("can_4k" in image and "four_k" in image for image in run["images"])
 
 
-def test_an_edits_result_can_be_made_4k_but_its_sources_are_not_results(client):
-    staged = stage(client, image_bytes(size=(64, 64)))
-    done = wait_for(client, create_edit(client, "make it moody", [{"upload_id": staged["upload_id"]}], width=2560, height=1440)["id"])
+def edit_with_source(client, size=(2048, 2048), prompt="make it moody", **options) -> dict:
+    staged = stage(client, image_bytes(size=size))
+    return wait_for(client, create_edit(client, prompt, [{"upload_id": staged["upload_id"]}], **{"width": 2560, "height": 1440, **options})["id"])
+
+
+def test_an_edits_result_can_be_made_4k(client):
+    done = edit_with_source(client)
     assert done["images"][0]["can_4k"] is True
-    assert "can_4k" not in done["inputs"][0]
-    assert make(client, {"id": done["inputs"][0]["id"]}).status_code == 404  # a source is not a result
+    assert make(client, done["images"][0], 201).json()["images"][0]["four_k"]["height"] == 2160
+
+
+def test_an_edits_source_image_can_be_made_4k_too_beside_the_copy_the_run_owns(client):
+    done = edit_with_source(client, size=(2048, 2048))
+    source = done["inputs"][0]
+    assert source["can_4k"] is True and source["four_k_size"] == {"width": 3840, "height": 3840, "trimmed": False}
+    assert source["four_k"] is None
+    updated = make(client, source, 201).json()
+    assert (updated["inputs"][0]["four_k"]["width"], updated["inputs"][0]["four_k"]["height"]) == (3840, 3840)
+    assert updated["images"][0]["four_k"] is None  # the result is its own picture
+    folder = client.app.state.storage.inputs / done["id"]
+    assert sorted(p.name for p in folder.iterdir()) == ["1-4k.png", "1.png"]  # beside the source, in the run's own folder
+    assert Image.open(io.BytesIO(client.get(updated["inputs"][0]["four_k"]["url"]).content)).size == (3840, 3840)
+
+
+def test_a_source_downloads_under_its_own_name(client):
+    done = edit_with_source(client, prompt="Put the dog from image 1 on a beach")
+    source = done["inputs"][0]
+    make(client, source, 201)
+    header = client.get(f"/api/images/{source['id']}/4k?download=1").headers["content-disposition"]
+    assert "source-1_put-dog-image-1-beach_3840x3840_" in header
+
+
+def test_a_small_source_says_it_cannot(client):
+    done = edit_with_source(client, size=(64, 64))
+    source = done["inputs"][0]
+    assert source["can_4k"] is False and source["four_k_size"] is None
+    assert make(client, source).status_code == 422
+
+
+def test_the_copy_of_a_source_is_removed_with_its_run(client):
+    done = edit_with_source(client)
+    source = done["inputs"][0]
+    make(client, source, 201)
+    folder = client.app.state.storage.inputs / done["id"]
+    assert (folder / "1-4k.png").is_file()
+    assert client.delete(f"/api/runs/{done['id']}").status_code == 204
+    assert not folder.exists()
+    assert client.get(f"/api/images/{source['id']}/4k").status_code == 404
+
+
+def test_a_staged_upload_that_no_run_owns_is_not_part_of_the_history_and_has_no_4k(client):
+    staged = stage(client, image_bytes(size=(2048, 2048)))
+    assert client.post(f"/api/images/{staged['upload_id']}/4k").status_code == 404
+    assert client.get(f"/api/images/{staged['upload_id']}/4k").status_code == 404
+
+
+def test_a_damaged_leftover_copy_is_made_again(client):
+    run = wide_run(client)
+    folder = client.app.state.storage.images / run["id"]
+    (folder / "0-4k.png").write_bytes(b"left over from a crash, not a png")
+    assert client.get(f"/api/runs/{run['id']}").json()["images"][0]["four_k"] is None  # not shown as made
+    response = make(client, run["images"][0], 201)  # and made, not 'found'
+    assert Image.open(folder / "0-4k.png").size == (3840, 2160) and response.json()["images"][0]["four_k"]["bytes"] > 100_000
 
 
 # ------------------------------------------------------------------ making it
@@ -156,11 +245,11 @@ def test_an_unknown_image_is_a_404_for_both_verbs(client):
     assert client.post("/api/images/not-an-id/4k").status_code == 404
 
 
-def test_a_picture_that_is_not_16_9_is_refused_with_the_reason(client):
-    square = wait_for(client, create_run(client, "square")["id"])["images"][0]
-    response = make(client, square)
+def test_a_picture_that_needs_too_big_an_enlargement_is_refused_with_the_reason(client):
+    tiny = wait_for(client, create_run(client, "tiny")["id"])["images"][0]  # 256x256
+    response = make(client, tiny)
     assert response.status_code == 422
-    assert response.json()["code"] == "not_4k_eligible" and "16:9" in response.json()["detail"]
+    assert response.json()["code"] == "not_4k_eligible" and "15.0× enlargement" in response.json()["detail"]
     assert not list(client.app.state.storage.images.rglob("*-4k.png"))
 
 

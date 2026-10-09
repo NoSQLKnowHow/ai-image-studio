@@ -1,5 +1,7 @@
-// End-to-end: Make 4K (DESIGN.md §27, criteria 78-86), in a real browser against the real server with the fake pipeline.
+// End-to-end: Make 4K (DESIGN.md §27, §27.9; criteria 78-93), in a real browser against the real server with the fake pipeline.
+import { readFileSync } from "node:fs";
 import { card, clearHistory, expect, generate, test, unique, useOptions, type Locator, type Page } from "./helpers";
+import { BLUE, GOLD, png } from "./png";
 
 // A 16:9 picture the studio can make: exactly 16:9, 3.7 MP (inside the 4.5 MP limit), wide enough for Make 4K (1920+).
 const WIDE = { aspect: "custom", customWidth: 2560, customHeight: 1440, steps: 2 };
@@ -30,7 +32,8 @@ test("a 16:9 picture gets Make 4K on its card, which makes a 3840×2160 copy and
 
   const button = make4k(c);
   await expect(button).toHaveText("Make 4K");
-  await expect(button).toHaveAttribute("title", /exactly 16:9.*3840×2160.*bigger, not sharper.*no detail is added/);
+  // 2560×1440 is exactly 16:9: nothing to trim, and the tooltip says what it will make
+  await expect(button).toHaveAttribute("title", "Make a 3840×2160 copy of this picture with a standard resize. It makes the picture bigger, not sharper: no detail is added.");
   await expect(download4k(c)).toHaveCount(0);
   await button.click();
 
@@ -51,13 +54,40 @@ test("a 16:9 picture gets Make 4K on its card, which makes a 3840×2160 copy and
   expect([original.width, original.height]).toEqual([2560, 1440]); // the picture itself did not change
 });
 
-test("pictures that are not 16:9 get no Make 4K", async ({ page }) => {
+test("the model's own 16:9 size is trimmed to exactly the frame, and the tooltip says so", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 2752, customHeight: 1536, steps: 2 });
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await done(page, unique("the model's own 16:9"));
+  await expect(make4k(c)).toHaveAttribute("title", /^Make a 3840×2160 copy of this picture, trimmed to exactly 16:9, with a standard resize\./);
+  await make4k(c).click();
+  const link = download4k(c);
+  await expect(link).toBeVisible();
+  expect(pngSize(await (await page.request.get((await link.getAttribute("href"))!)).body())).toEqual([3840, 2160]);
+});
+
+test("pictures that would need more than a doubling get no Make 4K", async ({ page }) => {
   await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 2 });
   await page.goto("/");
   await clearHistory(page);
-  const c = await done(page, unique("a square one"));
+  const c = await done(page, unique("a small square one"));
   await expect(make4k(c)).toHaveCount(0);
   await expect(download4k(c)).toHaveCount(0);
+});
+
+test("a square picture, your default shape, gets Make 4K at 3840×3840: nothing is cut off", async ({ page }) => {
+  await useOptions(page, { aspect: "custom", customWidth: 2048, customHeight: 2048, steps: 2 });
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await done(page, unique("a square harbour"));
+  await expect(make4k(c)).toHaveAttribute("title", "Make a 3840×3840 copy of this picture with a standard resize. It makes the picture bigger, not sharper: no detail is added.");
+  await make4k(c).click();
+  await expect(page.getByRole("status").filter({ hasText: "The 4K copy is ready: 3840×3840" })).toBeVisible();
+  const link = download4k(c);
+  await expect(link).toHaveAttribute("title", /^The 4K copy: 3840×3840 PNG, /);
+  const file = await page.request.get((await link.getAttribute("href"))!);
+  expect(file.headers()["content-disposition"]).toMatch(/3840x3840/);
+  expect(pngSize(await file.body())).toEqual([3840, 3840]);
 });
 
 test("a small 16:9 draft gets no Make 4K either: the server's rule, not the page's", async ({ page }) => {
@@ -269,4 +299,141 @@ test("a person who moved on while it was being made keeps their place", async ({
   await keep.focus();
   await expect(download4k(c)).toBeVisible({ timeout: 10_000 });
   await expect(keep).toBeFocused();
+});
+
+// ------------------------------------------------------------------ an edit's source images (DESIGN.md §27.9)
+const CLIENT = { "X-Studio-Client": "1" };
+
+/** An edit run made through the API from one picture of the given size, so the test is about the viewer, not about editing. */
+async function editRun(page: Page, prompt: string, size: [number, number]): Promise<void> {
+  const upload = await page.request.post("/api/uploads", { headers: CLIENT, data: png(size[0], size[1], BLUE) });
+  expect(upload.ok()).toBe(true);
+  const { upload_id } = (await upload.json()) as { upload_id: string };
+  const run = await page.request.post("/api/runs", {
+    headers: CLIENT, data: { mode: "edit", prompt, input_images: [{ upload_id }], options: { steps: 3, seed: 7, width: 2560, height: 1440 } },
+  });
+  expect(run.ok()).toBe(true);
+}
+
+test("an edit's source image can be made 4K in the viewer, and downloaded", async ({ page }) => {
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("put the dog on a beach");
+  await editRun(page, prompt, [2048, 2048]);
+  const c = card(page, prompt);
+  await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await c.getByRole("button", { name: "Open source image 1 of 1" }).click();
+  const v = viewer(page);
+  await expect(v).toBeVisible();
+  await expect(v.locator(".lightbox-title")).toContainText("Source 1 of 1");
+  await expect(make4k(v)).toHaveAttribute("title", /^Make a 3840×3840 copy of this picture/);
+  await make4k(v).click();
+  await expect(v.getByRole("status")).toContainText("The 4K copy is ready: 3840×3840");
+  const link = download4k(v);
+  await expect(link).toBeVisible();
+  const file = await page.request.get((await link.getAttribute("href"))!);
+  expect(file.headers()["content-disposition"]).toMatch(/source-1_put-dog-beach_3840x3840_/);
+  expect(pngSize(await file.body())).toEqual([3840, 3840]);
+  await page.keyboard.press("ArrowRight"); // the result is its own picture: no copy yet
+  await expect(v.locator(".lightbox-title")).toContainText("Result 1 of 1");
+  await expect(download4k(v)).toHaveCount(0);
+  await page.keyboard.press("ArrowLeft");
+  await expect(download4k(v)).toBeVisible(); // and the source keeps its copy
+});
+
+test("a small source image has no Make 4K", async ({ page }) => {
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("from a tiny picture");
+  await editRun(page, prompt, [200, 200]);
+  const c = card(page, prompt);
+  await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  await c.getByRole("button", { name: "Open source image 1 of 1" }).click();
+  await expect(viewer(page)).toBeVisible();
+  await expect(make4k(viewer(page))).toHaveCount(0);
+});
+
+// ------------------------------------------------------------------ a picture from the computer (DESIGN.md §27.9)
+const upscaleButton = (page: Page): Locator => page.getByRole("button", { name: /^(Upscale a picture…|Upscaling…)/ });
+const fileInput = (page: Page): Locator => page.getByTestId("upscale-file-input");
+const pic = (name: string, width: number, height: number) => ({ name, mimeType: "image/png", buffer: png(width, height, GOLD) });
+
+test("Upscale a picture… takes a file from the computer and downloads the 4K PNG, adding nothing to the history", async ({ page }) => {
+  await page.goto("/");
+  await clearHistory(page);
+  const prompt = unique("a run that is already here");
+  await generate(page, prompt);
+  await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
+  const cards = await page.locator("article.run-card").count();
+
+  await expect(upscaleButton(page)).toHaveText("Upscale a picture…");
+  await expect(upscaleButton(page)).toHaveAttribute("title", /Nothing is added to your history.*bigger, not sharper/);
+  await expect(fileInput(page)).toHaveAttribute("accept", "image/png,image/jpeg,image/webp");
+  const [chooser] = await Promise.all([page.waitForEvent("filechooser"), upscaleButton(page).click()]); // the real click path
+  expect(chooser.isMultiple()).toBe(false);
+  const downloading = page.waitForEvent("download");
+  await chooser.setFiles(pic("my holiday photo.png", 1920, 1080));
+  const download = await downloading;
+
+  expect(download.suggestedFilename()).toMatch(/^upscale_my-holiday-photo_3840x2160_\d{8}-\d{6}\.png$/);
+  const path = await download.path();
+  expect(pngSize(readFileSync(path))).toEqual([3840, 2160]);
+  await expect(page.getByRole("status").filter({ hasText: "Upscaled my holiday photo.png to 3840×2160" })).toBeVisible();
+  await expect(upscaleButton(page)).toHaveText("Upscale a picture…"); // ready for the next one
+  expect(await page.locator("article.run-card").count()).toBe(cards); // no card: nothing was added
+  expect(((await (await page.request.get("/api/runs?limit=50")).json()) as { runs: unknown[] }).runs).toHaveLength(cards);
+});
+
+test("a square picture from the computer comes back 3840×3840", async ({ page }) => {
+  await page.goto("/");
+  const downloading = page.waitForEvent("download");
+  await fileInput(page).setInputFiles(pic("square.png", 2048, 2048));
+  const download = await downloading;
+  expect(download.suggestedFilename()).toMatch(/^upscale_square_3840x3840_/);
+  expect(pngSize(readFileSync(await download.path()))).toEqual([3840, 3840]);
+});
+
+test("a picture that cannot be upscaled says why, downloads nothing and leaves the button ready", async ({ page }) => {
+  await page.goto("/");
+  let downloads = 0;
+  page.on("download", () => (downloads += 1));
+  await fileInput(page).setInputFiles(pic("tiny.png", 256, 256));
+  await expect(page.getByRole("alert").filter({ hasText: "Couldn't upscale tiny.png: This picture (256×256) is too small" })).toBeVisible();
+  await expect(upscaleButton(page)).toHaveText("Upscale a picture…");
+  await fileInput(page).setInputFiles(pic("already.png", 3840, 2160));
+  await expect(page.getByRole("alert").filter({ hasText: "already 4K or bigger" })).toBeVisible();
+  expect(downloads).toBe(0);
+});
+
+test("a file that is not a picture is refused in words", async ({ page }) => {
+  await page.goto("/");
+  await fileInput(page).setInputFiles({ name: "notes.png", mimeType: "image/png", buffer: Buffer.from("these are notes, not a picture") });
+  await expect(page.getByRole("alert").filter({ hasText: "Couldn't upscale notes.png: That isn't a PNG, JPEG or WebP image." })).toBeVisible();
+});
+
+test("while it works the button says so and a second file is ignored", async ({ page }) => {
+  await page.goto("/");
+  let posts = 0;
+  await page.route("**/api/upscale*", async (route) => {
+    posts += 1;
+    await new Promise((resolve) => setTimeout(resolve, 900));
+    await route.continue();
+  });
+  const downloading = page.waitForEvent("download");
+  await fileInput(page).setInputFiles(pic("first.png", 1920, 1080));
+  await expect(upscaleButton(page)).toHaveText("Upscaling…");
+  await expect(upscaleButton(page)).toHaveAttribute("aria-disabled", "true");
+  await fileInput(page).setInputFiles(pic("second.png", 1920, 1080)); // while the first is still being made
+  await downloading;
+  await expect(upscaleButton(page)).toHaveText("Upscale a picture…");
+  expect(posts).toBe(1);
+});
+
+test("phone width: the button fits and there is no sideways scroll", async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 740 });
+  await page.goto("/");
+  const box = (await upscaleButton(page).boundingBox())!;
+  expect(box.x).toBeGreaterThanOrEqual(0);
+  expect(box.x + box.width).toBeLessThanOrEqual(360);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
 });

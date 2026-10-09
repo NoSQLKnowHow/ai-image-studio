@@ -1,16 +1,17 @@
 import { useEffect, useRef } from "react";
 import { fourKControl } from "../fourk";
-import type { ImageInfo } from "../types";
+import type { FourKTarget } from "../types";
 import { DownloadIcon, UpscaleIcon } from "./icons";
 
-/** Make 4K, then Download 4K, for one result image (DESIGN.md §27.3). Nothing at all when the server does not offer it.
+/** Make 4K, then Download 4K, for one picture the studio holds: a result or an edit's source (DESIGN.md §27.3, §27.9).
+ *  Nothing at all when the server does not offer it.
  *  The same control sits on a card (`ghost`) and in the viewer's bar.
  *
  *  When the copy is made the button is replaced by a link, so a keyboard user who pressed it would lose their place.
  *  Focus then goes to the new link, but only if it was lost (on the page, or on the viewer itself): a person who has
  *  moved on to something else while it was being made keeps their place. */
 export function FourKButton({ image, making, className, onMake }: {
-  image: ImageInfo;
+  image: FourKTarget;
   making: boolean;
   className: string;
   onMake: () => void;

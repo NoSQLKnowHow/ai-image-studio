@@ -3,8 +3,8 @@
 
 This is a probe, not a feature: run it once on the Spark and tell me what it printed. It loads one upscaler model with
 `spandrel` (pure Python, so there is no ARM64 build to go wrong), upscales a picture with it, and reports the device,
-the time and the memory. If the picture is 16:9 it also makes two 3840x2160 files from it, one the way Make 4K does it
-today (a Lanczos resize) and one from the model's output, so you can look at them side by side.
+the time and the memory. If Make 4K accepts the picture (any shape up to a 2x enlargement) it also makes two 4K files from it,
+one the way Make 4K does it today (a Lanczos resize) and one from the model's output, so you can look at them side by side.
 
 Nothing in the studio uses this script, and it installs nothing: the studio image contains neither this script nor
 `spandrel`. Copy the script into the running container and install spandrel there (both last until the container is
@@ -26,7 +26,7 @@ Without --image a synthetic 2752x1536 test picture is made, which is enough to p
 about how it looks: a picture the studio made is the real test.
 
 Output, in --out: input.png (what was upscaled), model-x<scale>.png (the model's own output), and for a 16:9 picture
-4k-lanczos.png and 4k-from-model.png. Exit codes: 0 ok, 1 unexpected error, 2 bad arguments, 3 environment problem
+4k-lanczos.png and 4k-from-model.png (for a picture Make 4K accepts). Exit codes: 0 ok, 1 unexpected error, 2 bad arguments, 3 environment problem
 (a package is missing, or CUDA was asked for and is not there), 4 the model could not be loaded, 5 upscaling failed,
 6 output (disk) problem, 130 interrupted.
 """
@@ -289,7 +289,7 @@ def run(args: argparse.Namespace) -> None:
 
 
 def four_k_files(picture: Image.Image, result: Image.Image, scale: int, out: Path, written: list[str]) -> list[str]:
-    """For a picture Make 4K accepts, the two 3840x2160 files to compare. Returns notes for the report."""
+    """For a picture Make 4K accepts, the two 4K files to compare. Returns notes for the report."""
     try:
         from studio import fourk
     except ImportError:
@@ -301,11 +301,11 @@ def four_k_files(picture: Image.Image, result: Image.Image, scale: int, out: Pat
     try:
         fourk.make_4k(out / "input.png", out / "4k-lanczos.png")
         box = tuple(value * scale for value in plan.box)
-        result.resize((fourk.TARGET_WIDTH, fourk.TARGET_HEIGHT), Image.Resampling.LANCZOS, box=box).save(out / "4k-from-model.png", compress_level=1)
+        result.resize((plan.out_width, plan.out_height), Image.Resampling.LANCZOS, box=box).save(out / "4k-from-model.png", compress_level=1)
     except OSError as exc:
         raise Problem(6, f"Could not write to {out}: {exc.strerror or exc}") from exc
     written += ["4k-lanczos.png", "4k-from-model.png"]
-    return ["4k-lanczos.png is what Make 4K makes today; 4k-from-model.png is the model's output trimmed to 16:9 and reduced to 3840x2160: compare them at 100%"]
+    return [f"4k-lanczos.png is what Make 4K makes today; 4k-from-model.png is the model's output cut and sized the same way (to {plan.out_width}x{plan.out_height}): compare them at 100%"]
 
 
 def main(argv: Optional[list[str]] = None) -> int:
