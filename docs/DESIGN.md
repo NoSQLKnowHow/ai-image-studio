@@ -24,7 +24,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.9 | **Music, the page**: the Images and Music tabs; the Music tab (the fields and the editable description, Add lyrics with the section tags, length, versions, seed and steps); track cards with a player; a model pill and a Load/Unload button that name and act on the open tab's model | §26.1, §26.13 | #21, #22 | the page's part of §20 of `SPARK_TEST.md` not yet reported back; **the real music model has never run** |
 | 1.10 | **Make 4K**: a button on every 16:9 picture makes a 3840×2160 PNG beside the original (trimmed to exactly 16:9 and enlarged with a standard resize); the disabled Upscale button is removed; `scripts/upscale_probe.py` probes whether an upscaler model runs on the Spark | §27 | (this release) | §21 of `SPARK_TEST.md` not yet reported back; **the upscaler probe has never run on the Spark** |
 
-**Tests today (1.9):** backend 598 (pytest; 22 more run only where `torch` and `diffusers` 0.40.0 are installed), front end 257 (Vitest) and 98 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
+**Tests today (1.10):** backend 709 (pytest; 39 more run only where `torch` is installed: 22 for the real music pipeline, which also needs `diffusers` 0.40.0, and 17 for the upscaler probe's tiling), front end 268 (Vitest) and 112 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
 **What is left to build**, in the order proposed in §21.11:
 
@@ -235,7 +235,7 @@ Every value is saved in `localStorage` and restored on the next visit. Server-si
 
 | Option | Applies to | Default | Limits / notes |
 |---|---|---|---|
-| Size | both | 1:1 = 2048×2048 (Edit: Auto — from input) | 7 model-card presets: 1:1 2048×2048, 4:3 2400×1792, 3:4 1792×2400, 3:2 2528×1696, 2:3 1696×2528, 16:9 2752×1536, 9:16 1536×2752; or Custom W×H: each side 256–4096, multiple of 32 (the pipeline's `check_inputs` requires it; found in M2), total ≤ 4.5 MP (limits PROPOSED, to be tested on the Spark) |
+| Size | both | 1:1 = 2048×2048 (Edit: Auto — from input) | 7 model-card presets: 1:1 2048×2048, 4:3 2400×1792, 3:4 1792×2400, 3:2 2528×1696, 2:3 1696×2528, 16:9 2752×1536, 9:16 1536×2752; or Custom W×H: each side 256–4096, multiple of 32 (the pipeline only warns about a size off that grid and rounds it down, so the studio refuses one rather than make a different size from the one asked for; §27.1), total ≤ 4.5 MP (limits PROPOSED, to be tested on the Spark) |
 | Steps | both | 40 | 1–100 |
 | Seed | both | Random each run; Lock seed off | 0–4294967295 |
 | Images per click | both | 1 | 1–8 |
@@ -1277,3 +1277,15 @@ Upscale through Edit mode is dropped from the plan: its ceiling is near 2K, it w
 85. The disabled **Upscale** button is gone from cards and from the viewer. (1.10)
 86. On a **phone** the viewer's bar, with the new button, fits with no sideways scroll. (1.10)
 87. **Spark:** the time and size of a real 4K file, and how it looks next to the original (`SPARK_TEST.md` §21). (Spark)
+
+### 27.9 What was built in 1.10, and what was not checked
+
+Built to §27.3 and §27.5: the trim and the one-pass resize (`backend/studio/fourk.py`), the file beside the image and its two routes (`POST` and `GET /api/images/{id}/4k`), `can_4k` and `four_k` on every result image, one shared build for overlapping requests, the run's `run.updated` event, the page's *Make 4K* / *Making 4K…* / *Download 4K* on a card and in the viewer with the focus handling, the removal of the Upscale placeholder, and `scripts/upscale_probe.py`.
+
+- **Tests:** backend 709 (pytest; 110 are new: the base commit has 599), and 39 more run only where `torch` is installed (17 of them new, for the probe's tiling), front end 268 (Vitest; 11 new) and 112 in a real browser (14 new, including a phone width, two open pages, keyboard focus and the refusals).
+- **Mutation checks:** 68 mutants of the new code. **Backend 44:** 42 killed; one survivor was dead code (a clamp on the crop box that cannot fire: removed, and an exhaustive test over every size in the 2% band stands in for the argument) and one is equivalent (for an exactly-16:9 picture both branches compute the same box). **Page logic 10:** all killed. **Page in a browser 14:** 13 killed; the survivor, *do not store the run the server returned*, is redundant by design, since the `run.updated` event delivers the same update by a second route (the reducer's handling of it is unit-tested). Three browser mutants did not compile at first and were rewritten to ones that do. Listing the mutants also showed four behaviours my first tests did not pin (one Lanczos pass, one event for overlapping requests, refusal before any file work, the encoder level); each got a test.
+- **Mistakes of mine, found by the checking and fixed:** a test picture that was 2.2% off 16:9 and so passed for the wrong reason; a wrong ratio in a test's arithmetic; a module-level skip that would have skipped the tests that need no PyTorch (the file is now two); a test helper that converted an 8-megapixel picture once per column (30 s to 8 s); and the browser harness's rule that any console error fails a test, which a 507 provoked on purpose tripped (now handled in that one test). Looking at the screenshots found a real gap: when the button is replaced by the link, keyboard focus was lost. It now moves to the link, and three tests cover it.
+- **A wrong statement of mine, corrected:** the code comment and §6 said the pipeline's `check_inputs` *requires* sizes in multiples of 32. At the pinned commit it only warns and the pipeline rounds the size down. The studio's rule stays (it refuses a size rather than make a different one), and both places now say what is true.
+- **The probe, checked against the real model on a CPU** (§27.5), but not on the Spark.
+
+**Not checked, because only the Spark can:** how long Make 4K takes there and how big the files are; how a 4K copy looks next to the original (§27.4 is an expectation, not a measurement); whether the probe's upscaler runs on the GB10 with NVIDIA's PyTorch, how fast, and whether its output beats the resize (`SPARK_TEST.md` §21).
