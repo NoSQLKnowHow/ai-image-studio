@@ -229,3 +229,44 @@ test("phone width: the card's buttons and the viewer's bar, with Make 4K in them
   await expect(download4k(v)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(360);
 });
+
+// ------------------------------------------------------------------ keyboard focus: the button is replaced by a link
+test("a keyboard user who pressed Make 4K on a card lands on Download 4K", async ({ page }) => {
+  await useOptions(page, WIDE);
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await done(page, unique("focus on the card"));
+  await make4k(c).focus();
+  await page.keyboard.press("Enter");
+  await expect(download4k(c)).toBeFocused();
+});
+
+test("and in the viewer, where the page behind is out of reach", async ({ page }) => {
+  await useOptions(page, { ...WIDE, numImages: 2 });
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await done(page, unique("focus in the viewer"));
+  await c.locator(".thumb").first().click();
+  await make4k(viewer(page)).focus();
+  await page.keyboard.press("Enter");
+  await expect(download4k(viewer(page))).toBeFocused();
+});
+
+test("a person who moved on while it was being made keeps their place", async ({ page }) => {
+  await useOptions(page, WIDE);
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await done(page, unique("moved on"));
+  await page.route("**/api/images/*/4k", async (route) => {
+    if (route.request().method() === "POST") await new Promise((resolve) => setTimeout(resolve, 700));
+    await route.continue();
+  });
+  await make4k(c).focus();
+  await page.keyboard.press("Enter");
+  await expect(make4k(c)).toHaveText("Making 4K…");
+  await expect(make4k(c)).toBeFocused(); // still the same button while it works: focus is kept
+  const keep = c.getByRole("button", { name: "Keep" });
+  await keep.focus();
+  await expect(download4k(c)).toBeVisible({ timeout: 10_000 });
+  await expect(keep).toBeFocused();
+});
