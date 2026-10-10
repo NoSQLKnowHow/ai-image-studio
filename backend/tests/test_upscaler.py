@@ -67,6 +67,13 @@ def test_a_named_model_file_wins_over_the_default(tmp_path, monkeypatch):
     assert settings_for(tmp_path, upscaler_model=named).upscaler_model_path == named
 
 
+def test_the_defaults_are_the_gpu_if_there_is_one_and_the_cache_folder(tmp_path):
+    direct = Settings(data_dir=tmp_path)
+    from_env = Settings.from_env({"STUDIO_DATA_DIR": str(tmp_path)})
+    for settings in (direct, from_env):
+        assert settings.upscaler_device == "auto" and settings.upscaler_model is None
+
+
 def test_the_environment_names_the_file_and_the_device(tmp_path):
     env = {"STUDIO_UPSCALER_MODEL": "~/mine/x2.pth", "STUDIO_UPSCALER_DEVICE": " CPU ", "STUDIO_DATA_DIR": str(tmp_path)}
     settings = Settings.from_env(env)

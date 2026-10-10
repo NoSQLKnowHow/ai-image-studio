@@ -289,6 +289,16 @@ def test_a_failure_of_the_upscaler_is_answered_with_its_status_reason_and_hint(c
     assert not list(client.app.state.storage.images.rglob("*-4k-enlarged.png"))
 
 
+def test_after_a_failed_enlargement_asking_again_tries_again(client):
+    """A failed attempt must not be remembered: the person fixes the model file and presses Enlarge again."""
+    stub = use(client, Stub(error=UpscaleFailed("The model could not be loaded: boom")))
+    image = wide_run(client)["images"][0]
+    assert enlarge(client, image, 500).json()["code"] == "upscale_failed"
+    stub.error = None  # the file was replaced
+    assert enlarge(client, image, 201).json()["images"][0]["four_k"]["method"] == "model"
+    assert len(stub.calls) == 2 and client.app.state.jobs._enlarging == {}  # nothing is left in the list of enlargements under way
+
+
 def test_a_full_disk_is_a_507(client):
     use(client, Stub(error=OSError(28, "No space left on device")))
     response = enlarge(client, wide_run(client)["images"][0], 507)
