@@ -484,6 +484,28 @@ def test_deleting_the_last_picture_for_good_deletes_the_run(client):
     assert client.get(f"/api/images/{first}").status_code == 404
 
 
+# A picture that is in the bin is deleted for good whatever its run is doing, even while the run is itself in the bin: the run's own state is the rule for a
+# picture that is PRESENT (it is refused above), not for one that is already in the bin on its own clock.
+def test_a_picture_in_the_bin_can_be_deleted_for_good_while_its_run_is_in_the_bin(client):
+    run = made(client, 3)
+    victim = run["images"][0]["id"]
+    assert bin_picture(client, victim).status_code == 200
+    assert bin_it(client, run["id"]).status_code == 200
+    paths = files_of(client, victim)
+    assert delete_picture(client, victim).status_code == 204
+    assert not any(exists(paths).values()) and len(get_run(client, run["id"])["images"]) == 2  # the run and its present pictures are as they were
+
+
+# A music run in the bin lists the tracks it has, and not the ones deleted alone before it (the same rule as for pictures, §33.2 item 5).
+def test_a_music_run_in_the_bin_lists_no_binned_tracks(client):
+    run = made_music(client, 3)
+    assert client.post(f"/api/tracks/{run['tracks'][0]['id']}/bin").status_code == 200
+    assert len(get_run(client, run["id"])["binned_tracks"]) == 1
+    assert bin_it(client, run["id"]).status_code == 200
+    body = get_run(client, run["id"])
+    assert body["binned_tracks"] == [] and len(body["tracks"]) == 2
+
+
 # A run that is deleted for good takes its binned pictures' files too (§33.2 item 5): "everything of it goes".
 def test_deleting_a_run_for_good_takes_its_pictures_in_the_bin_with_it(client):
     run = made(client, 3)
