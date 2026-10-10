@@ -25,6 +25,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.10 | **Make 4K** for any picture: a button on every picture the studio holds (results, including those made before 1.10, and an edit's source images) makes a 4K PNG beside the original (16:9 trimmed to exactly 3840×2160, any other shape enlarged to cover the frame with nothing cut off); **Upscale a picture…** does it for a file from the computer and returns it as a download; the disabled Upscale button is removed; `scripts/upscale_probe.py` probes whether an upscaler model runs on the Spark | §27, §27.9 | #23 | §21 of `SPARK_TEST.md` not yet reported back; **the upscaler probe has never run on the Spark** |
 | 1.11 | **Enlarge**: the same picture, bigger and sharper. A button beside Make 4K on every picture the studio holds (results and an edit's source images) enlarges it to the 4K frame with an upscaler model (Real-ESRGAN x2plus, one or two ×2 passes, then one resize to the exact size), up to a 4× enlargement; the copy replaces a Make 4K copy and the original stays. Needs the model file, which you download; says why when it is missing | §28 | (this PR) | §22 of `SPARK_TEST.md` not yet reported back; **the upscaler has never run on the Spark, so how it looks and how long it takes are unknown** |
 | 1.12 | **The Kept view**: a filter bar above the history (All \| Kept, with the count of kept runs) that applies to both tabs and is remembered; a running job stays visible at the top of the Kept view; un-keeping there removes the card with a toast that says when it will be deleted, and Undo; the server filters the pages, and the filter shape is built to take more filters. **Also: Enlarge waits for a picture that is being made** instead of failing with an out-of-memory error | §29, §28.9 | (this PR) | §22(g) of `SPARK_TEST.md` is the check for the Enlarge fix; the Kept view needs no Spark |
+| 1.13 | **The bin**: a **Deleted** option in the filter bar; Delete (and the daily expiry) moves a run to the bin for 30 days; **Restore**, **Delete forever** and **Empty bin** | §30 | (this PR) | The bin needs no Spark; `SPARK_TEST.md` §24 is the short check |
 
 **Tests today (1.12):** backend 967 (pytest; 65 more run only where `torch` is installed: 28 for the real music pipeline, which also needs `diffusers` 0.40.0, 17 for the upscaler probe's tiling, and 20 for Enlarge's real loading path, which also need `spandrel`), front end 340 (Vitest) and 157 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
@@ -115,6 +116,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 45 | Make 4K for any picture (1.10) | You asked whether existing pictures and the one you are viewing can be upscaled, and to add whatever could not. **Cover 4K, without trimming** for every shape that is not 16:9: enlarged until it fills 3840×2160 (2160×3840 upright), so a 2048×2048 becomes 3840×3840; offered up to a 2× enlargement and 20 MP. Available for **any picture in the history** (before and after 1.10), **an edit's source images**, and **a picture from your computer** (an **Upscale a picture…** button: you choose a file and get the 4K PNG back as a download; nothing is stored or added to the history) (§27, §27.9) | DECIDED (your request and your three choices); details PROPOSED; built in 1.10 |
 | 46 | Enlarge: the same picture, bigger and sharper (1.11) | You asked why **Regenerate larger** gives another picture, said you want **the same picture, faithful, with extra sharpness** (Qwen redrawing fine detail would be nice as well), and asked for an **Enlarge** button that takes a picture to 4K. **Enlarge** uses an **upscaler model** (Real-ESRGAN x2plus, which keeps the composition because it is not generating anything new), once or twice, then one resize to exactly the 4K frame (the same frame and trim rule as Make 4K), up to a 4× enlargement. It sits **beside Make 4K** on every picture the studio holds; the copy **replaces** a Make 4K copy (one 4K copy per picture). It runs in a short-lived process on the GPU, not in the image worker; the model file is **yours to download** (the studio never fetches it). **Qwen redrawing** is **not built**: how to try it is in §28.5 (decision #47, proposed) (§28) | DECIDED (your request and your answer: faithful first, redrawing as a nice extra); details PROPOSED; built in 1.11; **amended in 1.12** after your Spark trial (it waits for a picture that is being made, §28.9) |
 | 48 | A Kept view, and filters that more can join (1.12) | You asked for the history to be filtered to **only the runs you have kept**, and answered the questions: with Kept chosen, **Generate stays in Kept and the running job stays visible at the top** until it finishes (then it leaves unless you kept it); **un-keeping in the Kept view removes the card with a toast and Undo, and the toast says when it will be deleted**; the choice applies to **both tabs**; and the design must let **other filters join later**. A **filter bar** (All \| Kept, with the count of kept runs on the tab) above the history; the server filters (`GET /api/runs?kept=`) because the history comes in pages of twenty; one filter shape on the server, the page and the store so the next filter is a short change (§29). A recoverable delete (*Deleted* view) is a release of its own, **1.13, and needs your answers** (§29.9) | DECIDED (your four answers); details PROPOSED; built in 1.12 |
+| 49 | The bin: a Deleted view that holds a deleted run for 30 days (1.13) | You asked that a deleted run be recoverable, and answered: **it stays in the Deleted view for 30 days before it is really deleted, and there should be an option to empty the garbage bin.** A **Deleted** option beside All and Kept in the filter bar; **Delete** moves a finished run to the bin (with a toast and Undo); the daily clean-up moves expired runs there too; after 30 days (`STUDIO_BIN_DAYS`) they go for good; **Restore** puts a run back as it was, with a fresh clock if it is un-kept; **Delete forever** and **Empty bin** ask first. The other questions of §29.9 are my defaults, listed in §30.6 for you to veto (§30) | DECIDED (your 30 days and your Empty bin); the rest PROPOSED; built in 1.13 |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -1518,3 +1520,77 @@ Built to §29.1–§29.6: on the server `runfilter.py` (`RunFilter`, `KINDS`, `C
 - **Found while building:** Keep was not offered on a card that was still working, so the note *"it stays in this view only if you Keep it"* had nothing to press (§29.7 item 9); and a tab whose newest kept runs are all of the other kind would have said *No kept images yet* with the picture one page further down (§29.1: it reads the next page instead; tested with a page I fabricated in the browser).
 - **Not checked:** how the counts query behaves on a history of many thousands of runs (it counts without an index; fine for the hundreds or low thousands a person makes, not measured); any browser but Chromium; how a screen reader announces the toast and the focus move (the markup is the usual one: a live region, a button, a radio group with arrow keys); and the Kept view on the Spark's own history, which is the Spark test (`SPARK_TEST.md` §23).
 - **Known limits:** the choice is remembered by each browser and is not shared between them; the counts are asked for 250 ms after a change, so the number can lag a moment; **Undo** after the daily clean-up has deleted the run says that the run no longer exists; and `kept=false` ("only runs that are not kept") works on the server and in `matches` but has no control yet.
+
+---
+
+## 30. Version 1.13: the bin, a Deleted view with a way to empty it (decision #49 DECIDED for what you said; the rest PROPOSED)
+
+You asked that a deleted run be **recoverable**, perhaps through a *Deleted* view in the same filter bar (§29.9). You answered: **it stays there for 30 days before it is really deleted, and there should be a way to empty the "garbage bin"**. You did not answer the other questions of §29.9, and asked me to go ahead, so I chose a default for each and listed it in §30.6 for you to veto.
+
+### 30.1 What it looks like
+
+- **The filter bar** (§29.1) gets a third option: **Show: All | Kept N | Deleted N**. The numbers are for the tab you are looking at. The choice is remembered like the other two, and applies to both tabs.
+- **Delete** on a card keeps its name and its question (*Delete this run?*), but now says what happens: *It moves to Deleted and stays there for 30 days; you can restore it from there. After that it is gone for good.* Pressing **Delete** removes the card and shows a toast: *Deleted "…". It stays in Deleted for 30 days.* with **Undo** (which is Restore, §30.4).
+- **The Deleted view** lists the runs in the bin as cards with a **Deleted** badge (and no **Keep**). Each says *In the bin since 12 Oct. It will be deleted for good around 11 Nov, in 29 days.* and has **Restore**, **Delete forever** (it asks first) and the two things that are harmless on a deleted run: **Reuse** (loads its prompt and settings into the form) and **Copy prompt**. Its pictures still open in the viewer, to look at or download.
+- **Empty bin**, a button in the filter bar's row while **Deleted** is chosen, with the count. It asks first: *Delete 12 runs for good (9 on Images, 3 on Music)? This cannot be undone.* It empties the whole bin, both tabs, and the question says how many of each.
+- **An empty bin** says *The bin is empty. Runs you delete stay here for 30 days before they are gone for good.*
+
+### 30.2 What goes to the bin, and for how long
+
+- **A run you delete by hand** (a finished one: done, failed or canceled) goes to the bin. **A run that is still queued** is removed for good, as before: it made nothing worth keeping, and a queued run in the bin would still be picked up by the queue. **A running run** cannot be deleted, as before.
+- **A run the daily clean-up expires** (un-kept, finished, older than the retention of 30 days, §5.6) now goes to the bin too, instead of being deleted at once. That is the situation you described in §29: you stop keeping a run, and it is "deleted" later. So an un-kept run now has its 30 days in the history and then 30 more in the bin.
+- **In the bin for 30 days** (`STUDIO_BIN_DAYS`, default 30; **0 turns the bin off**, and then Delete and the clean-up delete for good at once, as before 1.13). The clean-up that runs once a day removes the runs whose 30 days are over, with all their files (pictures or tracks, inputs, thumbnails, 4K copies).
+- **The files stay on disk while a run is in the bin**, so a deleted run costs the same disk space for 30 days more. There is no size limit; **Empty bin** is the way to get the space back at once.
+- A run in the bin is **not in All and not in Kept**, is not counted there, and is not expired again.
+
+### 30.3 What you can do with a run in the bin
+
+**Restore**, **Delete forever**, **Reuse**, **Copy prompt**, and open its pictures. Nothing else is offered: not Keep, Retry, Edit this, Make 4K or Enlarge. (The server does not forbid the rest, it only does not offer it: a script that makes a 4K copy of a deleted picture works, and the copy goes when the run does.)
+
+### 30.4 Restore
+
+**Restore puts the run back as it was**: a kept run is still kept, an un-kept one is un-kept. If it is un-kept it gets **a fresh clock**: its retention counts from the day it was restored, so that a run the clean-up put in the bin is not put there again at once. The toast says which: *Restored "…". It is still kept.* or *Restored "…". It has a fresh 30 days.* It reappears in All (and in Kept if it is kept) at the place its age gives it.
+
+### 30.5 The server
+
+- **Schema 4** adds two columns to `runs`: `deleted_at` (when it went to the bin) and `restored_at` (when it was last restored). A copy of the database is made first, as for every schema change (`studio.sqlite.before-schema-4`); the migration is tested on a 1.7 and on a 1.12 database.
+- `POST /api/runs/{id}/bin` moves a finished run to the bin: `200` with the run, `404`, `409` `run_not_finished` (queued or running: delete a queued one with `DELETE`, cancel or wait for a running one). `POST /api/runs/{id}/restore`: `200` with the run, `404`, `409` `not_in_bin`. `DELETE /api/runs/{id}` is **unchanged** and means *for good*, in or out of the bin (a running run is still refused). `DELETE /api/bin` empties the bin: `200` `{"deleted": n}`.
+- `GET /api/runs?deleted=true` lists the bin; **without `deleted` the list is the history and leaves the bin out** (as does the list the event stream starts with). `GET /api/runs/counts` gains `deleted` beside `all` and `kept`.
+- A run's payload gains `deleted_at` and `purge_at` (when it will be deleted for good; both null when it is not in the bin), and its `expires_at` is null while it is there. `capabilities.limits.bin_days` says how long the bin keeps a run (0 = no bin), so the page can say it in words.
+- **Events:** moving to the bin and restoring send `run.updated` (the page's views move the run by themselves, §29.5); deleting for good sends `run.deleted`, one for each run when the bin is emptied.
+- **The janitor** (once at start-up, then daily) first deletes for good the runs whose time in the bin is over, then moves the expired runs to the bin. With `STUDIO_BIN_DAYS=0` it deletes the expired runs as it always did.
+- The expiry of a run counts from the later of when it was made and when it was last restored.
+
+### 30.6 The small choices I made (tell me if you want any changed)
+
+1. **Both a hand delete and the daily expiry go to the bin** (your words were about the bin in general). The cost is that an un-kept run lives 60 days in all. If you want only hand deletes in the bin, the clean-up changes by one line.
+2. **Restore keeps the run as it was** (kept stays kept) **and gives an un-kept run a fresh 30 days**, rather than always making it kept. This is the answer to the question of §29.9 item 3 that I think surprises the least; the alternatives were *always kept* and *the old clock*.
+3. **Only finished runs go to the bin**; a queued run is removed for good (§30.2).
+4. **The card's button is still *Delete*,** and so is the question; the dialog now explains the bin.
+5. **A single run can be deleted for good from the bin**, with a question first, as well as the whole bin being emptied.
+6. **Empty bin empties both tabs**, and the question says how many of each. A button that emptied only the tab you are on would leave you not knowing what was left.
+7. **The Deleted view is ordered like the others, by when the run was made,** not by when it was deleted. A run you deleted a moment ago is found by its Undo toast, or by its age.
+8. **The bin has no size limit** (§30.2).
+9. **The Deleted option is always in the bar,** with its count, even when the bin is empty, so that it can be found.
+10. **The Undo toast after a delete stays 12 seconds,** as the Undo of §29.4 does.
+
+### 30.7 Acceptance criteria (continue §29.8)
+
+121. **Delete** on a finished run moves it to the bin: its card leaves All and Kept, a toast says so with **Undo**, and the run is in **Deleted** with its files still on disk. A queued run is removed for good. A running run cannot be deleted. (1.13)
+122. The Delete dialog says that the run goes to Deleted and for how long (`bin_days`); with `STUDIO_BIN_DAYS=0` it says what it always said and deletes for good. (1.13)
+123. The filter bar has **Deleted N** (the count for the tab shown); choosing it shows only the runs in the bin, with the same paging and the same remembered choice as the others. (1.13)
+124. A card in the bin shows when it was deleted and when it will be gone for good, has **Restore**, **Delete forever**, **Reuse** and **Copy prompt**, and offers nothing that changes the run. (1.13)
+125. **Restore** returns the run to All (and Kept if it is kept) as it was; an un-kept run's retention counts from the restore. A toast says which. (1.13)
+126. **Delete forever** asks first, then removes the run and all its files for good. (1.13)
+127. **Empty bin** asks first (saying how many on each tab), then removes every run in the bin and its files for good; it is disabled when the bin is empty. (1.13)
+128. The daily clean-up **moves** an expired un-kept run to the bin, and **deletes for good** a run that has been in the bin for `bin_days`, with all its files; kept runs and runs in the bin are never expired. With `STUDIO_BIN_DAYS=0` it deletes expired runs as before. (1.13)
+129. `POST /api/runs/{id}/bin`, `POST /api/runs/{id}/restore`, `DELETE /api/runs/{id}` (unchanged), `DELETE /api/bin` and `GET /api/runs?deleted=` answer as §30.5 says; the history list and the stream's first page leave the bin out; `counts` has `deleted`. (1.13)
+130. Schema 4 is made from a 1.7 and from a 1.12 database without losing a run; a copy of the old database is made first; a migrated database is the same as a fresh one. (1.13)
+131. Every open page follows a move to the bin, a restore and a deletion for good live. (1.13)
+132. In the Deleted view no run is shown only because it is working, and no toast says that a run left the view. (1.13)
+133. On a **phone** the filter bar with three options and Empty bin, a card in the bin and the dialogs fit with no sideways scroll. (1.13)
+134. The server's rule and the page's `matches` agree on the shared table of cases, now with the bin in it (§29.5). (1.13)
+
+### 30.8 What was built in 1.13, and what was not checked
+
+(Filled in when it is built.)
