@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConfirmDelete, ConfirmEmptyBin } from "./components/Dialogs";
+import { FilterBar } from "./components/FilterBar";
 import { ProjectMenu, projectOf, type ProjectControls } from "./components/ProjectMenu";
 import { ProjectsDialog } from "./components/ProjectsDialog";
 import { RunCard } from "./components/RunCard";
@@ -9,6 +10,7 @@ import { TrackCard } from "./components/TrackCard";
 import {
   deleteProjectQuestion, filedText, keepLockedTitle, leftTheViewText, movedText, projectContents, restoredText, takenOutText, workingNote,
 } from "./format";
+import { NO_FILTER, NO_PROJECT, ONLY_KEPT, withProject, type HistoryFilter } from "./history";
 import { makeMusicRun, makeRun } from "./testdata";
 import type { Project } from "./types";
 
@@ -107,6 +109,11 @@ describe("the Project button on a card (DESIGN.md §32.1)", () => {
     // a tick marks the project the run is in
     const checked = screen.getAllByRole("menuitemradio").filter((item) => item.getAttribute("aria-checked") === "true");
     expect(checked.map((item) => item.textContent)).toEqual(["Logo"]);
+    // ...and the tick itself, a drawn icon and not only the attribute, is on that project and on no other
+    expect(screen.getAllByRole("menuitemradio").filter((item) => item.querySelector("svg")).map((item) => item.textContent)).toEqual(["Logo"]);
+    cleanup();
+    open(unfiled);
+    expect(screen.getAllByRole("menuitemradio").filter((item) => item.querySelector("svg"))).toEqual([]); // a run in no project has no tick
   });
 
   it("says so when there are no projects yet, and still offers to make one", () => {
@@ -134,6 +141,12 @@ describe("the Project button on a card (DESIGN.md §32.1)", () => {
   it("starts on the first choice for a run in no project", () => {
     open(unfiled);
     expect(document.activeElement).toBe(screen.getAllByRole("menuitemradio")[0]);
+  });
+
+  // the test above has the run in the FIRST project, so "the first choice" would pass it too: this one is filed in the second
+  it("starts on the project the run is in even when that is not the first one", () => {
+    open(makeRun({ id: "run-c", project_id: PITCH.id, pinned: true }));
+    expect(document.activeElement).toBe(screen.getByRole("menuitemradio", { name: "Pitch deck" }));
   });
 
   it("files the run when a project is chosen, closes, and gives focus back to the button", () => {
@@ -212,6 +225,28 @@ describe("the Project button on a card (DESIGN.md §32.1)", () => {
       expect(document.activeElement).toBe(screen.getByRole("button", { name: "Add to project" }));
     });
 
+    // Enter pressed twice (or a double click) while the project is still being made must make one project, not two: the second would be refused as
+    // a name that is taken, and the person would be shown an error for something that worked
+    it("does not send the name twice while the first is still being made", async () => {
+      let finish: (value: string | null) => void = () => undefined;
+      const slow = controls({ onCreate: vi.fn(() => new Promise<string | null>((resolve) => { finish = resolve; })) as never });
+      const { c, field } = toForm(slow);
+      fireEvent.change(field, { target: { value: "Brand" } });
+      const form = field.closest("form") as HTMLFormElement;
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+      await act(async () => {
+        fireEvent.submit(form);
+      });
+      expect(c.onCreate).toHaveBeenCalledTimes(1);
+      expect((screen.getByRole("button", { name: "Create" }) as HTMLButtonElement).disabled).toBe(true);
+      await act(async () => {
+        finish(null);
+      });
+      expect(screen.queryByLabelText("Name of the new project")).toBeNull(); // made, so the menu closed
+    });
+
     it("asks for a name rather than sending an empty one", async () => {
       const { c, field } = toForm();
       fireEvent.change(field, { target: { value: "   " } });
@@ -278,6 +313,30 @@ describe("the Manage projects dialog (DESIGN.md §32.1)", () => {
     });
     expect(h.onCreate).toHaveBeenCalledWith("Poster");
     expect(field.value).toBe("");
+  });
+
+  it("asks for a name rather than making a project with an empty one", async () => {
+    const h = show();
+    const field = screen.getByLabelText("New project") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "   " } });
+    await act(async () => {
+      fireEvent.submit(field.closest("form") as HTMLFormElement);
+    });
+    expect(h.onCreate).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe("Give the project a name.");
+  });
+
+  it("asks for a name rather than renaming a project to an empty one, and stays in the field", async () => {
+    const h = show();
+    fireEvent.click(within(row("Logo")).getByRole("button", { name: "Rename Logo" }));
+    const field = screen.getByLabelText("New name for Logo") as HTMLInputElement;
+    fireEvent.change(field, { target: { value: "  " } });
+    await act(async () => {
+      fireEvent.submit(field.closest("form") as HTMLFormElement);
+    });
+    expect(h.onRename).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe("Give the project a name.");
+    expect(screen.getByLabelText("New name for Logo")).toBeTruthy();
   });
 
   it("keeps a refused name in the field with the reason", async () => {
@@ -347,6 +406,49 @@ describe("the Manage projects dialog (DESIGN.md §32.1)", () => {
   });
 });
 
+// ------------------------------------------------------------------ the filter bar's controls
+// filterbar.test.tsx draws the bar as markup; these press its controls, and look at what the bar asks the page to do
+describe("the Project drop-down and the Manage button in the filter bar act (DESIGN.md §32.1)", () => {
+  const draw = (filter: HistoryFilter) => {
+    const onChange = vi.fn();
+    const onManageProjects = vi.fn();
+    render(<FilterBar filter={filter} keptCount={2} deletedCount={1} binTotal={1} projects={[LOGO, PITCH]} tab="image" onChange={onChange}
+      onEmptyBin={nothing} onManageProjects={onManageProjects} />);
+    return { onChange, onManageProjects, select: document.querySelector("[data-filter-project]") as HTMLSelectElement };
+  };
+
+  it("chooses a project, 'no project' or any project, and keeps Kept or Deleted as it was", () => {
+    const { onChange, select } = draw(ONLY_KEPT);
+    fireEvent.change(select, { target: { value: LOGO.id } });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id });
+    fireEvent.change(select, { target: { value: NO_PROJECT } });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: NO_PROJECT });
+  });
+
+  // "" is the drop-down's value for Any project; the filter's is null (an empty id would be sent to the server as ?project=)
+  it("sends Any project as no project at all, not as an empty id", () => {
+    const { onChange, select } = draw(withProject(ONLY_KEPT, LOGO.id));
+    fireEvent.change(select, { target: { value: "" } });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: null });
+  });
+
+  it("keeps the chosen project when All, Kept or Deleted is chosen, by click and by arrow key", () => {
+    const { onChange } = draw(withProject(NO_FILTER, LOGO.id));
+    fireEvent.click(screen.getByRole("radio", { name: /^Kept/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id });
+    fireEvent.click(screen.getByRole("radio", { name: /^Deleted/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ kept: null, deleted: true, project: LOGO.id });
+    fireEvent.keyDown(screen.getByRole("radio", { name: /^All/ }), { key: "ArrowRight" });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id });
+  });
+
+  it("opens the Manage projects dialog when Manage is pressed", () => {
+    const { onManageProjects } = draw(NO_FILTER);
+    fireEvent.click(document.querySelector('[data-action="manage-projects"]') as HTMLElement);
+    expect(onManageProjects).toHaveBeenCalledTimes(1);
+  });
+});
+
 // ------------------------------------------------------------------ the card
 describe("a card of a run that is filed in a project (DESIGN.md §32.3)", () => {
   const cardProps = (run: ReturnType<typeof makeRun>, c = controls()) => ({
@@ -406,10 +508,14 @@ describe("a card of a run that is filed in a project (DESIGN.md §32.3)", () => 
 
   it("is the same for a music card: a chip, Keep locked, and a Project button", () => {
     // a track card takes the props a picture card does, less the picture-only ones; it ignores the extra ones it is not asked for
-    const props = { ...cardProps(makeRun()), run: makeMusicRun({ project_id: LOGO.id, pinned: true }) } as unknown as Parameters<typeof TrackCard>[0];
+    const base = cardProps(makeRun());
+    const props = { ...base, run: makeMusicRun({ project_id: LOGO.id, pinned: true }) } as unknown as Parameters<typeof TrackCard>[0];
     render(<TrackCard {...props} />);
     expect(document.querySelector("[data-project-chip]")?.textContent).toContain("Logo");
     expect(keepButton().getAttribute("aria-disabled")).toBe("true");
+    expect(keepButton().getAttribute("title")).toBe(keepLockedTitle("Logo")); // the reason, as on a picture card
+    fireEvent.click(keepButton());
+    expect(base.onToggleKeep).not.toHaveBeenCalled(); // locked: pressing it does nothing
     expect(screen.getByRole("button", { name: "Project: Logo. Change the project" })).toBeTruthy();
   });
 
