@@ -356,6 +356,20 @@ def test_filing_names_what_is_missing(client):
     assert client.get(f"/api/runs/{run['id']}").json()["project_id"] is None  # nothing happened
 
 
+# Both answers are 404, and the page tells them apart by the start of the message ("Run ..." or "Project ...", App.tsx fileInto) to say "That
+# run no longer exists." or "That project no longer exists." So the words are part of the contract, and when the run AND the project are both
+# unknown it is the run that is named (the run is looked for first, §32.4). Without this the wording could change and nothing would notice.
+def test_filing_says_which_of_the_two_is_missing_in_words_the_page_relies_on(client):
+    run = finished(client)
+    project = new_project(client)
+    assert file_it(client, NO_SUCH, project["id"]).json()["detail"].startswith("Run")
+    assert file_it(client, run["id"], NO_SUCH).json()["detail"].startswith("Project")
+    assert file_it(client, "nope", project["id"]).json()["detail"].startswith("Run")  # a malformed run id is a run that is not there
+    assert file_it(client, run["id"], "nope").json()["detail"].startswith("Project")  # a malformed project id is a project that is not
+    assert file_it(client, NO_SUCH, NO_SUCH).json()["detail"].startswith("Run")  # neither exists: the run is named
+    assert file_it(client, "nope", NO_SUCH).json()["detail"].startswith("Run")  # the same when the run's id is malformed
+
+
 # A run in the bin cannot be filed: 409 `run_in_bin`, and nothing changes.
 def test_a_run_in_the_bin_cannot_be_filed(client):
     run = finished(client)
