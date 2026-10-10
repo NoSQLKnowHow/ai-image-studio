@@ -372,6 +372,19 @@ def test_an_edits_source_picture_is_not_a_result(client):
     assert bin_picture(client, upload["upload_id"]).status_code == 404  # a staged upload is no part of the history
 
 
+# An edit's source images live in the same table as its results, but they are not pictures of the run: an edit's only result is its LAST picture,
+# however many sources it was given, so deleting it sends the run (to the bin, or for good), and does not leave a run with nothing to show.
+def test_the_only_result_of_an_edit_is_its_last_picture_whatever_its_sources(client):
+    ups = [stage(client, image_bytes(color)) for color in ((255, 0, 0), (0, 255, 0))]
+    run = wait_for(client, create_edit(client, "put them together", [ref(u) for u in ups])["id"])
+    assert len(run["images"]) == 1 and len(run["inputs"]) == 2
+    result = bin_picture(client, run["images"][0]["id"])
+    assert result.json()["moved"] == "run" and result.json()["run"]["deleted_at"] is not None
+    assert client.post(f"/api/runs/{run['id']}/restore").status_code == 200
+    assert delete_picture(client, run["images"][0]["id"]).status_code == 204
+    assert client.get(f"/api/runs/{run['id']}").status_code == 404  # for good, the run too
+
+
 # A picture that Make 4K or Enlarge is working on, or has waiting, cannot be deleted: the copy being written would be left behind. The studio keeps
 # the pictures in flight in two tables of its own (`_making_4k`, `_enlarging`); a picture in either is busy, one that is in neither is not.
 @pytest.mark.parametrize("table", ["_making_4k", "_enlarging"])
