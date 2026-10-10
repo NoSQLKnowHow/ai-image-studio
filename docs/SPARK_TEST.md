@@ -645,7 +645,7 @@ where** (faces, text, foliage). If `pip install` or the run fails, paste the err
 
 ## 22. Enlarge: the same picture, bigger and sharper (new in 1.11)
 
-Update first: `git pull && docker compose up -d --build`; the title should read **v1.11** (reload with Ctrl+Shift+R). The build log
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.12** (reload with Ctrl+Shift+R). The build log
 has a line `check_image: Enlarge: spandrel 0.4.x`; if it says spandrel cannot be imported, send me that line (everything else still
 works, and Enlarge says why it is off). There is no database change. Enlarge uses **a model file you download once** and a **separate
 short-lived process**, so the image model does not have to be loaded. If it is generating, Enlarge **waits for the picture to finish** and then runs (g): the two do not fit on the GPU together.
