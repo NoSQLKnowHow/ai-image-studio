@@ -5,6 +5,8 @@
 IMAGE="ai-image-studio:local"      # the image name in compose.yaml
 SERVICE="studio"                   # the service name in compose.yaml
 BACKUP_PREFIX="ai-image-studio-backup-"
+# The models the studio loads when .env doesn't say otherwise (the same defaults as compose.yaml and config.py).
+# A backup looks for exactly the models the studio would use, so these must stay in step with those files.
 DEFAULT_MODEL="Qwen/Qwen-Image-2.1"
 DEFAULT_MUSIC_MODEL="MiniMaxAI/MiniMax-Music3"
 DEFAULT_UPSCALER="upscalers/RealESRGAN_x2plus.pth"   # inside the model cache folder
@@ -145,17 +147,23 @@ check_listing() {
 }
 
 # check_listing_paths NAME LISTING PATH...: like check_listing, for an archive that may hold several paths (the models).
+# Used on model-cache.tar, which holds several paths (the models), where check_listing handles a single one.
+# Every entry in the archive must be one of the listed paths or lie inside one. Anything else, or any '..', is refused
+# BEFORE anything is unpacked, so a damaged or tampered backup cannot write outside the model folders it declares.
 check_listing_paths() {
   local name=$1 listing=$2 line path ok
   shift 2
   while IFS= read -r line; do
     [[ -n $line ]] || continue
+    # an entry is fine if it IS a listed path, or is inside one (the path followed by a slash and more)
     ok=0
     for path in "$@"; do
       if [[ $line == "$path" || $line == "$path"/* ]]; then ok=1; break; fi
     done
+    # no listed path matched this entry: stop here, nothing has been unpacked yet
     (( ok )) || die "Refusing to unpack $name: it holds an entry outside the paths the backup lists (for example: $line)."
   done <<< "$listing"
+  # a '..' anywhere could climb out of the folder it is unpacked into, even inside a listed path
   if printf '%s\n' "$listing" | grep -Eq '(^|/)\.\.(/|$)'; then
     die "Refusing to unpack $name: it holds a path containing '..'."
   fi

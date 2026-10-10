@@ -73,6 +73,8 @@ for tool in "${tools[@]}"; do
 done
 open_backup
 has_member data.tar.gz || die "$BACKUP has no data.tar.gz."
+# Format 1: no models, or the one image model (model_dir). Format 2: the models are listed in model_paths. Any other number
+# was made by a newer script that this one cannot safely read, so stop instead of guessing.
 [[ $(manifest format) == 1 || $(manifest format) == 2 ]] || die "This backup has a format ($(manifest format)) that this version of restore.sh doesn't know. Update the scripts (git pull) and try again."
 included=",$(manifest included),"
 has() { [[ $included == *",$1,"* ]]; }
@@ -87,6 +89,7 @@ fi
 say "Backup:   $BACKUP"
 say "  made:   $(manifest created_utc) on $(manifest host), studio $(manifest studio_version)"
 say "  holds:  $(manifest included)"
+# The models the backup holds (format 2): comma-separated paths inside the cache folder. Empty for older backups and for backups without models
 backup_models=$(manifest model_paths)
 if [[ -n $backup_models ]]; then say "  models: ${backup_models//,/ }"; fi
 backup_commit=$(manifest git_commit)
@@ -112,15 +115,20 @@ do_image=0; do_env=0; do_model=0
 (( WITH_ENV ))   && has env   && has_member env.backup && do_env=1
 (( WITH_MODEL )) && has model && has_member model-cache.tar && do_model=1
 
+# Work out which models the backup holds. Each path is going to be written into your own cache folder, so a path
+# that restore.sh would not itself have made is refused before anything is changed.
 MODEL_PATHS=()   # the models the backup holds, as paths inside the cache folder
 if (( do_model )); then
   if [[ -n $backup_models ]]; then
+    # format 2: the manifest lists them, separated by commas
     IFS=, read -r -a MODEL_PATHS <<< "$backup_models"
   else   # a backup made when only the image model could be included: one model, named by model_dir
     MODEL_DIR=$(manifest model_dir)
     [[ $MODEL_DIR =~ ^models--[A-Za-z0-9._-]+$ ]] || die "The backup names a model folder I don't trust: '$MODEL_DIR'."
     MODEL_PATHS=("hub/$MODEL_DIR")
   fi
+  # whatever the manifest says, each path must be a model folder (hub/models--NAME) or a file inside some other folder:
+  # never a '..', never an absolute path, never the whole hub/ folder, which other tools' models share
   for path in "${MODEL_PATHS[@]}"; do
     valid_model_path "$path" || die "The backup names a model path I don't trust: '$path'."
   done
@@ -146,6 +154,8 @@ if (( do_model )); then
   else
     HF_DIR=$(hf_cache_dir)
   fi
+  # The rule for each model: not in the cache, restore it. In the cache and no --force, leave it alone and say so. In the cache with
+  # --force, restore it and move the cached copy aside first (ASIDE remembers which, for the plan printed below).
   # each model on its own: one that is already in the cache is left alone (or moved aside with --force)
   WANT_PATHS=(); declare -A ASIDE=()
   for path in "${MODEL_PATHS[@]}"; do
@@ -156,6 +166,7 @@ if (( do_model )); then
       WANT_PATHS+=("$path")
     fi
   done
+  # every model was already in the cache: skip the whole model step, including unpacking the archive
   (( ${#WANT_PATHS[@]} )) || do_model=0
 fi
 
@@ -184,6 +195,7 @@ say "  - restore ./data from data.tar.gz"
 if (( do_env )); then say "  - restore .env$( ((env_in_way)) && echo " (the current one is moved aside to .env.before-restore-$stamp)")"; fi
 if (( do_image )); then say "  - load the Docker image$( [[ -n $current_image_id ]] && echo " (the current $IMAGE is kept as ai-image-studio:before-restore-$stamp)")"; fi
 if (( do_model )); then
+  # one line per model that will really be restored, saying so when the cached copy is moved aside first
   for path in "${WANT_PATHS[@]}"; do
     say "  - restore the model $HF_DIR/$path$( [[ -n ${ASIDE[$path]:-} ]] && echo " (the current copy is moved aside first)")"
   done
@@ -245,11 +257,14 @@ if (( do_image )); then
 fi
 
 if (( do_model )); then
+  # Restore only the wanted models. They are unpacked into a scratch folder first, so a failure part-way leaves your cache untouched,
+  # and then each is moved into place. A copy already in the way was approved with --force and is moved aside, never deleted.
   say "Restoring the models (a few minutes)..."
   mkdir -p -- "$HF_DIR"
   mkdir -- "$TMP/model"
   member_cat model-cache.tar | tar -xf - -C "$TMP/model" -- "${WANT_PATHS[@]}"
   for path in "${WANT_PATHS[@]}"; do
+    # the upscaler lives in a folder (upscalers/) that a fresh cache doesn't have yet
     mkdir -p -- "$(dirname -- "$HF_DIR/$path")"
     if [[ -e $HF_DIR/$path || -L $HF_DIR/$path ]]; then mv -- "$HF_DIR/$path" "$HF_DIR/$path.before-restore-$stamp"; fi
     mv -- "$TMP/model/$path" "$HF_DIR/$path"
