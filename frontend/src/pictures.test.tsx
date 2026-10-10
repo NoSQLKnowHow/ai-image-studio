@@ -65,6 +65,8 @@ describe("the question before a picture or track is deleted (DESIGN.md §33.1)",
     expect(deleteItemQuestion(ask({ binDays: 0 }))).toBe(
       "(image 2 of 4, seed 1234.) It is deleted for good: its file, its thumbnail and its 4K and Enlarge copies are removed from the Spark. This can't be undone.");
     expect(deleteItemQuestion(ask({ binDays: 0, item: track() }))).toContain("It is deleted for good: its file is removed from the Spark.");
+    // a run in a project that is not its last picture stays there with its others, bin or no bin
+    expect(deleteItemQuestion(ask({ binDays: 0, filed: true, projectName: "Logo" }))).toMatch(/ The run stays in the project “Logo” with its other pictures\.$/);
     expect(deleteItemQuestion(ask({ binDays: 0, last: true, filed: true, projectName: "Logo" }))).toBe(
       "(image 2 of 4, seed 1234.) This is the last picture of this run, so the whole run is deleted for good, with its files. This can't be undone. It is in the project “Logo”, which loses it.");
   });
@@ -269,6 +271,7 @@ describe("the card the Deleted view shows for a run with pictures in the bin (DE
     expect(card.getAttribute("data-run-id")).toBe("run-binned");
     expect(card.textContent).toContain("2 deleted pictures");
     expect(card.textContent).toContain("a red fox in the snow");
+    expect(card.textContent).toContain("2048×2048"); // what each picture is, as on a card
     expect(card.textContent).toMatch(/From a run made on /);
     const rows = card.querySelectorAll("li.binned-item");
     expect(rows).toHaveLength(2);
@@ -297,6 +300,11 @@ describe("the card the Deleted view shows for a run with pictures in the bin (DE
     expect(h.onRestore).toHaveBeenCalledTimes(1);
   });
 
+  it("says '1 deleted picture' for one, and '2 deleted pictures' for two", () => {
+    render(<BinnedItemsCard run={makeRun({ binned_images: [makeBinnedImage(0)] })} now={now} projectName={null} handlers={handlers()} />);
+    expect(document.querySelector('[data-card="binned-items"]')?.textContent).toMatch(/1 deleted picture(?!s)/);
+  });
+
   it("shows the project the run is filed in, with its name or a stand-in while the name is not known", () => {
     const filed = makeRun({ ...run, project_id: "p".repeat(32), binned_images: [makeBinnedImage(0)] });
     render(<BinnedItemsCard run={filed} now={now} projectName="Logo" handlers={handlers()} />);
@@ -314,7 +322,7 @@ describe("the card the Deleted view shows for a run with pictures in the bin (DE
     const h = handlers();
     render(<BinnedItemsCard run={music} now={now} projectName={null} handlers={h} />);
     const card = document.querySelector('[data-card="binned-items"]') as HTMLElement;
-    expect(card.textContent).toContain("1 deleted track");
+    expect(card.textContent).toMatch(/1 deleted track(?!s)/); // one is singular
     expect(card.textContent).toContain("Version 2 · seed 201");
     expect(card.textContent).toContain("0:47");
     expect(card.querySelector("audio")?.getAttribute("src")).toBe("/api/audio/track1");
