@@ -13,7 +13,7 @@ import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
 import { leftTheViewText, unkeptText } from "./format";
-import { NO_FILTER, filterKey, isDefault, matches, readFilter, saveFilter, visibleRuns, working, type HistoryFilter } from "./history";
+import { NO_FILTER, filterKey, isDefault, matches, readFilter, saveFilter, visibleRuns, watchWorking, working, type HistoryFilter } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -515,22 +515,11 @@ export default function App() {
   }, [visible]);
 
   // A run that is in a filtered view only while it works leaves it when it is done, unless it was kept; the page says so (§29.3).
-  const watched = useRef(new Set<string>());
+  const watched = useRef<ReadonlySet<string>>(new Set());
   useEffect(() => {
-    if (isDefault(filter)) {
-      watched.current.clear();
-      return;
-    }
-    for (const run of Object.values(state.runs)) if (working(run) && !matches(run, filter)) watched.current.add(run.id);
-    for (const id of [...watched.current]) {
-      const run = state.runs[id];
-      if (!run || (working(run) && matches(run, filter))) {
-        watched.current.delete(id); // deleted, or kept while it worked: nothing to say
-      } else if (!working(run)) {
-        watched.current.delete(id);
-        if (!matches(run, filter)) push("info", leftTheViewText(run), { label: "Show all", run: () => changeFilter(NO_FILTER) });
-      }
-    }
+    const next = watchWorking(watched.current, state.runs, filter);
+    watched.current = next.watched;
+    for (const run of next.left) push("info", leftTheViewText(run), { label: "Show all", run: () => changeFilter(NO_FILTER) });
   }, [state.runs, filter]);
 
   if (startupError) {

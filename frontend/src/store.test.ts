@@ -282,6 +282,16 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     expect(state.views.all).toMatchObject({ ready: true, nextBefore: "kept-now" });
   });
 
+  it("the unfiltered snapshot keeps the place the All view had reached, when it keeps the older runs", () => {
+    const newest = makeRun({ id: "n1", created_at: at(50) });
+    let state = reducer(initialState, { type: "runsLoaded", page: { runs: [newest, makeRun({ id: "n2", created_at: at(49) })], next_before: "n2" }, append: false });
+    state = reducer(state, { type: "runsLoaded", page: { runs: [makeRun({ id: "o1", created_at: at(20) })], next_before: "o1" }, append: true });
+    expect(state.views.all).toMatchObject({ nextBefore: "o1", boundary: { id: "o1" } });
+    state = reducer(state, { type: "runsLoaded", page: { runs: [newest, makeRun({ id: "n2", created_at: at(49) })], next_before: "n2" }, append: false });
+    expect(state.views.all).toMatchObject({ ready: true, nextBefore: "o1", boundary: { id: "o1" } }); // not back at the first page's end
+    expect(state.order).toEqual(["n1", "n2", "o1"]);
+  });
+
   it("the counts are kept as the server gave them", () => {
     const counts = { image: { all: 3, kept: 1 }, music: { all: 2, kept: 0 } };
     expect(reducer(initialState, { type: "counts", counts }).counts).toEqual(counts);

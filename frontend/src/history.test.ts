@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cases from "../../backend/tests/filter_cases.json";
 import {
-  FILTER_KEY, NO_FILTER, ONLY_KEPT, filterKey, filterParams, isDefault, matches, readFilter, saveFilter, visibleRuns, working,
+  FILTER_KEY, NO_FILTER, ONLY_KEPT, filterKey, filterParams, isDefault, matches, readFilter, saveFilter, visibleRuns, watchWorking, working,
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
@@ -148,5 +148,65 @@ describe("what a filter shows (DESIGN.md §29.2, §29.3, §29.5)", () => {
   it("a view that does not exist yet shows what the cache holds for it, up to nothing", () => {
     const { runs, order } = index(run("a", 1, { pinned: true }));
     expect(ids(visibleRuns(runs, order, undefined, ONLY_KEPT))).toEqual(["a"]);
+  });
+});
+
+describe("which runs have left the Kept view (DESIGN.md §29.3)", () => {
+  const run = (id: string, extra: Partial<Run> = {}) => makeRun({ id, status: "done", pinned: false, ...extra } as never);
+  const table = (...list: Run[]) => Object.fromEntries(list.map((r) => [r.id, r]));
+  const none = new Set<string>();
+
+  it("watches a run that is working and not kept, and reports nothing yet", () => {
+    const result = watchWorking(none, table(run("w", { status: "running" }), run("kept", { pinned: true }), run("old")), ONLY_KEPT);
+    expect([...result.watched]).toEqual(["w"]);
+    expect(result.left).toEqual([]);
+  });
+
+  it("reports a watched run that finished without being kept, once", () => {
+    const before = watchWorking(none, table(run("w", { status: "running" })), ONLY_KEPT);
+    const after = watchWorking(before.watched, table(run("w", { status: "done" })), ONLY_KEPT);
+    expect(after.left.map((r) => r.id)).toEqual(["w"]);
+    expect(after.watched.size).toBe(0);
+    expect(watchWorking(after.watched, table(run("w", { status: "done" })), ONLY_KEPT).left).toEqual([]); // not again
+  });
+
+  it("reports a failed or canceled one too, because it is gone from the view all the same", () => {
+    for (const status of ["failed", "canceled"] as const) {
+      const watched = new Set(["w"]);
+      expect(watchWorking(watched, table(run("w", { status })), ONLY_KEPT).left.map((r) => r.id)).toEqual(["w"]);
+    }
+  });
+
+  it("does not report one that is still working", () => {
+    const result = watchWorking(new Set(["w"]), table(run("w", { status: "queued" })), ONLY_KEPT);
+    expect(result.left).toEqual([]);
+    expect([...result.watched]).toEqual(["w"]);
+  });
+
+  it("does not report one that was kept while it worked, nor one kept as it finished", () => {
+    const whileWorking = watchWorking(new Set(["w"]), table(run("w", { status: "running", pinned: true })), ONLY_KEPT);
+    expect(whileWorking.left).toEqual([]);
+    expect(whileWorking.watched.size).toBe(0); // it belongs to the view now: no longer watched
+    const asItFinished = watchWorking(new Set(["w"]), table(run("w", { status: "done", pinned: true })), ONLY_KEPT);
+    expect(asItFinished.left).toEqual([]);
+  });
+
+  it("does not report one that was deleted", () => {
+    const result = watchWorking(new Set(["w"]), table(), ONLY_KEPT);
+    expect(result.left).toEqual([]);
+    expect(result.watched.size).toBe(0);
+  });
+
+  it("watches nothing in the unfiltered list, where a finished run does not leave", () => {
+    const result = watchWorking(new Set(["w"]), table(run("w", { status: "done" }), run("x", { status: "running" })), NO_FILTER);
+    expect(result.left).toEqual([]);
+    expect(result.watched.size).toBe(0);
+  });
+
+  it("is told apart by what the filter says: with 'not kept' a kept working run is the one that leaves", () => {
+    const filter: HistoryFilter = { kept: false };
+    const watched = watchWorking(none, table(run("w", { status: "running", pinned: true })), filter).watched;
+    expect([...watched]).toEqual(["w"]);
+    expect(watchWorking(watched, table(run("w", { status: "done", pinned: true })), filter).left.map((r) => r.id)).toEqual(["w"]);
   });
 });

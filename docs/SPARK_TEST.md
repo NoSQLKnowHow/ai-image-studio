@@ -713,6 +713,30 @@ the model, the settings (`--dtype bf16`, the tile overlap) or the whole idea nee
 
 To update later: `git pull && docker compose up -d --build`.
 
+## 23. The Kept view, and Enlarge waiting its turn (new in 1.12)
+
+Update first: `git pull && docker compose up -d --build` (on the branch or `main` that carries 1.12); the title should read **v1.12** (reload with Ctrl+Shift+R).
+There is no database change. The Enlarge part is §22(g) above; this section is the Kept view, which needs no GPU but is worth looking at with your own history.
+
+**a) The filter bar.** Above your runs: **Show**, **All**, **Kept N**. Press **Keep** on two cards. **Good:** the number beside **Kept** goes up by itself;
+choose **Kept** and only those two cards remain; choose **All** and everything is back; reload with **Kept** chosen and it is still chosen. The arrow keys move between the two options.
+
+**b) Both tabs.** With **Kept** chosen on **Images**, open **Music**: the bar there says **Kept** too, with that tab's own count, and shows only kept tracks.
+
+**c) Older kept runs.** If you have more than twenty runs, keep an old one: in **Kept**, it is found without scrolling through everything (*Load older runs* appears only when
+there are more than twenty kept). Back in **All** it is not shown out of order.
+
+**d) Generating while Kept is chosen.** Press **Generate**. **Good:** your job appears **at the top** with the note *Shown while it works. It stays in this view only if you Keep it.*;
+when it finishes (not kept) it leaves and a toast says *"…" is done. It is not kept, so it is not in this view.* with **Show all**. Do it again and press **Keep** on the working card:
+the note goes away and the card stays when the job is done.
+
+**e) Stopping to keep.** In **Kept**, press **Keep** on a kept card. **Good:** the card goes; a toast says *No longer kept: "…". It will be deleted around <date>, in N days, unless you Keep it again.*
+with **Undo**; **Undo** brings the card back in its place. A run older than your retention (30 days) says it will go *at the next daily clean-up*. With the keyboard, focus lands on the filter bar.
+
+**f) A phone.** The bar fits, and the toast with **Undo** can be pressed.
+
+**Send back:** anything that did not match "Good", and whether the date in (e) matched the date you expected from the run's age.
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -732,3 +756,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 13. From step 20 j) to n) (the Music tab on the Spark): the numbers from (k), (l) and (m), whether the track played and seeked on your phone, and a screenshot of anything on the phone that did not fit.
 14. From step 21 (Make 4K): the seconds and the file size from (a) and for a square in (c), what you thought of the picture in (b), whether the rotation of a phone photo and the refusals in (c3) were right, the time for a 12 MP photo in (c3), whether a running job slowed down in (d), and anything that did not match "Good". From (i), if you ran it: the whole probe output and which of the two 4K files looks better to you, and where.
 15. From step 22 (Enlarge): the `ENLARGED …` log lines (time, device, model), the times and sizes from (b), (d), (e), (f) and (i), your verdict on **where Enlarge looks better or worse than Make 4K** from (c) to (e), the memory and slowdown figures from (f) and (g), and anything that did not match "Good".
+16. From step 23 (the Kept view): anything that did not match "Good", and whether the date in (e) was the date you expected.

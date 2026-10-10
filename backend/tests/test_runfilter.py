@@ -72,6 +72,14 @@ def test_pages_continue_within_the_filter(db):
     assert [letter(r["id"]) for r in second] == ["a"] and not more
 
 
+def test_a_page_that_is_exactly_full_is_not_followed_by_an_empty_one(db):
+    """Three runs are kept: a page of three has no next page, a page of two has."""
+    rows, more = db.list_runs(3, None, RunFilter(kept=True))
+    assert [letter(r["id"]) for r in rows] == ["f", "c", "a"] and not more
+    rows, more = db.list_runs(2, f"{ord('f'):032x}", RunFilter(kept=True))  # after f: c and a, exactly a page
+    assert [letter(r["id"]) for r in rows] == ["c", "a"] and not more
+
+
 def test_the_cursor_may_be_a_run_the_filter_does_not_show(db):
     """A run un-kept since the page was loaded can still be the place the next page starts from."""
     rows, more = db.list_runs(100, f"{ord('d'):032x}", RunFilter(kept=True))  # d is not kept

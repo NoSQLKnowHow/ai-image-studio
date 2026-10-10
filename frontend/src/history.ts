@@ -90,6 +90,21 @@ export function visibleRuns(runs: Record<string, Run>, order: readonly string[],
   return [...active, ...shown];
 }
 
+/** The runs that are in a filtered view only while they work (§29.3): which are still being watched, and which have just left the view
+ *  (finished, failed or canceled without being kept). A run kept while it worked, or deleted, is no longer watched and is not reported. */
+export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, Run>, filter: HistoryFilter): { watched: Set<string>; left: Run[] } {
+  const next = new Set<string>();
+  const left: Run[] = [];
+  if (isDefault(filter)) return { watched: next, left }; // nothing is shown only for working in the unfiltered list
+  for (const run of Object.values(runs)) if (working(run) && !matches(run, filter)) next.add(run.id);
+  for (const id of watched) {
+    const run = runs[id];
+    if (!run || next.has(id)) continue; // deleted; or still working and still not kept: watched on
+    if (!working(run) && !matches(run, filter)) left.push(run); // finished without being kept; otherwise it was kept, and stays
+  }
+  return { watched: next, left };
+}
+
 /** The counts the server keeps (`GET /api/runs/counts`): per tab, how many runs there are and how many are kept. */
 export interface Counts {
   image: { all: number; kept: number };

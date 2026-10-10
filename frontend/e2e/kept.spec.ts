@@ -205,7 +205,7 @@ test("generating with Kept chosen: the job stays at the top with a note, leaves 
 });
 
 test("a job kept while it works stays in the Kept view when it is done, with no toast", async ({ page }) => {
-  await useOptions(page, { steps: 100, numImages: 3 });
+  await useOptions(page, { steps: 100, numImages: 4 }); // about four seconds of work
   await clearHistory(page);
   await page.goto("/");
   await keptOption(page).click();
@@ -216,7 +216,8 @@ test("a job kept while it works stays in the Kept view when it is done, with no 
   await expect(c.locator("[data-note=working-in-kept]")).toBeVisible();
   await keepButton(c).click(); // Keep is offered on a card that is still working
   await expect(keepButton(c)).toHaveAttribute("aria-pressed", "true");
-  await expect(c.locator("[data-note=working-in-kept]")).toHaveCount(0); // kept: it belongs here now
+  await expect(c.locator("[data-note=working-in-kept]")).toHaveCount(0, { timeout: 1500 }); // kept: it belongs here now, at once
+  await expect(c.locator(".badge").first()).toHaveText("Generating"); // ... while it is still working, not only after it is done
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 30_000 });
   await expect(c).toBeVisible();
   await expect(toastWith(page, "is not kept")).toHaveCount(0);
