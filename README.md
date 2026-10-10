@@ -449,7 +449,8 @@ cd frontend
 npm ci
 npm run dev        # http://localhost:5173, with /api proxied to the backend above (STUDIO_API)
 npm test           # unit tests (Vitest)
-npm run build      # type-check, then build into frontend/dist
+npm run typecheck  # type-check everything, tests included (needs the whole repository: a test reads backend/tests/)
+npm run build      # type-check the page itself (tests left out, as in the Docker image), then build into frontend/dist
 npm run e2e        # browser tests (Playwright) against the built page and a fake-pipeline backend
 ```
 
