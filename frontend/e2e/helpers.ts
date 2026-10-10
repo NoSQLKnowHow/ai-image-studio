@@ -41,14 +41,16 @@ export async function generate(page: Page, prompt: string): Promise<Locator> {
   return c;
 }
 
-/** Delete every run over the API (waiting out one that's still generating). */
+/** Delete every run over the API (waiting out one that's still generating), and empty the bin (DESIGN.md §30), which the list leaves out. */
 export async function clearHistory(page: Page) {
+  const asked = { "X-Studio-Client": "1" };
   await expect
     .poll(async () => {
       const { runs } = (await (await page.request.get("/api/runs?limit=100")).json()) as { runs: { id: string; status: string }[] };
       for (const run of runs) {
-        if (run.status !== "running") await page.request.delete(`/api/runs/${run.id}`, { headers: { "X-Studio-Client": "1" } });
+        if (run.status !== "running") await page.request.delete(`/api/runs/${run.id}`, { headers: asked });
       }
+      await page.request.delete("/api/bin", { headers: asked });
       return runs.length;
     }, { timeout: 20_000 })
     .toBe(0);

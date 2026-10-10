@@ -82,21 +82,27 @@ test("Kept shows only the kept runs, All shows them all, and the choice survives
 test("the filter bar is a radio group: arrow keys, Home and End move between the options", async ({ page }) => {
   await clearHistory(page);
   await page.goto("/");
+  const deleted = bar(page).getByRole("radio", { name: /^Deleted/ });
   await allOption(page).focus();
   await page.keyboard.press("ArrowRight");
   await expect(keptOption(page)).toBeChecked();
   await expect(keptOption(page)).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(deleted).toBeChecked();
   await page.keyboard.press("ArrowRight"); // wraps
   await expect(allOption(page)).toBeChecked();
+  await page.keyboard.press("ArrowLeft"); // wraps the other way
+  await expect(deleted).toBeChecked();
   await page.keyboard.press("ArrowLeft");
   await expect(keptOption(page)).toBeChecked();
   await page.keyboard.press("Home");
   await expect(allOption(page)).toBeChecked();
   await page.keyboard.press("End");
-  await expect(keptOption(page)).toBeChecked();
+  await expect(deleted).toBeChecked();
   // only the chosen option is in the tab order
   await expect(allOption(page)).toHaveAttribute("tabindex", "-1");
-  await expect(keptOption(page)).toHaveAttribute("tabindex", "0");
+  await expect(keptOption(page)).toHaveAttribute("tabindex", "-1");
+  await expect(deleted).toHaveAttribute("tabindex", "0");
 });
 
 test("the choice applies to both tabs, and each tab counts its own kept runs", async ({ page }) => {

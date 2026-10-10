@@ -98,3 +98,41 @@ export function leftTheViewText(run: { prompt: string; status: string }): string
 
 /** The note on a card that is in the Kept view only because it is working (§29.3). */
 export const WORKING_IN_KEPT_NOTE = "Shown while it works. It stays in this view only if you Keep it.";
+
+/** The toast after a run was moved to the bin (DESIGN.md §30.1). */
+export function binnedText(run: { prompt: string }, binDays: number): string {
+  return `Deleted “${shorten(run.prompt)}”. It stays in Deleted for ${binDays} ${binDays === 1 ? "day" : "days"}.`;
+}
+
+/** The toast after a restore (§30.4): a kept run is still kept; any other has a fresh clock, so it says how long that is. */
+export function restoredText(run: { prompt: string; pinned: boolean; expires_at: string | null }, now: number = Date.now()): string {
+  const lead = `Restored “${shorten(run.prompt)}”.`;
+  if (run.pinned) return `${lead} It is still kept.`;
+  const left = run.expires_at ? Date.parse(run.expires_at) - now : Number.NaN;
+  if (!Number.isFinite(left)) return lead;
+  const days = Math.max(1, Math.round(left / DAY_MS));
+  return `${lead} It has a fresh ${days} ${days === 1 ? "day" : "days"}.`;
+}
+
+/** The line on a card in the bin (§30.1): since when, and until when. The date is the server's (`purge_at`); "around" because the
+ *  clean-up that deletes it for good runs once a day. */
+export function binNote(
+  run: { deleted_at: string | null; purge_at: string | null },
+  now: number = Date.now(),
+  format: { locale?: string; timeZone?: string } = {},
+): string | null {
+  if (!run.deleted_at) return null;
+  const day = (iso: string) => new Date(iso).toLocaleDateString(format.locale, { day: "numeric", month: "short", timeZone: format.timeZone });
+  const since = `In the bin since ${day(run.deleted_at)}.`;
+  const left = run.purge_at ? Date.parse(run.purge_at) - now : Number.NaN;
+  if (!Number.isFinite(left)) return since;
+  if (left <= 0) return `${since} It will be deleted for good at the next daily clean-up.`;
+  if (left < DAY_MS) return `${since} It will be deleted for good within a day.`;
+  const days = Math.floor(left / DAY_MS);
+  return `${since} It will be deleted for good around ${day(run.purge_at as string)}, in ${days} ${days === 1 ? "day" : "days"}.`;
+}
+
+/** The toast after the bin was emptied (§30.1). */
+export function emptiedText(n: number): string {
+  return n === 0 ? "The bin was already empty." : `Emptied the bin: ${n} ${n === 1 ? "run" : "runs"} deleted for good.`;
+}

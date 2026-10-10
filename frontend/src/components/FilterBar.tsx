@@ -1,19 +1,29 @@
 import { useId, useRef, type ReactNode } from "react";
-import { NO_FILTER, ONLY_KEPT, type HistoryFilter } from "../history";
+import { TrashIcon } from "./icons";
+import { NO_FILTER, ONLY_DELETED, ONLY_KEPT, type HistoryFilter } from "../history";
 
 // The filter bar above the history (DESIGN.md §29.1): one choice for both tabs. More controls join it as more filters are added
 // (§29.5); each is a field of `HistoryFilter` and one more control in this row.
 
-const OPTIONS: { id: "all" | "kept"; label: string; filter: HistoryFilter }[] = [
+const OPTIONS: { id: "all" | "kept" | "deleted"; label: string; filter: HistoryFilter }[] = [
   { id: "all", label: "All", filter: NO_FILTER },
   { id: "kept", label: "Kept", filter: ONLY_KEPT },
+  { id: "deleted", label: "Deleted", filter: ONLY_DELETED },
 ];
 
-/** `keptCount` is how many kept runs the tab being looked at holds (from the server), or null while that is not known. */
-export function FilterBar({ filter, keptCount, onChange }: { filter: HistoryFilter; keptCount: number | null; onChange: (filter: HistoryFilter) => void }) {
+/** `keptCount` and `deletedCount` are how many kept runs and runs in the bin the tab being looked at holds (from the server), or null
+ *  while that is not known. `binTotal` is the whole bin, both tabs: **Empty bin** (shown while Deleted is chosen) empties all of it. */
+export function FilterBar({ filter, keptCount, deletedCount, binTotal, onChange, onEmptyBin }: {
+  filter: HistoryFilter;
+  keptCount: number | null;
+  deletedCount: number | null;
+  binTotal: number | null;
+  onChange: (filter: HistoryFilter) => void;
+  onEmptyBin: () => void;
+}) {
   const labelId = useId();
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
-  const selected = OPTIONS.findIndex((option) => option.filter.kept === filter.kept);
+  const selected = OPTIONS.findIndex((option) => option.filter.kept === filter.kept && option.filter.deleted === filter.deleted);
   const go = (index: number) => {
     const next = (index + OPTIONS.length) % OPTIONS.length;
     onChange(OPTIONS[next].filter);
@@ -44,9 +54,16 @@ export function FilterBar({ filter, keptCount, onChange }: { filter: HistoryFilt
           >
             {option.label}
             {option.id === "kept" && keptCount !== null && <span className="filter-count"> {keptCount}</span>}
+            {option.id === "deleted" && deletedCount !== null && <span className="filter-count"> {deletedCount}</span>}
           </button>
         ))}
       </div>
+      {filter.deleted === true && (
+        <button type="button" className="button small danger" data-action="empty-bin" disabled={binTotal === 0} onClick={onEmptyBin}
+          title={binTotal === 0 ? "The bin is empty" : "Delete everything in the bin for good"}>
+          <TrashIcon /> Empty bin
+        </button>
+      )}
     </div>
   );
 }
@@ -68,7 +85,16 @@ const EMPTY_ALL = {
 };
 
 /** What the list says when the tab has nothing to show for the filter (§29.1). */
-export function EmptyHistory({ kind, filter, onShowAll }: { kind: "image" | "music"; filter: HistoryFilter; onShowAll: () => void }): ReactNode {
+export function EmptyHistory({ kind, filter, binDays, onShowAll }: { kind: "image" | "music"; filter: HistoryFilter; binDays: number; onShowAll: () => void }): ReactNode {
+  if (filter.deleted === true) {
+    return (
+      <div className="empty-state">
+        <p className="empty-title">{kind === "music" ? "No deleted music" : "No deleted images"}</p>
+        <p>{binDays > 0 ? `Runs you delete stay here for ${binDays} ${binDays === 1 ? "day" : "days"} before they are gone for good.` : "There is no bin: a deleted run is deleted for good."}</p>
+        <button type="button" className="button small" onClick={onShowAll}>Show all</button>
+      </div>
+    );
+  }
   if (filter.kept === true) {
     return (
       <div className="empty-state">

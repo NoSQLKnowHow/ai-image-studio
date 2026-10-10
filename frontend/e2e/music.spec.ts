@@ -361,7 +361,7 @@ test("Reuse brings back the fields, the lyrics, the description and the length, 
   await expect(page.getByText(/Loaded the description, lyrics and settings\. Seed locked to \d+\./)).toBeVisible();
 });
 
-test("Keep and Delete work on a track, and delete takes its audio off the server", async ({ page }) => {
+test("Keep and Delete work on a track; deleted it waits in the bin, and deleted for good its audio is off the server", async ({ page }) => {
   await openMusic(page);
   const c = await makeMusic(page, unique("ambient"));
   await done(c);
@@ -378,13 +378,21 @@ test("Keep and Delete work on a track, and delete takes its audio off the server
   const again = page.locator("article.music-card").first();
   await again.getByRole("button", { name: "Delete" }).click();
   const confirm = page.getByRole("alertdialog", { name: "Delete this run?" });
-  await expect(confirm).toContainText("Its track is removed from the Spark.");
+  await expect(confirm).toContainText("It moves to Deleted and stays there for 30 days");
   await expect(confirm).toContainText("You marked it Keep.");
   await confirm.getByRole("button", { name: "Delete" }).click();
   await expect(page.locator("article.music-card")).toHaveCount(0);
   await expect(page.getByText("No music yet")).toBeVisible();
-  expect((await page.request.get(src)).status()).toBe(404);
+  expect((await page.request.get(src)).status()).toBe(200); // in the bin, with its audio (DESIGN.md §30)
   await expect(form(page).getByLabel("Genre")).toBeFocused(); // the list is empty, so focus goes to the form
+
+  await page.locator("[data-filter-bar]:visible").getByRole("radio", { name: /^Deleted/ }).click();
+  await page.locator("article.music-card").first().getByRole("button", { name: "Delete forever" }).click();
+  const forGood = page.getByRole("alertdialog", { name: "Delete this run for good?" });
+  await expect(forGood).toContainText("Its track is removed from the Spark.");
+  await forGood.getByRole("button", { name: "Delete forever" }).click();
+  await expect(page.locator("article.music-card")).toHaveCount(0);
+  expect((await page.request.get(src)).status()).toBe(404);
 });
 
 test("the Music tab names the model and reminds you of the licence", async ({ page }) => {

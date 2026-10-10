@@ -109,7 +109,7 @@ export function reducer(state: State, action: Action): State {
       const run = latest(current, action.run);
       if (run === current) return state;
       const runs = { ...state.runs, [run.id]: run };
-      const countsChange = !current || current.pinned !== run.pinned; // a new run, or one kept or un-kept: the counts have moved
+      const countsChange = !current || current.pinned !== run.pinned || (current.deleted_at === null) !== (run.deleted_at === null); // a new run, or one kept, un-kept, deleted or restored: the counts have moved
       return { ...state, runs, order: current ? state.order : newestFirst(runs), countsStale: state.countsStale + (countsChange ? 1 : 0) };
     }
     case "runProgress": {

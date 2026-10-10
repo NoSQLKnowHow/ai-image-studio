@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toApiError } from "./api";
-import { EXPIRY_WARNING_DAYS, WORKING_IN_KEPT_NOTE, canceledText, duration, expiryText, leftTheViewText, seedText, timeAgo, unkeptText } from "./format";
+import { EXPIRY_WARNING_DAYS, WORKING_IN_KEPT_NOTE, binNote, binnedText, canceledText, duration, emptiedText, expiryText, leftTheViewText, restoredText, seedText, timeAgo, unkeptText } from "./format";
 import { NO_FILTER, ONLY_KEPT } from "./history";
 import { initialState, reducer, type State } from "./store";
 import { STATUS, makeRun } from "./testdata";
@@ -293,7 +293,7 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
   });
 
   it("the counts are kept as the server gave them", () => {
-    const counts = { image: { all: 3, kept: 1 }, music: { all: 2, kept: 0 } };
+    const counts = { image: { all: 3, kept: 1, deleted: 1 }, music: { all: 2, kept: 0, deleted: 0 } };
     expect(reducer(initialState, { type: "counts", counts }).counts).toEqual(counts);
   });
 
@@ -308,10 +308,16 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     expect(state.countsStale).toBe(base + 2); // the same again: nothing moved
     state = reducer(state, { type: "runUpsert", run: { ...state.runs.new, prompt: "edited", status: "running" } });
     expect(state.countsStale).toBe(base + 2); // progress is not a change in the counts
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, deleted_at: "2026-10-03T00:00:00.000Z" } });
+    expect(state.countsStale).toBe(base + 3); // moved to the bin
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, deleted_at: "2026-10-03T00:00:00.000Z", purge_at: "2026-11-02T00:00:00.000Z" } });
+    expect(state.countsStale).toBe(base + 3); // still there: nothing moved
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, deleted_at: null } });
+    expect(state.countsStale).toBe(base + 4); // restored
     state = reducer(state, { type: "runDeleted", id: "r" });
-    expect(state.countsStale).toBe(base + 3);
+    expect(state.countsStale).toBe(base + 5);
     state = reducer(state, { type: "runDeleted", id: "never-loaded" }); // a clean-up of a run this page never held
-    expect(state.countsStale).toBe(base + 4);
+    expect(state.countsStale).toBe(base + 6);
   });
 
   it("views are named by their filter", () => {
@@ -364,3 +370,49 @@ describe("the words for the Kept view (DESIGN.md §29.3, §29.4)", () => {
   });
 });
 
+
+describe("the words for the bin (DESIGN.md §30.1, §30.4)", () => {
+  const NOW = Date.parse("2026-10-10T12:00:00.000Z");
+  const at = (days: number) => new Date(NOW + days * 86_400_000).toISOString();
+  const note = (deleted_at: string | null, purge_at: string | null) => binNote({ deleted_at, purge_at }, NOW, { locale: "en-GB", timeZone: "UTC" });
+
+  it("says what happened to a run that was deleted, and for how long it stays", () => {
+    expect(binnedText({ prompt: "a harbour at dawn" }, 30)).toBe("Deleted “a harbour at dawn”. It stays in Deleted for 30 days.");
+    expect(binnedText({ prompt: "a harbour at dawn" }, 1)).toBe("Deleted “a harbour at dawn”. It stays in Deleted for 1 day.");
+  });
+
+  it("says a kept run is still kept after a restore", () => {
+    expect(restoredText({ prompt: "a harbour", pinned: true, expires_at: null }, NOW)).toBe("Restored “a harbour”. It is still kept.");
+  });
+
+  it("says how long the fresh clock of an un-kept run is, in whole days, never fewer than one", () => {
+    expect(restoredText({ prompt: "a harbour", pinned: false, expires_at: at(30) }, NOW)).toBe("Restored “a harbour”. It has a fresh 30 days.");
+    expect(restoredText({ prompt: "a harbour", pinned: false, expires_at: at(1) }, NOW)).toBe("Restored “a harbour”. It has a fresh 1 day.");
+    expect(restoredText({ prompt: "a harbour", pinned: false, expires_at: at(0.2) }, NOW)).toBe("Restored “a harbour”. It has a fresh 1 day.");
+  });
+
+  it("says nothing about a clock that the server did not give", () => {
+    expect(restoredText({ prompt: "a harbour", pinned: false, expires_at: null }, NOW)).toBe("Restored “a harbour”.");
+  });
+
+  it("says since when a run is in the bin and until when, with the date and the days left", () => {
+    expect(note(at(-1), at(29))).toBe("In the bin since 9 Oct. It will be deleted for good around 8 Nov, in 29 days.");
+    expect(note(at(-29), at(1.5))).toBe("In the bin since 11 Sept. It will be deleted for good around 12 Oct, in 1 day.");
+  });
+
+  it("says 'within a day' and 'at the next daily clean-up' near and after the end", () => {
+    expect(note(at(-29.5), at(0.5))).toContain("It will be deleted for good within a day.");
+    expect(note(at(-31), at(-1))).toContain("It will be deleted for good at the next daily clean-up.");
+  });
+
+  it("says only since when when there is no end (a run that is not in the bin has no line at all)", () => {
+    expect(note(at(-2), null)).toBe("In the bin since 8 Oct.");
+    expect(note(null, null)).toBeNull();
+  });
+
+  it("says how many runs the emptied bin held", () => {
+    expect(emptiedText(12)).toBe("Emptied the bin: 12 runs deleted for good.");
+    expect(emptiedText(1)).toBe("Emptied the bin: 1 run deleted for good.");
+    expect(emptiedText(0)).toBe("The bin was already empty.");
+  });
+});

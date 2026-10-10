@@ -145,7 +145,11 @@ export const api = {
   cancelRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   keepRun: (id: string, pinned: boolean) =>
     request<Run>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ pinned }) }),
+  // Delete for good (DESIGN.md §30.5): a run in the bin, or any run when there is no bin. Whether a run goes to the bin is `binRun`.
   deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  binRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/bin`, { method: "POST" }),
+  restoreRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  emptyBin: () => request<{ deleted: number }>("/api/bin", { method: "DELETE" }),
   // Make the 4K copy of a result image (DESIGN.md §27). The answer is the whole run, as for Keep: its image now has `four_k`.
   upscalePicture,
   makeFourK: (imageId: string) => request<ImageRun>(`/api/images/${encodeURIComponent(imageId)}/4k`, { method: "POST" }),

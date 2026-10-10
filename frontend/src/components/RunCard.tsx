@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { WORKING_IN_KEPT_NOTE, canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
+import { WORKING_IN_KEPT_NOTE, binNote, canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
 import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState } from "../types";
 import { FourKButton } from "./FourKButton";
-import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 
 interface Props {
   run: ImageRun;
@@ -23,6 +23,7 @@ interface Props {
   onRetry: () => void;
   onCancel: () => void;
   onToggleKeep: () => void;
+  onRestore: () => void; // take the run out of the bin (DESIGN.md §30)
   onDelete: () => void;
   onCopy: () => void;
   onOpenImage: (index: number) => void;
@@ -112,7 +113,7 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, enlargeWaiting, transient, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, enlargeWaiting, transient, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onRestore, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
@@ -126,6 +127,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
   const active = run.status === "queued" || run.status === "running";
   const target = largerTarget(run); // the bigger size to regenerate at, when this run was made smaller than selected
   const expiry = run.pinned ? null : expiryText(run.expires_at, now);
+  const inBin = run.deleted_at !== null; // in the bin (DESIGN.md §30): look at it, restore it, copy it, or delete it for good
 
   return (
     <article className={`run-card status-${run.status}`} data-run-id={run.id} aria-label={`${label}: ${run.prompt.slice(0, 80)}`}>
@@ -137,6 +139,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
         <div className="run-head">
           <span className={`badge badge-${run.status}`}>{label}</span>
           {run.pinned && <span className="badge badge-kept"><PinIcon /> Kept</span>}
+          {inBin && <span className="badge badge-deleted"><TrashIcon /> Deleted</span>}
           {run.options.draft && <span className="badge badge-draft" title="A small, quick try. The full-size image will look different.">Draft</span>}
           {run.mode === "edit" && <span className="badge">Edit</span>}
           {run.options.transparent && <span className="badge">Transparent</span>}
@@ -162,14 +165,33 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
 
         {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
 
+        {inBin && <p className="run-note" data-note="in-bin">{binNote(run, now)}</p>}
+
         {run.status === "failed" && run.error && (
           <div className="run-error" role="alert">
             <p>{run.error.message}</p>
             {run.error.hint && <p className="hint">{run.error.hint}</p>}
-            <button type="button" className="button small" onClick={onRetry}><ReuseIcon /> Retry</button>
+            {!inBin && <button type="button" className="button small" onClick={onRetry}><ReuseIcon /> Retry</button>}
           </div>
         )}
 
+        {inBin ? (
+          <div className="run-actions">
+            <button type="button" className="button small" data-action="restore" onClick={onRestore}
+              title="Take this run out of the bin. A kept run is still kept; any other gets a fresh clock.">
+              <RestoreIcon /> Restore
+            </button>
+            <button type="button" className="button small ghost" data-action="reuse" onClick={onReuse}
+              title="Load this prompt and its options, with the seed locked">
+              <ReuseIcon /> Reuse
+            </button>
+            <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy prompt</button>
+            <button type="button" className="button small ghost danger" data-action="delete" onClick={onDelete}
+              title="Delete this run and its images for good">
+              <TrashIcon /> Delete forever
+            </button>
+          </div>
+        ) : (
         <div className="run-actions">
           {active && (
             <button type="button" className="button small ghost danger" data-action="cancel"
@@ -227,6 +249,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
             <TrashIcon /> Delete
           </button>
         </div>
+        )}
       </div>
     </article>
   );

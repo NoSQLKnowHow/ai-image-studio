@@ -8,32 +8,42 @@ import type { KeyValueStore } from "./options";
 import type { Run } from "./types";
 
 /** One field per filter. `kept`: `null` = either, `true` = only runs that are kept, `false` = only runs that are not (nothing in the
- *  page asks for that yet; the server and `matches` already do it). */
+ *  page asks for that yet; the server and `matches` already do it). `deleted`: `false` = the history, without the bin (what every
+ *  filter means unless it says otherwise), `true` = only the bin (DESIGN.md §30), `null` = either (nothing in the page asks for it). */
 export interface HistoryFilter {
   kept: boolean | null;
+  deleted: boolean | null;
 }
 
-export const NO_FILTER: HistoryFilter = { kept: null };
-export const ONLY_KEPT: HistoryFilter = { kept: true };
+export const NO_FILTER: HistoryFilter = { kept: null, deleted: false };
+export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false };
+export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true };
 
 export const FILTER_KEY = "studio.history.filter.v1";
 
-export const isDefault = (filter: HistoryFilter): boolean => filter.kept === null;
+export const isDefault = (filter: HistoryFilter): boolean => filter.kept === null && filter.deleted === false;
 
 /** A stable name for a filter: the key of its view in the store, and what the browser remembers. */
 export function filterKey(filter: HistoryFilter): string {
-  return filter.kept === null ? "all" : filter.kept ? "kept" : "not-kept";
+  const kept = filter.kept === null ? "" : filter.kept ? "kept" : "not-kept";
+  const deleted = filter.deleted === null ? "any" : filter.deleted ? "deleted" : "";
+  return [kept, deleted].filter(Boolean).join("+") || "all";
 }
 
-/** The query parameters of `GET /api/runs` for a filter: only what is set. */
+/** The query parameters of `GET /api/runs` for a filter: only what is not the default. `deleted=any` is not a thing the server takes,
+ *  so a filter that wants both is not sent: the page never builds one. */
 export function filterParams(filter: HistoryFilter): Record<string, string> {
-  return filter.kept === null ? {} : { kept: String(filter.kept) };
+  return { ...(filter.kept === null ? {} : { kept: String(filter.kept) }), ...(filter.deleted ? { deleted: "true" } : {}) };
 }
 
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
-export function matches(run: Pick<Run, "pinned">, filter: HistoryFilter): boolean {
-  return filter.kept === null || run.pinned === filter.kept;
+export function matches(run: Pick<Run, "pinned" | "deleted_at">, filter: HistoryFilter): boolean {
+  return (filter.kept === null || run.pinned === filter.kept) && (filter.deleted === null || (run.deleted_at !== null) === filter.deleted);
 }
+
+/** Whether a filter shows runs that are working whether or not they match it (DESIGN.md §29.3): every filter but the default and the
+ *  bin, where nothing is ever working. */
+export const showsWorking = (filter: HistoryFilter): boolean => !isDefault(filter) && filter.deleted !== true;
 
 /** A queued or running run. A filtered view shows these whether or not they match (§29.3). */
 export const working = (run: Pick<Run, "status">): boolean => run.status === "queued" || run.status === "running";
@@ -42,9 +52,11 @@ export const working = (run: Pick<Run, "status">): boolean => run.status === "qu
 export function readFilter(store: KeyValueStore): HistoryFilter {
   switch (store.get(FILTER_KEY)) {
     case "kept":
-      return { kept: true };
+      return ONLY_KEPT;
     case "not-kept":
-      return { kept: false };
+      return { kept: false, deleted: false };
+    case "deleted":
+      return ONLY_DELETED;
     default:
       return NO_FILTER;
   }
@@ -84,7 +96,7 @@ export function visibleRuns(runs: Record<string, Run>, order: readonly string[],
   for (const id of order) {
     const run = runs[id];
     if (!run) continue;
-    if (!isDefault(filter) && working(run)) active.push(run);
+    if (showsWorking(filter) && working(run)) active.push(run);
     else if (matches(run, filter) && within(run, boundary)) shown.push(run);
   }
   return [...active, ...shown];
@@ -95,7 +107,7 @@ export function visibleRuns(runs: Record<string, Run>, order: readonly string[],
 export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, Run>, filter: HistoryFilter): { watched: Set<string>; left: Run[] } {
   const next = new Set<string>();
   const left: Run[] = [];
-  if (isDefault(filter)) return { watched: next, left }; // nothing is shown only for working in the unfiltered list
+  if (!showsWorking(filter)) return { watched: next, left }; // nothing is shown only for working in the unfiltered list or the bin
   for (const run of Object.values(runs)) if (working(run) && !matches(run, filter)) next.add(run.id);
   for (const id of watched) {
     const run = runs[id];
@@ -107,6 +119,6 @@ export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, 
 
 /** The counts the server keeps (`GET /api/runs/counts`): per tab, how many runs there are and how many are kept. */
 export interface Counts {
-  image: { all: number; kept: number };
-  music: { all: number; kept: number };
+  image: { all: number; kept: number; deleted: number };
+  music: { all: number; kept: number; deleted: number };
 }
