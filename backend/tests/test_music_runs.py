@@ -396,7 +396,7 @@ def test_deleting_a_run_deletes_its_audio(client):
 
 
 def test_keep_and_expiry_work_for_music(client_factory):
-    client = client_factory(retention_days=10)
+    client = client_factory(retention_days=10, bin_days=0)
     kept, old = run_and_wait(client), run_and_wait(client)
     assert client.patch(f"/api/runs/{kept['id']}", json={"pinned": True}).json()["pinned"] is True
     db = client.app.state.db

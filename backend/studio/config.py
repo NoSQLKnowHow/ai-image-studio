@@ -33,6 +33,7 @@ class Settings:
     idle_timeout_min: float = 30.0  # 0 = unload as soon as the queue is empty
     queue_cap: int = 10
     retention_days: int = 30
+    bin_days: int = 30  # how long a deleted run stays in the bin (DESIGN.md §30); 0 = no bin: deleting is for good
     max_images_per_run: int = 8
     max_prompt_chars: int = 8000
     max_upload_mb: int = 20
@@ -176,6 +177,7 @@ class Settings:
             idle_timeout_min=number("STUDIO_IDLE_TIMEOUT_MIN", cls.idle_timeout_min, 0, 1440),
             queue_cap=integer("STUDIO_QUEUE_CAP", cls.queue_cap, 1, 1000),
             retention_days=integer("STUDIO_RETENTION_DAYS", cls.retention_days, 0, 36500),
+            bin_days=integer("STUDIO_BIN_DAYS", cls.bin_days, 0, 36500),
             max_images_per_run=integer("STUDIO_MAX_IMAGES_PER_RUN", cls.max_images_per_run, 1, 64),
             max_prompt_chars=integer("STUDIO_MAX_PROMPT_CHARS", cls.max_prompt_chars, 100, 100_000),
             max_upload_mb=integer("STUDIO_MAX_UPLOAD_MB", cls.max_upload_mb, 1, 200),

@@ -15,11 +15,12 @@ from studio.runfilter import COUNTED, KINDS, RunFilter
 TABLE = json.loads((Path(__file__).parent / "filter_cases.json").read_text())
 
 
-def row(letter: str, seq: int, mode: str, status: str, pinned: bool) -> dict:
+def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False) -> dict:
     return {
         "id": f"{ord(letter):032x}", "created_at": f"2026-10-01T00:00:{seq:02d}Z", "status": status, "mode": mode,
         "prompt": f"run {letter}", "effective_prompt": f"run {letter}", "steps": 3, "seed": seq, "num_images": 1,
         "model_id": "fake-pipeline", "options_json": json.dumps({}), "width": 256, "height": 256, "pinned": int(pinned),
+        "deleted_at": "2026-10-02T00:00:00.000Z" if deleted else None,
     }
 
 
@@ -32,7 +33,7 @@ def db(tmp_path):
     database = Database(tmp_path / "studio.sqlite")
     # the table lists the runs newest first; they are made oldest first
     for seq, entry in enumerate(reversed(TABLE["runs"]), start=1):
-        assert database.insert_run_if_capacity(row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"]), cap=100)
+        assert database.insert_run_if_capacity(row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"]), cap=100)
     yield database
     database.close()
 
@@ -60,9 +61,11 @@ def test_the_kinds_are_the_tabs():
 
 
 def test_a_filter_with_nothing_set_adds_no_condition():
-    assert RunFilter().conditions() == ([], [])
-    assert RunFilter(kept=True).conditions() == (["pinned = ?"], [1])
-    assert RunFilter(kept=False).conditions() == (["pinned = ?"], [0])
+    assert RunFilter(deleted=None).conditions() == ([], [])
+    assert RunFilter(deleted=None, kept=True).conditions() == (["pinned = ?"], [1])
+    assert RunFilter(deleted=None, kept=False).conditions() == (["pinned = ?"], [0])
+    assert RunFilter().conditions() == (["deleted_at IS NULL"], [])  # the history is what a filter means unless it says otherwise
+    assert RunFilter(deleted=True).conditions() == (["deleted_at IS NOT NULL"], [])
 
 
 def test_pages_continue_within_the_filter(db):
@@ -131,12 +134,12 @@ def test_the_counts_say_how_many_runs_each_tab_holds_and_how_many_are_kept(clien
     music = client.post("/api/runs", json={"mode": "music", "prompt": "Genre: ambient. A slow piano.", "options": {"duration": 30}}).json()["id"]
     for run_id in (first, second, music):
         wait_for(client, run_id)
-    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 0}, "music": {"all": 1, "kept": 0}}
+    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 0, "deleted": 0}, "music": {"all": 1, "kept": 0, "deleted": 0}}
     keep(client, first, True)
     keep(client, music, True)
-    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 1}, "music": {"all": 1, "kept": 1}}
+    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 1, "deleted": 0}, "music": {"all": 1, "kept": 1, "deleted": 0}}
     keep(client, first, False)
-    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0}
+    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0}
 
 
 def test_counts_is_not_mistaken_for_a_run_id(client):

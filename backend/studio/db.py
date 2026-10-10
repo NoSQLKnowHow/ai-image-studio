@@ -20,7 +20,7 @@ from typing import Any, Iterator, Mapping, Optional, Sequence
 
 from .runfilter import KINDS, RunFilter
 
-SCHEMA_VERSION = 3  # 3: runs accept mode 'music' and have lyrics; the tracks table (DESIGN.md §26.5)
+SCHEMA_VERSION = 4  # 4: runs have deleted_at and restored_at, for the bin (DESIGN.md §30); 3: mode 'music', lyrics, tracks (§26.5)
 log = logging.getLogger("studio.db")
 
 _SCHEMA = """
@@ -52,7 +52,9 @@ CREATE TABLE IF NOT EXISTS runs (
     error_hint       TEXT,
     pinned           INTEGER NOT NULL DEFAULT 0,
     options_json     TEXT NOT NULL,
-    lyrics           TEXT
+    lyrics           TEXT,
+    deleted_at       TEXT,
+    restored_at      TEXT
 );
 CREATE TABLE IF NOT EXISTS images (
     id          TEXT PRIMARY KEY,
@@ -137,6 +139,7 @@ class Database:
             self._conn.executescript(_SCHEMA)  # creates what is missing: tables and indexes of a newer schema
             if previous is not None and previous < 3:
                 self._rebuild_runs_for_music()
+            self._add_bin_columns()
             self._record_version(previous)
             self._queue_order = self._choose_queue_order()
 
@@ -201,6 +204,15 @@ class Database:
         finally:
             self._conn.execute("PRAGMA foreign_keys=ON")
         log.info("the runs table was rebuilt for music (schema 3)")
+
+    def _add_bin_columns(self) -> None:
+        """Schema 4: the columns of the bin (DESIGN.md §30.5), added to a table that lacks them; then the index on them, which cannot be
+        made before the column exists, so it is not in `_SCHEMA`."""
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
+        for column in ("deleted_at", "restored_at"):
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_deleted ON runs(deleted_at)")
 
     def _record_version(self, previous: Optional[int]) -> None:
         with self.tx() as c:
@@ -329,20 +341,67 @@ class Database:
             cur = self._conn.execute("UPDATE runs SET pinned=? WHERE id=?", (int(pinned), run_id))
             return cur.rowcount == 1
 
+    # An expiry counts from the later of when a run was made and when it was last restored (DESIGN.md §30.4).
+    _EXPIRED = ("pinned=0 AND deleted_at IS NULL AND status IN ('done','failed','canceled') "
+                "AND COALESCE(restored_at, created_at) < ?")
+
+    @staticmethod
+    def _delete_rows(c: sqlite3.Connection, ids: Sequence[str]) -> None:
+        for run_id in ids:
+            c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
+            c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
+            c.execute("DELETE FROM runs WHERE id=?", (run_id,))
+
     def delete_expired(self, cutoff: str, limit: int) -> list[str]:
-        """Delete up to `limit` finished runs created before `cutoff` that are not kept, and return their
+        """Delete up to `limit` finished runs that expired before `cutoff` and are not kept, and return their
         ids. Selecting and deleting happen in one transaction, so a run kept at the same moment is never
-        caught by a sweep that has already chosen it."""
+        caught by a sweep that has already chosen it. (Used when there is no bin: STUDIO_BIN_DAYS=0.)"""
         with self.tx() as c:
-            ids = [
-                r["id"] for r in c.execute(
-                    "SELECT id FROM runs WHERE pinned=0 AND status IN ('done','failed','canceled') "
-                    "AND created_at < ? ORDER BY seq LIMIT ?", (cutoff, limit)).fetchall()
-            ]
+            ids = [r["id"] for r in c.execute(f"SELECT id FROM runs WHERE {self._EXPIRED} ORDER BY seq LIMIT ?", (cutoff, limit)).fetchall()]
+            self._delete_rows(c, ids)
+            return ids
+
+    def expire_to_bin(self, cutoff: str, now: str, limit: int) -> list[str]:
+        """Move up to `limit` expired runs to the bin instead of deleting them (DESIGN.md §30.2), and return their ids; one
+        transaction, for the same reason as `delete_expired`."""
+        with self.tx() as c:
+            ids = [r["id"] for r in c.execute(f"SELECT id FROM runs WHERE {self._EXPIRED} ORDER BY seq LIMIT ?", (cutoff, limit)).fetchall()]
             for run_id in ids:
-                c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
-                c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
-                c.execute("DELETE FROM runs WHERE id=?", (run_id,))
+                c.execute("UPDATE runs SET deleted_at=? WHERE id=?", (now, run_id))
+            return ids
+
+    def bin_run(self, run_id: str, now: str) -> str:
+        """Move a finished run to the bin. Returns 'binned' (also when it already was), 'not_found' or 'not_finished' (queued or running)."""
+        with self.tx() as c:
+            row = c.execute("SELECT status, deleted_at FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                return "not_found"
+            if row["status"] not in ("done", "failed", "canceled"):
+                return "not_finished"
+            if row["deleted_at"] is None:
+                c.execute("UPDATE runs SET deleted_at=? WHERE id=?", (now, run_id))
+            return "binned"
+
+    def restore_run(self, run_id: str, now: str) -> str:
+        """Take a run out of the bin, with a fresh expiry clock (DESIGN.md §30.4). Returns 'restored', 'not_found' or 'not_in_bin'."""
+        with self.tx() as c:
+            row = c.execute("SELECT deleted_at FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                return "not_found"
+            if row["deleted_at"] is None:
+                return "not_in_bin"
+            c.execute("UPDATE runs SET deleted_at=NULL, restored_at=? WHERE id=?", (now, run_id))
+            return "restored"
+
+    def purge_bin(self, cutoff: Optional[str], limit: int) -> list[str]:
+        """Delete for good up to `limit` runs that went into the bin before `cutoff` (all of them when `cutoff` is None), and return their ids."""
+        with self.tx() as c:
+            if cutoff is None:
+                rows = c.execute("SELECT id FROM runs WHERE deleted_at IS NOT NULL ORDER BY seq LIMIT ?", (limit,)).fetchall()
+            else:
+                rows = c.execute("SELECT id FROM runs WHERE deleted_at IS NOT NULL AND deleted_at < ? ORDER BY seq LIMIT ?", (cutoff, limit)).fetchall()
+            ids = [r["id"] for r in rows]
+            self._delete_rows(c, ids)
             return ids
 
     def delete_run(self, run_id: str) -> str:
@@ -353,9 +412,7 @@ class Database:
                 return "not_found"
             if row["status"] == "running":
                 return "running"
-            c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
-            c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
-            c.execute("DELETE FROM runs WHERE id=?", (run_id,))
+            self._delete_rows(c, [run_id])
             return "deleted"
 
     def recover_interrupted(self, now: str) -> list[str]:

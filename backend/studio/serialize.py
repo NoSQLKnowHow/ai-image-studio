@@ -111,6 +111,7 @@ def run_payload(
     inputs: Optional[list[sqlite3.Row]] = None,
     tracks: Optional[list[sqlite3.Row]] = None,
     four_k: Optional[dict[str, dict[str, Any]]] = None,
+    purge_at: Optional[str] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -129,6 +130,8 @@ def run_payload(
         "error": error,
         "pinned": bool(row["pinned"]),
         "expires_at": expires_at,
+        "deleted_at": row["deleted_at"],  # when it went to the bin (DESIGN.md §30), else null
+        "purge_at": purge_at,  # when it will be deleted for good
         "queue_position": queue_position if row["status"] == "queued" else None,
         "progress": progress if row["status"] == "running" else None,
         "canceling": canceling and row["status"] == "running",

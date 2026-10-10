@@ -1,17 +1,22 @@
 {
-  "about": "The cases both sides of a history filter are tested against (DESIGN.md section 29.5): backend/tests/test_runfilter.py runs them through the server's SQL, frontend/src/history.test.ts through the page's matches(). Runs are listed newest first, as the history shows them; mode is the runs table's mode.",
+  "about": "The cases both sides of a history filter are tested against (DESIGN.md sections 29.5 and 30): backend/tests/test_runfilter.py runs them through the server's SQL, frontend/src/history.test.ts through the page's matches(). Runs are listed newest first, as the history shows them; mode is the runs table's mode; deleted means the run is in the bin. A filter's deleted is false (the history, the default), true (only the bin) or null (either).",
   "runs": [
-    {"id": "f", "mode": "generate", "status": "queued", "pinned": true},
-    {"id": "e", "mode": "edit", "status": "running", "pinned": false},
-    {"id": "d", "mode": "music", "status": "done", "pinned": false},
-    {"id": "c", "mode": "music", "status": "done", "pinned": true},
-    {"id": "b", "mode": "generate", "status": "done", "pinned": false},
-    {"id": "a", "mode": "generate", "status": "failed", "pinned": true}
+    {"id": "f", "mode": "generate", "status": "queued", "pinned": true, "deleted": false},
+    {"id": "e", "mode": "edit", "status": "running", "pinned": false, "deleted": false},
+    {"id": "i", "mode": "music", "status": "done", "pinned": true, "deleted": true},
+    {"id": "d", "mode": "music", "status": "done", "pinned": false, "deleted": false},
+    {"id": "c", "mode": "music", "status": "done", "pinned": true, "deleted": false},
+    {"id": "h", "mode": "generate", "status": "done", "pinned": false, "deleted": true},
+    {"id": "b", "mode": "generate", "status": "done", "pinned": false, "deleted": false},
+    {"id": "a", "mode": "generate", "status": "failed", "pinned": true, "deleted": false}
   ],
   "cases": [
-    {"name": "no filter shows everything", "filter": {"kept": null}, "expect": ["f", "e", "d", "c", "b", "a"]},
-    {"name": "kept shows the kept runs, whatever their state or kind", "filter": {"kept": true}, "expect": ["f", "c", "a"]},
-    {"name": "not kept shows the rest", "filter": {"kept": false}, "expect": ["e", "d", "b"]}
+    {"name": "no filter shows the history, without the bin", "filter": {"kept": null, "deleted": false}, "expect": ["f", "e", "d", "c", "b", "a"]},
+    {"name": "kept shows the kept runs of the history, whatever their state or kind", "filter": {"kept": true, "deleted": false}, "expect": ["f", "c", "a"]},
+    {"name": "not kept shows the rest of the history", "filter": {"kept": false, "deleted": false}, "expect": ["e", "d", "b"]},
+    {"name": "deleted shows the bin, kept or not", "filter": {"kept": null, "deleted": true}, "expect": ["i", "h"]},
+    {"name": "kept and deleted shows what is kept in the bin", "filter": {"kept": true, "deleted": true}, "expect": ["i"]},
+    {"name": "either shows everything", "filter": {"kept": null, "deleted": null}, "expect": ["f", "e", "i", "d", "c", "h", "b", "a"]}
   ],
-  "counts": {"image": {"all": 4, "kept": 2}, "music": {"all": 2, "kept": 1}}
+  "counts": {"image": {"all": 4, "kept": 2, "deleted": 1}, "music": {"all": 2, "kept": 1, "deleted": 1}}
 }

@@ -345,8 +345,8 @@ def sweep(client) -> int:
     return client.portal.call(client.app.state.jobs.sweep_expired)
 
 
-def test_expiry_takes_the_inputs_with_the_run_and_a_kept_run_keeps_them(quiet_client):
-    client = quiet_client
+def test_expiry_takes_the_inputs_with_the_run_and_a_kept_run_keeps_them(client_factory):
+    client = client_factory(quiet=True, bin_days=0)  # no bin: expiry deletes for good, as before 1.13
     doomed = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(RED)))])["id"])
     kept = wait_for(client, create_edit(client, "y", [ref(stage(client, image_bytes(GREEN)))])["id"])
     client.patch(f"/api/runs/{kept['id']}", json={"pinned": True})
@@ -357,8 +357,8 @@ def test_expiry_takes_the_inputs_with_the_run_and_a_kept_run_keeps_them(quiet_cl
     assert inputs_on_disk(client, kept["id"]) == ["1.png"] and client.get(kept["inputs"][0]["url"]).status_code == 200
 
 
-def test_an_input_copied_into_a_newer_run_survives_its_sources_expiry(quiet_client):
-    client = quiet_client
+def test_an_input_copied_into_a_newer_run_survives_its_sources_expiry(client_factory):
+    client = client_factory(quiet=True, bin_days=0)  # no bin: expiry deletes for good, as before 1.13
     source = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(RED)))])["id"])
     newer = wait_for(client, create_edit(client, "y", [{"image_id": source["inputs"][0]["id"]}])["id"])
     age(client, source["id"])
