@@ -298,6 +298,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ------------------------------------------------------------------ timeline */
 .timeline { display: grid; gap: 14px; }
+/* the filter bar above the history (DESIGN.md §29.1): the label, the All / Kept switch and the count of kept runs */
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .filter-label { color: var(--text-2); font-size: 13px; font-weight: 550; }
 .filter-count { color: var(--text-3); font-variant-numeric: tabular-nums; }
@@ -471,6 +472,7 @@ fieldset.field { gap: 8px; }
   border-radius: var(--radius); background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg);
   font-size: 14px; animation: slide-up 0.2s ease-out;
 }
+/* a toast's action button (Undo, Show all) keeps its size when the message is long */
 .toast [data-action="toast-action"] { flex: none; }
 .toast-error { border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); color: var(--danger); }
 .toast-success { color: var(--success); }

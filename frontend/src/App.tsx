@@ -78,6 +78,8 @@ export default function App() {
   const { caps, status } = state;
   const tray = useTray(caps);
   const version = status?.version;
+  // The history is filtered on the server. The store keeps one "view" per filter (which pages have arrived, and where the next starts)
+  // over one shared cache of runs; `visible` is what the chosen filter shows, and each tab takes its own kind from it.
   const key = filterKey(filter);
   const view = state.views[key];
   const runsReady = !!view?.ready;
@@ -88,6 +90,7 @@ export default function App() {
   const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
   const tabKind = tab === "music" ? "music" : "image";
   const tabRuns = tab === "music" ? musicRuns : imageRuns;
+  // the name the server counts this filter under (null: it has no count)
   const countName = filter.kept === true ? "kept" : filter.kept === null ? "all" : null;
   const knownEmpty = !!state.counts && countName !== null && state.counts[tabKind][countName] === 0; // the server says this tab has none
   const lookingForMore = runsReady && tabRuns.length === 0 && more && !knownEmpty && !loadOlderFailed; // none on this tab yet: the next page may have some
@@ -419,6 +422,7 @@ export default function App() {
   // deleted, and offers Undo (DESIGN.md §29.4); and keyboard focus, which was on the card, moves to the filter bar.
   const toggleKeep = (run: Run) =>
     once(`keep:${run.id}`, async () => {
+      // Stopping to keep a run takes its card out of the Kept view. A run that is still working stays: it is shown while it works.
       const leaves = run.pinned && filter.kept === true && !working(run);
       try {
         const updated = await api.keepRun(run.id, !run.pinned);
@@ -433,6 +437,7 @@ export default function App() {
       }
     });
 
+  // The Undo on the "No longer kept" toast: keep the run again. It comes back into the view by itself, since the cache still holds it.
   const keepAgain = (run: Run) =>
     once(`keep:${run.id}`, async () => {
       try {
@@ -461,6 +466,7 @@ export default function App() {
     try {
       dispatch({ type: "runsLoaded", page: await api.listRuns(view.nextBefore, filter), append: true, filter });
     } catch (error) {
+      // stop the effect that reads the next page by itself from trying again and again after an error
       setLoadOlderFailed(true);
       push("error", `Couldn't load older runs: ${(error as Error).message}`);
     } finally {
@@ -468,6 +474,7 @@ export default function App() {
     }
   };
 
+  // Choosing a filter: switch to it and remember the choice. The effect below reads its first page.
   const changeFilter = (next: HistoryFilter) => {
     setFilter(next);
     saveFilter(next, store);
@@ -535,7 +542,9 @@ export default function App() {
   const found = lightbox ? state.runs[lightbox.runId] : undefined;
   const lightboxRun = found && isImageRun(found) ? found : null;
   const transient = (run: Run) => !isDefault(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
+  // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
   const filterBar = <FilterBar filter={filter} keptCount={state.counts?.[tabKind].kept ?? null} onChange={changeFilter} />;
+  // what replaces "Loading…" when the first page of a filtered list could not be read: the reason, and a way to try again
   const problem =
     filterProblem && !isDefault(filter) ? (
       <div className="empty-state" role="alert">
@@ -544,6 +553,7 @@ export default function App() {
         <button type="button" className="button small" onClick={() => void loadFirstPage(filter)}>Try again</button>
       </div>
     ) : null;
+  // what an empty list says: that it is still looking (older pages may hold some), or the empty state for this filter
   const emptyFor = (kind: "image" | "music") =>
     lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : <EmptyHistory kind={kind} filter={filter} onShowAll={() => changeFilter(NO_FILTER)} />;
   const musicAvailable = !!caps?.modes.includes("music");

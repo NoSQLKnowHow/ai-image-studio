@@ -124,6 +124,7 @@ def test_a_problem_loading_the_model_passes_through_with_its_own_code(setup):
     type("AcceleratorError", (RuntimeError,), {})("CUDA error: out of memory"),  # what the GB10 raises
 ])
 def test_running_out_of_memory_is_its_own_answer_with_what_to_do(setup, error):
+    # make the upscaling itself run out of memory
     def exhausted(image, passes):
         raise error
 
@@ -144,6 +145,8 @@ def test_the_out_of_memory_words_blame_the_gpu_and_not_the_model_file():
     assert "model file" not in words and "could not be moved" not in words and "Check the" not in words
 
 
+# Which errors count as "out of memory": the CUDA and CPU allocator messages, and MemoryError. Anything else (a device assert, a bad
+# tile, a full disk) is not, and keeps its own exit code.
 @pytest.mark.parametrize("error,is_oom", [
     (RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB"), True),
     (type("AcceleratorError", (RuntimeError,), {})("CUDA error: out of memory\nCompile with TORCH_USE_CUDA_DSA"), True),

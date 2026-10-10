@@ -147,6 +147,7 @@ describe("a picture from the computer (DESIGN.md §27.9)", () => {
 });
 
 describe("Enlarge (DESIGN.md §28)", () => {
+  // Waiting… (DESIGN.md §28.9): the Enlarge control while the server has this picture's enlargement queued behind the picture being made
   it("Waiting… when the server has it queued behind the picture being made, and the title says nothing has to be done", () => {
     expect(enlargeControl(image(), true, READY, true)).toEqual({ kind: "waiting", label: "Waiting…", title: WAITING_TITLE });
     expect(WAITING_TITLE).toMatch(/starts by itself/);

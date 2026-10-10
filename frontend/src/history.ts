@@ -13,6 +13,7 @@ export interface HistoryFilter {
   kept: boolean | null;
 }
 
+// The two filters the page offers today: everything, and only the runs that are kept
 export const NO_FILTER: HistoryFilter = { kept: null };
 export const ONLY_KEPT: HistoryFilter = { kept: true };
 
@@ -84,6 +85,8 @@ export function visibleRuns(runs: Record<string, Run>, order: readonly string[],
   for (const id of order) {
     const run = runs[id];
     if (!run) continue;
+    // With a filter on, a run that is still working is always shown, at the top, even if it doesn't match: it is in the view only while it
+    // works. Every other run must match the filter AND lie within what this view has loaded.
     if (!isDefault(filter) && working(run)) active.push(run);
     else if (matches(run, filter) && within(run, boundary)) shown.push(run);
   }
@@ -96,7 +99,9 @@ export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, 
   const next = new Set<string>();
   const left: Run[] = [];
   if (isDefault(filter)) return { watched: next, left }; // nothing is shown only for working in the unfiltered list
+  // watch every run that is working and doesn't match the filter: it is in the view only for now
   for (const run of Object.values(runs)) if (working(run) && !matches(run, filter)) next.add(run.id);
+  // of those watched last time, report each that has since finished without matching: it has just left the view
   for (const id of watched) {
     const run = runs[id];
     if (!run) continue; // deleted

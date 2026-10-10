@@ -10,8 +10,10 @@ import type { Run, RunStatus } from "./types";
 
 // ------------------------------------------------------------------ the table both sides are tested against (DESIGN.md §29.5, criterion 120)
 // The server runs each case through its SQL (backend/tests/test_runfilter.py); here the page's `matches` gets the same runs.
+// the table's status words, as the page's RunStatus type
 const STATUSES: Record<string, RunStatus> = { queued: "queued", running: "running", done: "done", failed: "failed", canceled: "canceled" };
 
+// build a page `Run` from one row of the shared table (music rows become music runs)
 function tableRun(entry: { id: string; mode: string; status: string; pinned: boolean }): Run {
   const extra = { id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned };
   return entry.mode === "music" ? makeMusicRun(extra) : makeRun({ ...extra, mode: entry.mode as "generate" | "edit" });
@@ -27,6 +29,7 @@ describe("the shared table of cases", () => {
     });
   }
 
+  // the page counts the table the way the server counts it in SQL: both must give the numbers the table lists
   it("the page's counts of the table agree with the server's", () => {
     const count = (kind: "image" | "music", filter: HistoryFilter) =>
       runs.filter((run) => (run.mode === "music") === (kind === "music") && matches(run, filter)).length;
@@ -66,6 +69,7 @@ describe("a history filter", () => {
 });
 
 describe("what the browser remembers", () => {
+  // an in-memory stand-in for the browser's storage, which also records what was saved
   const memory = (initial: Record<string, string> = {}): KeyValueStore & { saved: Record<string, string> } => {
     const saved = { ...initial };
     return { available: true, saved, get: (key) => saved[key] ?? null, set: (key, value) => { saved[key] = value; } };
@@ -91,6 +95,8 @@ describe("what the browser remembers", () => {
 
 // ------------------------------------------------------------------ what a view shows
 describe("what a filter shows (DESIGN.md §29.2, §29.3, §29.5)", () => {
+  // Helpers. `at(n)`: a time n minutes in. `run`: a finished, un-kept run made at that time. `index`: the store's cache and its newest-first
+  // order. `ready`: a view whose first page has arrived. `ids`: read the ids back, so the assertions stay short.
   const at = (n: number) => `2026-10-02T10:${String(n).padStart(2, "0")}:00.000Z`;
   const run = (id: string, n: number, extra: Partial<Run> = {}) => makeRun({ id, created_at: at(n), status: "done", pinned: false, ...extra } as never);
   const index = (...list: Run[]) => ({ runs: Object.fromEntries(list.map((r) => [r.id, r])), order: [...list].sort((a, b) => (a.created_at < b.created_at ? 1 : -1)).map((r) => r.id) });
@@ -154,6 +160,7 @@ describe("what a filter shows (DESIGN.md §29.2, §29.3, §29.5)", () => {
 describe("which runs have left the Kept view (DESIGN.md §29.3)", () => {
   const run = (id: string, extra: Partial<Run> = {}) => makeRun({ id, status: "done", pinned: false, ...extra } as never);
   const table = (...list: Run[]) => Object.fromEntries(list.map((r) => [r.id, r]));
+  // `none`: nothing is being watched yet; `table`: the runs as the store holds them, by id
   const none = new Set<string>();
 
   it("watches a run that is working and not kept, and reports nothing yet", () => {

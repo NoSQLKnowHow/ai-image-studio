@@ -88,6 +88,7 @@ export function EmptyHistory({ kind, filter, onShowAll }: { kind: "image" | "mus
   }
   return (
     <div className="empty-state">
+      {/* no filter: the tab is simply empty, so say how to fill it */}
       <p className="empty-title">{EMPTY_ALL[kind].title}</p>
       <p>{EMPTY_ALL[kind].body}</p>
     </div>

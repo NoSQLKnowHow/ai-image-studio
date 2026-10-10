@@ -181,6 +181,7 @@ class JobManager:
         return {
             "version": __version__,
             "worker": self.worker_status(),
+            # enlarge_waiting: the pictures whose Enlarge is queued behind the run that is going; the page shows "Waiting…" on them
             "queue": {"running": self._current, "queued": self.db.count_queued(), "cap": self.settings.queue_cap,
                       "enlarge_waiting": list(self._enlarge_waiting)},
             "memory": self.memory_status(),
@@ -462,8 +463,10 @@ class JobManager:
             source, target = self.storage.abs(image["path"]), self.storage.enlarged_path(image["path"])
         except StorageError as exc:
             raise ImageNotFound(image["id"]) from exc
+        # Wait for the GPU. From here to the `finally`, this enlargement holds the gate, so no run can start while it works.
         await self._take_gpu_turn(image["id"])
         try:
+            # Another request for the same picture may have finished while this one waited: then there is nothing left to do
             if fourk.file_size(target) is not None:
                 return False
             try:
@@ -471,6 +474,7 @@ class JobManager:
             except FileNotFoundError as exc:  # the original is gone: its run was deleted under us
                 raise ImageNotFound(image["id"]) from exc
         finally:
+            # always give the GPU back, even when the upscaler failed
             self._gpu_gate.release()
         with suppress(OSError, StorageError):
             self.storage.four_k_path(image["path"]).unlink(missing_ok=True)
@@ -480,19 +484,27 @@ class JobManager:
         """Wait until nothing else is using the GPU, and return holding `_gpu_gate` (the caller releases it). Something is using it
         while a run is going (the loop holds the gate) and while a model is being loaded by the Load button (a worker that is
         `loading`). Whoever has to wait is announced in `enlarge_waiting`, so the page can say so; one that does not is not."""
+        # True once this request has been announced as waiting: it has to be taken out of `enlarge_waiting` however this ends
         waiting = False
         try:
             while True:
+                # If something is using the GPU, say once that this enlargement is waiting (the page then shows "Waiting…"). If the GPU is free
+                # it starts at once, without a word.
                 if (self._gpu_gate.locked() or self._worker_state["state"] == "loading") and not waiting:
                     waiting = True
                     self._enlarge_waiting.append(image_id)
                     self._publish_queue()
+                # Queue for the gate. A lock hands itself on in the order it was asked, so an enlargement asked for during a run goes next, ahead
+                # of the runs still queued.
                 await self._gpu_gate.acquire()
+                # Got the gate. But a model that is still loading (the Load button) is using the GPU without holding it: if so, give the gate
+                # back and look again in a moment.
                 if self._worker_state["state"] != "loading":
                     return
                 self._gpu_gate.release()  # a model is loading: let the loop go on, and look again in a moment
                 await asyncio.sleep(0.5)
         finally:
+            # however this ended (done, or cancelled by a shutdown), the request is no longer waiting
             if waiting:
                 self._enlarge_waiting.remove(image_id)
                 self._publish_queue()

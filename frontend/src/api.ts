@@ -139,6 +139,7 @@ export const api = {
     const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}), ...filterParams(filter) });
     return request<RunsPage>(`/api/runs?${query}`);
   },
+  // The counts on the filter bar: per tab, how many runs there are and how many are kept
   runCounts: () => request<Counts>("/api/runs/counts"),
   createRun: (body: CreateRunBody) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createMusicRun: (body: CreateMusicBody) => request<MusicRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),

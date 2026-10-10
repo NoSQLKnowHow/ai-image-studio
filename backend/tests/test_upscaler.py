@@ -182,6 +182,8 @@ def test_success_returns_quietly(tmp_path):
     assert run(scripted(tmp_path, 0, stdout="ENLARGED 3840x2160 in 1.0 s on cpu with m").enlarge(tmp_path / "s.png", tmp_path / "d.png")) is None
 
 
+# What the server does with each exit code of the upscaling process: the error it answers with. Code 9 (out of memory) is "busy":
+# try again later, not "broken".
 @pytest.mark.parametrize("code,error", [
     (2, fourk.NotEligible), (7, FileNotFoundError), (8, UnidentifiedImageError), (6, OSError),
     (3, UpscalerUnavailable), (4, UpscaleFailed), (5, UpscaleFailed), (9, UpscalerBusy), (1, UpscaleFailed), (137, UpscaleFailed),
