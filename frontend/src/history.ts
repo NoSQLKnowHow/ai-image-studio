@@ -48,6 +48,13 @@ export const showsWorking = (filter: HistoryFilter): boolean => !isDefault(filte
 /** A queued or running run. A filtered view shows these whether or not they match (§29.3). */
 export const working = (run: Pick<Run, "status">): boolean => run.status === "queued" || run.status === "running";
 
+/** Whether Delete moves a run to the bin (DESIGN.md §30.2): there is a bin, the run has finished, and it is not in the bin already. A run that
+ *  is still waiting made nothing worth keeping and is deleted for good, and so is every run when there is no bin; a run in the bin is
+ *  deleted for good by Delete forever. */
+export function canBin(run: Pick<Run, "status" | "deleted_at">, binDays: number): boolean {
+  return binDays > 0 && run.deleted_at === null && !working(run);
+}
+
 /** What the browser remembers is read defensively: a name this version does not know is the default. */
 export function readFilter(store: KeyValueStore): HistoryFilter {
   switch (store.get(FILTER_KEY)) {

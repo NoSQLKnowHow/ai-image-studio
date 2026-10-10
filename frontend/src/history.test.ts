@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cases from "../../backend/tests/filter_cases.json";
 import {
-  FILTER_KEY, NO_FILTER, ONLY_DELETED, ONLY_KEPT, filterKey, filterParams, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, working,
+  FILTER_KEY, NO_FILTER, ONLY_DELETED, ONLY_KEPT, canBin, filterKey, filterParams, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, working,
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
@@ -77,6 +77,27 @@ describe("a history filter", () => {
   it("knows what is working", () => {
     expect(["queued", "running"].map((status) => working({ status: status as RunStatus }))).toEqual([true, true]);
     expect(["done", "failed", "canceled"].map((status) => working({ status: status as RunStatus }))).toEqual([false, false, false]);
+  });
+});
+
+describe("whether Delete moves a run to the bin (DESIGN.md §30.2)", () => {
+  const deleted = "2026-10-02T00:00:00.000Z";
+
+  it("does for a run that has finished, whatever way it finished", () => {
+    for (const status of ["done", "failed", "canceled"] as const) expect(canBin({ status, deleted_at: null }, 30)).toBe(true);
+  });
+
+  it("does not for a run that is waiting or running: it made nothing worth keeping, or is not finished", () => {
+    for (const status of ["queued", "running"] as const) expect(canBin({ status, deleted_at: null }, 30)).toBe(false);
+  });
+
+  it("does not when there is no bin, or the run is in it already (that is Delete forever)", () => {
+    expect(canBin({ status: "done", deleted_at: null }, 0)).toBe(false);
+    expect(canBin({ status: "done", deleted_at: deleted }, 30)).toBe(false);
+  });
+
+  it("does with a bin of a single day", () => {
+    expect(canBin({ status: "done", deleted_at: null }, 1)).toBe(true);
   });
 });
 

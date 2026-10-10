@@ -13,7 +13,7 @@ import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
 import { binnedText, emptiedText, leftTheViewText, restoredText, unkeptText } from "./format";
-import { NO_FILTER, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, working, type HistoryFilter } from "./history";
+import { NO_FILTER, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, working, type HistoryFilter } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -447,14 +447,13 @@ export default function App() {
   // Delete (DESIGN.md §30): a finished run goes to the bin, with a toast and Undo; a run in the bin, a run that is only waiting, and any run when
   // there is no bin are deleted for good.
   const binDays = caps?.limits.bin_days ?? 0;
-  const goesToBin = (run: Run) => binDays > 0 && run.deleted_at === null && !working(run);
 
   const confirmDelete = async () => {
     const run = pendingDelete;
     setPendingDelete(null);
     if (!run) return;
     try {
-      if (goesToBin(run)) {
+      if (canBin(run, binDays)) {
         const updated = await api.binRun(run.id);
         dispatch({ type: "runUpsert", run: updated });
         push("info", binnedText(run, binDays), { label: "Undo", run: () => void restore(updated, false) });

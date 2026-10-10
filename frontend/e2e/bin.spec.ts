@@ -79,6 +79,7 @@ test("Delete moves a run to the bin: the card goes with a toast and Undo, and th
   for (const name of ["Keep", "Retry", "Edit this", "Make 4K", "Enlarge", "Regenerate larger"]) await expect(c.getByRole("button", { name })).toHaveCount(0);
   await allOption(page).click();
   await expect(c).toHaveCount(0);
+  await expect(emptyBinButton(page)).toHaveCount(0); // Empty bin is for the Deleted view only
 });
 
 test("Undo on the toast restores the run to where it was", async ({ page }) => {
@@ -216,6 +217,20 @@ test("a deleted track can be restored and deleted for good from the Music tab", 
   await trackCard(page, tune).getByRole("button", { name: "Restore" }).click();
   await expect(trackCard(page, tune)).toHaveCount(0);
   expect((await status(page, id)).deleted_at).toBeNull();
+});
+
+test("Empty bin is on whenever the bin holds anything on either tab, not only on the tab you are looking at", async ({ page }) => {
+  await clearHistory(page);
+  const tune = unique("Genre: ambient. only the bin has music");
+  await bin(page, await makeTrack(page, tune));
+  await page.goto("/");
+  await deletedOption(page).click();
+  await expect(deletedOption(page)).toHaveText("Deleted 0"); // nothing deleted on Images ...
+  await expect(emptyBinButton(page)).toBeEnabled(); // ... but the bin is not empty
+  await emptyBinButton(page).click();
+  await expect(dialog(page, "Empty the bin?")).toContainText("Delete 1 run for good (1 on Music), with their files.");
+  await dialog(page, "Empty the bin?").getByRole("button", { name: "Empty bin" }).click();
+  await expect(toastWith(page, "Emptied the bin: 1 run deleted for good.")).toBeVisible();
 });
 
 test("the viewer on a picture in the bin lets you look and download, and offers nothing that changes it", async ({ page }) => {
