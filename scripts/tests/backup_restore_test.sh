@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/backup.sh and scripts/restore.sh:   bash scripts/tests/backup_restore_test.sh
+# (FAILFAST=1 stops at the first failure.)
 #
 # Everything runs in a throw-away folder. `docker` is replaced by a stand-in that records every
 # call and pretends to be a container, an image and `docker save` / `docker load`; tar, gzip, the
@@ -74,7 +75,7 @@ export PATH="$T/bin:$PATH"
 
 # ------------------------------------------------------------------ helpers
 ok()   { PASS=$((PASS + 1)); printf '  ok    %s\n' "$1"; }
-bad()  { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [[ -n ${2:-} ]] && printf '        %s\n' "$2"; }
+bad()  { FAIL=$((FAIL + 1)); printf '  FAIL  %s\n' "$1"; [[ -n ${2:-} ]] && printf '        %s\n' "$2"; [[ -z ${FAILFAST:-} ]] || exit 1; }
 check() { local desc=$1; shift; if "$@" >/dev/null 2>&1; then ok "$desc"; else bad "$desc"; fi; }
 contains() { local desc=$1 text=$2 needle=$3
   if [[ $text == *"$needle"* ]]; then ok "$desc"; else bad "$desc" "wanted: $needle | got: ${text:0:300}"; fi; }
@@ -159,11 +160,11 @@ PY
 }
 
 # a backup as the OLD backup.sh made it: format 1, one model, named by model_dir
-mk_legacy() {
-  local d="$T/legacy"; rm -rf "$d" "$d.tar"; mkdir -p "$d"
+mk_legacy() {   # mk_legacy [MODEL_DIR]
+  local d="$T/legacy" model_dir=${1:-models--Qwen--Qwen-Image-2.1}; rm -rf "$d" "$d.tar"; mkdir -p "$d"
   tar -czf "$d/data.tar.gz" -C "$REPO" data
   tar -cf "$d/model-cache.tar" -C "$HFDIR" hub/models--Qwen--Qwen-Image-2.1
-  printf 'format=1\ncreated_utc=now\nhost=h\nuser=u\ngit_commit=none\ngit_uncommitted_files=0\nstudio_version=t\nimage_name=x\nimage_id=\nincluded=data,model\nmodel_dir=models--Qwen--Qwen-Image-2.1\n' > "$d/MANIFEST.txt"
+  printf 'format=1\ncreated_utc=now\nhost=h\nuser=u\ngit_commit=none\ngit_uncommitted_files=0\nstudio_version=t\nimage_name=x\nimage_id=\nincluded=data,model\nmodel_dir=%s\n' "$model_dir" > "$d/MANIFEST.txt"
   (cd "$d" && sha256sum data.tar.gz model-cache.tar MANIFEST.txt > SHA256SUMS && tar -cf "$d.tar" data.tar.gz model-cache.tar MANIFEST.txt SHA256SUMS)
 }
 #   mk_model_backup NAME FORMAT MODEL_PATHS ENTRY...: a hand-made backup whose model-cache.tar holds the given entries
@@ -699,6 +700,12 @@ out=$(rs "$T/legacy.tar" 2>&1); rc=$?
 equals "exits 0" "$rc" 0
 equals "its model is restored" "$(tree_hash "$MODEL")" "$PRISTINE_MODEL"
 check "and nothing else appears in the cache" test ! -e "$MUSIC" -a ! -e "$HFDIR/upscalers"
+mk_legacy "../../evil"
+rm -rf "$REPO/data" "$HFDIR"
+out=$(rs "$T/legacy.tar" 2>&1); rc=$?
+equals "(an older-format backup whose model folder climbs out of the cache) exits 1" "$rc" 1
+contains "says it doesn't trust it" "$out" "model folder I don't trust"
+check "and restored nothing" test ! -e "$REPO/data" -a ! -e "$HFDIR"
 rm -rf "$T/legacy" "$T/legacy.tar"
 
 section "restore: a manifest or archive that reaches outside what it lists is refused"
