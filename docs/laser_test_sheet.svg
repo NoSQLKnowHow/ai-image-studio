@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" version="1.1" width="100mm" height="100mm" viewBox="0 0 100 100">
+  <title>AI Image Studio laser test sheet</title>
+  <desc>DESIGN.md section 31.9. 100 x 100 mm, one unit is one millimetre. Four layers in four exact colours; each holds a filled square, an outline square, a ring (a filled circle with a hole), an outline circle and a 10 x 2 mm scale bar. Layer 1 also has an outline frame of the whole sheet.</desc>
+  <g id="layer-1-black" inkscape:groupmode="layer" inkscape:label="Layer 1 (black)">
+    <path id="frame" d="M0 0 L100 0 L100 100 L0 100 Z" fill="none" stroke="#000000" stroke-width="0.1"/>
+    <path id="layer1-filled-square" d="M5 5 L20 5 L20 20 L5 20 Z" fill="#000000" stroke="none"/>
+    <path id="layer1-outline-square" d="M25 5 L40 5 L40 20 L25 20 Z" fill="none" stroke="#000000" stroke-width="0.1"/>
+    <path id="layer1-ring" d="M60 12.5 C60 16.6421 56.6421 20 52.5 20 C48.3579 20 45 16.6421 45 12.5 C45 8.3579 48.3579 5 52.5 5 C56.6421 5 60 8.3579 60 12.5 Z M56 12.5 C56 10.567 54.433 9 52.5 9 C50.567 9 49 10.567 49 12.5 C49 14.433 50.567 16 52.5 16 C54.433 16 56 14.433 56 12.5 Z" fill="#000000" fill-rule="evenodd" stroke="none"/>
+    <path id="layer1-outline-circle" d="M80 12.5 C80 16.6421 76.6421 20 72.5 20 C68.3579 20 65 16.6421 65 12.5 C65 8.3579 68.3579 5 72.5 5 C76.6421 5 80 8.3579 80 12.5 Z" fill="none" stroke="#000000" stroke-width="0.1"/>
+    <path id="layer1-scale-bar" d="M85 11.5 L95 11.5 L95 13.5 L85 13.5 Z" fill="#000000" stroke="none"/>
+  </g>
+  <g id="layer-2-red" inkscape:groupmode="layer" inkscape:label="Layer 2 (red)">
+    <path id="layer2-filled-square" d="M5 30 L20 30 L20 45 L5 45 Z" fill="#FF0000" stroke="none"/>
+    <path id="layer2-outline-square" d="M25 30 L40 30 L40 45 L25 45 Z" fill="none" stroke="#FF0000" stroke-width="0.1"/>
+    <path id="layer2-ring" d="M60 37.5 C60 41.6421 56.6421 45 52.5 45 C48.3579 45 45 41.6421 45 37.5 C45 33.3579 48.3579 30 52.5 30 C56.6421 30 60 33.3579 60 37.5 Z M56 37.5 C56 35.567 54.433 34 52.5 34 C50.567 34 49 35.567 49 37.5 C49 39.433 50.567 41 52.5 41 C54.433 41 56 39.433 56 37.5 Z" fill="#FF0000" fill-rule="evenodd" stroke="none"/>
+    <path id="layer2-outline-circle" d="M80 37.5 C80 41.6421 76.6421 45 72.5 45 C68.3579 45 65 41.6421 65 37.5 C65 33.3579 68.3579 30 72.5 30 C76.6421 30 80 33.3579 80 37.5 Z" fill="none" stroke="#FF0000" stroke-width="0.1"/>
+    <path id="layer2-scale-bar" d="M85 36.5 L95 36.5 L95 38.5 L85 38.5 Z" fill="#FF0000" stroke="none"/>
+  </g>
+  <g id="layer-3-green" inkscape:groupmode="layer" inkscape:label="Layer 3 (green)">
+    <path id="layer3-filled-square" d="M5 55 L20 55 L20 70 L5 70 Z" fill="#00FF00" stroke="none"/>
+    <path id="layer3-outline-square" d="M25 55 L40 55 L40 70 L25 70 Z" fill="none" stroke="#00FF00" stroke-width="0.1"/>
+    <path id="layer3-ring" d="M60 62.5 C60 66.6421 56.6421 70 52.5 70 C48.3579 70 45 66.6421 45 62.5 C45 58.3579 48.3579 55 52.5 55 C56.6421 55 60 58.3579 60 62.5 Z M56 62.5 C56 60.567 54.433 59 52.5 59 C50.567 59 49 60.567 49 62.5 C49 64.433 50.567 66 52.5 66 C54.433 66 56 64.433 56 62.5 Z" fill="#00FF00" fill-rule="evenodd" stroke="none"/>
+    <path id="layer3-outline-circle" d="M80 62.5 C80 66.6421 76.6421 70 72.5 70 C68.3579 70 65 66.6421 65 62.5 C65 58.3579 68.3579 55 72.5 55 C76.6421 55 80 58.3579 80 62.5 Z" fill="none" stroke="#00FF00" stroke-width="0.1"/>
+    <path id="layer3-scale-bar" d="M85 61.5 L95 61.5 L95 63.5 L85 63.5 Z" fill="#00FF00" stroke="none"/>
+  </g>
+  <g id="layer-4-blue" inkscape:groupmode="layer" inkscape:label="Layer 4 (blue)">
+    <path id="layer4-filled-square" d="M5 80 L20 80 L20 95 L5 95 Z" fill="#0000FF" stroke="none"/>
+    <path id="layer4-outline-square" d="M25 80 L40 80 L40 95 L25 95 Z" fill="none" stroke="#0000FF" stroke-width="0.1"/>
+    <path id="layer4-ring" d="M60 87.5 C60 91.6421 56.6421 95 52.5 95 C48.3579 95 45 91.6421 45 87.5 C45 83.3579 48.3579 80 52.5 80 C56.6421 80 60 83.3579 60 87.5 Z M56 87.5 C56 85.567 54.433 84 52.5 84 C50.567 84 49 85.567 49 87.5 C49 89.433 50.567 91 52.5 91 C54.433 91 56 89.433 56 87.5 Z" fill="#0000FF" fill-rule="evenodd" stroke="none"/>
+    <path id="layer4-outline-circle" d="M80 87.5 C80 91.6421 76.6421 95 72.5 95 C68.3579 95 65 91.6421 65 87.5 C65 83.3579 68.3579 80 72.5 80 C76.6421 80 80 83.3579 80 87.5 Z" fill="none" stroke="#0000FF" stroke-width="0.1"/>
+    <path id="layer4-scale-bar" d="M85 86.5 L95 86.5 L95 88.5 L85 88.5 Z" fill="#0000FF" stroke="none"/>
+  </g>
+</svg>
