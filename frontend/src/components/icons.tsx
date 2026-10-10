@@ -46,3 +46,7 @@ export const ChipIcon = () => (
 );
 export const EjectIcon = () => <Icon><path d="M12 5l7 8H5z" /><path d="M5 18h14" /></Icon>;
 export const NoteIcon = () => <Icon><path d="M9 18V5l11-2v13" /><circle cx="6" cy="18" r="3" /><circle cx="17" cy="16" r="3" /></Icon>;
+// a folder: the icon of a project (DESIGN.md §32)
+export const FolderIcon = () => <Icon><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></Icon>;
+export const ChevronDownIcon = () => <Icon><path d="M6 9l6 6 6-6" /></Icon>;
+export const CheckIcon = () => <Icon><path d="M5 12.5l4.5 4.5L19 7.5" /></Icon>;

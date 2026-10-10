@@ -1,14 +1,17 @@
 import { useState } from "react";
-import { WORKING_IN_KEPT_NOTE, binNote, duration, expiryText, timeAgo, canceledText } from "../format";
+import { binNote, duration, expiryText, keepLockedTitle, timeAgo, canceledText, workingNote, type ViewScope } from "../format";
 import { musicMeta, musicPhases, musicProgressText, musicTitle, trackLabel } from "../music";
 import type { MusicRun, WorkerState } from "../types";
-import { CopyIcon, DownloadIcon, NoteIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { CopyIcon, DownloadIcon, FolderIcon, NoteIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 
 interface Props {
   run: MusicRun;
   now: number;
   workerState: WorkerState | null;
-  transient: boolean; // in the Kept view only because it is working (DESIGN.md §29.3)
+  transient: boolean; // in a filtered view only because it is working (DESIGN.md §29.3, §32)
+  viewScope: ViewScope; // which filter that is, so the note says what keeps the card there
+  projects: ProjectControls; // the project folders, and what the Project button does (DESIGN.md §32)
   onReuse: () => void;
   onRetry: () => void;
   onCancel: () => void;
@@ -65,7 +68,7 @@ function MusicProgress({ run, workerState }: { run: MusicRun; workerState: Worke
   );
 }
 
-export function TrackCard({ run, now, workerState, transient, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
+export function TrackCard({ run, now, workerState, transient, viewScope, projects, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const label = statusLabel(run);
@@ -73,6 +76,9 @@ export function TrackCard({ run, now, workerState, transient, onRestore, onReuse
   const took = run.status === "done" ? duration(run.started_at, run.finished_at) : null;
   const expiry = run.pinned ? null : expiryText(run.expires_at, now);
   const inBin = run.deleted_at !== null; // in the bin (DESIGN.md §30)
+  // The project it is filed in (DESIGN.md §32): a filed run is always kept, so its Keep button is pressed and locked
+  const filed = run.project_id !== null;
+  const project = projectOf(run, projects.projects);
   const tracks = [...run.tracks].sort((a, b) => a.idx - b.idx);
 
   return (
@@ -82,6 +88,8 @@ export function TrackCard({ run, now, workerState, transient, onRestore, onReuse
           <span className="music-mark" aria-hidden="true"><NoteIcon /></span>
           <span className={`badge badge-${run.status}`}>{label}</span>
           {run.pinned && <span className="badge badge-kept"><PinIcon /> Kept</span>}
+          {/* the project it is filed in: shown in the bin too, where it cannot be pressed */}
+          {filed && <span className="badge badge-project" data-project-chip><FolderIcon /> {project?.name ?? "Project"}</span>}
           {/* a run in the bin says so */}
           {inBin && <span className="badge badge-deleted"><TrashIcon /> Deleted</span>}
           <span className="badge">{run.options.instrumental ? "Instrumental" : "With lyrics"}</span>
@@ -128,8 +136,8 @@ export function TrackCard({ run, now, workerState, transient, onRestore, onReuse
 
         {expiry && <p className="run-expiry">{expiry}. Press <strong>Keep</strong> to save it.</p>}
 
-        {/* in the Kept view only because it is working: say so, so that the card being there is not a surprise */}
-        {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
+        {/* in a filtered view only because it is working: say so, so that the card being there is not a surprise */}
+        {transient && <p className="run-note" data-note={`working-in-${viewScope}`}>{workingNote(viewScope)}</p>}
 
         {/* since when it is in the bin, and until when */}
         {inBin && <p className="run-note" data-note="in-bin">{binNote(run, now)}</p>}
@@ -176,11 +184,13 @@ export function TrackCard({ run, now, workerState, transient, onRestore, onReuse
           </button>
           <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy description</button>
           {/* Keep is offered on a card that is still working too: it is how a run that is shown only while it works gets kept */}
+          {/* On a filed run Keep is pressed and locked (DESIGN.md §32.3): the button stays, so the tooltip can say why, but it does nothing */}
           <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
-            aria-pressed={run.pinned} onClick={onToggleKeep}
-            title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
+            aria-pressed={run.pinned} aria-disabled={filed || undefined} data-locked={filed || undefined} onClick={filed ? undefined : onToggleKeep}
+            title={filed ? keepLockedTitle(project?.name ?? null) : run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
             <PinIcon /> Keep
           </button>
+          <ProjectMenu run={run} controls={projects} />
           <button type="button" className="button small ghost danger" data-action="delete" onClick={onDelete} disabled={run.status === "running"}
             title={run.status === "running" ? "Can't delete while it's being made" : "Delete this run and its tracks"}>
             <TrashIcon /> Delete

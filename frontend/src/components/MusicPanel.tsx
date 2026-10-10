@@ -6,9 +6,11 @@ import {
 } from "../music";
 import type { KeyValueStore } from "../options";
 import type { Capabilities, MusicRun, Status } from "../types";
+import type { ViewScope } from "../format";
 import { QueueBar } from "./Feedback";
 import { NumberField } from "./NumberField";
 import { panelId, tabId } from "./Tabs";
+import type { ProjectControls } from "./ProjectMenu";
 import { TrackCard } from "./TrackCard";
 import { NoteIcon } from "./icons";
 import type { ToastKind } from "../hooks";
@@ -23,7 +25,9 @@ interface Props {
   filterBar: ReactNode; // the filter bar, shared with the Images tab (DESIGN.md §29)
   loadProblem: ReactNode | null; // shown in place of "Loading…" when the filtered list could not be loaded
   empty: ReactNode; // what the list says when there is nothing to show for the filter, or that it is still looking
-  isTransient: (run: MusicRun) => boolean; // in the Kept view only because it is working (§29.3)
+  isTransient: (run: MusicRun) => boolean; // in a filtered view only because it is working (§29.3, §32)
+  viewScope: ViewScope; // which filter that is
+  projects: ProjectControls; // the project folders and what the Project button does (§32)
   more: boolean; // older runs can be loaded
   loadingOlder: boolean;
   now: number;
@@ -77,7 +81,7 @@ const LABELS: Record<FieldName, { label: string; placeholder: string; hint?: str
 };
 
 /** The Music tab (DESIGN.md §26): the form that builds the description, and the tracks made so far. */
-export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, more, loadingOlder, now, push, onRun, onLoadOlder, onCancel, onToggleKeep, onRestore, onDelete, onCopy }: Props) {
+export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, more, loadingOlder, now, push, onRun, onLoadOlder, onCancel, onToggleKeep, onRestore, onDelete, onCopy }: Props) {
   const ids = useId();
   const idOf = (name: string) => `${ids}-${name}`;
   const root = useRef<HTMLDivElement>(null);
@@ -343,7 +347,7 @@ export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filte
           empty
         ) : (
           runs.map((run) => (
-            <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)}
+            <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)} viewScope={viewScope} projects={projects}
               onReuse={() => reuse(run)} onRetry={() => void retry(run)} onCancel={() => onCancel(run)}
               onToggleKeep={() => onToggleKeep(run)} onRestore={() => onRestore(run)} onDelete={() => onDelete(run)} onCopy={() => onCopy(run)} />
           ))

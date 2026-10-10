@@ -1,6 +1,6 @@
 import { filenameFromDisposition } from "./fourk";
 import { NO_FILTER, filterParams, type Counts, type HistoryFilter } from "./history";
-import type { Capabilities, CreateMusicBody, CreateRunBody, ImageRun, ModelName, MusicRun, Run, RunsPage, Status, UploadResult } from "./types";
+import type { Capabilities, CreateMusicBody, CreateRunBody, ImageRun, ModelName, MusicRun, Project, Run, RunsPage, Status, UploadResult } from "./types";
 
 export interface FieldError {
   field: string; // e.g. "options.width" or "prompt"
@@ -139,8 +139,9 @@ export const api = {
     const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}), ...filterParams(filter) });
     return request<RunsPage>(`/api/runs?${query}`);
   },
-  // The counts on the filter bar: per tab, how many runs there are and how many are kept
-  runCounts: () => request<Counts>("/api/runs/counts"),
+  // The counts on the filter bar: per tab, how many runs there are and how many are kept or deleted. With a project (an id, or "none"), the
+  // counts are within it (DESIGN.md §32.5); without, they are the whole history's.
+  runCounts: (project: string | null = null) => request<Counts>(`/api/runs/counts${project === null ? "" : `?${new URLSearchParams({ project })}`}`),
   createRun: (body: CreateRunBody) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createMusicRun: (body: CreateMusicBody) => request<MusicRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   cancelRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
@@ -151,6 +152,15 @@ export const api = {
   binRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/bin`, { method: "POST" }),
   restoreRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/restore`, { method: "POST" }),
   emptyBin: () => request<{ deleted: number }>("/api/bin", { method: "DELETE" }),
+  // Project folders (DESIGN.md §32.4). Filing a run also keeps it; the answer to a filing is the run, as for Keep.
+  listProjects: () => request<{ projects: Project[] }>("/api/projects").then((answer) => answer.projects),
+  createProject: (name: string) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),
+  renameProject: (id: string, name: string) => request<Project>(`/api/projects/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) }),
+  deleteProject: (id: string) => request<{ unfiled: number }>(`/api/projects/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  fileRun: (id: string, projectId: string) =>
+    request<Run>(`/api/runs/${encodeURIComponent(id)}/project`, { method: "PUT", body: JSON.stringify({ project_id: projectId }) }),
+  // Take a run out of its project. It stays kept, unless `keep` is false (what Undo of a filing asks for: the run goes back to what it was).
+  unfileRun: (id: string, keep = true) => request<Run>(`/api/runs/${encodeURIComponent(id)}/project${keep ? "" : "?keep=false"}`, { method: "DELETE" }),
   // Make the 4K copy of a result image (DESIGN.md §27). The answer is the whole run, as for Keep: its image now has `four_k`.
   upscalePicture,
   makeFourK: (imageId: string) => request<ImageRun>(`/api/images/${encodeURIComponent(imageId)}/4k`, { method: "POST" }),

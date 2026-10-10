@@ -53,6 +53,8 @@ export function useEventStream(dispatch: (action: Action) => void, handlers: Han
         const data = parse(e) as { running: string | null; positions: Record<string, number>; enlarge_waiting?: string[] };
         dispatch({ type: "queue", running: data.running, positions: data.positions, enlargeWaiting: data.enlarge_waiting ?? [] });
       });
+      // a project was made, renamed or deleted, or a run was filed or taken out: the list (and its counts) is the page's to read again
+      source.addEventListener("projects.changed", () => dispatch({ type: "projectsChanged" }));
       source.addEventListener("worker.state", (e) => dispatch({ type: "worker", worker: parse(e) as WorkerStatus }));
       source.addEventListener("capabilities.updated", () => handlersRef.current.onCapabilitiesChanged());
       source.addEventListener("shutdown", () => dispatch({ type: "serverStopping" }));

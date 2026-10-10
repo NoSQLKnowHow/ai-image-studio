@@ -2,47 +2,66 @@
 // shows for a filter. Both sides are tested against one table of cases (backend/tests/filter_cases.json).
 //
 // Adding a filter: a field here and in `filterKey`, `filterParams` and `matches`; a control in `components/FilterBar.tsx`; and a case in the
-// table. The store keeps one view per filter (`filterKey`), so nothing there changes.
+// table. The store keeps one view per filter (`filterKey`), so nothing there changes. (`project` is the first filter that holds a value
+// and not a yes-or-no: a project's id, "none", or null for any.)
 
 import type { KeyValueStore } from "./options";
 import type { Run } from "./types";
 
+/** The value of `project` that means "runs that are in no project" (DESIGN.md §32.4). A project's id is 32 hex digits, so it can never be one. */
+export const NO_PROJECT = "none";
+
 /** One field per filter. `kept`: `null` = either, `true` = only runs that are kept, `false` = only runs that are not (nothing in the
  *  page asks for that yet; the server and `matches` already do it). `deleted`: `false` = the history, without the bin (what every
- *  filter means unless it says otherwise), `true` = only the bin (DESIGN.md §30), `null` = either (nothing in the page asks for it). */
+ *  filter means unless it says otherwise), `true` = only the bin (DESIGN.md §30), `null` = either (nothing in the page asks for it).
+ *  `project`: `null` = any project or none, `NO_PROJECT` = only runs in no project, a project's id = only that project's runs (§32). */
 export interface HistoryFilter {
   kept: boolean | null;
   deleted: boolean | null;
+  project: string | null;
 }
 
-// The filters the page offers: everything, only the runs that are kept, and only the runs in the bin (the Deleted view, DESIGN.md §30)
-export const NO_FILTER: HistoryFilter = { kept: null, deleted: false };
-export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false };
-export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true };
+// The filters the page offers: everything, only the runs that are kept, and only the runs in the bin (the Deleted view, DESIGN.md §30).
+// None of them names a project: the Project drop-down adds that to whichever of these is chosen (`withProject`).
+export const NO_FILTER: HistoryFilter = { kept: null, deleted: false, project: null };
+export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false, project: null };
+export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true, project: null };
 
 export const FILTER_KEY = "studio.history.filter.v1";
 
-export const isDefault = (filter: HistoryFilter): boolean => filter.kept === null && filter.deleted === false;
+export const isDefault = (filter: HistoryFilter): boolean => filter.kept === null && filter.deleted === false && filter.project === null;
+
+/** The same filter, looking at another project: what the Project drop-down does. Kept and Deleted stay as they were. */
+export const withProject = (filter: HistoryFilter, project: string | null): HistoryFilter => ({ ...filter, project });
 
 /** A stable name for a filter: the key of its view in the store, and what the browser remembers. */
 export function filterKey(filter: HistoryFilter): string {
   // The name is made of the parts that are set, joined with +; with none set it is "all". So kept alone is "kept", the bin alone is
-  // "deleted", and (not offered today) kept in the bin is "kept+deleted".
+  // "deleted", kept in the bin is "kept+deleted", and a project is "project:<id>" (or "project:none"), after the others.
   const kept = filter.kept === null ? "" : filter.kept ? "kept" : "not-kept";
   const deleted = filter.deleted === null ? "any" : filter.deleted ? "deleted" : "";
-  return [kept, deleted].filter(Boolean).join("+") || "all";
+  const project = filter.project === null ? "" : `project:${filter.project}`;
+  return [kept, deleted, project].filter(Boolean).join("+") || "all";
 }
 
 /** The query parameters of `GET /api/runs` for a filter: only what is not the default. `deleted=any` is not a thing the server takes,
  *  so a filter that wants both is not sent: the page never builds one. */
 export function filterParams(filter: HistoryFilter): Record<string, string> {
-  return { ...(filter.kept === null ? {} : { kept: String(filter.kept) }), ...(filter.deleted ? { deleted: "true" } : {}) };
+  return {
+    ...(filter.kept === null ? {} : { kept: String(filter.kept) }),
+    ...(filter.deleted ? { deleted: "true" } : {}),
+    ...(filter.project === null ? {} : { project: filter.project }),
+  };
 }
 
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
-export function matches(run: Pick<Run, "pinned" | "deleted_at">, filter: HistoryFilter): boolean {
+export function matches(run: Pick<Run, "pinned" | "deleted_at" | "project_id">, filter: HistoryFilter): boolean {
   // a run is in the bin exactly when it has a `deleted_at`; either field set to null means "either"
-  return (filter.kept === null || run.pinned === filter.kept) && (filter.deleted === null || (run.deleted_at !== null) === filter.deleted);
+  const keptOk = filter.kept === null || run.pinned === filter.kept;
+  const deletedOk = filter.deleted === null || (run.deleted_at !== null) === filter.deleted;
+  // a project: null is any; "none" is the runs that are in no project; anything else is that project's id (one that does not exist matches nothing)
+  const projectOk = filter.project === null || (filter.project === NO_PROJECT ? run.project_id === null : run.project_id === filter.project);
+  return keptOk && deletedOk && projectOk;
 }
 
 /** Whether a filter shows runs that are working whether or not they match it (DESIGN.md §29.3): every filter but the default and the
@@ -59,18 +78,46 @@ export function canBin(run: Pick<Run, "status" | "deleted_at">, binDays: number)
   return binDays > 0 && run.deleted_at === null && !working(run);
 }
 
+/** A project's id as the server makes it: 32 lower-case hex digits. What the browser remembers is checked against this, never trusted. */
+const PROJECT_ID = /^[0-9a-f]{32}$/;
+
+/** What a stored name (`filterKey`'s own output) says, or null for text this version does not understand. Parts are separated by +, each
+ *  family (kept, bin, project) may appear once, and a name from before projects ("kept", "not-kept", "deleted") reads as it always did.
+ *  Only a filter the page can offer is restored: one of the choices All, Kept, not kept and Deleted, with or without a project. The rest
+ *  ("kept+deleted", "any") are names a view can have in the store but never something a person chose, so they are the default. */
+export function parseFilterKey(text: string): HistoryFilter | null {
+  if (text === "all") return NO_FILTER;
+  let kept: boolean | null = null;
+  let deleted: boolean | null = false;
+  let project: string | null = null;
+  const seen = new Set<string>();
+  for (const part of text.split("+")) {
+    // which family this part belongs to, and what it sets; a family twice, or a part nobody knows, makes the whole text unusable
+    let family: string;
+    if (part === "kept" || part === "not-kept") {
+      family = "kept";
+      kept = part === "kept";
+    } else if (part === "deleted" || part === "any") {
+      family = "deleted";
+      deleted = part === "deleted" ? true : null;
+    } else if (part.startsWith("project:") && (part.slice(8) === NO_PROJECT || PROJECT_ID.test(part.slice(8)))) {
+      family = "project";
+      project = part.slice(8);
+    } else {
+      return null;
+    }
+    if (seen.has(family)) return null;
+    seen.add(family);
+  }
+  // the bin on its own (kept must be unset) or the history; "either" is not something the page offers
+  if (deleted === null || (deleted === true && kept !== null)) return null;
+  return { kept, deleted, project };
+}
+
 /** What the browser remembers is read defensively: a name this version does not know is the default. */
 export function readFilter(store: KeyValueStore): HistoryFilter {
-  switch (store.get(FILTER_KEY)) {
-    case "kept":
-      return ONLY_KEPT;
-    case "not-kept":
-      return { kept: false, deleted: false };
-    case "deleted":
-      return ONLY_DELETED;
-    default:
-      return NO_FILTER;
-  }
+  const text = store.get(FILTER_KEY);
+  return (text === null || text === undefined ? null : parseFilterKey(text)) ?? NO_FILTER;
 }
 
 export function saveFilter(filter: HistoryFilter, store: KeyValueStore): void {

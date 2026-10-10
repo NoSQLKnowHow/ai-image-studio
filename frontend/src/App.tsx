@@ -7,13 +7,15 @@ import { ConfirmCancel, ConfirmDelete, ConfirmEmptyBin, Lightbox, cardReuseButto
 import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { EmptyHistory, FilterBar, focusFilterBar } from "./components/FilterBar";
 import { OptionsDrawer } from "./components/OptionsDrawer";
+import { ProjectsDialog } from "./components/ProjectsDialog";
+import type { ProjectControls } from "./components/ProjectMenu";
 import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
-import { binnedText, emptiedText, leftTheViewText, restoredText, unkeptText } from "./format";
-import { NO_FILTER, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, working, type HistoryFilter } from "./history";
+import { binnedText, emptiedText, filedText, leftTheViewText, movedText, restoredText, takenOutText, unkeptText, type ViewScope } from "./format";
+import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withProject, working, type HistoryFilter } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -36,10 +38,12 @@ import {
 } from "./options";
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
-import { isImageRun, isMusicRun, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Run } from "./types";
+import { isImageRun, isMusicRun, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Project, type Run } from "./types";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
 import { viewerItems, viewerKnown } from "./viewer";
+
+const NO_PROJECTS: Project[] = []; // the list of projects before it has arrived: one array, so nothing re-renders for a new empty one
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -71,6 +75,7 @@ export default function App() {
   const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images or Music (DESIGN.md §26.1), remembered
   const [filter, setFilter] = useState<HistoryFilter>(() => readFilter(store)); // All or Kept, for both tabs (DESIGN.md §29), remembered
   const [filterProblem, setFilterProblem] = useState<string | null>(null); // why the filtered list could not be loaded
+  const [managingProjects, setManagingProjects] = useState(false); // the Manage projects dialog is open (DESIGN.md §32.1)
   const [loadOlderFailed, setLoadOlderFailed] = useState(false);
   const { toasts, push, dismiss } = useToasts();
   const now = useNow(30_000);
@@ -93,7 +98,15 @@ export default function App() {
   const tabRuns = tab === "music" ? musicRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
   const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
-  const knownEmpty = !!state.counts && countName !== null && state.counts[tabKind][countName] === 0; // the server says this tab has none
+  // The counts are asked for within the project that is chosen (DESIGN.md §32.5), so they are only used for the filter they describe: a number
+  // that arrived for another project must never decide that this one is empty
+  const scopedCounts = state.countsProject === filter.project ? state.counts : null;
+  const knownEmpty = !!scopedCounts && countName !== null && scopedCounts[tabKind][countName] === 0; // the server says this tab has none
+  // The project folders (DESIGN.md §32), and which kind of filter is on: it decides what a card shown only while it works says (§29.3, §32.1)
+  const projects = state.projects ?? NO_PROJECTS;
+  const projectNameMax = caps?.limits.project_name_max ?? 60;
+  const viewScope: ViewScope = filter.project !== null ? "project" : "kept";
+  const nameOfProject = (id: string | null): string | null => (id === null ? null : projects.find((project) => project.id === id)?.name ?? null);
   const lookingForMore = runsReady && tabRuns.length === 0 && more && !knownEmpty && !loadOlderFailed; // none on this tab yet: the next page may have some
   const waitingList = status?.queue.enlarge_waiting;
   const enlargeWaiting = useMemo<ReadonlySet<string>>(() => new Set(waitingList ?? []), [waitingList]); // Enlarge requests queued behind a picture (§28.3)
@@ -423,6 +436,8 @@ export default function App() {
   // deleted, and offers Undo (DESIGN.md §29.4); and keyboard focus, which was on the card, moves to the filter bar.
   const toggleKeep = (run: Run) =>
     once(`keep:${run.id}`, async () => {
+      // A run in a project stays kept (DESIGN.md §32.3): the card's button is locked, so this is only a guard against a stale card
+      if (run.project_id !== null) return;
       // Stopping to keep a run takes its card out of the Kept view. A run that is still working stays: it is shown while it works.
       const leaves = run.pinned && filter.kept === true && !working(run);
       try {
@@ -434,7 +449,9 @@ export default function App() {
         }
       } catch (error) {
         const err = error as ApiError;
-        push("error", err.status === 404 ? "That run no longer exists." : `Couldn't ${run.pinned ? "stop keeping" : "keep"} it: ${err.message}`);
+        // filed in a project on another page meanwhile: it stays kept, and the server says how to change that
+        if (err.code === "run_in_project") push("info", err.message);
+        else push("error", err.status === 404 ? "That run no longer exists." : `Couldn't ${run.pinned ? "stop keeping" : "keep"} it: ${err.message}`);
       }
     });
 
@@ -481,7 +498,7 @@ export default function App() {
         const updated = await api.restoreRun(run.id);
         if (fromCard) refocus.current = true;
         dispatch({ type: "runUpsert", run: updated });
-        push("info", restoredText(updated));
+        push("info", restoredText(updated, Date.now(), nameOfProject(updated.project_id)));
       } catch (error) {
         const err = error as ApiError;
         // 404: someone deleted it for good meanwhile. 409: it is not in the bin any more (restored elsewhere). Both are said quietly, since
@@ -490,6 +507,122 @@ export default function App() {
           err.status === 404 ? "That run no longer exists." : err.status === 409 ? "That run is not in the bin any more." : `Couldn't restore it: ${err.message}`);
       }
     });
+
+  // ------------------------------------------------------------------ project folders (DESIGN.md §32)
+  // What a failed project request says, in words for the place that asked: a refused name or a taken one is the server's own message, a project
+  // that has gone is said quietly, and anything else is an error.
+  const projectProblem = (error: unknown, what: string): string => {
+    const err = error as ApiError;
+    if (err.status === 404) return "That project no longer exists.";
+    return err.status === 422 || err.status === 409 ? err.message : `Couldn't ${what}: ${err.message}`;
+  };
+  // the list as the page holds it, with one project added or replaced, in order (the server's own order comes back with the next read)
+  const withProjectInList = (project: Project): Project[] =>
+    [...projects.filter((other) => other.id !== project.id), project].sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+
+  // File a run in a project, and keep it: the same call moves a run that is filed already. The toast says which, and Undo puts the run back exactly
+  // as it was: out of the project and not kept if it was neither, or back in the project it came from (§32.3 item 3).
+  const fileInto = (run: Run, target: Project) =>
+    once(`file:${run.id}`, async () => {
+      const before = { projectId: run.project_id, pinned: run.pinned };
+      const from = nameOfProject(run.project_id);
+      try {
+        const updated = await api.fileRun(run.id, target.id);
+        // the card leaves the list when the view is No project, or another project: keyboard focus is looked after as for Keep (§29.4)
+        if (matches(run, filter) && !matches(updated, filter)) refocus.current = true;
+        dispatch({ type: "runUpsert", run: updated });
+        push("info", from !== null ? movedText(run, from, target.name) : filedText(run, target.name), { label: "Undo", run: () => void undoFiling(updated, before) });
+      } catch (error) {
+        const err = error as ApiError;
+        push(err.status === 404 || err.status === 409 ? "info" : "error",
+          err.status === 404 ? (err.message.startsWith("Run") ? "That run no longer exists." : "That project no longer exists.")
+            : err.status === 409 ? "That run is in the bin. Restore it before filing it in a project." : `Couldn't file it: ${err.message}`);
+      }
+    });
+
+  // The Undo of a filing, a move or a taking out: the run goes back to where it was. From no project it is taken out, and un-kept if it was not
+  // kept before (keep=false); from a project it is filed back there (it stays kept either way).
+  const undoFiling = (run: Run, before: { projectId: string | null; pinned: boolean }) =>
+    once(`file:${run.id}`, async () => {
+      try {
+        const back = before.projectId === null ? await api.unfileRun(run.id, before.pinned) : await api.fileRun(run.id, before.projectId);
+        if (matches(run, filter) && !matches(back, filter)) refocus.current = true;
+        dispatch({ type: "runUpsert", run: back });
+      } catch (error) {
+        const err = error as ApiError;
+        push(err.status === 404 || err.status === 409 ? "info" : "error",
+          err.status === 404 ? "That run or that project no longer exists, so it cannot be put back." : err.status === 409 ? "That run is not where it was filed any more." : `Couldn't put it back: ${err.message}`);
+      }
+    });
+
+  // Take a run out of its project. It stays kept; the toast says so, and Undo files it back.
+  const takeOut = (run: Run) =>
+    once(`file:${run.id}`, async () => {
+      const from = run.project_id;
+      try {
+        const updated = await api.unfileRun(run.id, true);
+        if (matches(run, filter) && !matches(updated, filter)) refocus.current = true;
+        dispatch({ type: "runUpsert", run: updated });
+        push("info", takenOutText(nameOfProject(from) ?? "its project"), from === null ? undefined : { label: "Undo", run: () => void undoFiling(updated, { projectId: from, pinned: true }) });
+      } catch (error) {
+        const err = error as ApiError;
+        push(err.status === 404 || err.status === 409 ? "info" : "error",
+          err.status === 404 ? "That run no longer exists." : err.status === 409 ? "That run is not in a project any more." : `Couldn't take it out: ${err.message}`);
+      }
+    });
+
+  // Make a project and file the run in it, right from the card's drop-down. A refused name is returned for the field to show; the project made
+  // is added to the list at once (the server's own list follows), so the filing can name it.
+  const createAndFile = async (run: Run, name: string): Promise<string | null> => {
+    let project: Project;
+    try {
+      project = await api.createProject(name);
+    } catch (error) {
+      return projectProblem(error, "make the project");
+    }
+    dispatch({ type: "projects", projects: withProjectInList(project) });
+    await fileInto(run, project);
+    return null;
+  };
+
+  // The Manage projects dialog: each answers with a message when it could not be done, or null when it was.
+  const createProject = async (name: string): Promise<string | null> => {
+    try {
+      dispatch({ type: "projects", projects: withProjectInList(await api.createProject(name)) });
+      return null;
+    } catch (error) {
+      return projectProblem(error, "make the project");
+    }
+  };
+  const renameProject = async (project: Project, name: string): Promise<string | null> => {
+    try {
+      dispatch({ type: "projects", projects: withProjectInList(await api.renameProject(project.id, name)) });
+      return null;
+    } catch (error) {
+      return projectProblem(error, "rename the project");
+    }
+  };
+  const deleteProject = async (project: Project): Promise<string | null> => {
+    try {
+      await api.deleteProject(project.id);
+      dispatch({ type: "projects", projects: projects.filter((other) => other.id !== project.id) });
+      push("info", `Deleted the project “${project.name}”. Its runs are kept.`);
+      return null;
+    } catch (error) {
+      return projectProblem(error, "delete the project");
+    }
+  };
+  // what a card needs to offer projects (DESIGN.md §32.1)
+  const projectControls: ProjectControls = {
+    projects,
+    nameMax: projectNameMax,
+    onFile: (run, id) => {
+      const target = projects.find((project) => project.id === id);
+      if (target) void fileInto(run, target);
+    },
+    onUnfile: (run) => void takeOut(run),
+    onCreate: createAndFile,
+  };
 
   // Empty bin: everything in it, both tabs, for good. The server tells every page by `run.deleted`; this page also drops what it holds, so
   // that the list does not wait for the events.
@@ -539,14 +672,55 @@ export default function App() {
     void loadFirstPage(filter);
   }, [key, state.connection, loadFirstPage]);
 
-  // The counts on the filter bar are the server's; asked for again, after a short pause, whenever a run is made, deleted, kept or un-kept.
+  // The counts on the filter bar are the server's; asked for again, after a short pause, whenever a run is made, deleted, kept, un-kept or
+  // filed. With a project chosen the bar's numbers are the project's (DESIGN.md §32.5), so two are read: the whole history's (which Empty bin
+  // needs, since it empties the whole bin) and the project's. Each is stored with the project it describes.
   useEffect(() => {
     if (state.connection !== "open") return;
+    let stale = false; // another change, or another project, has made this answer out of date
     const timer = setTimeout(() => {
-      void api.runCounts().then((counts) => dispatch({ type: "counts", counts })).catch(() => undefined);
+      void (async () => {
+        try {
+          const whole = await api.runCounts(null);
+          if (stale) return;
+          dispatch({ type: "totals", counts: whole });
+          if (filter.project === null) dispatch({ type: "counts", counts: whole, project: null });
+          else {
+            const within = await api.runCounts(filter.project);
+            if (!stale) dispatch({ type: "counts", counts: within, project: filter.project });
+          }
+        } catch {
+          /* the numbers stay as they were; the next change asks again */
+        }
+      })();
     }, 250);
-    return () => clearTimeout(timer);
-  }, [state.connection, state.countsStale]);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [state.connection, state.countsStale, filter.project]);
+
+  // The project folders (DESIGN.md §32): read when the page connects (at once: the filter and the cards need the names), and again, after a
+  // short pause, whenever the server says a project or what is filed in one changed.
+  useEffect(() => {
+    if (state.connection !== "open") return;
+    let stale = false;
+    const timer = setTimeout(() => {
+      void api.listProjects().then((list) => { if (!stale) dispatch({ type: "projects", projects: list }); }).catch(() => undefined);
+    }, state.projects === null ? 0 : 250);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [state.connection, state.projectsStale]);
+
+  // A project this browser remembers that no longer exists (another page deleted it): the filter goes back to any project, and a toast says so.
+  useEffect(() => {
+    if (state.projects === null || filter.project === null || filter.project === NO_PROJECT) return;
+    if (state.projects.some((project) => project.id === filter.project)) return;
+    changeFilter(withProject(filter, null));
+    push("info", "That project no longer exists.");
+  }, [state.projects, filter.project]);
 
   // A tab with nothing to show yet, while older runs are still to be read: read them, rather than say there is nothing (§29.1).
   useEffect(() => {
@@ -570,7 +744,7 @@ export default function App() {
   useEffect(() => {
     const next = watchWorking(watched.current, state.runs, filter);
     watched.current = next.watched;
-    for (const run of next.left) push("info", leftTheViewText(run), { label: "Show all", run: () => changeFilter(NO_FILTER) });
+    for (const run of next.left) push("info", leftTheViewText(run, viewScope), { label: "Show all", run: () => changeFilter(NO_FILTER) });
   }, [state.runs, filter]);
 
   if (startupError) {
@@ -586,12 +760,12 @@ export default function App() {
   const found = lightbox ? state.runs[lightbox.runId] : undefined;
   const lightboxRun = found && isImageRun(found) ? found : null;
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
-  // the whole bin, both tabs: what Empty bin deletes (the count on the bar is only for the tab being looked at)
-  const bin = state.counts ? state.counts.image.deleted + state.counts.music.deleted : null;
+  // the whole bin, both tabs, whatever project is chosen: what Empty bin deletes (the counts on the bar are for the tab and the project shown)
+  const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted : null;
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
   const filterBar = (
-    <FilterBar filter={filter} keptCount={state.counts?.[tabKind].kept ?? null} deletedCount={state.counts?.[tabKind].deleted ?? null} binTotal={bin}
-      onChange={changeFilter} onEmptyBin={() => setPendingEmptyBin(true)} />
+    <FilterBar filter={filter} keptCount={scopedCounts?.[tabKind].kept ?? null} deletedCount={scopedCounts?.[tabKind].deleted ?? null} binTotal={bin}
+      projects={state.projects} tab={tabKind} onChange={changeFilter} onEmptyBin={() => setPendingEmptyBin(true)} onManageProjects={() => setManagingProjects(true)} />
   );
   // what replaces "Loading…" when the first page of a filtered list could not be read: the reason, and a way to try again
   const problem =
@@ -604,7 +778,10 @@ export default function App() {
     ) : null;
   // what an empty list says: that it is still looking (older pages may hold some), or the empty state for this filter
   const emptyFor = (kind: "image" | "music") =>
-    lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : <EmptyHistory kind={kind} filter={filter} binDays={binDays} onShowAll={() => changeFilter(NO_FILTER)} />;
+    lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : (
+      <EmptyHistory kind={kind} filter={filter} binDays={binDays} project={filter.project === null || filter.project === NO_PROJECT ? null : projects.find((project) => project.id === filter.project) ?? null}
+        onShowAll={() => changeFilter(NO_FILTER)} onShowAnyProject={() => changeFilter(withProject(filter, null))} />
+    );
   const musicAvailable = !!caps?.modes.includes("music");
   const canEdit = !!caps?.modes.includes("edit");
   const editing = options?.mode === "edit";
@@ -687,6 +864,8 @@ export default function App() {
                       enlarging={enlarging}
                       enlargeWaiting={enlargeWaiting}
                       transient={transient(run)}
+                      viewScope={viewScope}
+                      projects={projectControls}
                       upscaler={caps?.upscaler ?? null}
                       onReuse={() => reuse(run)}
                       onRegenerateLarger={() => void regenerateLarger(run)}
@@ -735,6 +914,8 @@ export default function App() {
               loadProblem={problem}
               empty={emptyFor("music")}
               isTransient={transient}
+              viewScope={viewScope}
+              projects={projectControls}
               more={more}
               loadingOlder={loadingOlder}
               now={now}
@@ -768,9 +949,11 @@ export default function App() {
         onClose={() => setLightbox(null)}
       />
       <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />
-      <ConfirmDelete run={pendingDelete} binDays={binDays} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
-      <ConfirmEmptyBin open={pendingEmptyBin} images={state.counts?.image.deleted ?? 0} music={state.counts?.music.deleted ?? 0}
+      <ConfirmDelete run={pendingDelete} binDays={binDays} projectName={nameOfProject(pendingDelete?.project_id ?? null)} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
+      <ConfirmEmptyBin open={pendingEmptyBin} images={state.totals?.image.deleted ?? 0} music={state.totals?.music.deleted ?? 0} wholeBin={filter.project !== null}
         onCancel={() => setPendingEmptyBin(false)} onConfirm={() => void confirmEmptyBin()} />
+      <ProjectsDialog open={managingProjects} projects={projects} nameMax={projectNameMax} onClose={() => setManagingProjects(false)}
+        onCreate={createProject} onRename={renameProject} onDelete={deleteProject} />
       <Toasts toasts={toasts} onDismiss={dismiss} />
     </>
   );

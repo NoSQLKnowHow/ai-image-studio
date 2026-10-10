@@ -297,9 +297,53 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     expect(state.order).toEqual(["n1", "n2", "o1"]);
   });
 
-  it("the counts are kept as the server gave them", () => {
+  it("the counts are kept as the server gave them, with the project they describe", () => {
     const counts = { image: { all: 3, kept: 1, deleted: 1 }, music: { all: 2, kept: 0, deleted: 0 } };
-    expect(reducer(initialState, { type: "counts", counts }).counts).toEqual(counts);
+    expect(reducer(initialState, { type: "counts", counts, project: null })).toMatchObject({ counts, countsProject: null });
+    // within a project the counts say which: a number for one project must never be shown as another's
+    expect(reducer(initialState, { type: "counts", counts, project: "p1" })).toMatchObject({ counts, countsProject: "p1" });
+  });
+
+  it("the whole history's counts are kept apart from a project's, for Empty bin", () => {
+    const whole = { image: { all: 9, kept: 4, deleted: 3 }, music: { all: 2, kept: 1, deleted: 1 } };
+    const inProject = { image: { all: 2, kept: 2, deleted: 0 }, music: { all: 0, kept: 0, deleted: 0 } };
+    let state = reducer(initialState, { type: "totals", counts: whole });
+    state = reducer(state, { type: "counts", counts: inProject, project: "p1" });
+    expect(state.totals).toEqual(whole);
+    expect(state.counts).toEqual(inProject);
+  });
+
+  it("holds the projects as the server listed them, and is told to read them again", () => {
+    const projects = [{ id: "p1", name: "Logo", created_at: "2026-10-02T10:00:00.000Z", counts: { image: 2, music: 0 } }];
+    expect(initialState.projects).toBeNull(); // not known until the first answer
+    const state = reducer(initialState, { type: "projects", projects });
+    expect(state.projects).toEqual(projects);
+    expect(reducer(state, { type: "projectsChanged" }).projectsStale).toBe(state.projectsStale + 1);
+  });
+
+  // Filing a run changes the numbers on the Project drop-down and the counts within a project, so the page must ask again; a run that
+  // merely moves along (progress, a new prompt) must not make it ask.
+  it("the projects and the counts are stale when a run is filed, moved or taken out, and when a run goes", () => {
+    let state = withRuns(makeRun({ id: "r", pinned: true }));
+    const base = { counts: state.countsStale, projects: state.projectsStale };
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, project_id: "p1" } });
+    expect({ counts: state.countsStale, projects: state.projectsStale }).toEqual({ counts: base.counts + 1, projects: base.projects + 1 }); // filed
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, project_id: "p1", prompt: "edited" } });
+    expect({ counts: state.countsStale, projects: state.projectsStale }).toEqual({ counts: base.counts + 1, projects: base.projects + 1 }); // nothing moved
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, project_id: "p2" } });
+    expect({ counts: state.countsStale, projects: state.projectsStale }).toEqual({ counts: base.counts + 2, projects: base.projects + 2 }); // moved
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, project_id: null } });
+    expect({ counts: state.countsStale, projects: state.projectsStale }).toEqual({ counts: base.counts + 3, projects: base.projects + 3 }); // taken out
+    state = reducer(state, { type: "runDeleted", id: "r" });
+    expect({ counts: state.countsStale, projects: state.projectsStale }).toEqual({ counts: base.counts + 4, projects: base.projects + 4 }); // gone (it may have been filed)
+  });
+
+  it("a new run does not make the projects stale (it is in none), but a run kept or deleted does not either", () => {
+    let state = withRuns(makeRun({ id: "r", pinned: false }));
+    const before = state.projectsStale;
+    state = reducer(state, { type: "runUpsert", run: makeRun({ id: "new", created_at: "2026-10-02T12:00:00.000Z" }) });
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, pinned: true } });
+    expect(state.projectsStale).toBe(before);
   });
 
   // `countsStale` is a counter the page watches. It goes up when something that changes a count happens (a new run, Keep, un-keep, a

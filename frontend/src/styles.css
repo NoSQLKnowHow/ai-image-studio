@@ -547,3 +547,65 @@ fieldset.field { gap: 8px; }
 .phase-label { font-size: 12px; font-weight: 600; color: var(--text-3); }
 @media (max-width: 520px) { .phases { grid-template-columns: minmax(0, 1fr); } .tab { flex: 1 1 0; justify-content: center; } }
 
+
+/* ------------------------------------------------------------------ project folders (DESIGN.md §32) */
+/* the Project drop-down in the filter bar, with its Manage button: a second control beside Show, wrapping with it on a phone */
+.filter-project { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
+.filter-select {
+  min-height: 30px; max-width: min(16rem, 70vw); padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--surface); color: var(--text); font: inherit; font-size: 13px;
+}
+.filter-select:focus-visible { outline: none; box-shadow: var(--focus); }
+/* the chip on a card that is filed in a project: quiet, like the card's other badges */
+.badge-project { gap: 4px; background: var(--surface-3); color: var(--text-2); max-width: 100%; }
+.badge-project svg { font-size: 12px; }
+/* the Keep button on a filed card is pressed and locked: it stays, so its tooltip can say why, but it does nothing */
+.button[aria-disabled="true"][data-locked] { cursor: not-allowed; opacity: 0.8; }
+
+/* the Project button on a card and its drop-down: the menu hangs under the button and may run over the card's edge */
+.project-menu { position: relative; display: inline-block; }
+.project-button.active { background: var(--accent-soft); color: var(--accent-text); }
+.project-button-label { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-popover {
+  position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 14rem; max-width: min(20rem, calc(100vw - 32px));
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 6px;
+}
+/* where the menu sits horizontally is set by the component after it measures itself, so that it stays inside the window */
+.project-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 50vh; overflow: auto; }
+.project-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: 0; border-radius: 8px;
+  background: transparent; color: var(--text); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.project-item:hover { background: var(--surface-2); }
+.project-item:focus-visible { outline: none; box-shadow: var(--focus); background: var(--surface-2); }
+.project-tick { display: inline-flex; flex: none; width: 16px; color: var(--accent-text); }
+.project-item-name { min-width: 0; overflow-wrap: anywhere; }
+.project-rule { height: 1px; margin: 4px 0; background: var(--border); }
+.project-none { padding: 7px 8px; color: var(--text-3); font-size: 13px; }
+/* the one-line form the menu turns into for a new project, and the same field in the Manage dialog */
+.project-new { display: grid; gap: 6px; padding: 4px; width: min(20rem, calc(100vw - 48px)); }
+.project-new-label { font-size: 13px; font-weight: 600; }
+.project-new input, .project-add input, .project-rename input {
+  width: 100%; min-height: 34px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit;
+}
+.project-new input:focus-visible, .project-add input:focus-visible, .project-rename input:focus-visible { outline: none; box-shadow: var(--focus); }
+.project-new input[aria-invalid="true"], .project-add input[aria-invalid="true"], .project-rename input[aria-invalid="true"] { border-color: var(--danger); }
+.project-new-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* the Manage projects dialog */
+.projects-dialog { width: min(520px, calc(100vw - 32px)); max-height: 86vh; overflow: auto; }
+.projects-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.project-add { display: grid; gap: 6px; }
+.project-add-row { display: flex; gap: 8px; }
+.project-add-row input { flex: 1; min-width: 0; }
+.project-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.project-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.project-row-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.project-row-count { color: var(--text-3); font-size: 13px; }
+.project-row-actions { display: inline-flex; gap: 2px; margin-left: auto; }
+.project-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; width: 100%; }
+.project-rename input { flex: 1; min-width: 8rem; }
+.project-row-confirm { width: 100%; display: grid; gap: 6px; }
+.project-row .field-error { width: 100%; }
