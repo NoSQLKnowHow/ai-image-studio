@@ -19,8 +19,10 @@ DEFAULT_SIZE = ASPECT_RATIOS[DEFAULT_ASPECT]
 
 SIZE_MIN = 256
 SIZE_MAX = 4096
-# QwenImage21Pipeline requires height and width divisible by 2 x vae_scale_factor (16) = 32
-# (diffusers main @ 578c9b2c, pipeline_qwenimage21.py check_inputs). All model-card presets comply.
+# QwenImage21Pipeline works on a grid of 2 x vae_scale_factor (16) = 32 pixels. Its check_inputs only *warns* about a size that is
+# not on the grid and the pipeline then rounds it down (diffusers main @ 578c9b2c, pipeline_qwenimage21.py), so a size that is
+# not a multiple of 32 would quietly make a different size from the one asked for: the studio refuses it instead.
+# All model-card presets comply.
 SIZE_MULTIPLE = 32
 MAX_PIXELS = 4_500_000  # to be confirmed on the Spark (DESIGN.md §18 item 7)
 

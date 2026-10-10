@@ -477,8 +477,7 @@ test("a run made at 50% offers Regenerate larger, which queues the same prompt a
   await expect(again).toBeVisible();
   await expect(again).toHaveText("Regenerate larger");
   await expect(again).toHaveAttribute("title", /different picture/); // honest about what it will make
-  await expect(small.getByRole("button", { name: "Upscale" })).toBeDisabled();
-  await expect(small.getByRole("button", { name: "Upscale" })).toHaveAttribute("title", /Not built yet/);
+  await expect(small.getByRole("button", { name: "Upscale" })).toHaveCount(0); // the 1.4 placeholder is gone (DESIGN.md §27.7)
 
   await again.click();
   await expect(page.getByRole("status").filter({ hasText: "Queued at 1024×1024" })).toBeVisible();
@@ -573,7 +572,7 @@ test("when the server refuses or the queue is full, Regenerate larger says so an
   await expect(regenerateButton(card(page, prompt))).toBeEnabled();
 });
 
-test("phone width: the new buttons wrap inside the card, with no sideways scroll", async ({ page }) => {
+test("phone width: the buttons wrap inside the card, with no sideways scroll", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 740 });
   await useOptions(page, { aspect: "custom", customWidth: 512, customHeight: 512, steps: 4, scale: 50 });
   await page.goto("/");
@@ -582,10 +581,10 @@ test("phone width: the new buttons wrap inside the card, with no sideways scroll
   await generate(page, prompt);
   await expect(card(page, prompt).locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
   const regenerate = regenerateButton(card(page, prompt));
-  const upscale = card(page, prompt).getByRole("button", { name: "Upscale" });
+  const download = card(page, prompt).getByRole("link", { name: "Download", exact: true });
   await expect(regenerate).toBeVisible();
-  await expect(upscale).toBeVisible();
-  for (const button of [regenerate, upscale]) {
+  await expect(download).toBeVisible();
+  for (const button of [regenerate, download]) {
     const box = (await button.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(360);

@@ -401,6 +401,11 @@ class Database:
             result[row["run_id"]].append(row)
         return result
 
+    def input_position(self, image_id: str) -> Optional[int]:
+        """The place ("image 1") an image has among the inputs of the run that owns it, or None if it is not one."""
+        row = self._one("SELECT position FROM run_inputs WHERE image_id=?", (image_id,))
+        return None if row is None else int(row["position"])
+
     def get_staged(self, upload_id: str) -> Optional[sqlite3.Row]:
         """An uploaded image that no run has claimed yet."""
         return self._one("SELECT * FROM images WHERE id=? AND kind='input' AND run_id IS NULL", (upload_id,))

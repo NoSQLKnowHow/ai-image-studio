@@ -34,8 +34,31 @@ export interface FullSize {
   steps: number;
 }
 
-export interface ImageInfo {
+/** The 4K copy of an image, once made (DESIGN.md §27). It is a file beside the image, so it is just a size and a link. */
+export interface FourK {
+  width: number;
+  height: number;
+  bytes: number;
+  url: string;
+  download_url: string;
+}
+
+/** What Make 4K would make of a picture (DESIGN.md §27.3): its size, and whether a 16:9 (or 9:16) picture is trimmed to the frame. */
+export interface FourKSize {
+  width: number;
+  height: number;
+  trimmed: boolean;
+}
+
+/** What a picture the studio holds says about Make 4K: a result (ImageInfo) or an edit's source (RunInput) alike. */
+export interface FourKTarget {
   id: string;
+  can_4k: boolean; // the server's rule for whether Make 4K is offered for this picture
+  four_k_size: FourKSize | null; // what it would make; null when it is not offered
+  four_k: FourK | null; // its 4K copy, once made
+}
+
+export interface ImageInfo extends FourKTarget {
   idx: number;
   seed: number;
   width: number;
@@ -47,7 +70,7 @@ export interface ImageInfo {
 }
 
 /** An image an edit was given: its place in the order the model sees them (1 = "image 1"). */
-export interface RunInput {
+export interface RunInput extends FourKTarget {
   position: number;
   role: InputRole;
   id: string;
