@@ -19,6 +19,16 @@ sys.modules["upscale_probe"] = probe  # a dataclass in the script looks its own 
 spec.loader.exec_module(probe)  # importing it must not run anything or need torch
 
 
+# ------------------------------------------------------------------ the tiling is the studio's own
+def test_the_probe_tiles_with_the_same_code_as_enlarge_does():
+    """DESIGN.md §28.3, criterion 105: what the probe measures is what Enlarge runs."""
+    from studio import tiling
+
+    assert probe.tile_boxes is tiling.tile_boxes and probe.padding_needed is tiling.padding_needed
+    assert probe.upscale is tiling.upscale_tiled and probe.Tile is tiling.Tile
+    assert (probe.DEFAULT_TILE, probe.DEFAULT_OVERLAP) == (tiling.DEFAULT_TILE, tiling.DEFAULT_OVERLAP)
+
+
 # ------------------------------------------------------------------ tiles
 def coverage(width: int, height: int, tile: int, overlap: int) -> list[list[int]]:
     grid = [[0] * width for _ in range(height)]

@@ -14,6 +14,7 @@ from typing import Mapping, Optional
 PIPELINES = ("real", "fake")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
+UPSCALER_DEVICES = ("auto", "cuda", "cpu")  # STUDIO_UPSCALER_DEVICE (DESIGN.md §28.3)
 HUB_MODES = ("auto", "offline", "online")  # STUDIO_LOCAL_FILES_ONLY: auto (cache first), true/offline, false/online (§26.11)
 
 
@@ -48,12 +49,22 @@ class Settings:
     music_max_seconds: int = 300  # the longest `duration` a run may ask for (the model's own limit is 360)
     music_max_tracks: int = 4  # versions per music run
     music_libs: Optional[Path] = None  # a folder put first on the music worker's Python path (the image's own diffusers 0.40.0)
+    upscaler_model: Optional[Path] = None  # Enlarge's model file (DESIGN.md §28.3); None = $HF_HOME/upscalers/RealESRGAN_x2plus.pth
+    upscaler_device: str = "auto"  # where Enlarge runs: auto (the GPU if there is one), cuda, or cpu
     fake_step_delay_ms: int = 30
     static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
     @property
     def db_path(self) -> Path:
         return self.data_dir / "studio.sqlite"
+
+    @property
+    def upscaler_model_path(self) -> Path:
+        """The upscaler model file Enlarge uses: STUDIO_UPSCALER_MODEL, else RealESRGAN_x2plus.pth in the `upscalers` folder of the
+        Hugging Face cache (the folder the container sees as /models, where the probe looks too)."""
+        if self.upscaler_model is not None:
+            return self.upscaler_model
+        return Path(os.environ.get("HF_HOME") or "~/.cache/huggingface").expanduser() / "upscalers" / "RealESRGAN_x2plus.pth"
 
     @classmethod
     def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "Settings":
@@ -135,6 +146,11 @@ class Settings:
                 return None
             return value
 
+        upscaler_device = env.get("STUDIO_UPSCALER_DEVICE", "auto").strip().lower() or "auto"
+        if upscaler_device not in UPSCALER_DEVICES:
+            errors.append(f"STUDIO_UPSCALER_DEVICE={upscaler_device!r} must be one of: {', '.join(UPSCALER_DEVICES)}.")
+            upscaler_device = "auto"
+
         pipeline = env.get("STUDIO_PIPELINE", "real").strip().lower()
         if pipeline not in PIPELINES:
             errors.append(f"STUDIO_PIPELINE={pipeline!r} must be one of: {', '.join(PIPELINES)}.")
@@ -176,6 +192,8 @@ class Settings:
             music_max_seconds=integer("STUDIO_MUSIC_MAX_SECONDS", cls.music_max_seconds, 10, 360),
             music_max_tracks=integer("STUDIO_MUSIC_MAX_TRACKS", cls.music_max_tracks, 1, 8),
             music_libs=Path(env["STUDIO_MUSIC_LIBS"]).expanduser() if env.get("STUDIO_MUSIC_LIBS", "").strip() else None,
+            upscaler_model=Path(env["STUDIO_UPSCALER_MODEL"]).expanduser() if env.get("STUDIO_UPSCALER_MODEL", "").strip() else None,
+            upscaler_device=upscaler_device,
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )

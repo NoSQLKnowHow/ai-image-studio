@@ -359,6 +359,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .run-note { background: var(--surface-2); border-radius: var(--radius); padding: 8px 12px; color: var(--text-2); font-size: 14px; }
 .run-expiry { background: var(--warning-soft); border-radius: var(--radius); padding: 8px 12px; color: var(--warning); font-size: 14px; font-weight: 550; }
 .button[aria-disabled="true"] { opacity: 0.6; cursor: progress; }
+.button[aria-disabled="true"][data-unavailable] { cursor: not-allowed; } /* Enlarge without its model: pressing it says why */
 .button.keep.active { background: var(--accent-soft); color: var(--accent-text); }
 .button.keep.active svg { fill: currentColor; }
 .run-actions { display: flex; flex-wrap: wrap; gap: 2px; margin-left: -8px; }

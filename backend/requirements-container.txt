@@ -19,3 +19,8 @@ huggingface_hub==1.33.0  # diffusers wants >=1.32,<2; transformers >=1.31,<3
 hf-xet==1.6.0
 tokenizers==0.23.2
 safetensors==0.8.0
+
+# Enlarge (DESIGN.md section 28): spandrel loads the upscaler model. Both are pure-Python wheels (py3-none-any), so nothing is
+# compiled, and torch and torchvision stay NVIDIA's (the pins the build applies make pip fail rather than replace them).
+spandrel==0.4.2
+einops==0.8.2            # spandrel needs it

@@ -63,6 +63,8 @@ services:
       STUDIO_DRAFT_SIZE: ${STUDIO_DRAFT_SIZE:-512}
       STUDIO_DRAFT_STEPS: ${STUDIO_DRAFT_STEPS:-12}
       STUDIO_EDIT_WARN_UNITS: ${STUDIO_EDIT_WARN_UNITS:-8}
+      STUDIO_UPSCALER_MODEL: ${STUDIO_UPSCALER_MODEL:-}
+      STUDIO_UPSCALER_DEVICE: ${STUDIO_UPSCALER_DEVICE:-auto}
       HF_TOKEN: ${HF_TOKEN:-}
     # The server finishes or fails the current image and stops the worker cleanly on SIGTERM.
     stop_grace_period: 30s

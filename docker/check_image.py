@@ -96,6 +96,15 @@ def main() -> int:
     else:
         notes.append("STUDIO_MUSIC_LIBS is not set (outside the image?), skipped the music import check")
 
+    # Enlarge (DESIGN.md section 28.3) needs spandrel. A copy that cannot be imported is not a failed build: the page says that
+    # Enlarge is unavailable and why, and everything else works.
+    try:
+        import spandrel
+
+        notes.append(f"Enlarge: spandrel {getattr(spandrel, '__version__', md.version('spandrel'))}")
+    except Exception as exc:  # noqa: BLE001 - whatever went wrong, it is only a note
+        notes.append(f"Enlarge: spandrel cannot be imported here ({type(exc).__name__}: {exc}); the page will say Enlarge is unavailable")
+
     static = Path(os.environ.get("STUDIO_STATIC_DIR", "/app/static")) / "index.html"
     if not static.is_file():
         problems.append(f"the web page is missing: {static}")

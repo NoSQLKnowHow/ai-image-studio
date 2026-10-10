@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
-import type { FourKTarget, ImageRun, WorkerState } from "../types";
+import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState } from "../types";
 import { FourKButton } from "./FourKButton";
 import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 
@@ -11,9 +11,12 @@ interface Props {
   workerState: WorkerState | null;
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
+  enlarging: ReadonlySet<string>; // ids of the images being enlarged with the upscaler model (DESIGN.md §28)
+  upscaler: UpscalerStatus | null; // whether Enlarge can run here (from the capabilities)
   onReuse: () => void;
   onRegenerateLarger: () => void;
   onMake4K: (image: FourKTarget) => void;
+  onEnlarge: (image: FourKTarget) => void;
   onEditThis: () => void;
   onRetry: () => void;
   onCancel: () => void;
@@ -107,7 +110,7 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, canEdit, making4k, onReuse, onRegenerateLarger, onMake4K, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
@@ -188,8 +191,9 @@ export function RunCard({ run, now, workerState, canEdit, making4k, onReuse, onR
             </a>
           )}
           {run.images.length === 1 && (
-            <FourKButton image={run.images[0]} making={making4k.has(run.images[0].id)} className="button small ghost"
-              onMake={() => onMake4K(run.images[0])} />
+            <FourKButton image={run.images[0]} making={making4k.has(run.images[0].id)} enlarging={enlarging.has(run.images[0].id)}
+              upscaler={upscaler} className="button small ghost" onMake={() => onMake4K(run.images[0])}
+              onEnlarge={() => onEnlarge(run.images[0])} />
           )}
           {run.images.length === 1 && run.images[0].thumb_url && (
             <a className="button small ghost" href={`${run.images[0].thumb_url}?download=1`} download

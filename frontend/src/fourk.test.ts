@@ -1,17 +1,25 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  filenameFromDisposition, fourKControl, fourKFailedText, fourKMadeText, makeTitle, megabytes, saveBlob, upscaleFailedText, upscaledText,
+  enlargeControl, enlargeFailedText, enlargeTitle, enlargedText, filenameFromDisposition, fourKControl, fourKFailedText, fourKMadeText,
+  makeTitle, megabytes, saveBlob, upscaleFailedText, upscaledText,
 } from "./fourk";
 import { initialState, reducer } from "./store";
 import { makeRun } from "./testdata";
-import type { FourK, FourKSize, FourKTarget, ImageInfo } from "./types";
+import type { EnlargeSize, FourK, FourKSize, FourKTarget, ImageInfo, UpscalerStatus } from "./types";
 
 const FRAME: FourKSize = { width: 3840, height: 2160, trimmed: true };
 const SQUARE: FourKSize = { width: 3840, height: 3840, trimmed: false };
-const COPY: FourK = { width: 3840, height: 2160, bytes: 14_100_000, url: "/api/images/i1/4k", download_url: "/api/images/i1/4k?download=1" };
+const COPY: FourK = { width: 3840, height: 2160, bytes: 14_100_000, method: "resize", url: "/api/images/i1/4k", download_url: "/api/images/i1/4k?download=1" };
+const MODEL_COPY: FourK = { ...COPY, method: "model", url: "/api/images/i1/4k?method=model", download_url: "/api/images/i1/4k?method=model&download=1" };
+const ENLARGE: EnlargeSize = { width: 3840, height: 2160, trimmed: true, passes: 1 };
+const READY: UpscalerStatus = { available: true, model: "RealESRGAN_x2plus.pth", reason: null, hint: null, max_enlargement: 4 };
+const MISSING: UpscalerStatus = {
+  available: false, model: "RealESRGAN_x2plus.pth", max_enlargement: 4,
+  reason: "The upscaler model file is not there: /models/upscalers/RealESRGAN_x2plus.pth", hint: "Download it once.",
+};
 const image = (extra: Partial<ImageInfo> = {}): ImageInfo => ({
   id: "i1", idx: 0, seed: 7, width: 2752, height: 1536, has_alpha: false, url: "/api/images/i1", thumb_url: "/api/images/i1/thumb",
-  download_url: "/api/images/i1?download=1", can_4k: true, four_k_size: FRAME, four_k: null, ...extra,
+  download_url: "/api/images/i1?download=1", can_4k: true, four_k_size: FRAME, can_enlarge: true, enlarge_size: ENLARGE, four_k: null, ...extra,
 });
 
 describe("which control a picture gets (DESIGN.md §27.3)", () => {
@@ -45,7 +53,7 @@ describe("which control a picture gets (DESIGN.md §27.3)", () => {
   });
 
   it("an edit's source is a picture like any other: the same control, from the same three fields", () => {
-    const source: FourKTarget = { id: "in1", can_4k: true, four_k_size: SQUARE, four_k: null };
+    const source: FourKTarget = { id: "in1", can_4k: true, four_k_size: SQUARE, can_enlarge: true, enlarge_size: { ...ENLARGE, width: 3840, height: 3840, trimmed: false }, four_k: null };
     expect(fourKControl(source, false)).toMatchObject({ kind: "make", title: makeTitle(SQUARE) });
     expect(fourKControl({ ...source, four_k: { ...COPY, width: 3840, height: 3840, download_url: "/api/images/in1/4k?download=1" } }, false))
       .toMatchObject({ kind: "download", href: "/api/images/in1/4k?download=1", title: "The 4K copy: 3840×3840 PNG, 14.1 MB" });
@@ -135,6 +143,89 @@ describe("a picture from the computer (DESIGN.md §27.9)", () => {
       vi.useRealTimers();
       vi.unstubAllGlobals();
     });
+  });
+});
+
+describe("Enlarge (DESIGN.md §28)", () => {
+  it("is offered beside Make 4K when the server offers it and the model is there, with a tooltip that says what it will make", () => {
+    expect(enlargeControl(image(), false, READY)).toEqual({ kind: "enlarge", label: "Enlarge", title: enlargeTitle(ENLARGE) });
+    expect(fourKControl(image(), false)?.kind).toBe("make"); // and Make 4K is still there
+  });
+
+  it("is offered while the capabilities have not arrived yet: the server will answer", () => {
+    expect(enlargeControl(image(), false, null)?.kind).toBe("enlarge");
+  });
+
+  it("says Enlarging… while the request is under way, and that is not pressable again", () => {
+    expect(enlargeControl(image(), true, READY)).toMatchObject({ kind: "enlarging", label: "Enlarging…" });
+  });
+
+  it("an enlargement under way stays an enlargement under way even if the model has just gone away", () => {
+    expect(enlargeControl(image(), true, MISSING)?.kind).toBe("enlarging");
+  });
+
+  it("without the model file it is shown, dimmed, with the reason and what to do as its tooltip", () => {
+    expect(enlargeControl(image(), false, MISSING)).toEqual({
+      kind: "unavailable", label: "Enlarge",
+      title: "The upscaler model file is not there: /models/upscalers/RealESRGAN_x2plus.pth Download it once.",
+    });
+    expect(enlargeControl(image(), false, { ...MISSING, reason: null, hint: null })).toMatchObject({ kind: "unavailable", title: "Enlarge is not available here." });
+    expect(enlargeControl(image(), false, { ...MISSING, hint: null })?.title).toBe("The upscaler model file is not there: /models/upscalers/RealESRGAN_x2plus.pth");
+  });
+
+  it("nothing when the server does not offer it for this picture: the page repeats no rule of its own", () => {
+    expect(enlargeControl(image({ can_enlarge: false, enlarge_size: null }), false, READY)).toBeNull();
+    expect(enlargeControl(image({ can_enlarge: false, enlarge_size: null }), true, MISSING)).toBeNull();
+    // a picture Make 4K cannot do but Enlarge can: offered by Enlarge alone
+    const half = image({ can_4k: false, four_k_size: null });
+    expect(fourKControl(half, false)).toBeNull();
+    expect(enlargeControl(half, false, READY)?.kind).toBe("enlarge");
+  });
+
+  it("nothing once the picture has an enlarged copy: Download 4K is all there is", () => {
+    const done = image({ four_k: MODEL_COPY });
+    expect(enlargeControl(done, false, READY)).toBeNull();
+    expect(fourKControl(done, false)?.kind).toBe("download");
+  });
+
+  it("still offered after a plain Make 4K copy, which it replaces: both Download 4K and Enlarge show", () => {
+    const plain = image({ four_k: COPY });
+    expect(fourKControl(plain, false)?.kind).toBe("download");
+    expect(enlargeControl(plain, false, READY)?.kind).toBe("enlarge");
+  });
+
+  it("an edit's source is a picture like any other", () => {
+    const source: FourKTarget = { id: "in1", can_4k: false, four_k_size: null, can_enlarge: true, enlarge_size: { ...ENLARGE, trimmed: false }, four_k: null };
+    expect(enlargeControl(source, false, READY)).toMatchObject({ kind: "enlarge", title: enlargeTitle({ ...ENLARGE, trimmed: false }) });
+  });
+
+  it("the Download 4K tooltip says which kind of copy it is", () => {
+    expect(fourKControl(image({ four_k: COPY }), false)).toMatchObject({ title: "The 4K copy: 3840×2160 PNG, 14.1 MB" });
+    expect(fourKControl(image({ four_k: MODEL_COPY }), false)).toEqual({
+      kind: "download", label: "Download 4K", href: "/api/images/i1/4k?method=model&download=1",
+      title: "The enlarged 4K copy: 3840×2160 PNG, 14.1 MB, made with an upscaler model",
+    });
+  });
+
+  it("the tooltip names the size, the trim, and what the model's detail is", () => {
+    expect(enlargeTitle(ENLARGE)).toBe("Enlarge this picture to 3840×2160 (trimmed to exactly 16:9) with an upscaler model: the same picture, sharper than Make 4K, but it takes longer. The extra detail is the model's guess.");
+    expect(enlargeTitle({ ...ENLARGE, trimmed: false, width: 3840, height: 3840 })).toBe("Enlarge this picture to 3840×3840 with an upscaler model: the same picture, sharper than Make 4K, but it takes longer. The extra detail is the model's guess.");
+    expect(enlargeTitle({ width: 2160, height: 3840, trimmed: true, passes: 1 })).toContain("trimmed to exactly 9:16");
+    expect(enlargeTitle(null)).toBe("Enlarge this picture to 4K with an upscaler model: the same picture, sharper than Make 4K, but it takes longer. The extra detail is the model's guess.");
+  });
+
+  it("what is said when it is done names the size and where to find it", () => {
+    expect(enlargedText(image({ four_k: MODEL_COPY }))).toBe("Enlarged to 3840×2160, 14.1 MB. Use Download 4K.");
+    expect(enlargedText(image())).toBe("The enlarged copy is ready. Use Download 4K.");
+  });
+
+  it("a failure gives the server's reason and its hint after a short lead; a vanished picture says so instead", () => {
+    expect(enlargeFailedText(503, "The upscaler model file is not there: /m/x.pth", "Download it once.")).toBe(
+      "Couldn't enlarge: The upscaler model file is not there: /m/x.pth Download it once.");
+    expect(enlargeFailedText(500, "Out of memory while enlarging.", null)).toBe("Couldn't enlarge: Out of memory while enlarging.");
+    expect(enlargeFailedText(504, "Enlarging took longer than 30 minutes and was stopped.", "Use the GPU.")).toContain("Use the GPU.");
+    expect(enlargeFailedText(0, "Can't reach the studio server.", null)).toBe("Couldn't enlarge: Can't reach the studio server.");
+    expect(enlargeFailedText(404, "Image not found.", null)).toBe("That picture no longer exists, so there is nothing to enlarge.");
   });
 });
 

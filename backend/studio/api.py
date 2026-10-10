@@ -30,6 +30,7 @@ from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
 from .serialize import parse_ts, utcnow
 from .storage import Storage, StorageError, check_id
+from .upscaler import UpscalerError
 
 log = logging.getLogger("studio.api")
 
@@ -203,6 +204,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 },
             },
             "music": {**jobs.music_status(), "model": jobs.model_id_for("music")},
+            "upscaler": jobs.upscaler_status(),  # Enlarge (DESIGN.md §28.3): whether it can run here, and if not why
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
         }
@@ -394,18 +396,49 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _error(507, f"The 4K picture could not be saved: {exc.strerror or exc}", "storage_full")
         return JSONResponse(status_code=201 if made else 200, content=run)
 
+    @app.post("/api/images/{image_id}/enlarge")
+    async def enlarge_image(image_id: str, request: Request) -> Any:
+        """Enlarge a picture to the 4K frame with the upscaler model (DESIGN.md §28): `201` with the updated run when this call made
+        the copy, `200` when it was there already. The work is done by a short-lived process (the image worker is not involved),
+        so the request stays open for as long as it takes."""
+        try:
+            run, made = await jobs_of(request).enlarge(image_id)
+        except (StorageError, ImageNotFound, FileNotFoundError):
+            return _error(404, "Image not found.", "not_found")
+        except NotEligible as exc:
+            return _error(422, str(exc), "not_enlarge_eligible")
+        except UnidentifiedImageError:
+            return _error(422, "The picture file could not be read.", "unreadable")
+        except UpscalerError as exc:
+            content: dict[str, Any] = {"detail": exc.detail, "code": exc.code}
+            if exc.hint:
+                content["hint"] = exc.hint
+            return JSONResponse(status_code=exc.status, content=content)
+        except OSError as exc:
+            return _error(507, f"The enlarged picture could not be saved: {exc.strerror or exc}", "storage_full")
+        return JSONResponse(status_code=201 if made else 200, content=run)
+
     @app.get("/api/images/{image_id}/4k")
-    async def get_image_4k(image_id: str, request: Request, download: bool = False) -> Any:
-        """The 4K copy of a picture the studio holds (a result, or an edit's source), once it has been made; `?download=1`
-        names it like the picture, with the copy's own size."""
+    async def get_image_4k(image_id: str, request: Request, download: bool = False, method: str = Query("", max_length=16)) -> Any:
+        """The 4K copy of a picture the studio holds (a result, or an edit's source), once it has been made: the Enlarge copy if
+        there is one, else the Make 4K one; `?download=1` names it like the picture, with the copy's own size. `method` is only
+        part of the address the payload gives (an Enlarge copy replaces a Make 4K copy, and the address is cached as immutable);
+        the answer does not depend on it."""
         db: Database = request.app.state.db
         storage: Storage = request.app.state.storage
         image = db.get_image(image_id)
         if image is None or image["run_id"] is None:
             return _error(404, "Image not found.", "not_found")
-        try:
-            data = await asyncio.to_thread(storage.four_k_path(image["path"]).read_bytes)
-        except (StorageError, FileNotFoundError, IsADirectoryError):
+        data = None
+        for find in (storage.enlarged_path, storage.four_k_path):
+            try:
+                data = await asyncio.to_thread(find(image["path"]).read_bytes)
+                break
+            except (FileNotFoundError, IsADirectoryError):
+                continue
+            except StorageError:
+                break
+        if data is None:
             return _error(404, "No 4K copy of this image has been made yet.", "not_found")
         headers = {"Cache-Control": IMMUTABLE}
         run = db.get_run(image["run_id"]) if download else None
