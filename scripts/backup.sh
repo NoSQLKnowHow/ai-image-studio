@@ -8,7 +8,8 @@
 #   data.tar.gz      your history and images (the ./data folder)           always
 #   image.tar.gz     the Docker image, exactly as built                    unless --no-image
 #   env.backup       your .env settings (may hold a token)                 unless --no-env
-#   model-cache.tar  the model's files from the Hugging Face cache         only with --model
+#   model-cache.tar  the studio's models from the Hugging Face cache       unless --no-model
+#                    (the image model, the music model, the Enlarge upscaler file; nothing else in the cache)
 #   MANIFEST.txt     what this is, and which git commit and image it came from
 #   SHA256SUMS       a checksum for every other piece
 set -euo pipefail
@@ -19,13 +20,19 @@ usage() {
   cat <<'EOF'
 Usage: scripts/backup.sh [options] DESTINATION_FOLDER
 
-Backs up your history and images (./data), the Docker image and your .env settings into a single
-.tar file, named ai-image-studio-backup-<date>-<time>.tar, inside DESTINATION_FOLDER. The studio is
-stopped for the few seconds it takes to copy the data, then started again; the image and model are
+Backs up your history and images (./data), the Docker image, your .env settings and the studio's models
+into a single .tar file, named ai-image-studio-backup-<date>-<time>.tar, inside DESTINATION_FOLDER. The studio
+is stopped for the few seconds it takes to copy the data, then started again; the image and models are
 copied while it runs. The finished .tar is re-read and every checksum checked before it gets its name.
 
+The studio's models are the three it uses, found from your .env settings: the image model (STUDIO_MODEL),
+the music model (STUDIO_MUSIC_MODEL) and the Enlarge upscaler file (STUDIO_UPSCALER_MODEL), all in the
+Hugging Face cache; about 60 GiB with the defaults. Nothing else in that cache is touched. One that isn't
+there (never downloaded, or not in the cache at all) is skipped with a warning that names it.
+
 Options:
-  --model        also back up the model's files from the Hugging Face cache (about 31 GiB)
+  --no-model     leave out the models (they are included by default)
+  --model        accepted, and does nothing: the models are included anyway (old command lines keep working)
   --no-image     leave out the Docker image
   --no-env       leave out the .env file
   --no-verify    skip the final re-read and checksum check (faster; not recommended)
@@ -43,11 +50,12 @@ Exit codes: 0 done; 1 an error; 2 wrong usage; 3 not done because the studio is 
 EOF
 }
 
-WITH_MODEL=0; WITH_IMAGE=1; WITH_ENV=1; VERIFY=1; KEEP=0
+WITH_MODEL=1; WITH_IMAGE=1; WITH_ENV=1; VERIFY=1; KEEP=0
 ASSUME_YES=0; DRY=0; INTERRUPT=0; ALLOW_ROOT=0; DEST=""
 while (( $# )); do
   case $1 in
-    --model)      WITH_MODEL=1 ;;
+    --model)      WITH_MODEL=1 ;;   # the default since models were made part of every backup
+    --no-model)   WITH_MODEL=0 ;;
     --no-image)   WITH_IMAGE=0 ;;
     --no-env)     WITH_ENV=0 ;;
     --no-verify)  VERIFY=0 ;;
@@ -86,13 +94,43 @@ if (( WITH_ENV )) && [[ ! -f .env ]]; then
   WITH_ENV=0
 fi
 
-HF_DIR=""; MODEL_DIR=""
+# The studio's models that are in the cache. A model that can't be included is skipped with a warning that names
+# it, never an error: a fresh install, or a model that was never used, must not stop every backup.
+# Three lists describe what will be packed. MODEL_PATHS holds each model's path inside the cache folder
+# (hub/models--Org--Name for a model folder, upscalers/File.pth for the upscaler file), MODEL_LABELS what to call each one in
+# messages, and MODELS_NOTE what the summary says when none is packed.
+HF_DIR=""; MODEL_PATHS=(); MODEL_LABELS=(); MODELS_NOTE="no (--no-model)"
+# want_model LABEL PATH WHY_NOT: adds PATH (inside the cache folder; empty = it isn't in the cache at all) if it is there.
+want_model() {
+  # PATH is empty when the setting can't name a cached model at all; WHY_NOT then says what to do about it
+  local label=$1 path=$2 why=$3
+  # 1. The setting doesn't point into the cache (say, STUDIO_MODEL is a folder on disk): skip it and say why
+  if [[ -z $path ]]; then warn "Leaving the $label out of the backup: $why"; return 0; fi
+  # 2. A name restore.sh would refuse to put back: skip it now rather than make a backup that cannot be restored
+  if ! valid_model_path "$path"; then warn "Leaving the $label out of the backup: '$path' has a name that a restore would refuse."; return 0; fi
+  # 3. A model folder (hub/...) must be a directory and the upscaler a file. If it is there, queue it for packing; if not,
+  #    it simply hasn't been downloaded yet (the studio fetches a model the first time it is used)
+  if [[ $path == hub/* && -d $HF_DIR/$path ]] || [[ $path != hub/* && -f $HF_DIR/$path ]]; then
+    MODEL_PATHS+=("$path"); MODEL_LABELS+=("$label")
+  else
+    warn "Leaving the $label out of the backup: it isn't in the model cache yet ($HF_DIR/$path). It downloads the first time it is used."
+  fi
+}
 if (( WITH_MODEL )); then
-  MODEL_DIR=$(model_dir_name) \
-    || die "STUDIO_MODEL points at a folder on disk, not at the Hugging Face cache; --model can't back that up."
+  # Look for the three models in the order they are packed and listed: the image model first, then the music model, then
+  # the upscaler. PATH is left empty when a setting can't name a cached model, and want_model explains and skips that one.
   HF_DIR=$(hf_cache_dir)
-  [[ -d $HF_DIR/hub/$MODEL_DIR ]] \
-    || die "The model isn't in the cache yet ($HF_DIR/hub/$MODEL_DIR). Generate an image once so it downloads, or leave out --model."
+  path=$(hf_model_path STUDIO_MODEL "$DEFAULT_MODEL") || path=""
+  want_model "image model" "$path" "STUDIO_MODEL is a folder on disk, not a model in the Hugging Face cache. Back that folder up yourself."
+  path=$(hf_model_path STUDIO_MUSIC_MODEL "$DEFAULT_MUSIC_MODEL") || path=""
+  want_model "music model" "$path" "STUDIO_MUSIC_MODEL is a folder on disk, not a model in the Hugging Face cache. Back that folder up yourself."
+  path=$(upscaler_path) || path=""
+  want_model "Enlarge upscaler" "$path" "STUDIO_UPSCALER_MODEL is outside the model cache (/models in the container). Back that file up yourself."
+  # If none was found there is no model piece at all: switch the models off, so the file list, the manifest and the format all say so
+  if (( ${#MODEL_PATHS[@]} == 0 )); then
+    warn "None of the studio's models was found in the cache, so this backup holds no model."
+    WITH_MODEL=0; MODELS_NOTE="no (none was found in the cache)"
+  fi
 fi
 
 STAMP=$(date +%Y%m%d-%H%M%S)
@@ -112,7 +150,12 @@ if (( WITH_IMAGE )); then
   IMAGE_ID=$(docker image inspect "$IMAGE" --format '{{.Id}}')
   image_bytes=$(docker image inspect "$IMAGE" --format '{{.Size}}')
 fi
-(( WITH_MODEL )) && model_bytes=$(du -sb "$HF_DIR/hub/$MODEL_DIR" | cut -f1)
+# The models' total size, for the summary and the free-space check below
+for (( i = 0; i < ${#MODEL_PATHS[@]}; i++ )); do
+  # a model folder is counted as it is (its snapshots link to its blobs); the upscaler file may itself be a link
+  if [[ -d $HF_DIR/${MODEL_PATHS[i]} ]]; then one=$(du -sb "$HF_DIR/${MODEL_PATHS[i]}" | cut -f1); else one=$(du -sbL "$HF_DIR/${MODEL_PATHS[i]}" | cut -f1); fi
+  model_bytes=$(( model_bytes + one ))
+done
 need=$(( data_bytes + image_bytes + model_bytes ))
 largest=$data_bytes
 (( image_bytes > largest )) && largest=$image_bytes
@@ -124,7 +167,13 @@ say "  to:      $FINAL"
 say "  data:    yes ($(human "$data_bytes"))"
 say "  image:   $( ((WITH_IMAGE)) && echo "yes ($IMAGE)" || echo no )"
 say "  .env:    $( ((WITH_ENV)) && echo yes || echo no )"
-say "  model:   $( ((WITH_MODEL)) && echo "yes ($MODEL_DIR)" || echo "no (add --model)" )"
+if (( WITH_MODEL )); then
+  # The summary: the models' total size, then one line each so you can see exactly what will be packed
+  say "  models:  yes ($(human "$model_bytes"))"
+  for (( i = 0; i < ${#MODEL_PATHS[@]}; i++ )); do say "             - ${MODEL_LABELS[i]}: ${MODEL_PATHS[i]}"; done
+else
+  say "  models:  $MODELS_NOTE"
+fi
 
 if [[ -d $DEST ]]; then avail=$(df --output=avail -B1 "$DEST" | tail -n 1 | tr -d ' ')
 else                    avail=$(df --output=avail -B1 "$(dirname -- "$DEST")" | tail -n 1 | tr -d ' '); fi
@@ -153,7 +202,7 @@ if (( DRY )); then
   say "  - pack ./data into data.tar.gz"
   (( WAS_RUNNING )) && say "  - start the studio again"
   (( WITH_IMAGE )) && say "  - save $IMAGE (docker save | gzip) into image.tar.gz"
-  (( WITH_MODEL )) && say "  - pack $HF_DIR/hub/$MODEL_DIR into model-cache.tar"
+  (( WITH_MODEL )) && say "  - pack the models (${MODEL_PATHS[*]}) from $HF_DIR into model-cache.tar"
   (( WITH_ENV )) && say "  - copy .env"
   say "  - write MANIFEST.txt and SHA256SUMS, and put everything into one file: $FINAL"
   (( VERIFY )) && say "  - re-read that file and check every checksum, before it gets its final name"
@@ -210,8 +259,17 @@ if (( WITH_IMAGE )); then
   docker save "$IMAGE" | gzip > "$STAGE/image.tar.gz"
 fi
 if (( WITH_MODEL )); then
-  say "Packing the model (about 31 GiB; a few minutes)..."
-  tar -cf "$STAGE/model-cache.tar" -C "$HF_DIR" "hub/$MODEL_DIR"
+  # All the models go into ONE tar, model-cache.tar, so a restore can read them as a single piece: the first model creates
+  # it and each later one is appended to it
+  say "Packing the models ($(human "$model_bytes"); a few minutes)..."
+  for (( i = 0; i < ${#MODEL_PATHS[@]}; i++ )); do
+    # a model folder keeps its own links (its snapshots point at its blobs, which must not be stored twice); a model
+    # FILE that is itself a link is stored as the file, so that a restore doesn't make a link that points nowhere
+    deref=(); [[ ${MODEL_PATHS[i]} == hub/* ]] || deref=(-h)
+    # -cf creates the archive (first model), -rf appends to it (the rest)
+    if (( i == 0 )); then mode=-cf; else mode=-rf; fi
+    tar "$mode" "$STAGE/model-cache.tar" ${deref[@]+"${deref[@]}"} -C "$HF_DIR" -- "${MODEL_PATHS[i]}"
+  done
 fi
 if (( WITH_ENV )); then
   cp -p .env "$STAGE/env.backup"
@@ -226,8 +284,12 @@ included="data"
 git_commit=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo none)
 git_dirty=$(git -C "$REPO" status --porcelain 2>/dev/null | wc -l | tr -d ' ' || echo 0)
 version=$(grep -m1 '__version__' backend/studio/__init__.py 2>/dev/null | sed -E 's/.*"([^"]+)".*/\1/' || true)
+# The format tells restore.sh how to read the models. Format 1 (no models, or the old single image model, named by model_dir)
+# is what every older script reads; format 2 means the models are listed in model_paths. A backup without models stays format 1,
+# so it can still be restored by an older restore.sh.
+format=1; (( WITH_MODEL )) && format=2   # a backup with models says which; format 1 is the layout older scripts read
 {
-  echo "format=1"
+  echo "format=$format"
   echo "created_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   echo "host=$(hostname)"
   echo "user=$(id -un)"
@@ -237,7 +299,9 @@ version=$(grep -m1 '__version__' backend/studio/__init__.py 2>/dev/null | sed -E
   echo "image_name=$IMAGE"
   echo "image_id=$IMAGE_ID"
   echo "included=$included"
-  echo "model_dir=$MODEL_DIR"
+  # model_paths lists what is inside model-cache.tar, comma-separated, as paths inside the cache folder (restore.sh reads it and
+  # checks every entry of the archive against it). Without models the old, empty model_dir= line is kept so the manifest looks as it always did.
+  if (( WITH_MODEL )); then echo "model_paths=$(IFS=,; echo "${MODEL_PATHS[*]}")"; else echo "model_dir="; fi
 } > "$STAGE/MANIFEST.txt"
 
 say "Checksumming..."

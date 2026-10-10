@@ -152,13 +152,13 @@ saving four things that live outside it:
 | **Your history and images** | `./data` in the repo folder | **Gone for good.** This is the part that matters |
 | Your settings | `.env` | Easy to recreate, unless it holds a token |
 | The built image | `ai-image-studio:local` in Docker | Rebuildable, but a rebuild is not identical: it downloads the packages again |
-| The model | `~/.cache/huggingface` (31 GiB) | Re-downloadable, but Qwen could have changed it in the meantime |
+| The models | `~/.cache/huggingface`: the image model (31 GiB), the music model (about 29 GB) and the Enlarge upscaler file (about 64 MB) | Re-downloadable, but their authors could have changed them in the meantime, and the upscaler file is one you fetched by hand |
 
 **Back up:**
 
 ```bash
-scripts/backup.sh ~/backups              # history, image and settings
-scripts/backup.sh --model ~/backups      # ... and the 31 GiB model too
+scripts/backup.sh ~/backups              # history, image, settings and the models (roughly 70 GB)
+scripts/backup.sh --no-model ~/backups   # ... without the models (about 10 GB)
 ```
 
 The result is **one file**, such as `~/backups/ai-image-studio-backup-20261002-143015.tar`, that you can
@@ -170,11 +170,11 @@ whole, because what is inside already is), and any archive tool can open it. Ins
 | `data.tar.gz` | your history and images |
 | `image.tar.gz` | the Docker image, exactly as built (left out with `--no-image`) |
 | `env.backup` | your `.env` (left out with `--no-env`) |
-| `model-cache.tar` | the model's files, only with `--model` |
+| `model-cache.tar` | the studio's models: the image model, the music model and the upscaler file (left out with `--no-model`) |
 | `MANIFEST.txt`, `SHA256SUMS` | what was backed up (including the git commit and image id), and a checksum for every other piece |
 
 - **Downtime is a few seconds.** The database must be at rest to be copied consistently, so the studio
-  is stopped while `./data` is packed and started again straight away. The image and the model are
+  is stopped while `./data` is packed and started again straight away. The image and the models are
   copied while it runs.
 - **It checks its own work.** Once the `.tar` is finished, the script reads it back and compares every
   checksum. The file only gets its real name if that passes, so a `.tar` you can see is a good one.
@@ -183,9 +183,18 @@ whole, because what is inside already is), and any archive tool can open it. Ins
   so and stops (exit code 3). Try again later, or add `--interrupt` to go ahead anyway.
 - **It cleans up after itself.** If a backup fails part-way, the studio is started again and nothing
   half-written is left behind.
+- **The models are included unless you say `--no-model`.** "The models" are the three the studio uses, found
+  from your `.env`: the image model (`STUDIO_MODEL`), the music model (`STUDIO_MUSIC_MODEL`) and the Enlarge
+  upscaler file (`STUDIO_UPSCALER_MODEL`, by default `upscalers/RealESRGAN_x2plus.pth` in the cache). **Nothing
+  else in the cache is touched**: Hermes' vLLM and other tools share that folder, and their models are not the
+  studio's to back up. A model that isn't there (never downloaded, such as the music model before its first
+  Load model; or `STUDIO_MODEL` is a folder on disk) is **skipped with a warning that names it**, and the
+  backup carries on; `MANIFEST.txt` lists exactly which models are inside. (`--model`, which older command
+  lines use, is still accepted and changes nothing.)
 - **Disk space:** the destination needs room for the backup plus, briefly, a copy of its biggest piece.
-  Without `--model` the backup is about the size of the compressed Docker image: roughly 10 GB, since
-  NVIDIA's base image alone is an 8.3 GiB compressed download. The model adds about 31 GiB.
+  Without the models the backup is about the size of the compressed Docker image: roughly 10 GB, since
+  NVIDIA's base image alone is an 8.3 GiB compressed download. The models add about 31 GiB and about 29 GB
+  (and the upscaler file, which is small), so roughly 70 GB in all.
 - `--dry-run` shows what would happen and changes nothing, a good first run. `--keep N` deletes the
   oldest backups afterwards, keeping the newest N. `--yes` stops it asking questions. `--help` lists
   everything.
@@ -218,8 +227,9 @@ scripts/restore.sh /mnt/nas/backups/ai-image-studio-backup-20261002-143015.tar
   `--force` and the current folder is moved aside to `data.before-restore-<time>` instead, and the same
   goes for `.env` and the model folder. Delete those yourself when you are sure.
 - It loads the Docker image (the current `ai-image-studio:local` stays available as
-  `ai-image-studio:before-restore-<time>`), restores `.env`, and restores the model if the backup has it and
-  it isn't already in the cache.
+  `ai-image-studio:before-restore-<time>`), restores `.env`, and restores each model the backup has that
+  isn't already in the cache. A model that is already there is left alone (add `--force` and the cached
+  copy is moved aside first). Backups made by older versions, which hold one model, restore as before.
 - The studio is stopped while this happens. If it was running, it is started again, from the restored
   image; otherwise add `--start`, or run `docker compose up -d --no-build` yourself.
 - If the code on this machine is at a different commit from the backup, it tells you, and how to match
@@ -237,8 +247,13 @@ scripts/restore.sh /mnt/nas/backups/ai-image-studio-backup-20261002-143015.tar
   restore the image *and* the data from a backup made before the upgrade. Take one before every upgrade.
 - **A free safety net before a rebuild** (instant, no extra space): `docker tag ai-image-studio:local
   ai-image-studio:previous` keeps the current image, which a rebuild would otherwise orphan.
-- **Scheduling** (optional). For example, every Sunday at 03:30, keeping the newest four:
-  `30 3 * * 0  cd ~/ai-image-studio && scripts/backup.sh --yes --keep 4 ~/backups >> ~/backups/backup.log 2>&1`
+- **The models are big and never change, and every backup repeats them.** Four weekly backups with the
+  models are four times roughly 70 GB. For a schedule, consider `--no-model` for the weekly run and a full
+  backup (with the models) now and then, or when a model changes.
+- **Check what it will pack** (instant): `scripts/backup.sh --dry-run ~/backups` lists the models it found,
+  and warns about any it didn't.
+- **Scheduling** (optional). For example, every Sunday at 03:30, keeping the newest four, without the models:
+  `30 3 * * 0  cd ~/ai-image-studio && scripts/backup.sh --yes --no-model --keep 4 ~/backups >> ~/backups/backup.log 2>&1`
   (add it with `crontab -e`). If the studio is busy then, it skips that week and says so in the log.
   Run the command by hand first to be sure it works on your machine.
 
@@ -265,7 +280,7 @@ docker compose stop                                   # the database must be at 
 tar -czf "$BK/data.tar.gz" data                       # your history and images
 docker compose start
 docker save ai-image-studio:local | gzip > "$BK/image.tar.gz"
-tar -cf "$BK/model-cache.tar" -C ~/.cache/huggingface hub/models--Qwen--Qwen-Image-2.1   # optional
+tar -cf "$BK/model-cache.tar" -C ~/.cache/huggingface hub/models--Qwen--Qwen-Image-2.1 hub/models--MiniMaxAI--MiniMax-Music3 upscalers   # optional
 
 tar -cf "$BK.tar" -C "$BK" .                          # one file (restore.sh won't read this one: it needs the manifest)
 ```
