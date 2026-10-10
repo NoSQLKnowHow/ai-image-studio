@@ -456,9 +456,9 @@ def test_the_list_and_the_counts_can_be_narrowed_to_a_project(client):
     assert [r["prompt"] for r in client.get("/api/runs", params={"project": "none"}).json()["runs"]] == ["plain run"]
     assert len(client.get("/api/runs").json()["runs"]) == 2
     assert client.get("/api/runs/counts", params={"project": project["id"]}).json() == {
-        "image": {"all": 1, "kept": 1, "deleted": 0}, "music": {"all": 0, "kept": 0, "deleted": 0}}
-    assert client.get("/api/runs/counts", params={"project": "none"}).json()["image"] == {"all": 1, "kept": 0, "deleted": 0}
-    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 1, "deleted": 0}  # no project: the whole tab, as ever
+        "image": {"all": 1, "kept": 1, "deleted": 0, "deleted_items": 0}, "music": {"all": 0, "kept": 0, "deleted": 0, "deleted_items": 0}}
+    assert client.get("/api/runs/counts", params={"project": "none"}).json()["image"] == {"all": 1, "kept": 0, "deleted": 0, "deleted_items": 0}
+    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 1, "deleted": 0, "deleted_items": 0}  # no project: the whole tab, as ever
     assert plain  # (made, not filed)
 
 
@@ -467,7 +467,7 @@ def test_the_list_and_the_counts_can_be_narrowed_to_a_project(client):
 def test_an_unknown_project_is_an_empty_list_and_a_malformed_one_is_a_422(client):
     finished(client)
     assert client.get("/api/runs", params={"project": NO_SUCH}).json() == {"runs": [], "next_before": None}
-    assert client.get("/api/runs/counts", params={"project": NO_SUCH}).json()["image"] == {"all": 0, "kept": 0, "deleted": 0}
+    assert client.get("/api/runs/counts", params={"project": NO_SUCH}).json()["image"] == {"all": 0, "kept": 0, "deleted": 0, "deleted_items": 0}
     for bad in ("", "x' OR 1=1 --", "NONE", "f" * 31, "F" * 32, "../x"):
         assert client.get("/api/runs", params={"project": bad}).status_code == 422, bad
         assert client.get("/api/runs/counts", params={"project": bad}).status_code == 422, bad
@@ -514,9 +514,10 @@ def test_the_daily_clean_up_leaves_a_filed_run_alone(seeded, client_factory):
 
 
 # ------------------------------------------------------------------ schema 5
-# The current schema is 5 (the projects table and runs.project_id). When the next release changes it, this is the line to move.
-def test_the_schema_is_5():
-    assert SCHEMA_VERSION == 5
+# The current schema is 6 (1.15's images.deleted_at and tracks.deleted_at; 1.14 made it 5, the projects table and runs.project_id). When the next
+# release changes it, this is the line to move.
+def test_the_schema_is_6():
+    assert SCHEMA_VERSION == 6
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:
@@ -539,16 +540,29 @@ def without_projects(path) -> None:
     conn.close()
 
 
+# Take what schema 6 added out of a database made by this code: `deleted_at` on pictures and tracks, and the indexes on it. (A database "from 1.13" made
+# by this code alone would still have them.)
+def without_picture_bin(path) -> None:
+    conn = sqlite3.connect(path)
+    for table in ("images", "tracks"):
+        conn.execute(f"DROP INDEX idx_{table}_deleted")
+        conn.execute(f"ALTER TABLE {table} DROP COLUMN deleted_at")
+    conn.commit()
+    conn.close()
+
+
 # A schema 3 database as 1.12 leaves it: no bin, no projects, and a run (the bin's own test helper makes the first two halves).
 def v3_database(path) -> None:
     without_the_bin(path)  # makes the database with this code, then takes the bin's columns out, sets the version to 3 and adds a run
     without_projects(path)
+    without_picture_bin(path)
 
 
 # A schema 4 database as 1.13 leaves it: the bin, but no projects, and a run that is in the bin.
 def v4_database(path) -> None:
     Database(path).close()
     without_projects(path)
+    without_picture_bin(path)
     conn = sqlite3.connect(path)
     conn.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
     conn.execute(

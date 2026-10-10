@@ -26,7 +26,7 @@ from .db import Database
 from .events import EventBus
 from .projects import normalize_name
 from .runspec import ResolvedRun, RunRequestError
-from .serialize import format_ts, parse_ts, run_payload, utcnow
+from .serialize import format_ts, parse_ts, purge_time, run_payload, utcnow
 from .storage import Storage, StorageError
 from .upscaler import UpscalerUnavailable, make_upscaler
 from .worker_client import WorkerClient, WorkerGone, worker_env
@@ -60,6 +60,14 @@ class RunConflict(Exception):
 
 class ImageNotFound(Exception):
     """No such result image, or its file is gone."""
+
+
+class PictureConflict(Exception):
+    """A picture or track cannot be sent to the bin, restored or deleted just now (DESIGN.md §33.2). `code` is the code of the API's `409`."""
+
+    def __init__(self, code: str, detail: str):
+        super().__init__(detail)
+        self.code, self.detail = code, detail
 
 
 class ProjectNotFound(Exception):
@@ -238,11 +246,13 @@ class JobManager:
     def payloads(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         ids = [r["id"] for r in rows]
         images, inputs, tracks = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids), self.db.tracks_for_runs(ids)
+        binned_images, binned_tracks = self.db.binned_images_for_runs(ids), self.db.binned_tracks_for_runs(ids)  # the pictures in the bin (§33.3)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
-        four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *inputs[run_id])])
+        four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *binned_images[run_id], *inputs[run_id])])
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
-                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r))
+                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r),
+                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days)
             for r in rows
         ]
 
@@ -273,10 +283,7 @@ class JobManager:
 
     def purge_at(self, row: sqlite3.Row) -> Optional[str]:
         """When a run in the bin will be deleted for good, or None if it is not in the bin (DESIGN.md §30.2)."""
-        days = self.settings.bin_days
-        if days <= 0 or not row["deleted_at"]:
-            return None
-        return format_ts(parse_ts(row["deleted_at"]) + timedelta(days=days))
+        return purge_time(row["deleted_at"], self.settings.bin_days)
 
     def payload(self, run_id: str) -> Optional[dict[str, Any]]:
         row = self.db.get_run(run_id)
@@ -619,9 +626,11 @@ class JobManager:
             raise RunConflict("This run is not in the bin.")
         self._publish_run(run_id)
 
-    async def empty_bin(self) -> int:
-        """Delete for good every run in the bin, with its files. Returns how many."""
-        return await self._purge_bin(None)
+    async def empty_bin(self) -> tuple[int, int]:
+        """Delete for good everything in the bin, with its files: every run in it, then every picture and track in it of a run that stays
+        (DESIGN.md §33.3). Returns (runs, pictures and tracks). The runs go first, so what is left to count as pictures is only that."""
+        runs = await self._purge_bin(None)
+        return runs, await self._purge_binned_items(None)
 
     # Delete runs from the bin for good, `SWEEP_BATCH` at a time so that a big bin never holds the database for long: the rows go first, in one
     # transaction; then their files, in a worker thread (the server stays responsive); then every open page is told.
@@ -638,6 +647,94 @@ class JobManager:
             removed += len(ids)
         return removed
 
+    # ------------------------------------------------------------ a single picture or track in the bin (DESIGN.md §33)
+    def _busy(self, kind: str, item_id: str) -> bool:
+        """Whether Make 4K or Enlarge is working on this picture, or has it waiting (§33.2 item 4): the copy being written would be left behind.
+        Only a result picture can be, and only if it exists; any other id is not busy, and the database says what is wrong with it."""
+        if kind != "image" or (item_id not in self._making_4k and item_id not in self._enlarging):
+            return False
+        row = self.db.get_image(item_id)
+        return row is not None and row["run_id"] is not None and row["kind"] == "output"
+
+    @staticmethod
+    def _picture_error(result: str, kind: str, item_id: str) -> Exception:
+        """The exception for a refusal of the database (`db.bin_picture` and its neighbours), with the words the page shows."""
+        what = "picture" if kind == "image" else "track"
+        if result == "not_found":
+            return ImageNotFound(item_id)
+        words = {
+            "not_a_result": "Only a result can be deleted by itself: an edit's source pictures go with the run.",
+            "not_finished": f"This run has not finished. Wait for it to finish before deleting one of its {what}s.",
+            "run_in_bin": "This run is in the bin. Restore the run first.",
+            "not_in_bin": f"This {what} is not in the bin.",
+        }
+        return PictureConflict("run_not_finished" if result == "not_finished" else result, words[result])
+
+    async def bin_picture(self, kind: str, item_id: str) -> tuple[str, dict[str, Any]]:
+        """Send a result picture (`kind` "image") or a track ("track") to the bin; its last one sends the run instead. Returns ("picture" or
+        "run", the updated run). Raises ImageNotFound or PictureConflict."""
+        if self._busy(kind, item_id):
+            raise PictureConflict("image_busy", "Make 4K or Enlarge is working on this picture. Try again when it has finished.")
+        result, run_id = self.db.bin_picture(kind, item_id, utcnow())
+        if result not in ("picture", "run"):
+            raise self._picture_error(result, kind, item_id)
+        self._publish_run(run_id)
+        payload = self.payload(run_id)
+        assert payload is not None  # the run was in the database a moment ago, and only this process deletes
+        return result, payload
+
+    async def restore_picture(self, kind: str, item_id: str) -> dict[str, Any]:
+        """Take a picture or track out of the bin, back into its run at its own place. Returns the updated run."""
+        result, run_id = self.db.restore_picture(kind, item_id)
+        if result != "restored":
+            raise self._picture_error(result, kind, item_id)
+        self._publish_run(run_id)
+        payload = self.payload(run_id)
+        assert payload is not None
+        return payload
+
+    async def delete_picture(self, kind: str, item_id: str) -> None:
+        """Delete a picture or track for good, in or out of the bin, with its files (and its 4K and Enlarge copies). If it was its run's last,
+        the whole run is deleted, as `delete` does. Every open page is told: `run.updated`, or `run.deleted` for a run that went."""
+        if self._busy(kind, item_id):
+            raise PictureConflict("image_busy", "Make 4K or Enlarge is working on this picture. Try again when it has finished.")
+        result, run_id, item = self.db.delete_picture(kind, item_id)
+        if result not in ("picture", "run"):
+            raise self._picture_error(result, kind, item_id)
+        if result == "run":
+            await asyncio.to_thread(self.storage.delete_run_files, run_id)
+            self._progress.pop(run_id, None)
+            self.bus.publish("run.deleted", {"id": run_id})
+            self._publish_queue()
+            return
+        await asyncio.to_thread(self._remove_item_files, kind, item)
+        self._publish_run(run_id)
+
+    def _remove_item_files(self, kind: str, row: sqlite3.Row) -> None:
+        """In a thread: remove the files of a picture or track whose row is gone. A file that cannot be removed is logged and left (the row is
+        gone either way, and a stray file is found by nothing but the disk): the delete is not undone for it."""
+        try:
+            if kind == "image":
+                self.storage.delete_picture_files(row["path"], row["thumb_path"])
+            else:
+                self.storage.delete_track_file(row["path"])
+        except (OSError, StorageError):
+            log.warning("could not remove the files of %s %s", kind, row["id"], exc_info=True)
+
+    # Delete for good the pictures and tracks that have been in the bin long enough (all of them when `cutoff` is None), wherever their run is
+    # (§33.2 item 7): the rows in one transaction, `SWEEP_BATCH` at a time, then their files in a thread, then every page that shows the run is told.
+    async def _purge_binned_items(self, cutoff: Optional[str]) -> int:
+        removed = 0
+        while True:
+            purged = self.db.purge_binned_items(cutoff, SWEEP_BATCH)
+            if not purged:
+                break
+            await asyncio.to_thread(lambda: [self._remove_item_files(kind, row) for kind, row in purged])
+            for run_id in {row["run_id"] for _, row in purged}:
+                self._publish_run(run_id)
+            removed += len(purged)
+        return removed
+
     # ------------------------------------------------------------ expiry
     async def sweep_expired(self) -> int:
         """The daily clean-up. First the runs whose time in the bin is over are deleted for good (everything in the bin when there is
@@ -646,9 +743,14 @@ class JobManager:
         bin_days = self.settings.bin_days
         now = datetime.now(timezone.utc)
         # 1. Delete for good what has been in the bin long enough (all of it when there is no bin)
-        removed = await self._purge_bin(format_ts(now - timedelta(days=bin_days)) if bin_days > 0 else None)
+        bin_cutoff = format_ts(now - timedelta(days=bin_days)) if bin_days > 0 else None
+        removed = await self._purge_bin(bin_cutoff)
         if removed:
             log.info("deleted %d run(s) that had been in the bin for %d day(s) (STUDIO_BIN_DAYS)", removed, bin_days)
+        # ...and the pictures and tracks that were deleted by themselves, on the same clock (§33.2 item 7), wherever their run is
+        pictures = await self._purge_binned_items(bin_cutoff)
+        if pictures:
+            log.info("deleted %d picture(s) and track(s) that had been in the bin for %d day(s) (STUDIO_BIN_DAYS)", pictures, bin_days)
         days = self.settings.retention_days
         if days <= 0:
             return removed

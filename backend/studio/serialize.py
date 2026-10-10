@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from .fourk import enlarge_plan_or_none, plan_or_none
@@ -21,6 +21,14 @@ def parse_ts(value: str) -> datetime:
 def format_ts(moment: datetime) -> str:
     """The same shape as utcnow(), so timestamps compare correctly as text (the sweep relies on it)."""
     return moment.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def purge_time(deleted_at: Optional[str], days: int) -> Optional[str]:
+    """When something that went to the bin at `deleted_at` will be deleted for good, `days` later (DESIGN.md §30.2, §33.2 item 2), or None when
+    it is not in the bin or there is no bin (`days` is 0). A run in the bin and a picture in the bin use the same rule."""
+    if days <= 0 or not deleted_at:
+        return None
+    return format_ts(parse_ts(deleted_at) + timedelta(days=days))
 
 
 def four_k_fields(row: sqlite3.Row, base: str, copy: Optional[dict[str, Any]]) -> dict[str, Any]:
@@ -85,6 +93,16 @@ def track_payload(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def binned_image_payload(row: sqlite3.Row, four_k: Optional[dict[str, Any]], bin_days: int) -> dict[str, Any]:
+    """A result picture that is in the bin (DESIGN.md §33.3): as any picture, with when it went and when it will be deleted for good."""
+    return {**image_payload(row, four_k), "deleted_at": row["deleted_at"], "purge_at": purge_time(row["deleted_at"], bin_days)}
+
+
+def binned_track_payload(row: sqlite3.Row, bin_days: int) -> dict[str, Any]:
+    """The same for a track."""
+    return {**track_payload(row), "deleted_at": row["deleted_at"], "purge_at": purge_time(row["deleted_at"], bin_days)}
+
+
 def input_payload(row: sqlite3.Row, four_k: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """An image an edit was given: its place in the order the model sees them (1 = "image 1") and its role."""
     base = f"/api/images/{row['id']}"
@@ -112,6 +130,9 @@ def run_payload(
     tracks: Optional[list[sqlite3.Row]] = None,
     four_k: Optional[dict[str, dict[str, Any]]] = None,
     purge_at: Optional[str] = None,
+    binned_images: Optional[list[sqlite3.Row]] = None,
+    binned_tracks: Optional[list[sqlite3.Row]] = None,
+    bin_days: int = 0,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -138,6 +159,10 @@ def run_payload(
         "canceling": canceling and row["status"] == "running",
         "lyrics": row["lyrics"],
         "inputs": [input_payload(item, (four_k or {}).get(item["id"])) for item in inputs or []],
+        # `images` and `tracks` are what is NOT in the bin, so the card, the viewer and the numbering need no change (DESIGN.md §33.3); what is in
+        # it is listed beside them, and is empty for a run that is itself in the bin (its card shows the pictures it has, §33.2 item 5)
         "images": [image_payload(img, (four_k or {}).get(img["id"])) for img in images],
         "tracks": [track_payload(track) for track in tracks or []],
+        "binned_images": [] if row["deleted_at"] else [binned_image_payload(img, (four_k or {}).get(img["id"]), bin_days) for img in binned_images or []],
+        "binned_tracks": [] if row["deleted_at"] else [binned_track_payload(track, bin_days) for track in binned_tracks or []],
     }
