@@ -2,6 +2,7 @@
 
     <data>/studio.sqlite
     <data>/images/<run>/<idx>.png      written by the worker
+    <data>/images/<run>/<idx>-4k.png   the 4K copy of that image, made on request by the API process (DESIGN.md §27)
     <data>/thumbs/<run>/<idx>.webp     made by the API process
     <data>/inputs/staged/<id>.png      an uploaded image that no run has claimed yet (deleted after a day)
     <data>/thumbs/staged/<id>.webp     its thumbnail
@@ -88,6 +89,11 @@ class Storage:
         if not path.is_relative_to(self.root):
             raise StorageError(f"Path escapes the data directory: {rel!r}")
         return path
+
+    def four_k_path(self, image_rel: str) -> Path:
+        """Where the 4K copy of an image lives (DESIGN.md §27.3): beside it, `<idx>-4k.png`. It goes with the run's folder."""
+        path = self.abs(image_rel)
+        return path.with_name(f"{path.stem}-4k.png")
 
     def accept_worker_image(self, rel: str, run_id: str) -> Path:
         """Validate a path reported by the worker: inside this run's folder, an existing file."""

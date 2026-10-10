@@ -220,7 +220,7 @@ describe("expiry and cancel wording", () => {
   it("says what a canceled run kept", () => {
     const base = makeRun({ status: "canceled", options: { ...makeRun().options, num_images: 4 } });
     expect(canceledText(base)).toBe("Canceled before any image was finished.");
-    const image = { id: "i", idx: 0, seed: 1, width: 8, height: 8, has_alpha: false, url: "/u", thumb_url: null, download_url: "/d" };
+    const image = { id: "i", idx: 0, seed: 1, width: 8, height: 8, has_alpha: false, url: "/u", thumb_url: null, download_url: "/d", can_4k: false, four_k_size: null, four_k: null };
     expect(canceledText({ ...base, images: [image, { ...image, id: "j", idx: 1 }] })).toBe("Canceled. 2 of 4 images finished and kept.");
   });
 });

@@ -61,6 +61,22 @@ def music_filename(*, label: str, seconds: float, seed: int, created_at: datetim
     return "_".join(parts) + ".wav"
 
 
+def source_filename(*, prompt: str, position: int, width: int, height: int, created_at: datetime) -> str:
+    """`source-<position>_<prompt-words>_<W>x<H>_<YYYYmmdd-HHMMSS>.png`: the name a 4K copy of an edit's source image is
+    downloaded as (DESIGN.md §27.9). The size is the copy's."""
+    parts = [f"source-{int(position)}", slugify(prompt), f"{width}x{height}", created_at.strftime("%Y%m%d-%H%M%S")]
+    return "_".join(parts) + ".png"
+
+
+def upscale_filename(*, name: str, width: int, height: int, created_at: datetime) -> str:
+    """`upscale_<file-name-words>_<W>x<H>_<YYYYmmdd-HHMMSS>.png`: what a picture from the person's computer is returned as
+    (DESIGN.md §27.9). `name` is the file's own name; only its stem is used, and a name with nothing usable in it is
+    called `untitled`."""
+    stem = PurePath(name.replace("\\", "/")).stem
+    parts = ["upscale", slugify(stem, MAX_STEM_BYTES, max_words=4), f"{width}x{height}", created_at.strftime("%Y%m%d-%H%M%S")]
+    return "_".join(parts) + ".png"
+
+
 def thumbnail_filename(image_filename: str) -> str:
     """The name of an image's thumbnail download: `<name>_thumb.webp` for `<name>.png`."""
     stem = image_filename[:-4] if image_filename.lower().endswith(".png") else image_filename

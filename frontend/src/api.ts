@@ -1,3 +1,4 @@
+import { filenameFromDisposition } from "./fourk";
 import type { Capabilities, CreateMusicBody, CreateRunBody, ImageRun, ModelName, MusicRun, Run, RunsPage, Status, UploadResult } from "./types";
 
 export interface FieldError {
@@ -87,6 +88,43 @@ export function uploadImage(file: Blob, onProgress?: (fraction: number) => void)
   return { promise, abort: () => xhr.abort() };
 }
 
+/** A picture from the person's computer, made 4K and sent back (DESIGN.md §27.9). Nothing is stored on the server. */
+export interface UpscaledPicture {
+  blob: Blob;
+  filename: string; // as the server named it: upscale_<name>_<size>_<time>.png
+  width: number;
+  height: number;
+}
+
+async function upscalePicture(file: File): Promise<UpscaledPicture> {
+  let response: Response;
+  try {
+    response = await fetch(`/api/upscale?name=${encodeURIComponent(file.name)}`, {
+      method: "POST",
+      body: file, // the file itself is the body, as for an upload
+      headers: { "X-Studio-Client": "1", Accept: "image/png, application/json" },
+    });
+  } catch {
+    throw toApiError(0, null);
+  }
+  if (!response.ok) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      /* empty or non-JSON body */
+    }
+    throw toApiError(response.status, body);
+  }
+  const size = /^(\d+)x(\d+)$/.exec(response.headers.get("X-Output-Size") ?? "");
+  return {
+    blob: await response.blob(),
+    filename: filenameFromDisposition(response.headers.get("Content-Disposition")) ?? "upscaled.png",
+    width: size ? Number(size[1]) : 0,
+    height: size ? Number(size[2]) : 0,
+  };
+}
+
 export const api = {
   capabilities: () => request<Capabilities>("/api/capabilities"),
   status: () => request<Status>("/api/status"),
@@ -101,5 +139,8 @@ export const api = {
   keepRun: (id: string, pinned: boolean) =>
     request<Run>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ pinned }) }),
   deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // Make the 4K copy of a result image (DESIGN.md §27). The answer is the whole run, as for Keep: its image now has `four_k`.
+  upscalePicture,
+  makeFourK: (imageId: string) => request<ImageRun>(`/api/images/${encodeURIComponent(imageId)}/4k`, { method: "POST" }),
   deleteUpload: (id: string) => request<void>(`/api/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

@@ -301,6 +301,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .empty-state { text-align: center; padding: 48px 16px; color: var(--text-3); border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); }
 .empty-title { color: var(--text); font-weight: 650; font-size: 16px; margin-bottom: 4px; }
 .load-more { justify-self: center; }
+.tools-row { display: flex; justify-content: flex-end; margin: 0 0 8px; }
 
 .run-card {
   display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 16px;

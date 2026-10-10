@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
-import type { ImageRun, WorkerState } from "../types";
-import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon, UpscaleIcon } from "./icons";
+import type { FourKTarget, ImageRun, WorkerState } from "../types";
+import { FourKButton } from "./FourKButton";
+import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 
 interface Props {
   run: ImageRun;
   now: number;
   workerState: WorkerState | null;
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
+  making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   onReuse: () => void;
   onRegenerateLarger: () => void;
+  onMake4K: (image: FourKTarget) => void;
   onEditThis: () => void;
   onRetry: () => void;
   onCancel: () => void;
@@ -104,7 +107,7 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, canEdit, onReuse, onRegenerateLarger, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, canEdit, making4k, onReuse, onRegenerateLarger, onMake4K, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
@@ -173,22 +176,20 @@ export function RunCard({ run, now, workerState, canEdit, onReuse, onRegenerateL
             <ReuseIcon /> Reuse
           </button>
           {target && (
-            <>
-              <button type="button" className="button small ghost" data-action="regenerate-larger" onClick={onRegenerateLarger}
-                aria-label={`Regenerate larger: ${target.width}×${target.height}, ${target.steps} steps`}
-                title={`Regenerate at ${target.width}×${target.height}, ${target.steps} steps. The same seed at a bigger size makes a different picture.`}>
-                <EnlargeIcon /> Regenerate larger
-              </button>
-              <button type="button" className="button small ghost" disabled data-action="upscale"
-                title="Not built yet: it waits for a test of whether editing can enlarge a picture without changing it">
-                <UpscaleIcon /> Upscale
-              </button>
-            </>
+            <button type="button" className="button small ghost" data-action="regenerate-larger" onClick={onRegenerateLarger}
+              aria-label={`Regenerate larger: ${target.width}×${target.height}, ${target.steps} steps`}
+              title={`Regenerate at ${target.width}×${target.height}, ${target.steps} steps. The same seed at a bigger size makes a different picture.`}>
+              <EnlargeIcon /> Regenerate larger
+            </button>
           )}
           {run.images.length === 1 && (
             <a className="button small ghost" href={run.images[0].download_url} download>
               <DownloadIcon /> Download
             </a>
+          )}
+          {run.images.length === 1 && (
+            <FourKButton image={run.images[0]} making={making4k.has(run.images[0].id)} className="button small ghost"
+              onMake={() => onMake4K(run.images[0])} />
           )}
           {run.images.length === 1 && run.images[0].thumb_url && (
             <a className="button small ghost" href={`${run.images[0].thumb_url}?download=1`} download
