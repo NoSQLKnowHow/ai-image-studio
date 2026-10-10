@@ -88,6 +88,19 @@ test("Delete picture in the viewer: the question, the viewer moves on, Undo rest
   expect((await runOf(page, run.id)).images.map((p) => p.id)).toEqual([first.id, second.id, third.id]); // at its own place
 });
 
+// Deleting the picture the viewer is on when it is the LAST one in the list: there is no next picture, so the viewer steps back to the one before (§33.1).
+test("deleting the last picture in the list moves the viewer back to the one before it", async ({ page }) => {
+  await clearHistory(page);
+  const prompt = unique("at the end");
+  const run = await makeRun(page, prompt, 3);
+  await page.goto("/");
+  await card(page, prompt).getByRole("button", { name: /^Open image 3 of 3/ }).click();
+  await deletePictureButton(page).click();
+  await confirmButton(page).click();
+  await expect(viewer(page).locator(".lightbox-title")).toContainText(`Image 2 of 2 · seed ${run.images[1].seed}`);
+  expect((await runOf(page, run.id)).binned_images.map((p) => p.id)).toEqual([run.images[2].id]);
+});
+
 // Criterion 165: the last picture sends the whole run. The question says so; the viewer closes, the card leaves the history, the toast is the run's
 // own, and Undo brings the run back.
 test("deleting the last picture moves the whole run to the bin; Undo brings it back", async ({ page }) => {
@@ -206,13 +219,19 @@ test("Empty bin says how many runs and pictures, and deletes both", async ({ pag
   await binPicture(page, a.images[0].id);
   await binPicture(page, a.images[1].id);
   expect((await page.request.post(`/api/runs/${b.id}/bin`, { headers: ASK })).ok()).toBe(true);
+  const song = await makeMusic(page, unique("a song"), 2);
+  expect((await page.request.post(`/api/tracks/${song.tracks[0].id}/bin`, { headers: ASK })).ok()).toBe(true); // and a track of the Music tab
   await page.goto("/");
-  await expect(deletedOption(page)).toContainText("3"); // two pictures and a run
+  await expect(deletedOption(page)).toContainText("3"); // on this tab: two pictures and a run
   await deletedOption(page).click();
   await bar(page).locator('[data-action="empty-bin"]').click();
-  await expect(question(page)).toContainText("Delete 1 run and 2 pictures for good (1 run and 2 pictures on Images), with their files. This can't be undone.");
+  // the whole bin, both tabs: it says which kind each is, in the total and tab by tab
+  await expect(question(page)).toContainText(
+    "Delete 1 run, 2 pictures and 1 track for good (1 run and 2 pictures on Images, 1 track on Music), with their files. This can't be undone.");
   await question(page).locator('[data-action="confirm-empty-bin"]').click();
-  await expect(toastWith(page, "Emptied the bin: 1 run and 2 pictures deleted for good.")).toBeVisible();
+  await expect(toastWith(page, "Emptied the bin: 1 run, 2 pictures and 1 track deleted for good.")).toBeVisible();
+  expect((await runOf(page, song.id)).binned_tracks).toHaveLength(0);
+  expect((await page.request.get(song.tracks[0].url)).status()).toBe(404);
   expect((await page.request.get(`/api/runs/${b.id}`)).status()).toBe(404);
   const left = await runOf(page, a.id);
   expect([left.images.map((p) => p.id), left.binned_images.length]).toEqual([[a.images[2].id], 0]);
