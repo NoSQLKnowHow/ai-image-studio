@@ -24,9 +24,12 @@ from .events import OVERFLOW, EventBus, format_sse
 from . import fourk as fourk_mod
 from .fourk import NotEligible
 from . import inputs as inputs_mod
-from .jobs import ImageNotFound, InputStorageError, JobManager, ModelRefused, QueueFull, RunConflict, RunNotFound
+from .jobs import (
+    ImageNotFound, InputStorageError, JobManager, ModelRefused, ProjectNameTaken, ProjectNotFound, QueueFull, RunConflict, RunNotFound,
+)
 from .naming import content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename
-from .runfilter import COUNTED, RunFilter
+from .projects import BadProjectName
+from .runfilter import RunFilter, counted_within
 from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
 from .serialize import parse_ts, utcnow
@@ -85,7 +88,26 @@ class RunPatch(BaseModel):
     pinned: bool
 
 
+class ProjectBody(BaseModel):
+    """The name of a project, to make one or to rename one (DESIGN.md §32.4). The name is checked by `projects.normalize_name`, not here, so the
+    page is told in words why a name was refused."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: str
+
+
+class RunProject(BaseModel):
+    """The project to file a run in (DESIGN.md §32.4)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    project_id: str
+
+
 UPSCALE_AT_ONCE = 2  # pictures being made through POST /api/upscale at the same moment
+
+# What `?project=` may be (DESIGN.md §32.4): the word `none` (runs in no project) or a project's id, which is 32 hex digits like every id. Anything
+# else is a 422 from the framework; an id that is well formed but unknown is not an error, it matches no run.
+PROJECT_PATTERN = r"^(none|[0-9a-f]{32})$"
 
 
 def _png_size(data: bytes) -> Optional[tuple[int, int]]:
@@ -189,6 +211,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "draft": {"long_side": settings.draft_size, "steps": settings.draft_steps},
                 "edit_warn_units": settings.edit_warn_units,
                 "bin_days": settings.bin_days,
+                "project_name_max": P.PROJECT_NAME_MAX,  # the longest a project's name may be (DESIGN.md §32.4), so the page can say it
                 "resolutions": list(P.RESOLUTIONS),
                 "upload_mb": settings.max_upload_mb,
                 "steps": {"min": P.STEPS_MIN, "max": P.STEPS_MAX},
@@ -291,16 +314,21 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         before: Optional[str] = Query(None),
         kept: Optional[bool] = Query(None, description="true: only kept runs; false: only runs that are not kept; absent: either"),
         deleted: Optional[bool] = Query(None, description="true: only the bin; false or absent: the history, without the bin"),
+        project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a project's id: only its runs; 'none': only runs in no project; absent: any"),
     ) -> Any:
         try:
-            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted)))
+            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project))
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
 
     @app.get("/api/runs/counts")
-    async def run_counts(request: Request) -> Any:
-        """How many runs each tab holds and how many are kept (DESIGN.md §29.6). Declared before `/api/runs/{run_id}`, which would take it."""
-        return request.app.state.db.run_counts(COUNTED)
+    async def run_counts(
+        request: Request,
+        project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="count only this project's runs ('none': runs in no project)"),
+    ) -> Any:
+        """How many runs each tab holds and how many are kept or in the bin (DESIGN.md §29.6), within one project when `project` is given
+        (§32.5). Declared before `/api/runs/{run_id}`, which would take it."""
+        return request.app.state.db.run_counts(counted_within(project))
 
     @app.get("/api/runs/{run_id}")
     async def get_run(run_id: str, request: Request) -> Any:
@@ -314,6 +342,76 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             await jobs_of(request).set_pinned(run_id, body.pinned)
         except (StorageError, RunNotFound):
             return _error(404, "Run not found.", "not_found")
+        except RunConflict as exc:
+            # a run in a project stays kept (DESIGN.md §32.3): it has to be taken out of the project before it can stop being kept
+            return _error(409, str(exc), "run_in_project")
+        return jobs_of(request).payload(run_id)
+
+    # ------------------------------------------------------------------ projects (DESIGN.md §32.4)
+    @app.get("/api/projects")
+    async def list_projects(request: Request) -> Any:
+        """Every project, A to Z, with how many runs of each tab it holds (runs in the bin are not counted)."""
+        return {"projects": jobs_of(request).list_projects()}
+
+    @app.post("/api/projects", status_code=201)
+    async def create_project(body: ProjectBody, request: Request) -> Any:
+        try:
+            return await jobs_of(request).create_project(body.name)
+        except BadProjectName as exc:
+            return _error(422, str(exc), "bad_name")
+        except ProjectNameTaken:
+            return _error(409, "There is a project with that name already.", "name_taken")
+
+    @app.patch("/api/projects/{project_id}")
+    async def rename_project(project_id: str, body: ProjectBody, request: Request) -> Any:
+        try:
+            check_id(project_id)
+            return await jobs_of(request).rename_project(project_id, body.name)
+        except (StorageError, ProjectNotFound):
+            return _error(404, "Project not found.", "not_found")
+        except BadProjectName as exc:
+            return _error(422, str(exc), "bad_name")
+        except ProjectNameTaken:
+            return _error(409, "There is a project with that name already.", "name_taken")
+
+    @app.delete("/api/projects/{project_id}")
+    async def delete_project(project_id: str, request: Request) -> Any:
+        """Delete a project. Its runs are not deleted: they stay kept and are in no project. `unfiled` is how many that was."""
+        try:
+            check_id(project_id)
+            return {"unfiled": await jobs_of(request).delete_project(project_id)}
+        except (StorageError, ProjectNotFound):
+            return _error(404, "Project not found.", "not_found")
+
+    # File a run in a project, and keep it: one call (and one transaction) that also moves a run that is filed already
+    @app.put("/api/runs/{run_id}/project")
+    async def file_run(run_id: str, body: RunProject, request: Request) -> Any:
+        # an id that is not even shaped like one cannot belong to anything: the same answer as for one that is not there. Run first, then project.
+        try:
+            check_id(run_id)
+        except StorageError:
+            return _error(404, "Run not found.", "not_found")
+        try:
+            check_id(body.project_id)
+            await jobs_of(request).file_run(run_id, body.project_id)
+        except RunNotFound:
+            return _error(404, "Run not found.", "not_found")
+        except (StorageError, ProjectNotFound):
+            return _error(404, "Project not found.", "not_found")
+        except RunConflict as exc:
+            return _error(409, str(exc), "run_in_bin")
+        return jobs_of(request).payload(run_id)
+
+    # Take a run out of its project. It stays kept, unless `?keep=false` (what Undo of a filing sends: the run goes back to what it was)
+    @app.delete("/api/runs/{run_id}/project")
+    async def unfile_run(run_id: str, request: Request, keep: bool = Query(True)) -> Any:
+        try:
+            check_id(run_id)
+            await jobs_of(request).unfile_run(run_id, keep)
+        except (StorageError, RunNotFound):
+            return _error(404, "Run not found.", "not_found")
+        except RunConflict as exc:
+            return _error(409, str(exc), "not_in_project")
         return jobs_of(request).payload(run_id)
 
     @app.post("/api/runs/{run_id}/cancel")

@@ -132,6 +132,7 @@ def run_payload(
         "expires_at": expires_at,
         "deleted_at": row["deleted_at"],  # when it went to the bin (DESIGN.md §30), else null
         "purge_at": purge_at,  # when it will be deleted for good
+        "project_id": row["project_id"],  # the project it is filed in (DESIGN.md §32), else null; a filed run is always kept
         "queue_position": queue_position if row["status"] == "queued" else None,
         "progress": progress if row["status"] == "running" else None,
         "canceling": canceling and row["status"] == "running",

@@ -1,5 +1,5 @@
-"""History filters (DESIGN.md §29.5, §29.6; criteria 117, 120): the server's side. The cases are the table the page's own tests read too
-(`filter_cases.json`), so the two cannot drift apart. Runs are inserted straight into the database with the states the table names."""
+"""History filters (DESIGN.md §29.5, §29.6, §32.4; criteria 117, 120, 162): the server's side. The cases are the table the page's own tests read
+too (`filter_cases.json`), so the two cannot drift apart. Runs are inserted straight into the database with the states the table names."""
 
 from __future__ import annotations
 
@@ -10,18 +10,19 @@ import pytest
 from conftest import create_run, wait_for
 
 from studio.db import Database
-from studio.runfilter import COUNTED, KINDS, RunFilter
+from studio.runfilter import COUNTED, KINDS, NO_PROJECT, RunFilter, counted_within
 
 TABLE = json.loads((Path(__file__).parent / "filter_cases.json").read_text())
 
 
-# One run as the database wants it (a dict of columns). The letter names the run (a to f), `seq` fixes how old it is, and `deleted` puts it in the bin.
-def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False) -> dict:
+# One run as the database wants it (a dict of columns). The letter names the run (a to f), `seq` fixes how old it is, `deleted` puts it in the bin,
+# and `project` is the project it is filed in (the table's own short names, "x" and "y": the database takes any text there).
+def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False, project: str | None = None) -> dict:
     return {
         "id": f"{ord(letter):032x}", "created_at": f"2026-10-01T00:00:{seq:02d}Z", "status": status, "mode": mode,
         "prompt": f"run {letter}", "effective_prompt": f"run {letter}", "steps": 3, "seed": seq, "num_images": 1,
         "model_id": "fake-pipeline", "options_json": json.dumps({}), "width": 256, "height": 256, "pinned": int(pinned),
-        "deleted_at": "2026-10-02T00:00:00.000Z" if deleted else None,
+        "deleted_at": "2026-10-02T00:00:00.000Z" if deleted else None, "project_id": project,
     }
 
 
@@ -35,7 +36,8 @@ def db(tmp_path):
     database = Database(tmp_path / "studio.sqlite")
     # the table lists the runs newest first; they are made oldest first
     for seq, entry in enumerate(reversed(TABLE["runs"]), start=1):
-        assert database.insert_run_if_capacity(row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"]), cap=100)
+        assert database.insert_run_if_capacity(
+            row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"], entry["project"]), cap=100)
     yield database
     database.close()
 
@@ -63,6 +65,20 @@ def test_the_counts_are_the_tables(db):
     assert db.run_counts(COUNTED) == TABLE["counts"]
 
 
+# ... and what they are within each project, and within "no project": the numbers on the filter bar follow the project chosen (§32.5)
+@pytest.mark.parametrize("project", sorted(TABLE["counts_by_project"]))
+def test_the_counts_within_a_project_are_the_tables(db, project):
+    assert db.run_counts(counted_within(project)) == TABLE["counts_by_project"][project]
+
+
+# a filter with no project is `COUNTED` itself, and a project is added to every counted filter without losing what each already says
+def test_counted_within_narrows_every_counted_filter_to_the_project():
+    assert counted_within(None) is COUNTED
+    narrowed = counted_within("x")
+    assert set(narrowed) == set(COUNTED)
+    assert all(narrowed[name] == RunFilter(kept=COUNTED[name].kept, deleted=COUNTED[name].deleted, project="x") for name in COUNTED)
+
+
 def test_the_kinds_are_the_tabs():
     assert KINDS == {"image": ("generate", "edit"), "music": ("music",)}
 
@@ -74,6 +90,16 @@ def test_a_filter_with_nothing_set_adds_no_condition():
     assert RunFilter(deleted=None, kept=False).conditions() == (["pinned = ?"], [0])
     assert RunFilter().conditions() == (["deleted_at IS NULL"], [])  # the history is what a filter means unless it says otherwise
     assert RunFilter(deleted=True).conditions() == (["deleted_at IS NOT NULL"], [])
+
+
+# the project is the one filter that holds a value: "none" is a fixed condition, an id is bound as a value and never pasted into the text
+def test_a_project_is_one_fixed_condition_with_a_bound_value():
+    assert RunFilter(deleted=None, project=NO_PROJECT).conditions() == (["project_id IS NULL"], [])
+    assert RunFilter(deleted=None, project="x").conditions() == (["project_id = ?"], ["x"])
+    # text that looks like SQL is still only a value: it matches no run and changes nothing else
+    hostile = "x' OR 1=1 --"
+    assert RunFilter(deleted=None, project=hostile).conditions() == (["project_id = ?"], [hostile])
+    assert NO_PROJECT == "none"  # the word the API and the page use for "no project"
 
 
 # paging inside a filter: the cursor continues among the matching runs only

@@ -194,7 +194,7 @@ def test_a_1_12_database_gets_the_bin_and_loses_nothing(tmp_path):
     assert "deleted_at" not in dict(columns(path))
     db = Database(path)
     try:
-        assert SCHEMA_VERSION == 4
+        assert SCHEMA_VERSION >= 4  # the bin's columns arrived with schema 4; later schemas keep them
         row = db.get_run("a" * 32)
         assert (row["prompt"], row["pinned"], row["deleted_at"], row["restored_at"]) == ("a lighthouse", 1, None, None)
         assert db.bin_run("a" * 32, "2026-10-05T10:00:00.000Z") == "binned"  # the new columns work
@@ -202,13 +202,13 @@ def test_a_1_12_database_gets_the_bin_and_loses_nothing(tmp_path):
         db.close()
 
 
-# Before the upgrade the old database is copied to `.before-schema-4`: a way back, exactly as it was (schema 3, without the bin's
+# Before the upgrade the old database is copied to `.before-schema-<the schema it is upgraded to>`: a way back, exactly as it was (schema 3, without the bin's
 # columns).
 def test_the_1_12_database_is_copied_first_as_a_way_back(tmp_path):
     path = tmp_path / "studio.sqlite"
     v3_database(path)
     Database(path).close()
-    copy = tmp_path / "studio.sqlite.before-schema-4"
+    copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"
     assert copy.is_file()
     conn = sqlite3.connect(copy)
     try:
@@ -225,9 +225,9 @@ def test_a_second_start_changes_nothing_and_a_migrated_database_is_the_same_as_a
     migrated, fresh = tmp_path / "migrated.sqlite", tmp_path / "fresh.sqlite"
     v3_database(migrated)
     Database(migrated).close()
-    copy_bytes = (tmp_path / "migrated.sqlite.before-schema-4").read_bytes()
+    copy_bytes = (tmp_path / f"migrated.sqlite.before-schema-{SCHEMA_VERSION}").read_bytes()
     Database(migrated).close()
-    assert (tmp_path / "migrated.sqlite.before-schema-4").read_bytes() == copy_bytes
+    assert (tmp_path / f"migrated.sqlite.before-schema-{SCHEMA_VERSION}").read_bytes() == copy_bytes
     Database(fresh).close()
     for table in ("runs", "images", "tracks", "run_inputs"):
         assert sorted(columns(migrated, table)) == sorted(columns(fresh, table)), table
