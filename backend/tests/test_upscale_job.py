@@ -137,6 +137,13 @@ def test_running_out_of_memory_is_its_own_answer_with_what_to_do(setup, error):
     assert not args.dst.exists() and not list(args.dst.parent.glob("*.part"))
 
 
+def test_the_out_of_memory_words_blame_the_gpu_and_not_the_model_file():
+    """The words that replaced "Check the model file", shown to someone whose model file was fine."""
+    words = job.OUT_OF_MEMORY
+    assert "GPU" in words and "STUDIO_UPSCALER_DEVICE=cpu" in words
+    assert "model file" not in words and "could not be moved" not in words and "Check the" not in words
+
+
 @pytest.mark.parametrize("error,is_oom", [
     (RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB"), True),
     (type("AcceleratorError", (RuntimeError,), {})("CUDA error: out of memory\nCompile with TORCH_USE_CUDA_DSA"), True),

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import pytest
-from conftest import create_run, wait_for
+from conftest import close, create_run, wait_for
 
 from studio.serialize import parse_ts
 from studio.upscaler import Availability, FakeUpscaler
@@ -167,10 +167,12 @@ def test_a_model_that_is_loading_is_using_the_gpu_too(client):
     client.portal.call(set_state, "loading")
     with ThreadPoolExecutor(1) as pool:
         future = pool.submit(lambda: enlarge(client, older))
-        time.sleep(0.8)  # long enough for several looks
-        assert stub.calls == 0 and waiting(client) == [older["id"]]
-        released = now()
-        client.portal.call(set_state, "ready")
+        try:
+            time.sleep(0.8)  # long enough for several looks
+            assert stub.calls == 0 and waiting(client) == [older["id"]]
+            released = now()
+        finally:
+            client.portal.call(set_state, "ready")  # even after a failed assertion: the request must not be left waiting for ever
         assert future.result().status_code == 201
     assert stub.started >= released and waiting(client) == []
 
@@ -200,3 +202,88 @@ def test_a_failed_enlargement_gives_the_turn_back(client):
     assert enlarge(client, older).status_code == 500
     run = create_run(client, "after the failure", steps=3)
     assert wait_for(client, run["id"], timeout=10)["status"] == "done"
+
+
+def test_it_is_announced_when_it_starts_to_wait_not_only_when_the_run_it_waits_for_is_over(client_factory):
+    client = client_factory(fake_step_delay_ms=60)
+    older = wide_run(client)["images"][0]
+    use(client, delay=0.1)
+    sub = client.app.state.bus.subscribe()
+    run = create_run(client, "going now", steps=15)
+    wait_for(client, run["id"], frozenset({"running"}))
+    enlarge(client, older)
+    events = []
+    while not sub.queue.empty():
+        events.append(sub.queue.get_nowait())
+    client.app.state.bus.unsubscribe(sub)
+    said = next(i for i, (name, data) in enumerate(events) if name == "queue.updated" and older["id"] in data["enlarge_waiting"])
+    over = next(i for i, (name, data) in enumerate(events) if name == "run.updated" and data["id"] == run["id"] and data["status"] == "done")
+    assert said < over  # a page learns it is waiting while it waits, not afterwards
+
+
+class CountingGate(asyncio.Lock):
+    acquisitions = 0
+
+    async def acquire(self) -> bool:
+        type(self).acquisitions += 1
+        return await super().acquire()
+
+
+def test_a_model_that_is_loading_is_looked_at_now_and_then_not_in_a_tight_loop(client):
+    jobs = client.app.state.jobs
+    older = wide_run(client)["images"][0]
+    use(client)
+    CountingGate.acquisitions = 0
+    jobs._gpu_gate = CountingGate()
+
+    async def set_state(state: str) -> None:
+        jobs._set_worker_state(state)
+
+    client.portal.call(set_state, "loading")
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(lambda: enlarge(client, older))
+        try:
+            time.sleep(1.2)
+            looks = CountingGate.acquisitions
+        finally:
+            client.portal.call(set_state, "ready")
+        assert future.result().status_code == 201
+    assert 1 <= looks <= 6  # about every half second
+
+
+def test_a_copy_that_appeared_while_it_waited_is_not_made_again(client_factory):
+    client = client_factory(fake_step_delay_ms=60)
+    older = wide_run(client)["images"][0]
+    stub = use(client)
+    run = create_run(client, "going now", steps=25)
+    wait_for(client, run["id"], frozenset({"running"}))
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(lambda: enlarge(client, older))
+        time.sleep(0.4)
+        assert waiting(client) == [older["id"]]
+        storage = client.app.state.storage
+        asyncio.run(FakeUpscaler().enlarge(storage.abs(older_path(client, older)), storage.enlarged_path(older_path(client, older))))
+        response = future.result()
+    assert response.status_code == 200 and stub.calls == 0  # there already; nothing was made when its turn came
+    assert waiting(client) == []
+
+
+def older_path(client, image: dict) -> str:
+    return client.app.state.db.get_image(image["id"])["path"]
+
+
+def test_stopping_the_server_cancels_an_enlargement_that_is_still_waiting(client_factory):
+    client = client_factory(fake_step_delay_ms=60)
+    older = wide_run(client)["images"][0]
+    stub = use(client)
+    run = create_run(client, "going now", steps=40)
+    wait_for(client, run["id"], frozenset({"running"}))
+    jobs = client.app.state.jobs
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(lambda: enlarge(client, older))
+        time.sleep(0.4)
+        assert waiting(client) == [older["id"]]
+        flight = jobs._enlarging[older["id"]]
+        close(client)
+        assert flight.cancelled() and stub.calls == 0 and jobs._enlarge_waiting == []
+        future.exception(timeout=15)  # the request ends; how it ends is not the point

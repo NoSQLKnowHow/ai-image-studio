@@ -431,3 +431,15 @@ test("a picture queued behind the long one is made first: an Enlarge asked for d
   await expect(queued.locator(".badge").first()).not.toHaveText("Done"); // and the one behind it was still waiting its own turn
   await expect(queued.locator(".badge").first()).toHaveText("Done", { timeout: 45_000 }); // it is not lost
 });
+
+test("a keyboard user who had to wait still lands on Download 4K when the copy is made", async ({ page }) => {
+  await useOptions(page, NEAR);
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await done(page, unique("focus after waiting"));
+  await startLongRun(page, unique("long, before the focus"));
+  await enlarge(c).focus();
+  await page.keyboard.press("Enter");
+  await expect(enlarge(c)).toHaveText("Waiting…");
+  await expect(download4k(c)).toBeFocused({ timeout: 45_000 }); // waiting, then enlarging, then the link: the place is kept all the way
+});

@@ -128,6 +128,12 @@ class JobManager:
 
     async def stop(self) -> None:
         busy = self._current is not None  # read before cancelling: the loop clears it on the way out
+        # First, before the loop is cancelled: the loop gives up the GPU gate on its way out, and an enlargement that is waiting for
+        # it would take its turn and start a process of its own in the middle of a shutdown.
+        for flight in list(self._enlarging.values()):  # an enlargement waiting its turn, or its process
+            flight.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await flight
         if self._probe_task is not None:
             self._probe_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -144,10 +150,6 @@ class JobManager:
             with suppress(asyncio.CancelledError):
                 await self._task
             self._task = None
-        for flight in list(self._enlarging.values()):  # an enlargement waiting its turn, or its process
-            flight.cancel()
-            with suppress(asyncio.CancelledError, Exception):
-                await flight
         await self._worker.stop(busy=busy)
 
     # ------------------------------------------------------------ queries
