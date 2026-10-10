@@ -1,0 +1,14 @@
+{
+  // The type-check that `npm run build` runs, and so the one the Docker image's web-page stage runs.
+  //
+  // That stage copies only `frontend/` into the image, so the build must not depend on anything outside it.
+  // The tests do: `src/history.test.ts` reads `../../backend/tests/filter_cases.json`, a table the server's
+  // tests share, and without the `backend/` folder beside it the build stopped with "Cannot find module" and
+  // then with "implicitly has an 'any' type". The image never runs the tests, so this config leaves them out.
+  //
+  // `npm run typecheck` still uses `tsconfig.json`, which checks everything (tests and e2e included) and
+  // needs the whole repository. `src/buildconfig.test.ts` fails if this build ever reaches outside `frontend/`.
+  "extends": "./tsconfig.json",
+  "include": ["src", "vite.config.ts"],
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/testdata.ts"]
+}
