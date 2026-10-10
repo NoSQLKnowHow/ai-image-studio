@@ -17,7 +17,7 @@ import contextlib
 import logging
 from typing import Any, Iterator
 
-from .base import Canceled, MusicJob, MusicProgress, MusicResult, OutOfMemory, PipelineError, PipelineUnavailable
+from .base import Canceled, MusicJob, MusicProgress, MusicResult, OutOfMemory, PipelineError, PipelineLoadError, PipelineUnavailable
 from .hub import load_with_hub_mode
 from .real import (
     REBUILD_HINT, _arch_mismatch, _is_oom, describe_error, device_info, require_gpu, translate_load_error,
@@ -95,6 +95,26 @@ def translate_music_error(exc: Exception, torch: Any) -> PipelineError:
     return PipelineError(f"Making the track failed: {type(exc).__name__}: {exc}")
 
 
+class MissingComponents(FileNotFoundError):
+    """Some of the model's parts did not load. `diffusers` turns a part that fails to load into a log warning and carries
+    on, so without this check a model folder with a part missing (a download that stopped part-way) would count as loaded
+    and fail at the first track. It is a FileNotFoundError so that the cache-first logic (hub.py) treats it as "files are
+    missing": a half-cached model is completed online in `auto` mode instead of staying half-loaded."""
+
+    def __init__(self, names: list[str]):
+        super().__init__(f"These parts of the music model did not load: {', '.join(names)}.")
+        self.names = names
+
+
+def unloaded_components(pipe: Any) -> list[str]:
+    """The parts `load_components` would have loaded (the same rule it uses) that are still not there."""
+    specs = getattr(pipe, "_component_specs", {}) or {}
+    return sorted(name for name, spec in specs.items()
+                  if getattr(spec, "default_creation_method", None) == "from_pretrained"
+                  and getattr(spec, "pretrained_model_name_or_path", None) is not None
+                  and getattr(pipe, name, None) is None)
+
+
 class _ReportingBar:
     """The smallest stand-in for the progress bar the pipeline makes for its rendering stage. Every update is reported."""
 
@@ -159,12 +179,27 @@ class RealMusicPipeline:
             pipe = modular_pipeline.from_pretrained(self.model, **extra)
             # Every component is loaded from the same place as the pipeline's index, even when STUDIO_MUSIC_MODEL
             # is a folder: the index itself names the hub repository.
-            pipe.load_components(dtype=getattr(torch, self.dtype), pretrained_model_name_or_path=self.model, **extra)
+            # `fix_mistral_regex=False` for the tokenizer only: transformers cannot tell that a tokenizer with a large
+            # vocabulary, loaded from a local folder whose config.json has no `transformers_version` (the model's
+            # has none), is not a Mistral one, and warns about "incorrect tokenization". This tokenizer is Qwen's, so the
+            # warning is wrong; False says so and changes nothing else (True would replace the tokenizer's split rule).
+            pipe.load_components(dtype=getattr(torch, self.dtype), pretrained_model_name_or_path=self.model,
+                                 fix_mistral_regex={"tokenizer": False}, **extra)
+            missing = unloaded_components(pipe)
+            if missing:
+                raise MissingComponents(missing)
             return pipe
 
         try:
             pipe = load_with_hub_mode(fetch, self.hub_mode, self.model)
             pipe.to(self.device)
+        except MissingComponents as exc:
+            raise PipelineLoadError(
+                f"The music model is incomplete: {', '.join(exc.names)} did not load.",
+                hint="If STUDIO_MUSIC_MODEL is a folder, check that it holds a folder of that name (a download that stopped "
+                     "part-way leaves some out) and that the studio's user can read it; the log has the reason for each part. "
+                     "Otherwise download the model again.",
+            ) from exc
         except Exception as exc:
             raise translate_load_error(exc, torch, self.hub_mode == "offline") from exc
         configure = getattr(pipe, "set_progress_bar_config", None)
