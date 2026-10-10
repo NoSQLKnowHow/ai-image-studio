@@ -204,7 +204,7 @@ def test_old_runs_are_removed_at_start_up_with_every_file_and_the_rest_stay(seed
     recent = seed_run(db, storage, 5, age_days=2)
     edge = seed_run(db, storage, 6, age_days=29.5)
     db.close()  # the app opens its own connection, as after a restart
-    client = client_factory()  # default retention: 30 days
+    client = client_factory(bin_days=0)  # default retention: 30 days; no bin, so expiry deletes for good (the bin has tests/test_bin.py)
     for run_id in doomed:
         wait_gone(client, run_id)
         assert not on_disk(storage, run_id)
@@ -238,7 +238,7 @@ def test_pending_runs_are_never_expired_however_old(client_factory):
 
 
 def test_a_kept_run_survives_and_a_run_stops_being_kept_when_unkept(client_factory):
-    client = client_factory(quiet=True)
+    client = client_factory(quiet=True, bin_days=0)   # no bin: expiry deletes for good, as before 1.13 (the bin's own tests are in test_bin.py)
     run = create_run(client)
     wait_for(client, run["id"])
     with client.app.state.db.tx() as c:
@@ -254,7 +254,7 @@ def test_a_sweep_that_is_bigger_than_one_batch_removes_everything(seeded, client
     monkeypatch.setattr(jobs_module, "SWEEP_BATCH", 3)
     ids = [seed_run(db, storage, n, age_days=60) for n in range(1, 11)]
     db.close()
-    client = client_factory()
+    client = client_factory(bin_days=0)   # no bin: expiry deletes for good, as before 1.13
     for run_id in ids:
         wait_gone(client, run_id)
         assert not on_disk(storage, run_id)
@@ -262,7 +262,7 @@ def test_a_sweep_that_is_bigger_than_one_batch_removes_everything(seeded, client
 
 def test_the_sweep_repeats_on_its_interval_and_tells_open_pages(client_factory, monkeypatch):
     monkeypatch.setattr(jobs_module, "SWEEP_INTERVAL_SECONDS", 0.2)
-    client = client_factory()
+    client = client_factory(bin_days=0)   # no bin: expiry deletes for good, as before 1.13
     run = create_run(client)
     wait_for(client, run["id"])
     bus = client.app.state.bus
@@ -292,7 +292,7 @@ def test_a_failed_sweep_does_not_stop_the_next_one(client_factory, monkeypatch):
         return await real(self)
 
     monkeypatch.setattr(jobs_module.JobManager, "sweep_expired", flaky)
-    client = client_factory()
+    client = client_factory(bin_days=0)   # no bin: expiry deletes for good, as before 1.13
     run = create_run(client)
     wait_for(client, run["id"])
     with client.app.state.db.tx() as c:

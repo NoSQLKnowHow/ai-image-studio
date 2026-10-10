@@ -233,7 +233,7 @@ class JobManager:
         four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *inputs[run_id])])
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
-                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k)
+                        r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r))
             for r in rows
         ]
 
@@ -257,9 +257,17 @@ class JobManager:
     def expires_at(self, row: sqlite3.Row) -> Optional[str]:
         """When the run will be deleted, or None if it never will be (kept, still pending, or expiry off)."""
         days = self.settings.retention_days
-        if days <= 0 or row["pinned"] or row["status"] not in FINISHED:
+        # no expiry for: expiry off, kept runs, runs that have not finished, and runs in the bin (the bin has its own clock, `purge_at`)
+        if days <= 0 or row["pinned"] or row["status"] not in FINISHED or row["deleted_at"]:
             return None
-        return format_ts(parse_ts(row["created_at"]) + timedelta(days=days))
+        return format_ts(parse_ts(row["restored_at"] or row["created_at"]) + timedelta(days=days))  # from the later of the two (§30.4)
+
+    def purge_at(self, row: sqlite3.Row) -> Optional[str]:
+        """When a run in the bin will be deleted for good, or None if it is not in the bin (DESIGN.md §30.2)."""
+        days = self.settings.bin_days
+        if days <= 0 or not row["deleted_at"]:
+            return None
+        return format_ts(parse_ts(row["deleted_at"]) + timedelta(days=days))
 
     def payload(self, run_id: str) -> Optional[dict[str, Any]]:
         row = self.db.get_run(run_id)
@@ -520,17 +528,35 @@ class JobManager:
         self.bus.publish("run.deleted", {"id": run_id})
         self._publish_queue()
 
-    # ------------------------------------------------------------ expiry
-    async def sweep_expired(self) -> int:
-        """Delete finished runs older than the retention period, with their files. Kept runs, and runs
-        that are queued or running, are never touched. Returns how many runs were removed."""
-        days = self.settings.retention_days
-        if days <= 0:
-            return 0
-        cutoff = format_ts(datetime.now(timezone.utc) - timedelta(days=days))
+    # ------------------------------------------------------------ the bin (DESIGN.md §30)
+    async def bin_run(self, run_id: str) -> None:
+        """Move a finished run to the bin: its files stay, it leaves the history, every open page is told (`run.updated`)."""
+        result = self.db.bin_run(run_id, utcnow())
+        if result == "not_found":
+            raise RunNotFound(run_id)
+        if result == "not_finished":
+            raise RunConflict("This run has not finished. Cancel it or wait for it to finish; a run that is only waiting can be deleted for good instead.")
+        self._publish_run(run_id)
+
+    async def restore_run(self, run_id: str) -> None:
+        """Take a run out of the bin: it goes back as it was, with a fresh expiry clock (§30.4)."""
+        result = self.db.restore_run(run_id, utcnow())
+        if result == "not_found":
+            raise RunNotFound(run_id)
+        if result == "not_in_bin":
+            raise RunConflict("This run is not in the bin.")
+        self._publish_run(run_id)
+
+    async def empty_bin(self) -> int:
+        """Delete for good every run in the bin, with its files. Returns how many."""
+        return await self._purge_bin(None)
+
+    # Delete runs from the bin for good, `SWEEP_BATCH` at a time so that a big bin never holds the database for long: the rows go first, in one
+    # transaction; then their files, in a worker thread (the server stays responsive); then every open page is told.
+    async def _purge_bin(self, cutoff: Optional[str]) -> int:
         removed = 0
         while True:
-            ids = self.db.delete_expired(cutoff, SWEEP_BATCH)
+            ids = self.db.purge_bin(cutoff, SWEEP_BATCH)
             if not ids:
                 break
             await asyncio.to_thread(lambda: [self.storage.delete_run_files(run_id) for run_id in ids])
@@ -538,9 +564,50 @@ class JobManager:
                 self._progress.pop(run_id, None)
                 self.bus.publish("run.deleted", {"id": run_id})
             removed += len(ids)
-        if removed:
-            log.info("expired %d run(s) older than %d day(s) (STUDIO_RETENTION_DAYS)", removed, days)
         return removed
+
+    # ------------------------------------------------------------ expiry
+    async def sweep_expired(self) -> int:
+        """The daily clean-up. First the runs whose time in the bin is over are deleted for good (everything in the bin when there is
+        no bin); then finished runs older than the retention period are moved to the bin, or deleted if there is none. Kept runs, and
+        runs that are queued or running, are never touched. Returns how many runs were deleted for good."""
+        bin_days = self.settings.bin_days
+        now = datetime.now(timezone.utc)
+        # 1. Delete for good what has been in the bin long enough (all of it when there is no bin)
+        removed = await self._purge_bin(format_ts(now - timedelta(days=bin_days)) if bin_days > 0 else None)
+        if removed:
+            log.info("deleted %d run(s) that had been in the bin for %d day(s) (STUDIO_BIN_DAYS)", removed, bin_days)
+        days = self.settings.retention_days
+        if days <= 0:
+            return removed
+        # 2. Expire. Finished runs older than the retention move to the bin, or are deleted outright when there is no bin.
+        cutoff = format_ts(now - timedelta(days=days))
+        moved = 0
+        expired = 0
+        while True:
+            # with a bin: only mark the runs (their files stay, and every page is told that the run changed)
+            if bin_days > 0:
+                ids = self.db.expire_to_bin(cutoff, utcnow(), SWEEP_BATCH)
+                if not ids:
+                    break
+                for run_id in ids:
+                    self._publish_run(run_id)
+                moved += len(ids)
+            else:
+                # without a bin: delete the rows and the files, as it was before the bin existed
+                ids = self.db.delete_expired(cutoff, SWEEP_BATCH)
+                if not ids:
+                    break
+                await asyncio.to_thread(lambda: [self.storage.delete_run_files(run_id) for run_id in ids])
+                for run_id in ids:
+                    self._progress.pop(run_id, None)
+                    self.bus.publish("run.deleted", {"id": run_id})
+                expired += len(ids)
+        if moved:
+            log.info("moved %d run(s) older than %d day(s) to the bin (STUDIO_RETENTION_DAYS)", moved, days)
+        if expired:
+            log.info("expired %d run(s) older than %d day(s) (STUDIO_RETENTION_DAYS)", expired, days)
+        return removed + expired
 
     async def _janitor(self) -> None:
         while True:

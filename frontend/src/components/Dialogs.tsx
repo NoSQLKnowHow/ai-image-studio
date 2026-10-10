@@ -15,11 +15,12 @@ export interface ViewerNotice {
   text: string;
 }
 
-export function Lightbox({ run, index, notice, canEdit, making4k, enlarging, enlargeWaiting, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onClose }: {
+export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enlarging, enlargeWaiting, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onClose }: {
   run: ImageRun | null;
   index: number;
   notice: ViewerNotice | null;
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
+  readOnly: boolean; // the run is in the bin: look at it and download it, but nothing that changes it (DESIGN.md §30.3)
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   enlarging: ReadonlySet<string>; // ids of the images being enlarged with the upscaler model (DESIGN.md §28)
   enlargeWaiting: ReadonlySet<string>; // ids of the images whose Enlarge is waiting for the picture being made (§28.3)
@@ -61,14 +62,14 @@ export function Lightbox({ run, index, notice, canEdit, making4k, enlarging, enl
               <div className="lightbox-bar">
                 <Dialog.Title className="lightbox-title">{viewerTitle(item, run.mode === "edit")}</Dialog.Title>
                 <div className="lightbox-actions">
-                  {result && target && (
+                  {!readOnly && result && target && (
                     <button type="button" className="button small" data-action="regenerate-larger" onClick={() => onRegenerateLarger(result)}
                       aria-label={`Regenerate larger: ${target.width}×${target.height}, ${target.steps} steps`}
                       title={`Regenerate this image at ${target.width}×${target.height}, ${target.steps} steps. The same seed at a bigger size makes a different picture.`}>
                       <EnlargeIcon /> Regenerate larger
                     </button>
                   )}
-                  {canEdit && (
+                  {canEdit && !readOnly && (
                     <button type="button" className="button small" data-action="edit-this" onClick={() => {
                         if (onEditThis(viewerKnown(run, item))) redirectTo(document.getElementById("prompt")); // the viewer closes: go to the prompt, not back to the thumbnail
                       }}
@@ -77,7 +78,7 @@ export function Lightbox({ run, index, notice, canEdit, making4k, enlarging, enl
                     </button>
                   )}
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
-                  {shown && (
+                  {shown && !readOnly && (
                     <FourKButton image={shown} making={making4k.has(shown.id)} enlarging={enlarging.has(shown.id)} waiting={enlargeWaiting.has(shown.id)} upscaler={upscaler}
                       className="button small" onMake={() => onMake4K(shown)} onEnlarge={() => onEnlarge(shown)} />
                   )}
@@ -158,10 +159,19 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
   );
 }
 
-export function ConfirmDelete({ run, onCancel, onConfirm }: { run: Run | null; onCancel: () => void; onConfirm: () => void }) {
+/** Delete, in its three kinds (DESIGN.md §30): to the bin (a finished run, with a bin), for good out of the bin, and for good without a bin
+ *  or for a run that has not made anything. */
+export function ConfirmDelete({ run, binDays, onCancel, onConfirm }: { run: Run | null; binDays: number; onCancel: () => void; onConfirm: () => void }) {
   const music = run?.mode === "music";
   const thing = music ? "track" : "image";
   const n = (music ? run?.tracks.length : run?.images.length) ?? 0;
+  // One dialog, three cases. A finished run, with a bin: Delete moves it to Deleted (nothing is lost yet). A run already in the bin:
+  // "Delete forever". Anything else (a run that is only waiting, or any run when there is no bin): deleted for good, with no way back.
+  const inBin = !!run?.deleted_at;
+  // it moves to the bin only if there is a bin, it is not already in it, and it has finished (a run still waiting made nothing worth keeping)
+  const toBin = !!run && !inBin && binDays > 0 && run.status !== "queued" && run.status !== "running";
+  // what "for good" means: the pictures or tracks are removed from the Spark, not just hidden
+  const gone = n ? `Its ${n === 1 ? `${thing} is` : `${n} ${thing}s are`} removed from the Spark.` : "It is removed from the history.";
   const { props: returnFocus, redirectTo } = useReturnFocus();
   const confirm = () => {
     if (run) redirectTo(focusAfterDelete(run.id));
@@ -172,14 +182,41 @@ export function ConfirmDelete({ run, onCancel, onConfirm }: { run: Run | null; o
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
-          <Dialog.Title>Delete this run?</Dialog.Title>
+          <Dialog.Title>{inBin ? "Delete this run for good?" : "Delete this run?"}</Dialog.Title>
           <Dialog.Description>
-            {n ? `Its ${n === 1 ? `${thing} is` : `${n} ${thing}s are`} removed from the Spark.` : "It is removed from the history."}
-            {run?.pinned ? " You marked it Keep." : ""} This can't be undone.
+            {toBin
+              ? `It moves to Deleted and stays there for ${binDays} ${binDays === 1 ? "day" : "days"}; you can restore it from there. After that it is gone for good.`
+              : `${gone} This can't be undone.`}
+            {run?.pinned && !inBin ? " You marked it Keep." : ""}
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Cancel</Dialog.Close>
-            <button type="button" className="button danger-solid" onClick={confirm}>Delete</button>
+            <button type="button" className="button danger-solid" data-action="confirm-delete" onClick={confirm}>{inBin ? "Delete forever" : "Delete"}</button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Empty bin (DESIGN.md §30.1): everything in the bin, both tabs, for good; the question says how many of each. */
+export function ConfirmEmptyBin({ open, images, music, onCancel, onConfirm }: { open: boolean; images: number; music: number; onCancel: () => void; onConfirm: () => void }) {
+  const { props: returnFocus } = useReturnFocus();
+  const total = images + music;
+  // how many are on each tab, so that the question is concrete
+  const parts = [images ? `${images} on Images` : "", music ? `${music} on Music` : ""].filter(Boolean).join(", ");
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onCancel()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="overlay" />
+        <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
+          <Dialog.Title>Empty the bin?</Dialog.Title>
+          <Dialog.Description>
+            {`Delete ${total} ${total === 1 ? "run" : "runs"} for good${parts ? ` (${parts})` : ""}, with their files. This can't be undone.`}
+          </Dialog.Description>
+          <div className="confirm-actions">
+            <Dialog.Close className="button">Cancel</Dialog.Close>
+            <button type="button" className="button danger-solid" data-action="confirm-empty-bin" onClick={onConfirm}>Empty bin</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

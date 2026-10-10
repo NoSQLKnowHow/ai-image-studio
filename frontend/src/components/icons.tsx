@@ -25,6 +25,8 @@ export const CloseIcon = () => <Icon><path d="M6 6l12 12M18 6L6 18" /></Icon>;
 export const ReuseIcon = () => <Icon><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" /></Icon>;
 export const DownloadIcon = () => <Icon><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Icon>;
 export const CopyIcon = () => <Icon><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h8" /></Icon>;
+// a circular arrow going back: the icon of Restore
+export const RestoreIcon = () => <Icon><path d="M3 12a9 9 0 1 0 3-6.7" /><path d="M3 4v5h5" /></Icon>;
 export const TrashIcon = () => <Icon><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3" /></Icon>;
 export const EditIcon = () => <Icon><path d="M4 20h4L19 9l-4-4L4 16z" /><path d="M14 6l4 4" /></Icon>;
 export const DraftIcon = () => <Icon><path d="M13 3L5 14h6l-1 7 8-11h-6z" /></Icon>;

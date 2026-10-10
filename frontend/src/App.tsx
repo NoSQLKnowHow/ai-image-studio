@@ -3,7 +3,7 @@ import { ApiError, api } from "./api";
 import { Header } from "./components/Header";
 import { MusicPanel } from "./components/MusicPanel";
 import { Tabs, panelId, tabId } from "./components/Tabs";
-import { ConfirmCancel, ConfirmDelete, Lightbox, cardReuseButton, type ViewerNotice } from "./components/Dialogs";
+import { ConfirmCancel, ConfirmDelete, ConfirmEmptyBin, Lightbox, cardReuseButton, type ViewerNotice } from "./components/Dialogs";
 import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { EmptyHistory, FilterBar, focusFilterBar } from "./components/FilterBar";
 import { OptionsDrawer } from "./components/OptionsDrawer";
@@ -12,8 +12,8 @@ import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
-import { leftTheViewText, unkeptText } from "./format";
-import { NO_FILTER, filterKey, isDefault, matches, readFilter, saveFilter, visibleRuns, watchWorking, working, type HistoryFilter } from "./history";
+import { binnedText, emptiedText, leftTheViewText, restoredText, unkeptText } from "./format";
+import { NO_FILTER, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, working, type HistoryFilter } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -60,6 +60,7 @@ export default function App() {
     lightboxOpen.current = lightbox !== null;
   }, [lightbox]);
   const [pendingDelete, setPendingDelete] = useState<Run | null>(null);
+  const [pendingEmptyBin, setPendingEmptyBin] = useState(false); // the "Empty the bin?" question is open (DESIGN.md §30.1)
   const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
   const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
   const [making4k, setMaking4k] = useState<ReadonlySet<string>>(new Set()); // images whose 4K copy is being made (DESIGN.md §27)
@@ -91,7 +92,7 @@ export default function App() {
   const tabKind = tab === "music" ? "music" : "image";
   const tabRuns = tab === "music" ? musicRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
-  const countName = filter.kept === true ? "kept" : filter.kept === null ? "all" : null;
+  const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
   const knownEmpty = !!state.counts && countName !== null && state.counts[tabKind][countName] === 0; // the server says this tab has none
   const lookingForMore = runsReady && tabRuns.length === 0 && more && !knownEmpty && !loadOlderFailed; // none on this tab yet: the next page may have some
   const waitingList = status?.queue.enlarge_waiting;
@@ -448,15 +449,58 @@ export default function App() {
       }
     });
 
+  // Delete (DESIGN.md §30): a finished run goes to the bin, with a toast and Undo; a run in the bin, a run that is only waiting, and any run when
+  // there is no bin are deleted for good.
+  const binDays = caps?.limits.bin_days ?? 0;
+
   const confirmDelete = async () => {
     const run = pendingDelete;
     setPendingDelete(null);
     if (!run) return;
     try {
-      await api.deleteRun(run.id);
-      dispatch({ type: "runDeleted", id: run.id });
+      // a finished run goes to the bin: the page keeps the run (it now has `deleted_at`, which takes it out of the list) and the toast offers
+      // Undo. Anything else is deleted for good, and the page drops it.
+      if (canBin(run, binDays)) {
+        const updated = await api.binRun(run.id);
+        dispatch({ type: "runUpsert", run: updated });
+        push("info", binnedText(run, binDays), { label: "Undo", run: () => void restore(updated, false) });
+      } else {
+        await api.deleteRun(run.id);
+        dispatch({ type: "runDeleted", id: run.id });
+      }
     } catch (error) {
       push("error", `Couldn't delete: ${(error as Error).message}`);
+    }
+  };
+
+  // Restore a run from the bin: it goes back as it was, with a fresh clock if it is not kept (§30.4). Pressed on a card in the bin, the card
+  // leaves the list, so keyboard focus is looked after as for Keep (§29.4); from the Undo toast there is nothing to look after.
+  const restore = (run: Run, fromCard: boolean) =>
+    once(`restore:${run.id}`, async () => {
+      try {
+        const updated = await api.restoreRun(run.id);
+        if (fromCard) refocus.current = true;
+        dispatch({ type: "runUpsert", run: updated });
+        push("info", restoredText(updated));
+      } catch (error) {
+        const err = error as ApiError;
+        // 404: someone deleted it for good meanwhile. 409: it is not in the bin any more (restored elsewhere). Both are said quietly, since
+        // nothing is wrong; anything else is an error.
+        push(err.status === 404 || err.status === 409 ? "info" : "error",
+          err.status === 404 ? "That run no longer exists." : err.status === 409 ? "That run is not in the bin any more." : `Couldn't restore it: ${err.message}`);
+      }
+    });
+
+  // Empty bin: everything in it, both tabs, for good. The server tells every page by `run.deleted`; this page also drops what it holds, so
+  // that the list does not wait for the events.
+  const confirmEmptyBin = async () => {
+    setPendingEmptyBin(false);
+    try {
+      const { deleted } = await api.emptyBin();
+      for (const run of Object.values(state.runs)) if (run.deleted_at !== null) dispatch({ type: "runDeleted", id: run.id });
+      push("info", emptiedText(deleted));
+    } catch (error) {
+      push("error", `Couldn't empty the bin: ${(error as Error).message}`);
     }
   };
 
@@ -541,21 +585,26 @@ export default function App() {
 
   const found = lightbox ? state.runs[lightbox.runId] : undefined;
   const lightboxRun = found && isImageRun(found) ? found : null;
-  const transient = (run: Run) => !isDefault(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
+  const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
+  // the whole bin, both tabs: what Empty bin deletes (the count on the bar is only for the tab being looked at)
+  const bin = state.counts ? state.counts.image.deleted + state.counts.music.deleted : null;
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
-  const filterBar = <FilterBar filter={filter} keptCount={state.counts?.[tabKind].kept ?? null} onChange={changeFilter} />;
+  const filterBar = (
+    <FilterBar filter={filter} keptCount={state.counts?.[tabKind].kept ?? null} deletedCount={state.counts?.[tabKind].deleted ?? null} binTotal={bin}
+      onChange={changeFilter} onEmptyBin={() => setPendingEmptyBin(true)} />
+  );
   // what replaces "Loading…" when the first page of a filtered list could not be read: the reason, and a way to try again
   const problem =
     filterProblem && !isDefault(filter) ? (
       <div className="empty-state" role="alert">
-        <p className="empty-title">Couldn't load your kept runs</p>
+        <p className="empty-title">{filter.deleted === true ? "Couldn't load your deleted runs" : "Couldn't load your kept runs"}</p>
         <p>{filterProblem}</p>
         <button type="button" className="button small" onClick={() => void loadFirstPage(filter)}>Try again</button>
       </div>
     ) : null;
   // what an empty list says: that it is still looking (older pages may hold some), or the empty state for this filter
   const emptyFor = (kind: "image" | "music") =>
-    lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : <EmptyHistory kind={kind} filter={filter} onShowAll={() => changeFilter(NO_FILTER)} />;
+    lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : <EmptyHistory kind={kind} filter={filter} binDays={binDays} onShowAll={() => changeFilter(NO_FILTER)} />;
   const musicAvailable = !!caps?.modes.includes("music");
   const canEdit = !!caps?.modes.includes("edit");
   const editing = options?.mode === "edit";
@@ -650,6 +699,7 @@ export default function App() {
                       onRetry={() => void retry(run)}
                       onCancel={() => requestCancel(run)}
                       onToggleKeep={() => void toggleKeep(run)}
+                      onRestore={() => void restore(run, true)}
                       onDelete={() => setPendingDelete(run)}
                       onCopy={() => void copy(run)}
                       onOpenImage={(index) => setLightbox({ runId: id, index })}
@@ -693,6 +743,7 @@ export default function App() {
               onLoadOlder={() => void loadOlder()}
               onCancel={requestCancel}
               onToggleKeep={(run) => void toggleKeep(run)}
+              onRestore={(run) => void restore(run, true)}
               onDelete={setPendingDelete}
               onCopy={(run) => void copy(run)}
             />
@@ -704,6 +755,7 @@ export default function App() {
         index={lightbox?.index ?? 0}
         notice={lightbox?.notice ?? null}
         canEdit={canEdit}
+        readOnly={!!lightboxRun?.deleted_at}
         making4k={making4k}
         enlarging={enlarging}
         enlargeWaiting={enlargeWaiting}
@@ -716,7 +768,9 @@ export default function App() {
         onClose={() => setLightbox(null)}
       />
       <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />
-      <ConfirmDelete run={pendingDelete} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
+      <ConfirmDelete run={pendingDelete} binDays={binDays} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
+      <ConfirmEmptyBin open={pendingEmptyBin} images={state.counts?.image.deleted ?? 0} music={state.counts?.music.deleted ?? 0}
+        onCancel={() => setPendingEmptyBin(false)} onConfirm={() => void confirmEmptyBin()} />
       <Toasts toasts={toasts} onDismiss={dismiss} />
     </>
   );

@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { WORKING_IN_KEPT_NOTE, duration, expiryText, timeAgo, canceledText } from "../format";
+import { WORKING_IN_KEPT_NOTE, binNote, duration, expiryText, timeAgo, canceledText } from "../format";
 import { musicMeta, musicPhases, musicProgressText, musicTitle, trackLabel } from "../music";
 import type { MusicRun, WorkerState } from "../types";
-import { CopyIcon, DownloadIcon, NoteIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { CopyIcon, DownloadIcon, NoteIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 
 interface Props {
   run: MusicRun;
@@ -13,6 +13,7 @@ interface Props {
   onRetry: () => void;
   onCancel: () => void;
   onToggleKeep: () => void;
+  onRestore: () => void; // take the run out of the bin (DESIGN.md §30)
   onDelete: () => void;
   onCopy: () => void;
 }
@@ -64,13 +65,14 @@ function MusicProgress({ run, workerState }: { run: MusicRun; workerState: Worke
   );
 }
 
-export function TrackCard({ run, now, workerState, transient, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
+export function TrackCard({ run, now, workerState, transient, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const label = statusLabel(run);
   const active = run.status === "queued" || run.status === "running";
   const took = run.status === "done" ? duration(run.started_at, run.finished_at) : null;
   const expiry = run.pinned ? null : expiryText(run.expires_at, now);
+  const inBin = run.deleted_at !== null; // in the bin (DESIGN.md §30)
   const tracks = [...run.tracks].sort((a, b) => a.idx - b.idx);
 
   return (
@@ -80,6 +82,8 @@ export function TrackCard({ run, now, workerState, transient, onReuse, onRetry, 
           <span className="music-mark" aria-hidden="true"><NoteIcon /></span>
           <span className={`badge badge-${run.status}`}>{label}</span>
           {run.pinned && <span className="badge badge-kept"><PinIcon /> Kept</span>}
+          {/* a run in the bin says so */}
+          {inBin && <span className="badge badge-deleted"><TrashIcon /> Deleted</span>}
           <span className="badge">{run.options.instrumental ? "Instrumental" : "With lyrics"}</span>
           <time dateTime={run.created_at} title={new Date(run.created_at).toLocaleString()}>{timeAgo(run.created_at, now)}</time>
         </div>
@@ -127,14 +131,37 @@ export function TrackCard({ run, now, workerState, transient, onReuse, onRetry, 
         {/* in the Kept view only because it is working: say so, so that the card being there is not a surprise */}
         {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
 
+        {/* since when it is in the bin, and until when */}
+        {inBin && <p className="run-note" data-note="in-bin">{binNote(run, now)}</p>}
+
         {run.status === "failed" && run.error && (
           <div className="run-error" role="alert">
             <p>{run.error.message}</p>
             {run.error.hint && <p className="hint">{run.error.hint}</p>}
-            <button type="button" className="button small" onClick={onRetry}><ReuseIcon /> Retry</button>
+            {/* no Retry in the bin: restore the run first */}
+            {!inBin && <button type="button" className="button small" onClick={onRetry}><ReuseIcon /> Retry</button>}
           </div>
         )}
 
+        {/* In the bin a card has only what is safe there: Restore, Reuse and Copy (they only read the run) and Delete forever. No Keep, Cancel */}
+        {/* or Retry: nothing that changes the run. */}
+        {inBin ? (
+          <div className="run-actions">
+            <button type="button" className="button small" data-action="restore" onClick={onRestore}
+              title="Take this run out of the bin. A kept run is still kept; any other gets a fresh clock.">
+              <RestoreIcon /> Restore
+            </button>
+            <button type="button" className="button small ghost" data-action="reuse" onClick={onReuse}
+              title="Load this description, its lyrics and settings, with the seed locked">
+              <ReuseIcon /> Reuse
+            </button>
+            <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy description</button>
+            <button type="button" className="button small ghost danger" data-action="delete" onClick={onDelete}
+              title="Delete this run and its tracks for good">
+              <TrashIcon /> Delete forever
+            </button>
+          </div>
+        ) : (
         <div className="run-actions">
           {active && (
             <button type="button" className="button small ghost danger" data-action="cancel"
@@ -159,6 +186,7 @@ export function TrackCard({ run, now, workerState, transient, onReuse, onRetry, 
             <TrashIcon /> Delete
           </button>
         </div>
+        )}
       </div>
     </article>
   );
