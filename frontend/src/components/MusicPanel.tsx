@@ -5,12 +5,13 @@ import {
   insertTag, loadMusicForm, musicFormFromRun, musicModelNote, musicProblem, musicRetryRequest, saveMusicForm, type FieldName, type MusicForm,
 } from "../music";
 import type { KeyValueStore } from "../options";
-import type { Capabilities, MusicRun, Status } from "../types";
+import type { Capabilities, MusicRun, Status, TrackInfo } from "../types";
 import type { ViewScope } from "../format";
+import { BinnedItemsCard, type BinnedItemHandlers } from "./BinnedItemsCard";
 import { QueueBar } from "./Feedback";
 import { NumberField } from "./NumberField";
 import { panelId, tabId } from "./Tabs";
-import type { ProjectControls } from "./ProjectMenu";
+import { projectOf, type ProjectControls } from "./ProjectMenu";
 import { TrackCard } from "./TrackCard";
 import { NoteIcon } from "./icons";
 import type { ToastKind } from "../hooks";
@@ -28,6 +29,8 @@ interface Props {
   isTransient: (run: MusicRun) => boolean; // in a filtered view only because it is working (§29.3, §32)
   viewScope: ViewScope; // which filter that is
   projects: ProjectControls; // the project folders and what the Project button does (§32)
+  deletedView: boolean; // the Deleted view is chosen: a run with tracks of its own in the bin is shown as a card of them (DESIGN.md §33.1)
+  binned: BinnedItemHandlers; // what the card of deleted tracks hands back
   more: boolean; // older runs can be loaded
   loadingOlder: boolean;
   now: number;
@@ -38,6 +41,7 @@ interface Props {
   onToggleKeep: (run: MusicRun) => void;
   onRestore: (run: MusicRun) => void;
   onDelete: (run: MusicRun) => void;
+  onDeleteTrack: (run: MusicRun, track: TrackInfo, position: number, of: number) => void; // Delete track on a card (DESIGN.md §33.1)
   onCopy: (run: MusicRun) => void;
 }
 
@@ -81,7 +85,7 @@ const LABELS: Record<FieldName, { label: string; placeholder: string; hint?: str
 };
 
 /** The Music tab (DESIGN.md §26): the form that builds the description, and the tracks made so far. */
-export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, more, loadingOlder, now, push, onRun, onLoadOlder, onCancel, onToggleKeep, onRestore, onDelete, onCopy }: Props) {
+export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, deletedView, binned, more, loadingOlder, now, push, onRun, onLoadOlder, onCancel, onToggleKeep, onRestore, onDelete, onDeleteTrack, onCopy }: Props) {
   const ids = useId();
   const idOf = (name: string) => `${ids}-${name}`;
   const root = useRef<HTMLDivElement>(null);
@@ -346,11 +350,18 @@ export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filte
         ) : runs.length === 0 ? (
           empty
         ) : (
-          runs.map((run) => (
-            <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)} viewScope={viewScope} projects={projects}
-              onReuse={() => reuse(run)} onRetry={() => void retry(run)} onCancel={() => onCancel(run)}
-              onToggleKeep={() => onToggleKeep(run)} onRestore={() => onRestore(run)} onDelete={() => onDelete(run)} onCopy={() => onCopy(run)} />
-          ))
+          runs.map((run) =>
+            // In Deleted, a run that is still in the history but has tracks of its own in the bin is one card of those tracks (DESIGN.md §33.1); a run that
+            // is itself in the bin, and every run in the other views, is an ordinary card
+            deletedView && run.deleted_at === null ? (
+              <BinnedItemsCard key={run.id} run={run} now={now} projectName={projectOf(run, projects.projects)?.name ?? null} handlers={binned} />
+            ) : (
+              <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)} viewScope={viewScope} projects={projects}
+                onReuse={() => reuse(run)} onRetry={() => void retry(run)} onCancel={() => onCancel(run)}
+                onToggleKeep={() => onToggleKeep(run)} onRestore={() => onRestore(run)} onDelete={() => onDelete(run)}
+                onDeleteTrack={(track, position, of) => onDeleteTrack(run, track, position, of)} onCopy={() => onCopy(run)} />
+            )
+          )
         )}
         {more && (
           <button type="button" className="button load-more" onClick={onLoadOlder} disabled={loadingOlder}>

@@ -131,13 +131,21 @@ interface RunBase {
   canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
 }
 
+/** A result picture that is in the bin on its own (DESIGN.md §33.3): as any picture, with when it went and when it will be deleted for good. */
+export interface BinnedImage extends ImageInfo {
+  deleted_at: string;
+  purge_at: string | null; // null when there is no bin
+}
+
 export interface ImageRun extends RunBase {
   mode: ImageMode;
   options: RunOptionsSnapshot;
   lyrics: null;
   inputs: RunInput[]; // an edit's images, in order; empty for Generate
-  images: ImageInfo[];
+  images: ImageInfo[]; // the result pictures that are NOT in the bin: what the card and the viewer show, numbered by position (§33.1)
+  binned_images: BinnedImage[]; // the ones that are; empty for a run that is itself in the bin, whose card shows what it has (§33.2 item 5)
   tracks: [];
+  binned_tracks: [];
 }
 
 /** One finished track of a music run (DESIGN.md §26.3). `seconds` is what the model really made. */
@@ -164,13 +172,21 @@ export interface MusicOptionsSnapshot {
   fields: Record<string, string>;
 }
 
+/** A track that is in the bin on its own (DESIGN.md §33.3): as any track, with when it went and when it will be deleted for good. */
+export interface BinnedTrack extends TrackInfo {
+  deleted_at: string;
+  purge_at: string | null;
+}
+
 export interface MusicRun extends RunBase {
   mode: "music";
   options: MusicOptionsSnapshot;
   lyrics: string | null; // null for an instrumental track
   inputs: [];
   images: [];
-  tracks: TrackInfo[];
+  binned_images: [];
+  tracks: TrackInfo[]; // the tracks that are not in the bin, numbered by position (DESIGN.md §33.1)
+  binned_tracks: BinnedTrack[]; // the ones that are; empty for a run that is itself in the bin
 }
 
 export type Run = ImageRun | MusicRun;

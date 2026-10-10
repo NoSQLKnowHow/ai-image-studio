@@ -541,6 +541,7 @@ fieldset.field { gap: 8px; }
 .track-name { font-weight: 650; font-size: 14px; font-variant-numeric: tabular-nums; }
 .track-seed { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
 .track-head .button { margin-left: auto; }
+.track-head .button + .button { margin-left: 0; } /* Download WAV pushes the row's buttons to the right; Delete track follows it */
 .track audio { width: 100%; height: 40px; }
 .phases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .phase { display: grid; gap: 4px; }
@@ -609,3 +610,19 @@ fieldset.field { gap: 8px; }
 .project-rename input { flex: 1; min-width: 8rem; }
 .project-row-confirm { width: 100%; display: grid; gap: 6px; }
 .project-row .field-error { width: 100%; }
+
+/* ------------------------------------------------------------------ the card of deleted pictures in the Deleted view (DESIGN.md §33.1) */
+.run-card.binned-items { grid-template-columns: minmax(0, 1fr); }
+.binned-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.binned-item { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 8px; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); }
+.binned-thumb { padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: none; cursor: pointer; line-height: 0; }
+.binned-thumb img { width: 96px; height: 72px; object-fit: cover; border-radius: var(--radius-sm); display: block; }
+.binned-item audio { width: 220px; max-width: 100%; height: 40px; }
+.binned-text { display: grid; gap: 2px; min-width: 0; font-variant-numeric: tabular-nums; }
+.binned-text span { color: var(--text-3); font-size: 13px; }
+.binned-text .run-note { margin: 4px 0 0; padding: 0; background: none; font-size: 13px; }
+.binned-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+@media (max-width: 640px) {
+  .binned-item { grid-template-columns: auto minmax(0, 1fr); }
+  .binned-actions { grid-column: 1 / -1; justify-content: flex-start; }
+}

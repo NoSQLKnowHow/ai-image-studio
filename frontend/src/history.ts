@@ -54,11 +54,17 @@ export function filterParams(filter: HistoryFilter): Record<string, string> {
   };
 }
 
+/** Whether a run has a picture or a track of its own in the bin while it is itself in the history (DESIGN.md §33.1). */
+export const hasItemsInTheBin = (run: Pick<Run, "binned_images" | "binned_tracks">): boolean => run.binned_images.length > 0 || run.binned_tracks.length > 0;
+
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
-export function matches(run: Pick<Run, "pinned" | "deleted_at" | "project_id">, filter: HistoryFilter): boolean {
-  // a run is in the bin exactly when it has a `deleted_at`; either field set to null means "either"
+export function matches(run: Pick<Run, "pinned" | "deleted_at" | "project_id" | "binned_images" | "binned_tracks">, filter: HistoryFilter): boolean {
+  // The history (`deleted: false`) is every run that is not in the bin, whatever it has in the bin. The Deleted view (`true`) is every run that is
+  // in the bin AND every run that has a picture or a track in it (§33.3): a run is in the bin exactly when it has a `deleted_at`. Either field
+  // set to null means "either".
   const keptOk = filter.kept === null || run.pinned === filter.kept;
-  const deletedOk = filter.deleted === null || (run.deleted_at !== null) === filter.deleted;
+  const inTheDeletedView = run.deleted_at !== null || hasItemsInTheBin(run);
+  const deletedOk = filter.deleted === null || (filter.deleted ? inTheDeletedView : run.deleted_at === null);
   // a project: null is any; "none" is the runs that are in no project; anything else is that project's id (one that does not exist matches nothing)
   const projectOk = filter.project === null || (filter.project === NO_PROJECT ? run.project_id === null : run.project_id === filter.project);
   return keptOk && deletedOk && projectOk;
@@ -180,8 +186,11 @@ export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, 
   return { watched: next, left };
 }
 
-/** The counts the server keeps (`GET /api/runs/counts`): per tab, how many runs there are and how many are kept. */
+/** The counts the server keeps (`GET /api/runs/counts`): per tab, how many runs there are and how many are kept. `deleted` counts THINGS in the
+ *  bin (DESIGN.md §33.1): each run in it, and each picture or track in it of a run that is still in the history; `deleted_items` is the second part
+ *  alone, so a page can say "3 runs and 2 pictures". */
+export interface TabCounts { all: number; kept: number; deleted: number; deleted_items: number }
 export interface Counts {
-  image: { all: number; kept: number; deleted: number };
-  music: { all: number; kept: number; deleted: number };
+  image: TabCounts;
+  music: TabCounts;
 }

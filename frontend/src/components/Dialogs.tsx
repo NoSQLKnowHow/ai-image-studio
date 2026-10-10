@@ -1,12 +1,13 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect } from "react";
+import { deleteItemQuestion, deleteItemTitle, emptyBinQuestion, type BinContents, type ItemRef } from "../format";
 import { useReturnFocus } from "../hooks";
 import { largerTarget } from "../options";
 import type { KnownImage } from "../tray";
 import type { FourKTarget, ImageInfo, ImageRun, Run, UpscalerStatus } from "../types";
 import { viewerItems, viewerKnown, viewerTitle } from "../viewer";
 import { FourKButton } from "./FourKButton";
-import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EditIcon, EnlargeIcon } from "./icons";
+import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EditIcon, EnlargeIcon, TrashIcon } from "./icons";
 
 /** What the viewer says about a request made from it. The page behind a modal, toasts included, is hidden from
  *  screen readers, so the answer is shown inside the viewer instead (DESIGN.md §24.2). */
@@ -15,7 +16,7 @@ export interface ViewerNotice {
   text: string;
 }
 
-export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enlarging, enlargeWaiting, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onClose }: {
+export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enlarging, enlargeWaiting, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onDeletePicture, onClose }: {
   run: ImageRun | null;
   index: number;
   notice: ViewerNotice | null;
@@ -30,6 +31,7 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
   onMake4K: (image: FourKTarget) => void;
   onEnlarge: (image: FourKTarget) => void;
   onEditThis: (image: KnownImage) => boolean; // whether it was added (the tray may be full)
+  onDeletePicture: (image: ImageInfo, position: number, of: number) => void; // Delete picture (DESIGN.md §33.1): which result of how many
   onClose: () => void;
 }) {
   const target = run ? largerTarget(run) : null; // the same rule as the run's card
@@ -78,6 +80,18 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
                     </button>
                   )}
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
+                  {/* Delete picture (DESIGN.md §33.1): on a RESULT of a finished run that is not in the bin; never on an edit's source, which is the run's
+                      input, and never while Make 4K or Enlarge is working on this picture (the copy being written would be left behind) */}
+                  {result && !readOnly && run.status !== "queued" && run.status !== "running" && item?.kind === "result" && (
+                    <button type="button" className="button small danger" data-action="delete-picture"
+                      disabled={making4k.has(result.id) || enlarging.has(result.id) || enlargeWaiting.has(result.id)}
+                      title={making4k.has(result.id) || enlarging.has(result.id) || enlargeWaiting.has(result.id)
+                        ? "Make 4K or Enlarge is working on this picture. Delete it when that has finished."
+                        : "Delete this picture. It goes to Deleted for a while, and can be restored from there."}
+                      onClick={() => onDeletePicture(result, item.number, item.of)}>
+                      <TrashIcon /> Delete picture
+                    </button>
+                  )}
                   {shown && !readOnly && (
                     <FourKButton image={shown} making={making4k.has(shown.id)} enlarging={enlarging.has(shown.id)} waiting={enlargeWaiting.has(shown.id)} upscaler={upscaler}
                       className="button small" onMake={() => onMake4K(shown)} onEnlarge={() => onEnlarge(shown)} />
@@ -203,23 +217,53 @@ export function ConfirmDelete({ run, binDays, projectName, onCancel, onConfirm }
   );
 }
 
-/** Empty bin (DESIGN.md §30.1): everything in the bin, both tabs, for good; the question says how many of each. */
-export function ConfirmEmptyBin({ open, images, music, wholeBin, onCancel, onConfirm }: { open: boolean; images: number; music: number; wholeBin: boolean; onCancel: () => void; onConfirm: () => void }) {
+/** What the question about deleting one picture or track needs (DESIGN.md §33.1): which run and which item (its place, `of` how many, its seed, and its
+ *  id for the request), whether it is the run's last, and whether it is in the bin already (Delete forever). */
+export interface ItemAsk {
+  run: Run;
+  item: ItemRef & { id: string };
+  last: boolean;
+  forever: boolean;
+}
+
+/** The question before a picture or track is deleted (§33.1): to the bin, the whole run to the bin when it is the last, for good with no bin, or for
+ *  good out of the bin. The answer is Delete or Delete forever; Cancel and Escape leave everything as it was. */
+export function ConfirmDeleteItem({ ask, binDays, projectName, onCancel, onConfirm }: { ask: ItemAsk | null; binDays: number; projectName: string | null; onCancel: () => void; onConfirm: () => void }) {
   const { props: returnFocus } = useReturnFocus();
-  const total = images + music;
-  // how many are on each tab, so that the question is concrete
-  const parts = [images ? `${images} on Images` : "", music ? `${music} on Music` : ""].filter(Boolean).join(", ");
+  return (
+    <Dialog.Root open={!!ask} onOpenChange={(open) => !open && onCancel()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="overlay" />
+        <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
+          {ask && (
+            <>
+              <Dialog.Title>{deleteItemTitle(ask.item, ask.forever)}</Dialog.Title>
+              <Dialog.Description>
+                {deleteItemQuestion({ item: ask.item, binDays, last: ask.last, forever: ask.forever, filed: ask.run.project_id !== null, projectName })}
+              </Dialog.Description>
+              <div className="confirm-actions">
+                <Dialog.Close className="button">Cancel</Dialog.Close>
+                <button type="button" className="button danger-solid" data-action="confirm-delete-picture" onClick={onConfirm}>{ask.forever ? "Delete forever" : "Delete"}</button>
+              </div>
+            </>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+/** Empty bin (DESIGN.md §30.1, §33.1): everything in the bin, both tabs, for good; the question says how many runs and how many pictures or tracks. */
+export function ConfirmEmptyBin({ open, bin, wholeBin, onCancel, onConfirm }: { open: boolean; bin: BinContents; wholeBin: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const { props: returnFocus } = useReturnFocus();
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onCancel()}>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
           <Dialog.Title>Empty the bin?</Dialog.Title>
-          <Dialog.Description>
-            {`Delete ${total} ${total === 1 ? "run" : "runs"} for good${parts ? ` (${parts})` : ""}, with their files. This can't be undone.`}
-            {/* with a project chosen, the bar on screen shows only that project's part of the bin: say that the whole bin goes */}
-            {wholeBin ? " This is the whole bin, not only the project you are looking at." : ""}
-          </Dialog.Description>
+          {/* what goes (with the whole-bin sentence when a project is chosen: the bar on screen shows only that project's part of the bin) */}
+          <Dialog.Description>{emptyBinQuestion(bin, wholeBin)}</Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Cancel</Dialog.Close>
             <button type="button" className="button danger-solid" data-action="confirm-empty-bin" onClick={onConfirm}>Empty bin</button>

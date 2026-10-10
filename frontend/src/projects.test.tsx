@@ -559,11 +559,11 @@ describe("the Delete question for a run that is filed in a project (DESIGN.md §
 
 describe("Empty bin while a project is chosen (DESIGN.md §30.1, §32)", () => {
   it("says that it empties the whole bin when a project is chosen, and says nothing extra otherwise", () => {
-    render(<ConfirmEmptyBin open images={3} music={1} wholeBin onCancel={nothing} onConfirm={nothing} />);
+    render(<ConfirmEmptyBin open bin={{ image: { runs: 3, items: 0 }, music: { runs: 1, items: 0 } }} wholeBin onCancel={nothing} onConfirm={nothing} />);
     expect(screen.getByRole("alertdialog").textContent).toContain("Delete 4 runs for good (3 on Images, 1 on Music)");
     expect(screen.getByRole("alertdialog").textContent).toContain("This is the whole bin, not only the project you are looking at.");
     cleanup();
-    render(<ConfirmEmptyBin open images={3} music={1} wholeBin={false} onCancel={nothing} onConfirm={nothing} />);
+    render(<ConfirmEmptyBin open bin={{ image: { runs: 3, items: 0 }, music: { runs: 1, items: 0 } }} wholeBin={false} onCancel={nothing} onConfirm={nothing} />);
     expect(screen.getByRole("alertdialog").textContent).not.toContain("whole bin");
   });
 });

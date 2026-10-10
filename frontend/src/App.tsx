@@ -3,7 +3,8 @@ import { ApiError, api } from "./api";
 import { Header } from "./components/Header";
 import { MusicPanel } from "./components/MusicPanel";
 import { Tabs, panelId, tabId } from "./components/Tabs";
-import { ConfirmCancel, ConfirmDelete, ConfirmEmptyBin, Lightbox, cardReuseButton, type ViewerNotice } from "./components/Dialogs";
+import { BinnedItemsCard, type BinnedItemHandlers } from "./components/BinnedItemsCard";
+import { ConfirmCancel, ConfirmDelete, ConfirmDeleteItem, ConfirmEmptyBin, Lightbox, cardReuseButton, type ItemAsk, type ViewerNotice } from "./components/Dialogs";
 import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
 import { EmptyHistory, FilterBar, focusFilterBar } from "./components/FilterBar";
 import { OptionsDrawer } from "./components/OptionsDrawer";
@@ -14,7 +15,10 @@ import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
-import { binnedText, emptiedText, filedText, leftTheViewText, movedText, restoredText, takenOutText, unkeptText, type ViewScope } from "./format";
+import {
+  binContents, binnedText, emptiedText, filedText, itemBinnedText, itemDeletedText, itemRestoredText, leftTheViewText, movedText, restoredText, takenOutText,
+  unkeptText, type BinContents, type ItemRef, type ViewScope,
+} from "./format";
 import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withProject, working, type HistoryFilter } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
@@ -38,12 +42,13 @@ import {
 } from "./options";
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
-import { isImageRun, isMusicRun, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Project, type Run } from "./types";
+import { isImageRun, isMusicRun, type BinnedImage, type BinnedTrack, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Project, type Run } from "./types";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
 import { viewerItems, viewerKnown } from "./viewer";
 
 const NO_PROJECTS: Project[] = []; // the list of projects before it has arrived: one array, so nothing re-renders for a new empty one
+const EMPTY_BIN: BinContents = { image: { runs: 0, items: 0 }, music: { runs: 0, items: 0 } }; // what is in the bin before the counts have arrived
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -58,7 +63,9 @@ export default function App() {
   const [optionsOpen, setOptionsOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [formProblem, setFormProblem] = useState<string | null>(null);
-  const [lightbox, setLightbox] = useState<{ runId: string; index: number; notice?: ViewerNotice } | null>(null);
+  // `binned`: the viewer is on the run's pictures that are in the bin (DESIGN.md §33.1), not on the run's own: read-only, and its places are theirs
+  const [lightbox, setLightbox] = useState<{ runId: string; index: number; notice?: ViewerNotice; binned?: boolean } | null>(null);
+  const [pendingItem, setPendingItem] = useState<ItemAsk | null>(null); // a picture or track the person is being asked about deleting (§33.1)
   const lightboxOpen = useRef(false); // read when a request made from the viewer is answered, which may be after it closed
   useEffect(() => {
     lightboxOpen.current = lightbox !== null;
@@ -508,6 +515,93 @@ export default function App() {
       }
     });
 
+  // ------------------------------------------------------------------ one picture or track in the bin (DESIGN.md §33)
+  // Delete picture (in the viewer) and Delete track (on a track's row) ask first, then send ONE picture or track to the bin, or the whole run when it is the
+  // run's last. A toast offers Undo, which is Restore. In the Deleted view a picture in the bin has Restore and Delete forever (which asks).
+  const askDeleteItem = (run: Run, kind: "image" | "track", item: { id: string; seed: number }, position: number, of: number) =>
+    setPendingItem({ run, item: { kind, id: item.id, seed: item.seed, position, of }, last: of <= 1, forever: false });
+  const askDeleteItemForever = (run: Run, item: BinnedImage | BinnedTrack) =>
+    setPendingItem({ run, item: { kind: run.mode === "music" ? "track" : "image", id: item.id, seed: item.seed, position: null, of: 0 }, last: false, forever: true });
+
+  // After a picture left a run, the viewer on that run moves on: the next picture takes its place in the list, so the same index shows it; at the end the
+  // index steps back to the last one. A run with nothing left to show closes the viewer (DESIGN.md §33.1).
+  const settleViewer = (updated: Run | null) =>
+    setLightbox((current) => {
+      if (!current || current.binned || (updated !== null && current.runId !== updated.id)) return current;
+      const count = updated !== null && isImageRun(updated) ? viewerItems(updated).length : 0;
+      return count === 0 ? null : { ...current, index: Math.min(current.index, count - 1), notice: undefined };
+    });
+
+  // what the person was told and what the request said can differ by the time it is answered: 404 (gone), 409 (the server says why in its words)
+  const itemProblem = (err: ApiError, what: string): { kind: "info" | "error"; text: string } =>
+    err.status === 404 ? { kind: "info", text: "That picture no longer exists." }
+      : err.status === 409 ? { kind: "info", text: err.message }
+      : { kind: "error", text: `Couldn't ${what}: ${err.message}` };
+
+  const confirmDeleteItem = async () => {
+    const ask = pendingItem;
+    setPendingItem(null);
+    if (!ask) return;
+    const { run, item, forever } = ask;
+    try {
+      if (!forever && binDays > 0) {
+        const answer = await (item.kind === "image" ? api.binPicture(item.id) : api.binTrack(item.id));
+        dispatch({ type: "runUpsert", run: answer.run });
+        if (answer.moved === "run") {
+          // it was the run's last: the run is in the bin, there is nothing left to look at, and Undo restores the run
+          setLightbox((current) => (current?.runId === run.id ? null : current));
+          push("info", binnedText(run, binDays), { label: "Undo", run: () => void restore(answer.run, false) });
+        } else {
+          settleViewer(answer.run);
+          push("info", itemBinnedText(run, item, binDays), { label: "Undo", run: () => void restoreItem(item, false) });
+        }
+      } else {
+        // with no bin, or from the bin: for good. The answer is nothing, so the run is read again to learn whether it went with its last picture
+        await (item.kind === "image" ? api.deletePicture(item.id) : api.deleteTrack(item.id));
+        try {
+          const updated = await api.getRun(run.id);
+          dispatch({ type: "runUpsert", run: updated });
+          settleViewer(updated);
+        } catch (error) {
+          if ((error as ApiError).status !== 404) throw error;
+          dispatch({ type: "runDeleted", id: run.id });
+          settleViewer(null);
+        }
+        push("info", itemDeletedText(run, item));
+      }
+    } catch (error) {
+      const problem = itemProblem(error as ApiError, "delete it");
+      push(problem.kind, problem.text);
+    }
+  };
+
+  // Restore one picture or track: it goes back into its run at its own place. From the Deleted view the card (or the whole card of the run, when it was the
+  // last) leaves the list, so keyboard focus is looked after as for Restore on a run (§29.4); from the Undo toast there is nothing to look after.
+  const restoreItem = (item: ItemRef & { id: string }, fromCard: boolean) =>
+    once(`restore-item:${item.id}`, async () => {
+      try {
+        const updated = await (item.kind === "image" ? api.restorePicture(item.id) : api.restoreTrack(item.id));
+        if (fromCard) refocus.current = true;
+        dispatch({ type: "runUpsert", run: updated });
+        // it is back at its own place: say which place that is now
+        const places: { id: string }[] = updated.mode === "music" ? updated.tracks : updated.images;
+        const at = places.findIndex((place) => place.id === item.id);
+        push("info", itemRestoredText(updated, { ...item, position: at >= 0 ? at + 1 : null, of: places.length }));
+      } catch (error) {
+        const err = error as ApiError;
+        const words = err.status === 409 && err.code === "run_in_bin" ? "That run is in the bin. Restore the run first." : err.status === 409 ? "That picture is not in the bin any more." : null;
+        const problem = words ? { kind: "info" as const, text: words } : itemProblem(err, "restore it");
+        push(problem.kind, problem.text);
+      }
+    });
+
+  // what a card of deleted pictures hands back (DESIGN.md §33.1)
+  const binnedHandlers: BinnedItemHandlers = {
+    onOpen: (run, index) => setLightbox({ runId: run.id, index, binned: true }),
+    onRestore: (run, item) => void restoreItem({ kind: run.mode === "music" ? "track" : "image", id: item.id, seed: item.seed, position: null, of: 0 }, true),
+    onDeleteForever: askDeleteItemForever,
+  };
+
   // ------------------------------------------------------------------ project folders (DESIGN.md §32)
   // What a failed project request says, in words for the place that asked: a refused name or a taken one is the server's own message, a project
   // that has gone is said quietly, and anything else is an error.
@@ -631,9 +725,10 @@ export default function App() {
   const confirmEmptyBin = async () => {
     setPendingEmptyBin(false);
     try {
-      const { deleted } = await api.emptyBin();
+      const { deleted, pictures } = await api.emptyBin();
       for (const run of Object.values(state.runs)) if (run.deleted_at !== null) dispatch({ type: "runDeleted", id: run.id });
-      push("info", emptiedText(deleted));
+      // the pictures and tracks in the bin of runs that stay: the server tells every page `run.updated` for each of those runs, so the cards follow
+      push("info", emptiedText(deleted, pictures, { pictures: binTotals.image.items, tracks: binTotals.music.items }));
     } catch (error) {
       push("error", `Couldn't empty the bin: ${(error as Error).message}`);
     }
@@ -760,10 +855,14 @@ export default function App() {
   }
 
   const found = lightbox ? state.runs[lightbox.runId] : undefined;
-  const lightboxRun = found && isImageRun(found) ? found : null;
+  // The viewer shows the run's own pictures; on a card of deleted pictures it shows THOSE (DESIGN.md §33.1), as a run made of them, with no sources. A
+  // run whose pictures were all restored meanwhile has nothing left to show.
+  const lightboxRun = found && isImageRun(found) ? (lightbox?.binned ? (found.binned_images.length ? { ...found, inputs: [], images: found.binned_images } : null) : found) : null;
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
   // the whole bin, both tabs, whatever project is chosen: what Empty bin deletes (the counts on the bar are for the tab and the project shown)
   const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted : null;
+  // the same, as runs and pictures per tab, for the question Empty bin asks (DESIGN.md §33.1)
+  const binTotals = state.totals ? binContents(state.totals) : EMPTY_BIN;
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
   const filterBar = (
     <FilterBar filter={filter} keptCount={scopedCounts?.[tabKind].kept ?? null} deletedCount={scopedCounts?.[tabKind].deleted ?? null} binTotal={bin}
@@ -855,6 +954,11 @@ export default function App() {
               ) : (
                 imageRuns.map((run) => {
                   const id = run.id;
+                  // In Deleted, a run that is in the history but has pictures of its own in the bin is one card of those pictures (DESIGN.md §33.1); a run that
+                  // is itself in the bin, and every run in the other views, is an ordinary card
+                  if (filter.deleted === true && run.deleted_at === null) {
+                    return <BinnedItemsCard key={id} run={run} now={now} projectName={nameOfProject(run.project_id)} handlers={binnedHandlers} />;
+                  }
                   return (
                     <RunCard
                       key={id}
@@ -918,6 +1022,8 @@ export default function App() {
               isTransient={transient}
               viewScope={viewScope}
               projects={projectControls}
+              deletedView={filter.deleted === true}
+              binned={binnedHandlers}
               more={more}
               loadingOlder={loadingOlder}
               now={now}
@@ -928,6 +1034,7 @@ export default function App() {
               onToggleKeep={(run) => void toggleKeep(run)}
               onRestore={(run) => void restore(run, true)}
               onDelete={setPendingDelete}
+              onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
           </>
@@ -938,7 +1045,7 @@ export default function App() {
         index={lightbox?.index ?? 0}
         notice={lightbox?.notice ?? null}
         canEdit={canEdit}
-        readOnly={!!lightboxRun?.deleted_at}
+        readOnly={!!lightbox?.binned || !!lightboxRun?.deleted_at}
         making4k={making4k}
         enlarging={enlarging}
         enlargeWaiting={enlargeWaiting}
@@ -946,13 +1053,15 @@ export default function App() {
         onMake4K={(image) => void make4k(image)}
         onEnlarge={(image) => void enlargeImage(image)}
         onEditThis={(image) => editThis(image, true)}
+        onDeletePicture={(image, position, of) => lightboxRun && askDeleteItem(lightboxRun, "image", image, position, of)}
         onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
         onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}
         onClose={() => setLightbox(null)}
       />
       <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />
       <ConfirmDelete run={pendingDelete} binDays={binDays} projectName={nameOfProject(pendingDelete?.project_id ?? null)} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
-      <ConfirmEmptyBin open={pendingEmptyBin} images={state.totals?.image.deleted ?? 0} music={state.totals?.music.deleted ?? 0} wholeBin={filter.project !== null}
+      <ConfirmDeleteItem ask={pendingItem} binDays={binDays} projectName={nameOfProject(pendingItem?.run.project_id ?? null)} onCancel={() => setPendingItem(null)} onConfirm={() => void confirmDeleteItem()} />
+      <ConfirmEmptyBin open={pendingEmptyBin} bin={binTotals} wholeBin={filter.project !== null}
         onCancel={() => setPendingEmptyBin(false)} onConfirm={() => void confirmEmptyBin()} />
       <ProjectsDialog open={managingProjects} projects={projects} nameMax={projectNameMax} onClose={() => setManagingProjects(false)}
         onCreate={createProject} onRename={renameProject} onDelete={deleteProject} />
