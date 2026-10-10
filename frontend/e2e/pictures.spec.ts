@@ -254,6 +254,17 @@ test("Delete track on a music run: the row goes, the others are numbered again, 
   await allOption(page).click();
   await expect(c.locator(".track")).toHaveCount(3);
   expect((await runOf(page, run.id)).tracks.map((t) => t.id)).toEqual([one.id, two.id, three.id]);
+
+  // Delete forever on a deleted track asks first, and then its file is gone
+  expect((await page.request.post(`/api/tracks/${two.id}/bin`, { headers: ASK })).ok()).toBe(true);
+  await deletedOption(page).click();
+  await d.getByRole("button", { name: /^Delete Version 2 · seed .* for good/ }).click();
+  await expect(question(page)).toContainText("Delete this track for good?");
+  await question(page).getByRole("button", { name: "Delete forever" }).click();
+  await expect(toastWith(page, /Deleted a track of .* for good\./)).toBeVisible();
+  await expect(d).toHaveCount(0);
+  expect((await page.request.get(two.url)).status()).toBe(404);
+  expect((await runOf(page, run.id)).tracks.map((t) => t.id)).toEqual([one.id, three.id]);
 });
 
 // A run with one track has no Delete track: its Delete is the run's.
@@ -265,6 +276,40 @@ test("a music run with a single track has no Delete track", async ({ page }) => 
   await musicTab(page).click();
   await expect(trackCard(page, prompt)).toBeVisible();
   await expect(trackCard(page, prompt).getByRole("button", { name: /^Delete track/ })).toHaveCount(0);
+});
+
+// A refusal from the server (here: Make 4K or Enlarge is working on the picture, 409 image_busy) is said as information, in the server's own words, and not as
+// a failure; nothing changes. The refusal is answered the way the server answers it.
+test("a refusal to delete a picture is said in the server's words, not as an error", async ({ page }) => {
+  await clearHistory(page);
+  const prompt = unique("a busy picture");
+  const run = await makeRun(page, prompt, 2);
+  await page.goto("/");
+  const words = "Make 4K or Enlarge is working on this picture. Try again when it has finished.";
+  await page.route(`**/api/images/${run.images[0].id}/bin`, (route) =>
+    route.fulfill({ status: 409, contentType: "application/json", body: JSON.stringify({ detail: words, code: "image_busy" }) }));
+  await card(page, prompt).getByRole("button", { name: /^Open image 1 of 2/ }).click();
+  await deletePictureButton(page).click();
+  await confirmButton(page).click();
+  await expect(toastWith(page, words)).toBeVisible();
+  await expect(page.locator(".toast-error")).toHaveCount(0);
+  expect((await runOf(page, run.id)).binned_images).toHaveLength(0);
+});
+
+// Restore from the Deleted view takes the picture, and with the last one the whole card, out of the list: the keyboard goes on from the filter bar, as it
+// does after Restore on a run (§29.4), since the button that had the focus is gone.
+test("restoring the last deleted picture of a card moves keyboard focus to the filter bar", async ({ page }) => {
+  await clearHistory(page);
+  const prompt = unique("focus after restore");
+  const run = await makeRun(page, prompt, 2);
+  await binPicture(page, run.images[0].id);
+  await page.goto("/");
+  await deletedOption(page).click();
+  const c = binnedCard(page, prompt);
+  await c.getByRole("button", { name: /^Restore Image 1/ }).focus();
+  await page.keyboard.press("Enter");
+  await expect(c).toHaveCount(0);
+  await expect(deletedOption(page)).toBeFocused();
 });
 
 // ------------------------------------------------------------------ live, and a phone
