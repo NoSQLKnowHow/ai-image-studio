@@ -309,7 +309,7 @@ first run step by step and says what each step should show.
 - **Enlarge (1.11):** a second button beside Make 4K that makes **the same picture bigger and sharper**: an upscaler model
   (Real-ESRGAN x2plus) enlarges it, then it is sized to exactly 3840×2160 (or the shape's equivalent), up to a 4× enlargement, so a
   50% picture (1376×768) qualifies and Make 4K cannot do it. It is slower than Make 4K (the GPU, a short-lived process of its own;
-  minutes on the CPU), works while a picture is being made, and the copy **replaces** a Make 4K copy of that picture
+  minutes on the CPU). If a picture is being made it **waits for it** (the button says *Waiting…* on every open page, then *Enlarging…*) and goes before the runs still queued, because the image model and the upscaler do not fit on the GPU together; if something outside the studio is holding the GPU it says so (*Not enough memory for the upscaler right now…*). The copy **replaces** a Make 4K copy of that picture
   (`data/images/<run>/<n>-4k-enlarged.png`). It is bigger *and* sharper, but **the extra detail is the model's guess**: faces can come out
   smooth, small text may not sharpen, flat colour can pick up texture. How it looks on your pictures is what the Spark test (SPARK_TEST.md
   section 22) is for. **One-time setup, on the machine that runs the studio** (the studio never downloads it: the model has its own terms,

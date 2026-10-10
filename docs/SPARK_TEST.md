@@ -648,7 +648,7 @@ where** (faces, text, foliage). If `pip install` or the run fails, paste the err
 Update first: `git pull && docker compose up -d --build`; the title should read **v1.11** (reload with Ctrl+Shift+R). The build log
 has a line `check_image: Enlarge: spandrel 0.4.x`; if it says spandrel cannot be imported, send me that line (everything else still
 works, and Enlarge says why it is off). There is no database change. Enlarge uses **a model file you download once** and a **separate
-short-lived process**, so the image model does not have to be loaded and may be generating.
+short-lived process**, so the image model does not have to be loaded. If it is generating, Enlarge **waits for the picture to finish** and then runs (g): the two do not fit on the GPU together.
 
 **a) The model file.** Before you download anything: generate any 16:9 picture (Options, size **16:9**, 2752×1536). Its card has
 **Make 4K** and **Enlarge**, and Enlarge is **dimmed**. Hover it: the tooltip says the model file is not there and says what to do. Press
@@ -675,8 +675,12 @@ Press it. **Write down the time and how it looks** next to the picture you would
 
 **f) A square.** The default 2048×2048: Enlarge makes **3840×3840** (the model's 4096×4096 is reduced). **Write down the time**, and the memory while it runs (`free -g` in another terminal).
 
-**g) While a picture is being made.** Start a long run (many steps), and press Enlarge on an older picture while it runs. **Good:** it finishes, and the running picture is
-not stopped. **Write down** whether the run slowed down (steps per second in the log) and the lowest available memory.
+**g) While a picture is being made.** (This is the check that failed in the first trial, with *CUDA error: out of memory*.) Start a long run (several pictures, many steps),
+and press Enlarge on an older picture while it runs. Queue a second run behind it. **Good:** the button says **Waiting…** and is dimmed (that is not an error; hover it for why); the running
+picture is not stopped or slowed; **when that run finishes** the button says *Enlarging…* **before the second run starts**, and then the note *Enlarged to 3840×2160…* appears and the second run goes on.
+Open the page in a second browser tab while it waits: its button says *Waiting…* too, and shows Download 4K when it is done. **Write down** how long it waited, how long it then took, and whether the log's
+`ENLARGED …` line says `cuda`. If you get *Not enough memory for the upscaler right now…* instead, something other than the studio is holding the GPU (the LLM server?): send me `nvidia-smi` and `free -g` taken at that moment.
+Also try **Load model** and, while it is loading, Enlarge: it should wait for the load to finish.
 
 **h) When it goes wrong.** (1) Rename the model file, reload: Enlarge is dimmed again, with the reason. (2) Put a file that is not a model in its place (`echo x > ~/.cache/huggingface/upscalers/RealESRGAN_x2plus.pth`):
 pressing Enlarge says the model could not be loaded, naming the file. Restore the real file afterwards. (3) Press Enlarge twice quickly: one request, one copy.
