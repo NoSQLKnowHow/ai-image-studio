@@ -6,6 +6,8 @@ IMAGE="ai-image-studio:local"      # the image name in compose.yaml
 SERVICE="studio"                   # the service name in compose.yaml
 BACKUP_PREFIX="ai-image-studio-backup-"
 DEFAULT_MODEL="Qwen/Qwen-Image-2.1"
+DEFAULT_MUSIC_MODEL="MiniMaxAI/MiniMax-Music3"
+DEFAULT_UPSCALER="upscalers/RealESRGAN_x2plus.pth"   # inside the model cache folder
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd -- "$SCRIPT_DIR/.." && pwd)
@@ -68,13 +70,33 @@ hf_cache_dir() {
   printf '%s' "${dir/#\~/$HOME}"
 }
 
-# The model's folder inside that cache ("Qwen/Qwen-Image-2.1" -> "models--Qwen--Qwen-Image-2.1").
-# Fails for a model given as a path on disk, which is not in the cache at all.
-model_dir_name() {
+# hf_model_path SETTING DEFAULT: where the Hugging Face model named by that setting lives inside the cache folder
+# ("Qwen/Qwen-Image-2.1" -> "hub/models--Qwen--Qwen-Image-2.1"). Fails for a model given as a path on disk, which is
+# not in the cache at all.
+hf_model_path() {
   local model
-  model=$(env_value STUDIO_MODEL "$DEFAULT_MODEL")
+  model=$(env_value "$1" "$2")
   case $model in /*|./*|../*) return 1;; esac
-  printf 'models--%s' "${model//\//--}"
+  printf 'hub/models--%s' "${model//\//--}"
+}
+
+# upscaler_path: where Enlarge's model file lives inside the cache folder. STUDIO_UPSCALER_MODEL is a path as the
+# container sees it, where the cache folder is /models; empty means the default file. Fails for a path outside /models.
+upscaler_path() {
+  local file
+  file=$(env_value STUDIO_UPSCALER_MODEL "")
+  if [[ -z $file ]]; then printf '%s' "$DEFAULT_UPSCALER"; return 0; fi
+  case $file in /models/*) printf '%s' "${file#/models/}";; *) return 1;; esac
+}
+
+# valid_model_path PATH: is this a path inside the cache folder that a backup may hold? A model folder
+# (hub/models--NAME), or a file inside some other folder (the upscaler). Never a ".." or an absolute path, and never
+# anything else in hub/: that folder holds other tools' models too.
+valid_model_path() {
+  local path=$1
+  [[ $path != *..* && $path != /* ]] || return 1
+  [[ $path =~ ^hub/models--[A-Za-z0-9._-]+$ ]] && return 0
+  [[ $path =~ ^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)+$ && $path != hub/* ]]
 }
 
 # Is the studio's container running right now?
@@ -122,6 +144,23 @@ check_listing() {
   fi
 }
 
+# check_listing_paths NAME LISTING PATH...: like check_listing, for an archive that may hold several paths (the models).
+check_listing_paths() {
+  local name=$1 listing=$2 line path ok
+  shift 2
+  while IFS= read -r line; do
+    [[ -n $line ]] || continue
+    ok=0
+    for path in "$@"; do
+      if [[ $line == "$path" || $line == "$path"/* ]]; then ok=1; break; fi
+    done
+    (( ok )) || die "Refusing to unpack $name: it holds an entry outside the paths the backup lists (for example: $line)."
+  done <<< "$listing"
+  if printf '%s\n' "$listing" | grep -Eq '(^|/)\.\.(/|$)'; then
+    die "Refusing to unpack $name: it holds a path containing '..'."
+  fi
+}
+
 # ---------------------------------------------------------------------------------------------
 # Reading a backup. A backup is one .tar file (what backup.sh makes) or a folder holding the same
 # files (what you get by unpacking that .tar). Pieces are read straight out of the .tar with
@@ -130,7 +169,7 @@ check_listing() {
 #   data.tar.gz      your history and images
 #   image.tar.gz     the Docker image (docker save, gzipped)
 #   env.backup       your .env
-#   model-cache.tar  the model's files from the Hugging Face cache
+#   model-cache.tar  the studio's models from the Hugging Face cache (hub/models--… folders, the upscaler file)
 #   MANIFEST.txt     what this is (key=value lines)
 #   SHA256SUMS       a checksum for every other file
 KNOWN_MEMBERS=(data.tar.gz image.tar.gz env.backup model-cache.tar MANIFEST.txt SHA256SUMS)
