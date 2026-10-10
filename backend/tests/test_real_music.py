@@ -201,8 +201,9 @@ def test_a_folder_with_a_part_missing_is_reported_as_incomplete_and_not_as_loade
 def test_a_big_vocabulary_tokenizer_in_a_local_folder_does_not_trigger_the_mistral_regex_warning(repo, tmp_path):
     """transformers checks tokenizers with more than 100,000 entries for Mistral's old regex bug, and for a local folder
     whose config.json has no `transformers_version` (the real model's has none) it cannot rule Mistral out, so it warns
-    of "incorrect tokenization" for the model's Qwen tokenizer. The loader says it is not Mistral. The same tokens come
-    out either way; the warning is the only difference."""
+    of "incorrect tokenization" for the model's Qwen tokenizer. The loader says it is not Mistral. The warning is the only
+    difference: asking for the fix instead (`fix_mistral_regex=True`) would also silence it, but would swap the tokenizer's
+    split rule for one that cuts a word like "HelloWorld" in two, so the test also checks that such a word stays whole."""
     import logging
 
     from tokenizers import Tokenizer, models
@@ -228,11 +229,14 @@ def test_a_big_vocabulary_tokenizer_in_a_local_folder_does_not_trigger_the_mistr
     handler = Catch()
     logger = logging.getLogger("transformers")
     logger.addHandler(handler)
+    loaded = RealMusicPipeline(str(copy), hub_mode="offline", device="cpu", dtype="float32")
     try:
-        RealMusicPipeline(str(copy), hub_mode="offline", device="cpu", dtype="float32").load()
+        loaded.load()
     finally:
         logger.removeHandler(handler)
     assert not [m for m in handler.messages if "incorrect regex pattern" in m], handler.messages
+    pieces = loaded._pipe.tokenizer.backend_tokenizer.pre_tokenizer.pre_tokenize_str("HelloWorld")
+    assert [span for _, span in pieces] == [(0, 10)], pieces  # one piece: the tokenizer's own split rule is untouched
 
 
 def test_a_folder_that_is_not_there_fails_the_load_with_an_explanation(tmp_path):
