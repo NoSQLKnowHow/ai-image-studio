@@ -188,6 +188,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "input_images": {"min": 1, "max": settings.max_input_images},
                 "draft": {"long_side": settings.draft_size, "steps": settings.draft_steps},
                 "edit_warn_units": settings.edit_warn_units,
+                "bin_days": settings.bin_days,
                 "resolutions": list(P.RESOLUTIONS),
                 "upload_mb": settings.max_upload_mb,
                 "steps": {"min": P.STEPS_MIN, "max": P.STEPS_MAX},
@@ -289,9 +290,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         limit: int = Query(20, ge=1, le=100),
         before: Optional[str] = Query(None),
         kept: Optional[bool] = Query(None, description="true: only kept runs; false: only runs that are not kept; absent: either"),
+        deleted: Optional[bool] = Query(None, description="true: only the bin; false or absent: the history, without the bin"),
     ) -> Any:
         try:
-            return runs_page(request, limit, before, RunFilter(kept=kept))
+            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted)))
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
 
@@ -336,6 +338,39 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except RunConflict as exc:
             return _error(409, str(exc), "run_active")
         return Response(status_code=204)
+
+    @app.post("/api/runs/{run_id}/bin")
+    async def bin_run(run_id: str, request: Request) -> Any:
+        """Move a finished run to the bin (DESIGN.md §30.5). `DELETE` still means for good."""
+        # With the bin turned off there is nothing to move a run to: refuse. The page knows (`capabilities.limits.bin_days`) and deletes for
+        # good instead.
+        if settings.bin_days <= 0:
+            return _error(409, "The bin is turned off (STUDIO_BIN_DAYS=0): a deleted run is deleted for good.", "bin_off")
+        try:
+            check_id(run_id)
+            await jobs_of(request).bin_run(run_id)
+        except (StorageError, RunNotFound):
+            return _error(404, "Run not found.", "not_found")
+        except RunConflict as exc:
+            return _error(409, str(exc), "run_not_finished")
+        return jobs_of(request).payload(run_id)
+
+    # Take a run out of the bin: 404 if there is no such run, 409 if it is not in the bin
+    @app.post("/api/runs/{run_id}/restore")
+    async def restore_run(run_id: str, request: Request) -> Any:
+        try:
+            check_id(run_id)
+            await jobs_of(request).restore_run(run_id)
+        except (StorageError, RunNotFound):
+            return _error(404, "Run not found.", "not_found")
+        except RunConflict as exc:
+            return _error(409, str(exc), "not_in_bin")
+        return jobs_of(request).payload(run_id)
+
+    @app.delete("/api/bin")
+    async def empty_bin(request: Request) -> Any:
+        """Delete for good every run in the bin, with its files."""
+        return {"deleted": await jobs_of(request).empty_bin()}
 
     async def _image_file(request: Request, image_id: str, thumb: bool) -> tuple[Any, Optional[bytes]]:
         """(image row, file contents), or (None, None) when there's no such image.

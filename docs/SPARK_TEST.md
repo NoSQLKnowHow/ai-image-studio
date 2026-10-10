@@ -737,6 +737,31 @@ with **Undo**; **Undo** brings the card back in its place. A run older than your
 
 **Send back:** anything that did not match "Good", and whether the date in (e) matched the date you expected from the run's age.
 
+## 24. The bin (new in 1.13)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.13** (reload with Ctrl+Shift+R). **This release upgrades the database**
+(schema 4): the first start makes a copy beside it, so check, before anything else: `ls -l data/studio.sqlite*` shows `studio.sqlite.before-schema-4`, and your
+runs are all there. (If anything is missing, stop and send me the log; the copy is the way back, with an older studio.)
+
+**a) The first clean-up.** Runs older than 30 days that you did not Keep used to be deleted at the first start and then daily; now they are **moved to Deleted**.
+Open **Deleted**: if you had such runs they are there, each saying when it will be deleted for good (30 days from today). **Good:** nothing you cared about is gone.
+
+**b) Delete, Undo.** Press **Delete** on a recent card. **Good:** the question says it moves to Deleted and stays 30 days; the card goes; a toast says so with **Undo**; **Undo** brings
+the card back where it was. Do it again and this time let the toast go: the run is in **Deleted** (the count beside it went up), with its pictures still opening.
+
+**c) Restore.** In **Deleted** press **Restore** on a run you had kept: the toast says *It is still kept*. On one you had not: *It has a fresh 30 days*. Both are back in All.
+
+**d) Delete forever, Empty bin.** **Delete forever** asks first and then removes the run and its files (`ls data/images/<run id>` is gone). **Empty bin** (top right of the bar) asks,
+saying how many on Images and on Music, and then empties both. **Good:** `du -sh data` falls by what was in the bin.
+
+**e) A waiting run.** Start a long run, queue another, and press **Delete** on the waiting one: the question says it cannot be undone, and it does not appear in Deleted.
+
+**f) The setting.** In `.env` put `STUDIO_BIN_DAYS=0` and `docker compose up -d`: Delete is for good again (the old question), and the next clean-up empties whatever is in the bin. Set it back to `30`.
+
+**g) A phone.** The bar with **Deleted** and **Empty bin**, a card in the bin and the questions fit the screen.
+
+**Send back:** the `ls -l data/studio.sqlite*` line, what (a) showed, anything that did not match "Good".
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -757,3 +782,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 14. From step 21 (Make 4K): the seconds and the file size from (a) and for a square in (c), what you thought of the picture in (b), whether the rotation of a phone photo and the refusals in (c3) were right, the time for a 12 MP photo in (c3), whether a running job slowed down in (d), and anything that did not match "Good". From (i), if you ran it: the whole probe output and which of the two 4K files looks better to you, and where.
 15. From step 22 (Enlarge): the `ENLARGED …` log lines (time, device, model), the times and sizes from (b), (d), (e), (f) and (i), your verdict on **where Enlarge looks better or worse than Make 4K** from (c) to (e), the memory and slowdown figures from (f) and (g), and anything that did not match "Good".
 16. From step 23 (the Kept view): anything that did not match "Good", and whether the date in (e) was the date you expected.
+17. From step 24 (the bin): the `ls -l data/studio.sqlite*` line, what the first clean-up put in Deleted, and anything that did not match "Good".

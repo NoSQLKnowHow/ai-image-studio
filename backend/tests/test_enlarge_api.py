@@ -384,7 +384,6 @@ def test_a_run_deleted_while_its_picture_is_being_enlarged_ends_in_a_404_and_lea
     assert not folder.exists() and len(stub.calls) == 1
 
 
-def test_the_database_schema_is_unchanged(client):
-    from studio.db import SCHEMA_VERSION
-
-    assert SCHEMA_VERSION == 3  # an enlarged copy is a file beside the image; there is no row for it (DESIGN.md §28.2)
+def test_the_database_schema_has_no_row_for_the_copy(client):
+    columns = {r["name"] for r in client.app.state.db._all("SELECT name FROM pragma_table_info('images')")}
+    assert not any("4k" in name or "enlarge" in name for name in columns)  # an enlarged copy is a file beside the image; there is no row for it

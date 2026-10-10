@@ -114,7 +114,9 @@ interface RunBase {
   finished_at: string | null;
   error: { message: string; hint: string | null } | null;
   pinned: boolean; // "Keep": never expires
-  expires_at: string | null; // when it will be deleted automatically; null if kept, pending, or expiry is off
+  expires_at: string | null; // when it will be deleted automatically; null if kept, pending, in the bin, or expiry is off
+  deleted_at: string | null; // when it went to the bin (DESIGN.md §30); null if it is not there
+  purge_at: string | null; // when it will be deleted for good; null if it is not in the bin
   queue_position: number | null;
   progress: Progress | null;
   canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
@@ -248,6 +250,7 @@ export interface Capabilities {
     resolutions: number[]; // Edit's 1K / 2K choices (1024, 2048)
     upload_mb: number; // the largest single upload
     edit_warn_units: number; // an edit costing more units than this gets a warning; 0 = never (DESIGN.md §21.4)
+    bin_days: number; // how long a deleted run stays in the bin; 0 = there is no bin and Delete is for good (DESIGN.md §30)
     music: MusicLimits;
   };
   music: MusicAvailability;

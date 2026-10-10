@@ -298,8 +298,13 @@ button, input, textarea, select { font: inherit; color: inherit; }
 
 /* ------------------------------------------------------------------ timeline */
 .timeline { display: grid; gap: 14px; }
-/* the filter bar above the history (DESIGN.md §29.1): the label, the All / Kept switch and the count of kept runs */
+/* the filter bar above the history (DESIGN.md §29.1, §30.1): the label, the All / Kept / Deleted switch with its counts, and Empty bin while Deleted is on show */
 .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+/* the Deleted badge on a card in the bin: quiet, like the card's other badges */
+.badge-deleted { background: var(--surface-2); color: var(--text-2); }
+.badge-deleted svg { width: 12px; height: 12px; }
+/* Empty bin sits at the far end of the filter bar */
+.filter-bar [data-action="empty-bin"] { margin-left: auto; }
 .filter-label { color: var(--text-2); font-size: 13px; font-weight: 550; }
 .filter-count { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .segmented button[aria-checked="true"] .filter-count { color: var(--text-2); }

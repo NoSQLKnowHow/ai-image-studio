@@ -23,6 +23,7 @@ export const CAPS: Capabilities = {
     resolutions: [1024, 2048],
     upload_mb: 20,
     edit_warn_units: 8,
+    bin_days: 30,
     music: {
       duration: { min: 10, max: 300, default: 60 },
       tracks: { min: 1, max: 4 },
@@ -55,6 +56,8 @@ export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
     error: null,
     pinned: false,
     expires_at: null,
+    deleted_at: null,
+    purge_at: null,
     queue_position: null,
     progress: null,
     canceling: false,
@@ -84,6 +87,8 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
     error: null,
     pinned: false,
     expires_at: null,
+    deleted_at: null,
+    purge_at: null,
     queue_position: null,
     progress: null,
     canceling: false,
@@ -96,7 +101,7 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
 }
 
 export const STATUS: Status = {
-  version: "1.12",
+  version: "1.13",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", model: "image", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10, enlarge_waiting: [] },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },

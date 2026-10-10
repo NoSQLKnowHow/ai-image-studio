@@ -410,7 +410,6 @@ def test_it_works_while_another_run_is_generating(client_factory):
     wait_for(client, busy["id"])
 
 
-def test_the_database_schema_is_unchanged(client):
-    from studio.db import SCHEMA_VERSION
-
-    assert SCHEMA_VERSION == 3  # a 4K copy is a file beside the image; there is no row for it (DESIGN.md §27.3)
+def test_the_database_schema_has_no_row_for_the_copy(client):
+    columns = {r["name"] for r in client.app.state.db._all("SELECT name FROM pragma_table_info('images')")}
+    assert not any("4k" in name or "enlarge" in name for name in columns)  # a 4K copy is a file beside the image; there is no row for it

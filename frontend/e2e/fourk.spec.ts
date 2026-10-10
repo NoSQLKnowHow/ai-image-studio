@@ -219,7 +219,7 @@ test("another open page learns of the copy without reloading", async ({ page, co
   await other.close();
 });
 
-test("deleting the run removes its 4K copy", async ({ page }) => {
+test("deleting the run for good removes its 4K copy (in the bin it is still there)", async ({ page }) => {
   await useOptions(page, WIDE);
   await page.goto("/");
   await clearHistory(page);
@@ -231,6 +231,12 @@ test("deleting the run removes its 4K copy", async ({ page }) => {
   expect((await page.request.get(url)).status()).toBe(200);
   await card(page, prompt).getByRole("button", { name: "Delete" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
+  await expect(card(page, prompt)).toHaveCount(0);
+  expect((await page.request.get(url)).status()).toBe(200); // deleted means in the bin, with its files (DESIGN.md §30)
+  // now delete it for good from the bin: this is when its 4K copy goes too
+  await page.locator("[data-filter-bar]:visible").getByRole("radio", { name: /^Deleted/ }).click();
+  await card(page, prompt).getByRole("button", { name: "Delete forever" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete forever" }).click();
   await expect(card(page, prompt)).toHaveCount(0);
   expect((await page.request.get(url)).status()).toBe(404);
 });

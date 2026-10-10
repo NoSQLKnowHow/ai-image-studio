@@ -20,6 +20,7 @@ KINDS: dict[str, tuple[str, ...]] = {"image": ("generate", "edit"), "music": ("m
 @dataclass(frozen=True)
 class RunFilter:
     kept: Optional[bool] = None  # True: only runs that are kept; False: only runs that are not; None: either
+    deleted: Optional[bool] = False  # False: the history (runs not in the bin); True: only the bin (DESIGN.md §30); None: either
 
     def conditions(self) -> tuple[list[str], list[Any]]:
         """The SQL conditions (to be joined with AND) and the values bound to their placeholders."""
@@ -28,8 +29,12 @@ class RunFilter:
         if self.kept is not None:
             clauses.append("pinned = ?")
             values.append(1 if self.kept else 0)
+        # The bin is a filter like the others. The default (False) makes every list the history WITHOUT the bin, so nothing that was
+        # written before the bin existed shows a deleted run by accident; True is only the bin; None is both.
+        if self.deleted is not None:
+            clauses.append("deleted_at IS NOT NULL" if self.deleted else "deleted_at IS NULL")
         return clauses, values
 
 
 # The counts the page shows, by name: `GET /api/runs/counts` answers {kind: {name: n}}.
-COUNTED: dict[str, RunFilter] = {"all": RunFilter(), "kept": RunFilter(kept=True)}
+COUNTED: dict[str, RunFilter] = {"all": RunFilter(), "kept": RunFilter(kept=True), "deleted": RunFilter(deleted=True)}

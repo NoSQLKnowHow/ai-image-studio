@@ -43,6 +43,17 @@ def test_config_parses_every_variable():
     assert s.min_free_gb == 40.5 and s.cpu_offload and s.hub_mode == "offline" and s.queue_cap == 3
 
 
+def test_the_bin_setting():
+    """STUDIO_BIN_DAYS: how long a deleted run stays in the bin (DESIGN.md §30); 30 unless set, 0 = no bin."""
+    assert Settings.from_env({}).bin_days == 30
+    assert Settings.from_env({"STUDIO_BIN_DAYS": "7"}).bin_days == 7
+    assert Settings.from_env({"STUDIO_BIN_DAYS": "0"}).bin_days == 0
+    assert Settings.from_env({"STUDIO_BIN_DAYS": "7", "STUDIO_RETENTION_DAYS": "3"}).retention_days == 3  # two settings, not one
+    for bad in ("-1", "many", "36501"):
+        with pytest.raises(ConfigError, match="STUDIO_BIN_DAYS"):
+            Settings.from_env({"STUDIO_BIN_DAYS": bad})
+
+
 def test_where_model_files_come_from(monkeypatch):
     """STUDIO_LOCAL_FILES_ONLY: auto (cache first, the default), true (offline), false (the old behaviour)."""
     assert Settings.from_env({}).hub_mode == "auto"
