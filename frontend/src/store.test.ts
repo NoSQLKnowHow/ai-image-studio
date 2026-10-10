@@ -90,6 +90,14 @@ describe("API errors", () => {
   it("explains an unreachable server", () => {
     expect(toApiError(0, null).message).toBe("Can't reach the studio server.");
   });
+
+  it("keeps the server's hint, when it gives one as text, and only then", () => {
+    const refused = toApiError(503, { detail: "The upscaler model file is not there.", code: "upscaler_unavailable", hint: "Download it once." });
+    expect([refused.message, refused.status, refused.code, refused.hint]).toEqual(["The upscaler model file is not there.", 503, "upscaler_unavailable", "Download it once."]);
+    expect(toApiError(500, { detail: "It failed.", code: "upscale_failed" }).hint).toBeNull();
+    expect(toApiError(500, { detail: "It failed.", hint: 42 }).hint).toBeNull();
+    expect(toApiError(0, null).hint).toBeNull();
+  });
 });
 
 describe("formatting", () => {
@@ -220,7 +228,7 @@ describe("expiry and cancel wording", () => {
   it("says what a canceled run kept", () => {
     const base = makeRun({ status: "canceled", options: { ...makeRun().options, num_images: 4 } });
     expect(canceledText(base)).toBe("Canceled before any image was finished.");
-    const image = { id: "i", idx: 0, seed: 1, width: 8, height: 8, has_alpha: false, url: "/u", thumb_url: null, download_url: "/d", can_4k: false, four_k_size: null, four_k: null };
+    const image = { id: "i", idx: 0, seed: 1, width: 8, height: 8, has_alpha: false, url: "/u", thumb_url: null, download_url: "/d", can_4k: false, four_k_size: null, can_enlarge: false, enlarge_size: null, four_k: null };
     expect(canceledText({ ...base, images: [image, { ...image, id: "j", idx: 1 }] })).toBe("Canceled. 2 of 4 images finished and kept.");
   });
 });

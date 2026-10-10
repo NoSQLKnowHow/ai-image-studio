@@ -34,11 +34,15 @@ export interface FullSize {
   steps: number;
 }
 
+/** How a 4K copy was made: `resize` is Make 4K (a standard resize), `model` is Enlarge (an upscaler model, DESIGN.md §28). */
+export type FourKMethod = "resize" | "model";
+
 /** The 4K copy of an image, once made (DESIGN.md §27). It is a file beside the image, so it is just a size and a link. */
 export interface FourK {
   width: number;
   height: number;
   bytes: number;
+  method: FourKMethod;
   url: string;
   download_url: string;
 }
@@ -50,12 +54,19 @@ export interface FourKSize {
   trimmed: boolean;
 }
 
-/** What a picture the studio holds says about Make 4K: a result (ImageInfo) or an edit's source (RunInput) alike. */
+/** What Enlarge would make of a picture (DESIGN.md §28.2): the size, and how many x2 passes of the model it takes (1 or 2). */
+export interface EnlargeSize extends FourKSize {
+  passes: number;
+}
+
+/** What a picture the studio holds says about Make 4K and Enlarge: a result (ImageInfo) or an edit's source (RunInput) alike. */
 export interface FourKTarget {
   id: string;
   can_4k: boolean; // the server's rule for whether Make 4K is offered for this picture
   four_k_size: FourKSize | null; // what it would make; null when it is not offered
-  four_k: FourK | null; // its 4K copy, once made
+  can_enlarge: boolean; // the server's rule for whether Enlarge is offered (whether or not the model is installed)
+  enlarge_size: EnlargeSize | null; // what it would make; null when it is not offered
+  four_k: FourK | null; // its 4K copy, once made, by either
 }
 
 export interface ImageInfo extends FourKTarget {
@@ -200,6 +211,15 @@ export interface MusicAvailability {
   model: string;
 }
 
+/** Whether Enlarge can run here and, if not, why and what to do (DESIGN.md §28.3). */
+export interface UpscalerStatus {
+  available: boolean;
+  model: string | null;
+  reason: string | null;
+  hint: string | null;
+  max_enlargement: number;
+}
+
 export interface Capabilities {
   pipeline: string;
   model: string;
@@ -231,6 +251,7 @@ export interface Capabilities {
     music: MusicLimits;
   };
   music: MusicAvailability;
+  upscaler: UpscalerStatus;
   queue_cap: number;
   device: WorkerStatus["device"];
 }

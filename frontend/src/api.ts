@@ -12,6 +12,7 @@ export class ApiError extends Error {
     readonly status: number,
     readonly code: string | null = null,
     readonly fieldErrors: FieldError[] = [],
+    readonly hint: string | null = null, // what to do about it, when the server knows (e.g. Enlarge without its model file)
   ) {
     super(message);
     this.name = "ApiError";
@@ -22,6 +23,7 @@ export class ApiError extends Error {
 export function toApiError(status: number, body: unknown): ApiError {
   const detail = (body as { detail?: unknown } | null)?.detail;
   const code = (body as { code?: string } | null)?.code ?? null;
+  const hint = (body as { hint?: unknown } | null)?.hint;
   if (Array.isArray(detail)) {
     const fieldErrors = detail.map((d: { loc?: unknown[]; msg?: string }) => ({
       field: (d.loc ?? []).filter((p) => p !== "body").join("."),
@@ -29,7 +31,7 @@ export function toApiError(status: number, body: unknown): ApiError {
     }));
     return new ApiError(fieldErrors.map((f) => f.message).join(" ") || "The request was rejected.", status, code, fieldErrors);
   }
-  if (typeof detail === "string") return new ApiError(detail, status, code);
+  if (typeof detail === "string") return new ApiError(detail, status, code, [], typeof hint === "string" ? hint : null);
   if (status === 0) return new ApiError("Can't reach the studio server.", status, code);
   return new ApiError(`The server answered ${status}.`, status, code);
 }
@@ -142,5 +144,7 @@ export const api = {
   // Make the 4K copy of a result image (DESIGN.md §27). The answer is the whole run, as for Keep: its image now has `four_k`.
   upscalePicture,
   makeFourK: (imageId: string) => request<ImageRun>(`/api/images/${encodeURIComponent(imageId)}/4k`, { method: "POST" }),
+  // Enlarge a picture to the 4K frame with the upscaler model (DESIGN.md §28). It can take a minute or more; the answer is the run.
+  enlargeImage: (imageId: string) => request<ImageRun>(`/api/images/${encodeURIComponent(imageId)}/enlarge`, { method: "POST" }),
   deleteUpload: (id: string) => request<void>(`/api/uploads/${encodeURIComponent(id)}`, { method: "DELETE" }),
 };

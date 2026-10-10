@@ -33,6 +33,7 @@ export const CAPS: Capabilities = {
     },
   },
   music: { available: true, state: "done", reason: null, hint: null, model: "fake-music" },
+  upscaler: { available: true, model: "fake", reason: null, hint: null, max_enlargement: 4 },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },
 };
@@ -95,7 +96,7 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
 }
 
 export const STATUS: Status = {
-  version: "1.10",
+  version: "1.11",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", model: "image", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10 },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },

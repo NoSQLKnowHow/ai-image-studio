@@ -10,7 +10,7 @@ import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
-import { fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
+import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -60,6 +60,7 @@ export default function App() {
   const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
   const inFlight = useRef(new Set<string>()); // "cancel:<id>" / "keep:<id>": one request per control at a time
   const [making4k, setMaking4k] = useState<ReadonlySet<string>>(new Set()); // images whose 4K copy is being made (DESIGN.md §27)
+  const [enlarging, setEnlarging] = useState<ReadonlySet<string>>(new Set()); // images being enlarged with the upscaler model (DESIGN.md §28)
   const [upscaling, setUpscaling] = useState(false); // a picture from the computer is being upscaled (DESIGN.md §27.9)
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
@@ -224,10 +225,12 @@ export default function App() {
 
   // Make the 4K copy of one result image (DESIGN.md §27). The answer is the run, with the image's `four_k` filled in. As for
   // Regenerate larger, the answer is a toast on a card and a note inside the viewer when it is open when the answer comes.
+  const tellAboutImage = (kind: "info" | "error", text: string) =>
+    lightboxOpen.current ? setLightbox((current) => (current ? { ...current, notice: { kind, text } } : current)) : push(kind, text);
+
   const make4k = (image: FourKTarget) =>
     once(`4k:${image.id}`, async () => {
-      const tell = (kind: "info" | "error", text: string) =>
-        lightboxOpen.current ? setLightbox((current) => (current ? { ...current, notice: { kind, text } } : current)) : push(kind, text);
+      const tell = tellAboutImage;
       setMaking4k((current) => new Set(current).add(image.id));
       try {
         const run = await api.makeFourK(image.id);
@@ -238,6 +241,27 @@ export default function App() {
         tell("error", fourKFailedText(err.status, err.message));
       } finally {
         setMaking4k((current) => {
+          const next = new Set(current);
+          next.delete(image.id);
+          return next;
+        });
+      }
+    });
+
+  // Enlarge one image to the 4K frame with the upscaler model (DESIGN.md §28). It can take a minute or more, so the button says so
+  // meanwhile; the answer is the run, with the image's `four_k` filled in (method `model`), told as Make 4K's is.
+  const enlargeImage = (image: FourKTarget) =>
+    once(`enlarge:${image.id}`, async () => {
+      setEnlarging((current) => new Set(current).add(image.id));
+      try {
+        const run = await api.enlargeImage(image.id);
+        dispatch({ type: "runUpsert", run });
+        tellAboutImage("info", enlargedText([...run.images, ...run.inputs].find((candidate) => candidate.id === image.id) ?? image));
+      } catch (error) {
+        const err = error as ApiError;
+        tellAboutImage("error", enlargeFailedText(err.status, err.message, err.hint));
+      } finally {
+        setEnlarging((current) => {
           const next = new Set(current);
           next.delete(image.id);
           return next;
@@ -501,9 +525,12 @@ export default function App() {
                       workerState={status?.worker.state ?? null}
                       canEdit={canEdit}
                       making4k={making4k}
+                      enlarging={enlarging}
+                      upscaler={caps?.upscaler ?? null}
                       onReuse={() => reuse(run)}
                       onRegenerateLarger={() => void regenerateLarger(run)}
                       onMake4K={(image) => void make4k(image)}
+                      onEnlarge={(image) => void enlargeImage(image)}
                       onEditThis={() => {
                         const result = viewerItems(run).find((item) => item.kind === "result");
                         if (result) editThis(viewerKnown(run, result), false);
@@ -562,7 +589,10 @@ export default function App() {
         notice={lightbox?.notice ?? null}
         canEdit={canEdit}
         making4k={making4k}
+        enlarging={enlarging}
+        upscaler={caps?.upscaler ?? null}
         onMake4K={(image) => void make4k(image)}
+        onEnlarge={(image) => void enlargeImage(image)}
         onEditThis={(image) => editThis(image, true)}
         onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
         onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}

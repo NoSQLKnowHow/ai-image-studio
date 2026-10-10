@@ -1,13 +1,18 @@
-// Make 4K on the page (DESIGN.md §27.3, §27.9): which control a picture gets and the words around it. Whether Make 4K is
-// offered at all, and what it would make, is the server's rule (`can_4k`, `four_k_size` on the picture), so nothing here
-// repeats it: the page only follows.
+// Make 4K and Enlarge on the page (DESIGN.md §27.3, §27.9, §28): which controls a picture gets and the words around them. Whether
+// either is offered at all, and what it would make, is the server's rule (`can_4k`, `four_k_size`, `can_enlarge`, `enlarge_size`
+// on the picture, `upscaler` in the capabilities), so nothing here repeats it: the page only follows.
 
-import type { FourKSize, FourKTarget } from "./types";
+import type { EnlargeSize, FourKSize, FourKTarget, UpscalerStatus } from "./types";
 
 export type FourKControl =
   | { kind: "make"; label: string; title: string }
   | { kind: "making"; label: string; title: string }
   | { kind: "download"; label: string; title: string; href: string };
+
+export type EnlargeControl =
+  | { kind: "enlarge"; label: string; title: string }
+  | { kind: "enlarging"; label: string; title: string }
+  | { kind: "unavailable"; label: string; title: string }; // offered, but the model is not installed: shown disabled, with the reason
 
 export const megabytes = (bytes: number): string => `${(bytes / 1_000_000).toFixed(1)} MB`;
 
@@ -28,11 +33,48 @@ export function makeTitle(size: FourKSize | null): string {
 export function fourKControl(target: FourKTarget, making: boolean): FourKControl | null {
   const copy = target.four_k;
   if (copy) {
-    return { kind: "download", label: "Download 4K", href: copy.download_url, title: `The 4K copy: ${copy.width}×${copy.height} PNG, ${megabytes(copy.bytes)}` };
+    const what = copy.method === "model" ? "The enlarged 4K copy" : "The 4K copy";
+    const how = copy.method === "model" ? ", made with an upscaler model" : "";
+    return { kind: "download", label: "Download 4K", href: copy.download_url, title: `${what}: ${copy.width}×${copy.height} PNG, ${megabytes(copy.bytes)}${how}` };
   }
   if (!target.can_4k) return null;
   if (making) return { kind: "making", label: "Making 4K…", title: "Making the 4K copy. It takes a few seconds." };
   return { kind: "make", label: "Make 4K", title: makeTitle(target.four_k_size) };
+}
+
+/** The tooltip of Enlarge: what it will make, and what it is (the model's guess at detail) and costs (time). */
+export function enlargeTitle(size: EnlargeSize | null): string {
+  const frame = size && size.height > size.width ? "9:16" : "16:9";
+  const what = !size
+    ? "Enlarge this picture to 4K with an upscaler model"
+    : size.trimmed
+      ? `Enlarge this picture to ${size.width}×${size.height} (trimmed to exactly ${frame}) with an upscaler model`
+      : `Enlarge this picture to ${size.width}×${size.height} with an upscaler model`;
+  return `${what}: the same picture, sharper than Make 4K, but it takes longer. The extra detail is the model's guess.`;
+}
+
+/** The Enlarge control for one picture, or null when it has none: the server does not offer it, or the picture already has an
+ *  enlarged copy (the better one; Download 4K is then all there is). Without the model file it is shown disabled with the
+ *  server's reason, so the person can see why. `upscaler` is null until the capabilities have arrived: then it is offered. */
+export function enlargeControl(target: FourKTarget, enlarging: boolean, upscaler: UpscalerStatus | null): EnlargeControl | null {
+  if (!target.can_enlarge || target.four_k?.method === "model") return null;
+  if (enlarging) return { kind: "enlarging", label: "Enlarging…", title: "Enlarging with the upscaler model. It can take a minute or more." };
+  if (upscaler && !upscaler.available) {
+    const why = [upscaler.reason, upscaler.hint].filter(Boolean).join(" ");
+    return { kind: "unavailable", label: "Enlarge", title: why || "Enlarge is not available here." };
+  }
+  return { kind: "enlarge", label: "Enlarge", title: enlargeTitle(target.enlarge_size) };
+}
+
+/** What is said when the copy has been enlarged, and when it could not be: the server's own words and its hint, after a short lead. */
+export function enlargedText(target: FourKTarget): string {
+  const copy = target.four_k;
+  return copy ? `Enlarged to ${copy.width}×${copy.height}, ${megabytes(copy.bytes)}. Use Download 4K.` : "The enlarged copy is ready. Use Download 4K.";
+}
+
+export function enlargeFailedText(status: number, message: string, hint: string | null): string {
+  if (status === 404) return "That picture no longer exists, so there is nothing to enlarge.";
+  return `Couldn't enlarge: ${message}${hint ? ` ${hint}` : ""}`;
 }
 
 /** What is said when the copy has been made. */
