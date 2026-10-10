@@ -163,6 +163,27 @@ def test_a_ring_is_a_hole_under_either_fill_rule():
     assert all(p.get("fill-rule") is None for g in layers() for p in paths(g) if short(p) != "ring")
 
 
+def test_circles_are_round():
+    """Four cubic curves make a circle only with the right control-point distance (0.5523 of the radius); a wrong one gives a rounded
+    square or a diamond with the same bounding box. The middle of each curve must lie on the circle."""
+    seen = 0
+    for g in layers():
+        for p in paths(g):
+            if short(p) not in ("ring", "outline-circle"):
+                continue
+            for sub in subpaths(p.get("d")):
+                x0, y0, x1, y1 = bbox(sub)
+                cx, cy, r = (x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) / 2
+                assert len(sub) == 13  # a start and four curves of three points
+                for i in range(0, 12, 3):
+                    p0, p1, p2, p3 = sub[i:i + 4]
+                    mx = (p0[0] + 3 * p1[0] + 3 * p2[0] + p3[0]) / 8
+                    my = (p0[1] + 3 * p1[1] + 3 * p2[1] + p3[1]) / 8
+                    assert abs(((mx - cx) ** 2 + (my - cy) ** 2) ** 0.5 - r) < 0.002 * r
+                    seen += 1
+    assert seen == 4 * 3 * 4  # four layers; a ring (two circles) and a circle; four curves each
+
+
 def test_no_two_shapes_touch():
     boxes = []
     for g in layers():
