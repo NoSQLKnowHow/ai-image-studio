@@ -19,7 +19,8 @@ can reuse and tweak prompts.
 | Version 1.8: **Music, the server side** (built, tested with the fake pipeline, and the real pipeline's own code on tiny random weights; **the real music model has never run**) | `POST /api/runs` with `"mode": "music"` makes **instrumental music** (or music with lyrics) with **MiniMax-Music3**: each track is a WAV file with a note that it is machine-generated, served with range requests so a player can seek. Only **one model is in memory at a time**: a music run unloads the image model first, and a picture does the reverse. Every model now loads **from the local cache and only fetches what is missing**. **`scripts/minimax_music.py`** makes a track from a terminal, with no page: `docker compose exec studio python /app/scripts/minimax_music.py --genre "ambient" --duration 15 --out /data/try.wav`. The page for it is version 1.9. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §26; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 20 is the checklist for the real model. |
 | Version 1.9: **the Music tab** (built, tested with the fake pipeline in a real browser; **the real music model has never run**) | A second tab, **Music**, next to **Images**. Describe the music with boxes (genre, mood, tempo, key, instruments); the **description the model will read** is shown below them, built as you type and editable (*Rebuild from fields* undoes your edits). Music is **instrumental unless you turn on Add lyrics**, which adds a voice box and a lyrics box with buttons that put the section tags (`[Verse]`, `[Chorus]`…) on lines of their own. Choose a length (shortcuts from 15 seconds to 5 minutes), 1 to 4 versions, and Make music. Each track gets a **player**, a **Download WAV** and the usual Reuse, Keep, Delete and Cancel, with two progress bars (composing, rendering). The model pill now says which model is loaded, and the button beside it loads or unloads the model of the tab you are on. Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §26; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 20 has the page's checks. |
 | Version 1.10: **Make 4K** (built, tested with the fake pipeline in a real browser; **not yet run on the Spark**) | A **Make 4K** button on **any picture** the studio holds (on its card; in the viewer for a run with several pictures, and for an **edit's source images**) makes a **4K PNG** beside the original, and **Download 4K** then sits next to Download. A **16:9** picture (such as the model's own 2752×1536) is trimmed to exactly 16:9 (0.8% of the width, equally from both sides) and becomes exactly **3840×2160**; **any other shape** is enlarged, keeping its shape and cutting nothing, until it covers 3840×2160 (your default 2048×2048 becomes **3840×3840**). It works for pictures made before 1.10 too, up to a 2× enlargement. It is **bigger, not sharper**: no detail is added. **Upscale a picture…**, above your runs, does the same for a **file from your computer** (PNG, JPEG or WebP) and gives you the 4K PNG as a download, adding nothing to the history. The model cannot make 3840×2160 itself (2160 is not a multiple of 32). A dedicated upscaler model would add real detail: **[`scripts/upscale_probe.py`](scripts/upscale_probe.py)** is a probe to run once on the Spark to see whether one runs there (nothing in the studio uses it). Specified in [`docs/DESIGN.md`](docs/DESIGN.md) §27; [`docs/SPARK_TEST.md`](docs/SPARK_TEST.md) section 21 is the checklist. |
-| Still to come | The Spark test for edits (M5c), local edits (M5d), the optional prompt rewriter (M5e, only if you want it), an upscaler model for Make 4K (waiting for the probe), and the Spark smoke test together (M8). |
+| Version 1.11: **Enlarge** (built, tested with the fake pipeline in a real browser and with a tiny model through the real code path; **not yet run on the Spark**) | An **Enlarge** button beside Make 4K on every picture (and every edit source): **the same picture, bigger and sharper**, taken to the 4K frame (3840×2160, or 2160×3840 upright; a 16:9 picture is trimmed to exactly 16:9) with an **upscaler model** (Real-ESRGAN x2plus: one ×2 pass up to a 3× enlargement, two above, up to 4×; then one resize to the exact size). It needs the model file, which **you download once** (below); without it the button is dimmed and says so. The copy replaces a Make 4K copy; the original is never touched. |
+| Still to come | The Spark test for edits (M5c), local edits (M5d), the optional prompt rewriter (M5e, only if you want it), **Qwen redrawing** of an enlarged picture (an experiment first: `docs/DESIGN.md` §28.5), and the Spark smoke test together (M8). |
 | `scripts/qwen_image.py`: command-line tool for text-to-image, image editing, transparent (RGBA) output | Written and exercised with mocks only. **Not yet run on a real GPU.** |
 
 ## Build and run on the DGX Spark
@@ -305,6 +306,21 @@ first run step by step and says what each step should show.
   Spark's CPU, needs no GPU and works while a picture is being made. It trims the long side to exactly 16:9
   and enlarges with a standard resize: bigger, not sharper. Other shapes (square, 4:3, 3:2…), small pictures
   and pictures that are already 4K do not get the button. The 4K file goes when its run is deleted or expires.
+- **Enlarge (1.11):** a second button beside Make 4K that makes **the same picture bigger and sharper**: an upscaler model
+  (Real-ESRGAN x2plus) enlarges it, then it is sized to exactly 3840×2160 (or the shape's equivalent), up to a 4× enlargement, so a
+  50% picture (1376×768) qualifies and Make 4K cannot do it. It is slower than Make 4K (the GPU, a short-lived process of its own;
+  minutes on the CPU), works while a picture is being made, and the copy **replaces** a Make 4K copy of that picture
+  (`data/images/<run>/<n>-4k-enlarged.png`). It is bigger *and* sharper, but **the extra detail is the model's guess**: faces can come out
+  smooth, small text may not sharpen, flat colour can pick up texture. How it looks on your pictures is what the Spark test (SPARK_TEST.md
+  section 22) is for. **One-time setup, on the machine that runs the studio** (the studio never downloads it: the model has its own terms,
+  which are yours to read):
+  ```bash
+  mkdir -p ~/.cache/huggingface/upscalers
+  curl -L -o ~/.cache/huggingface/upscalers/RealESRGAN_x2plus.pth \
+    https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
+  ```
+  then reload the page. Until the file is there the button is dimmed and its tooltip (and the message if you press it) says so.
+  `STUDIO_UPSCALER_MODEL` names another ×2 model file; `STUDIO_UPSCALER_DEVICE` is `auto`, `cuda` or `cpu`.
 - **Settings** live in `.env`; [`.env.example`](.env.example) explains each one.
 - **Data:** the history and images are in `./data`. The model is cached in
   `~/.cache/huggingface`, shared with anything else on the Spark that uses it, and is downloaded once.
@@ -457,15 +473,15 @@ machine-generated. The first run downloads about 29 GB. Exit codes: 0 ok, 2 bad 
 or two).
 
 
-### Trying an upscaler model (`scripts/upscale_probe.py`, new in 1.10)
+### Trying other upscaler models and settings (`scripts/upscale_probe.py`, new in 1.10)
 
-A probe, not a feature: it shows whether an ESRGAN-class upscaler runs on the Spark, and how fast, before anything
-is built on it (`docs/DESIGN.md` §27.5). It needs `spandrel`, which the image does not contain, so copy the script in
-and install it in the running container (both last until the container is recreated):
+A probe, not a feature: it compares what an ESRGAN-class upscaler makes of a picture with a plain resize, and shows
+how fast it runs on the Spark, with options to try (`--dtype bf16`, `--tile`). Enlarge (below) uses the same model and
+the same tiling code; the probe is how you try other models and settings (`docs/DESIGN.md` §27.5, §28). From version
+1.11 the image contains `spandrel`, so only the script needs copying in (it lasts until the container is recreated):
 
 ```bash
 docker compose cp scripts/upscale_probe.py studio:/tmp/upscale_probe.py
-docker compose exec studio pip install --user spandrel
 docker compose exec studio python /tmp/upscale_probe.py --model /models/upscalers/RealESRGAN_x2plus.pth --crop 512x288
 ```
 

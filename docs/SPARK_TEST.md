@@ -630,7 +630,7 @@ runs on the Spark's GPU, and it makes two 4K files to compare. Nothing in the st
    `mkdir -p ~/.cache/huggingface/upscalers && curl -L -o ~/.cache/huggingface/upscalers/RealESRGAN_x2plus.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth`.
    It is 67,061,725 bytes. When I downloaded it (2026-10-09) its SHA-256 was `49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb` (`sha256sum` it); the project does not publish a checksum that I found, so
    a different one means only that the file has changed. The code is BSD-3-Clause; read the model's terms yourself.
-2. `docker compose cp scripts/upscale_probe.py studio:/tmp/upscale_probe.py`, then `docker compose exec studio pip install --user spandrel`.
+2. `docker compose cp scripts/upscale_probe.py studio:/tmp/upscale_probe.py`. (From version 1.11 `spandrel` is in the image; in 1.10 you also had to run `docker compose exec studio pip install --user spandrel`.)
 3. A quick check: `docker compose exec studio python /tmp/upscale_probe.py --model /models/upscalers/RealESRGAN_x2plus.pth --crop 512x288`. **Good:** it prints the GPU, `ESRGAN, x2`, a tile time and `PROBE OK`.
 4. The real one, on a 16:9 picture the studio made: `... --image /data/images/<run>/0.png --out /data/upscale-probe`.
    Then try `--dtype bf16`. The results are in `data/upscale-probe/`: put `4k-lanczos.png` (what Make 4K makes) and
@@ -640,6 +640,54 @@ runs on the Spark's GPU, and it makes two 4K files to compare. Nothing in the st
 GPU and which compute capability), the tile times, the peak GPU memory and the memory figures; whether the same run
 with `--dtype bf16` was faster and looked the same; and above all **which of the two 4K files looks better to you and
 where** (faces, text, foliage). If `pip install` or the run fails, paste the error: that is the answer I am looking for.
+
+---
+
+## 22. Enlarge: the same picture, bigger and sharper (new in 1.11)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.11** (reload with Ctrl+Shift+R). The build log
+has a line `check_image: Enlarge: spandrel 0.4.x`; if it says spandrel cannot be imported, send me that line (everything else still
+works, and Enlarge says why it is off). There is no database change. Enlarge uses **a model file you download once** and a **separate
+short-lived process**, so the image model does not have to be loaded and may be generating.
+
+**a) The model file.** Before you download anything: generate any 16:9 picture (Options, size **16:9**, 2752×1536). Its card has
+**Make 4K** and **Enlarge**, and Enlarge is **dimmed**. Hover it: the tooltip says the model file is not there and says what to do. Press
+it: the same words appear as a message. **Good:** nothing is made, and Make 4K still works. Then, on the Spark:
+`mkdir -p ~/.cache/huggingface/upscalers && curl -L -o ~/.cache/huggingface/upscalers/RealESRGAN_x2plus.pth https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth`
+(67,061,725 bytes; the code is BSD-3-Clause; the model has its own terms, which are yours to read), reload the page: **Enlarge is no longer dimmed**.
+
+**b) Enlarge a picture.** Press **Enlarge** on the 16:9 card. **Good:** the button says *Enlarging…*, a note then says *Enlarged to 3840×2160, N MB.
+Use Download 4K.*, **Enlarge and Make 4K are gone** and **Download 4K** is there. **Write down how long it took and the file size.** The log
+says it too: `docker compose logs studio | grep ENLARGED` shows a line like `ENLARGED 3840x2160 in 12.3 s on cuda with ESRGAN ×2 (RealESRGAN_x2plus.pth)`:
+**send me that line**, especially the *device* (it should say `cuda`; `cpu` means the GPU was not used, which is minutes per picture). `ls -l data/images/<run>/`
+shows `0.png` and `0-4k-enlarged.png`.
+
+**c) Look at it, against the plain resize.** On a second picture of the same size press **Make 4K**, **Download 4K** and save it as `plain.png`; then press **Enlarge**
+(it replaces the plain copy; that is expected), download it again as `enlarged.png`. Open both at 100%. **Write down what you think, and where**
+(faces, hair, text, foliage, skies, flat colour): is Enlarge **sharper**? Does it look **natural**? Things to look for: skin that is too smooth or plastic; grain or texture
+on flat colour and gradients (I saw some of that on a synthetic gradient with the real model); faint lines at regular spacing across the picture (seams where tiles meet; they would be
+every 512 source pixels, so about every 700 pixels of the 4K copy for a 2752-wide picture); small text that got worse. This is the main thing I need from you.
+
+**d) A 50% picture.** Scale **50%** (1376×768) and generate. **Make 4K is not offered** (it would be a 2.8× enlargement); **Enlarge is**, and its tooltip says 3840×2160.
+Press it. **Write down the time and how it looks** next to the picture you would get from regenerating at full size (it is the same picture, which is the point).
+
+**e) Two passes.** A custom size of **960×544**: Enlarge runs the model twice (×4) and then reduces. **Write down the time**, and whether it looks worse than a one-pass picture (a second pass can over-smooth).
+
+**f) A square.** The default 2048×2048: Enlarge makes **3840×3840** (the model's 4096×4096 is reduced). **Write down the time**, and the memory while it runs (`free -g` in another terminal).
+
+**g) While a picture is being made.** Start a long run (many steps), and press Enlarge on an older picture while it runs. **Good:** it finishes, and the running picture is
+not stopped. **Write down** whether the run slowed down (steps per second in the log) and the lowest available memory.
+
+**h) When it goes wrong.** (1) Rename the model file, reload: Enlarge is dimmed again, with the reason. (2) Put a file that is not a model in its place (`echo x > ~/.cache/huggingface/upscalers/RealESRGAN_x2plus.pth`):
+pressing Enlarge says the model could not be loaded, naming the file. Restore the real file afterwards. (3) Press Enlarge twice quickly: one request, one copy.
+
+**i) The CPU, for the record.** Set `STUDIO_UPSCALER_DEVICE=cpu` in `.env`, `docker compose up -d`, and Enlarge one picture. **Write down the time.** Set it back to `auto`.
+
+**j) A phone.** On your phone the card's buttons and the viewer's bar, with **Enlarge** in them, wrap onto more rows; nothing runs off the screen.
+
+**Send back:** the `ENLARGED …` lines; the times and file sizes from (b), (d), (e), (f), (i); your verdict from (c), (d) and (e): **where Enlarge looks better than the plain resize and where it looks worse**;
+the memory and slowdown figures from (f) and (g); and anything that did not match "Good". If Enlarge looks worse than Make 4K on your pictures, say so plainly: that decides whether
+the model, the settings (`--dtype bf16`, the tile overlap) or the whole idea needs another look, and whether Qwen redrawing (`docs/DESIGN.md` §28.5) is worth trying.
 
 ---
 
@@ -679,3 +727,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 12. From step 20 a) to i) (the music model, the first real run): the download size and time, the load time, the seconds of work per second of music at 15, 60 and (if you can) 180 seconds, the lowest available memory, whether the track was instrumental with the tag alone, whether the same seed repeats, how fast Ctrl+C stopped it, whether anything downloaded after the first time, and anything that did not match "Good".
 13. From step 20 j) to n) (the Music tab on the Spark): the numbers from (k), (l) and (m), whether the track played and seeked on your phone, and a screenshot of anything on the phone that did not fit.
 14. From step 21 (Make 4K): the seconds and the file size from (a) and for a square in (c), what you thought of the picture in (b), whether the rotation of a phone photo and the refusals in (c3) were right, the time for a 12 MP photo in (c3), whether a running job slowed down in (d), and anything that did not match "Good". From (i), if you ran it: the whole probe output and which of the two 4K files looks better to you, and where.
+15. From step 22 (Enlarge): the `ENLARGED …` log lines (time, device, model), the times and sizes from (b), (d), (e), (f) and (i), your verdict on **where Enlarge looks better or worse than Make 4K** from (c) to (e), the memory and slowdown figures from (f) and (g), and anything that did not match "Good".
