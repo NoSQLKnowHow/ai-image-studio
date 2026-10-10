@@ -201,6 +201,12 @@ def test_the_file_is_the_same_every_time():
     assert sheet.build_svg() == sheet.build_svg()
 
 
+def test_the_file_is_plain_ascii_so_it_reads_the_same_on_any_computer():
+    """It declares UTF-8 and uses nothing outside ASCII, so no program's idea of the default encoding can change a byte of it."""
+    assert sheet.build_svg().isascii()
+    assert COMMITTED.read_bytes().isascii()
+
+
 def test_the_committed_file_is_what_the_script_writes():
     """docs/laser_test_sheet.svg is what the owner downloads, so it must not drift from the script."""
     assert COMMITTED.read_text(encoding="utf-8") == sheet.build_svg()
