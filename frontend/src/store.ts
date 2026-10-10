@@ -73,10 +73,15 @@ export function reducer(state: State, action: Action): State {
       return state.status ? { ...state, status: { ...state.status, worker: action.worker } } : state;
     case "runsLoaded": {
       const { page, append } = action;
+      // A page arrives for one filter. Every page feeds the one cache of runs (`runs`); each filter keeps its own bookkeeping in `views`:
+      // has its first page arrived, where does its next page start, and how far has it loaded.
       const filter = action.filter ?? NO_FILTER;
       const key = filterKey(filter);
       const before = state.views[key];
       const last = page.runs.at(-1);
+      // This page's effect on its view. It is ready once a first (non-append) page has arrived. `nextBefore` is where the next older page
+      // starts. `boundary` is the last run just loaded: older runs in the cache (loaded for another filter) must not be shown by this view,
+      // or they would appear out of sequence.
       let view: View = { ready: !!before?.ready || !append, nextBefore: page.next_before, boundary: page.next_before && last ? { created_at: last.created_at, id: last.id } : null };
       let runs: Record<string, Run>;
       if (append) {
@@ -119,6 +124,7 @@ export function reducer(state: State, action: Action): State {
     }
     case "runDeleted": {
       const gone = { ...state.gone, [action.id]: true as const };
+      // any delete may change a count, so the page is told to ask the server again
       const countsStale = state.countsStale + 1;
       if (!state.runs[action.id]) return { ...state, gone, countsStale };
       const runs = { ...state.runs };

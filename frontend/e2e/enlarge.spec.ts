@@ -80,6 +80,7 @@ test("while it works the button says so, a second click does nothing, and only o
   await expect(button).toHaveText("Enlarging…");
   await expect(button).toHaveAttribute("aria-disabled", "true");
   await expect(button).toHaveAttribute("title", /Enlarging with the upscaler model\. It can take a minute or more\./);
+  // pressing the waiting button again must do nothing: the request count is checked at the end (exactly one)
   await button.click({ force: true });
   await button.click({ force: true });
   await expect(download4k(c)).toBeVisible({ timeout: 30_000 });
@@ -340,6 +341,7 @@ test("an edit's source image can be enlarged in the viewer when Make 4K cannot d
 });
 
 // ------------------------------------------------------------------ Enlarge waits its turn (DESIGN.md §28.3; criteria 106-109)
+// the studio's API wants this header on every write: its guard against requests from other web pages
 const CLIENT_ASK = { "X-Studio-Client": "1" };
 
 /** A run that takes the fake pipeline a few seconds (a hundred steps of 10 ms for each of its pictures), started through the API so
@@ -354,6 +356,8 @@ async function startLongRun(page: Page, prompt: string, pictures = 3): Promise<L
   return running;
 }
 
+// The main promise (criterion 106): pressing Enlarge while a picture is being generated does not fail with an out-of-memory error. The
+// button says Waiting…, ignores more presses, and the copy is made when the picture is done (the picture first).
 test("asked for while a picture is being made, Enlarge says Waiting…, does not fail, and enlarges when the picture is done", async ({ page }) => {
   await useOptions(page, NEAR);
   await page.goto("/");
@@ -376,10 +380,12 @@ test("asked for while a picture is being made, Enlarge says Waiting…, does not
   await expect(download4k(c)).toHaveAttribute("href", /method=model/);
   await expect(page.getByRole("alert")).toHaveCount(0); // nothing failed on the way
   expect(requests.posts()).toBe(1);
+  // and nothing is left waiting on the server
   const status = (await (await page.request.get("/api/status")).json()) as { queue: { enlarge_waiting: string[] } };
   expect(status.queue.enlarge_waiting).toEqual([]);
 });
 
+// The viewer's Enlarge button shows the same Waiting… state, and the copy arrives there
 test("in the viewer the button says Waiting… too, and the copy arrives there", async ({ page }) => {
   await useOptions(page, { ...NEAR, numImages: 2 });
   await page.goto("/");
@@ -395,6 +401,7 @@ test("in the viewer the button says Waiting… too, and the copy arrives there",
   await expect(download4k(v)).toBeVisible();
 });
 
+// Waiting is the server's word: another open page shows Waiting… for a request that this page never made
 test("another open page also shows Waiting… for a request the first page made, and both end with the copy", async ({ page, context }) => {
   await useOptions(page, NEAR);
   await page.goto("/");
@@ -413,6 +420,8 @@ test("another open page also shows Waiting… for a request the first page made,
   await expect(download4k(c)).toHaveAttribute("href", /method=model/);
 });
 
+// The order of work (criterion 107): one run is going and another is queued. An Enlarge asked for now is made after the running one and
+// before the queued one, which is not lost.
 test("a picture queued behind the long one is made first: an Enlarge asked for during a run goes before the runs still waiting", async ({ page }) => {
   await useOptions(page, NEAR);
   await page.goto("/");
@@ -432,6 +441,7 @@ test("a picture queued behind the long one is made first: an Enlarge asked for d
   await expect(queued.locator(".badge").first()).toHaveText("Done", { timeout: 45_000 }); // it is not lost
 });
 
+// Focus is kept for keyboard users all the way: Enlarge, then Waiting…, then Enlarging…, then the Download 4K link
 test("a keyboard user who had to wait still lands on Download 4K when the copy is made", async ({ page }) => {
   await useOptions(page, NEAR);
   await page.goto("/");

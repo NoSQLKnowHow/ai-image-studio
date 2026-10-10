@@ -29,6 +29,8 @@ class RunFilter:
         if self.kept is not None:
             clauses.append("pinned = ?")
             values.append(1 if self.kept else 0)
+        # The bin is a filter like the others. The default (False) makes every list the history WITHOUT the bin, so nothing that was
+        # written before the bin existed shows a deleted run by accident; True is only the bin; None is both.
         if self.deleted is not None:
             clauses.append("deleted_at IS NOT NULL" if self.deleted else "deleted_at IS NULL")
         return clauses, values

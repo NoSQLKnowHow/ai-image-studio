@@ -17,13 +17,16 @@ from conftest import close, create_run, wait_for
 from studio.serialize import parse_ts
 from studio.upscaler import Availability, FakeUpscaler
 
+# A 16:9 size that Enlarge accepts, with few steps so that the fake pipeline is quick
 WIDE = {"width": 2560, "height": 1440, "steps": 2}
 
 
+# Make one finished picture of that size and return its run; the tests enlarge its image
 def wide_run(client, prompt: str = "a harbour at dawn") -> dict:
     return wait_for(client, create_run(client, prompt, **WIDE)["id"])
 
 
+# Press Enlarge on a picture (POST /api/images/{id}/enlarge). The request returns when the copy has been made.
 def enlarge(client, image: dict):
     return client.post(f"/api/images/{image['id']}/enlarge")
 
@@ -49,6 +52,8 @@ class Recording:
     def availability(self) -> Availability:
         return Availability(True, model="recording")
 
+    # Called when the job manager starts the enlargement itself: note the moment, and which run (if any) the manager thought was going,
+    # then do the (fake) work after the delay
     async def enlarge(self, src, dst) -> None:
         self.calls += 1
         self.started, self.run_going_at_start = now(), self.jobs._current
@@ -60,20 +65,26 @@ class Recording:
             self.ended = now()
 
 
+# The images the server says are waiting for their turn on the GPU (`enlarge_waiting` in the status's queue)
 def waiting(client) -> list[str]:
     return client.get("/api/status").json()["queue"]["enlarge_waiting"]
 
 
+# Swap the job manager's upscaler for the recording stub; `delay` is how long its work takes
 def use(client, delay: float = 0.0) -> Recording:
     stub = Recording(client.app.state.jobs, delay)
     client.app.state.jobs.upscaler = stub
     return stub
 
 
+# The baseline: with nothing going on, nobody is waiting
 def test_nobody_is_waiting_by_default_and_the_status_says_so(client):
     assert waiting(client) == []
 
 
+# The main rule (criterion 106). One run is going (about 1.5 s) and another is queued behind it. Enlarge is pressed meanwhile: it
+# must wait, and say so, start only once the running run is over, and be done before the queued run starts: after the current run, before
+# the queue. The timestamps at the end prove that order.
 def test_an_enlargement_during_a_run_waits_for_it_and_goes_before_the_runs_still_queued(client_factory):
     client = client_factory(fake_step_delay_ms=60)
     older = wide_run(client)["images"][0]
@@ -81,6 +92,7 @@ def test_an_enlargement_during_a_run_waits_for_it_and_goes_before_the_runs_still
     first = create_run(client, "going now", steps=25)  # about 1.5 s
     wait_for(client, first["id"], frozenset({"running"}))
     behind = create_run(client, "queued behind it", steps=3)
+    # press Enlarge from another thread: the request does not return until the copy is made
     with ThreadPoolExecutor(1) as pool:
         future = pool.submit(lambda: enlarge(client, older))
         time.sleep(0.4)  # asked for while the first run is still going
@@ -90,16 +102,20 @@ def test_an_enlargement_during_a_run_waits_for_it_and_goes_before_the_runs_still
     assert response.status_code == 201
     first_done, behind_done = wait_for(client, first["id"]), wait_for(client, behind["id"])
     assert first_done["status"] == behind_done["status"] == "done"
+    # the order, proved by the timestamps: no run was going when the enlargement started, it started after the run it waited for had
+    # finished, and it ended before the queued run began
     assert stub.run_going_at_start is None  # no run was going when it started
     assert parse_ts(first_done["finished_at"]) <= stub.started  # after the run it waited for ...
     assert stub.ended <= parse_ts(behind_done["started_at"]) + MS  # ... and before the one queued behind that
     assert waiting(client) == []
 
 
+# The page learns who is waiting from the queue event: it names the waiting picture, and the list is empty again afterwards
 def test_the_queue_event_says_who_is_waiting_and_then_that_nobody_is(client_factory):
     client = client_factory(fake_step_delay_ms=60)
     older = wide_run(client)["images"][0]
     use(client, delay=0.1)
+    # listen to the server's event stream, as the page does, and collect everything published meanwhile
     sub = client.app.state.bus.subscribe()
     run = create_run(client, "going now", steps=15)
     wait_for(client, run["id"], frozenset({"running"}))
@@ -113,6 +129,7 @@ def test_the_queue_event_says_who_is_waiting_and_then_that_nobody_is(client_fact
     assert all(len(waiting_ids) <= 1 for waiting_ids in lists)
 
 
+# With the GPU free, Enlarge starts at once and nobody is told it is "waiting": no flash of Waiting… on the button
 def test_an_enlargement_that_does_not_have_to_wait_is_not_announced(client):
     older = wide_run(client)["images"][0]
     use(client)
@@ -125,6 +142,7 @@ def test_an_enlargement_that_does_not_have_to_wait_is_not_announced(client):
     assert [data for name, data in events if name == "queue.updated" and data["enlarge_waiting"]] == []
 
 
+# The other direction: a run asked for during an enlargement stays queued until the enlargement is over (the few seconds it takes)
 def test_a_run_asked_for_during_an_enlargement_waits_for_it(client):
     older = wide_run(client)["images"][0]
     stub = use(client, delay=0.8)
@@ -139,6 +157,7 @@ def test_a_run_asked_for_during_an_enlargement_waits_for_it(client):
     assert done["status"] == "done" and stub.ended <= parse_ts(done["started_at"]) + MS
 
 
+# The gate is fair: two enlargements wait in the order they were asked, and both are made in the end
 def test_two_enlargements_wait_for_each_other_in_the_order_they_asked(client_factory):
     client = client_factory(fake_step_delay_ms=60)
     one, two = wide_run(client, "one")["images"][0], wide_run(client, "two")["images"][0]
@@ -161,6 +180,7 @@ def test_a_model_that_is_loading_is_using_the_gpu_too(client):
     older = wide_run(client)["images"][0]
     stub = use(client)
 
+    # pretend the worker is loading a model (the Load model button): it is using the GPU without holding the gate
     async def set_state(state: str) -> None:
         jobs._set_worker_state(state)
 
@@ -177,6 +197,8 @@ def test_a_model_that_is_loading_is_using_the_gpu_too(client):
     assert stub.started >= released and waiting(client) == []
 
 
+# Pressing Enlarge again while it waits must not start a second enlargement: the later requests join the first one (200, "already
+# made", for two of the three) and the upscaler is called once.
 def test_an_enlargement_waiting_for_its_turn_that_is_asked_again_is_still_one_enlargement(client_factory):
     client = client_factory(fake_step_delay_ms=60)
     older = wide_run(client)["images"][0]
@@ -195,6 +217,7 @@ def test_a_failed_enlargement_gives_the_turn_back(client):
     older = wide_run(client)["images"][0]
     stub = use(client)
 
+    # make the upscaler fail
     async def broken(src, dst):
         raise UpscaleFailed("boom")
 
@@ -204,6 +227,8 @@ def test_a_failed_enlargement_gives_the_turn_back(client):
     assert wait_for(client, run["id"], timeout=10)["status"] == "done"
 
 
+# The announcement has to come when the wait starts, not when it is over, or a page would show Waiting… too late to matter: compare
+# where the two events fall in the stream.
 def test_it_is_announced_when_it_starts_to_wait_not_only_when_the_run_it_waits_for_is_over(client_factory):
     client = client_factory(fake_step_delay_ms=60)
     older = wide_run(client)["images"][0]
@@ -221,6 +246,7 @@ def test_it_is_announced_when_it_starts_to_wait_not_only_when_the_run_it_waits_f
     assert said < over  # a page learns it is waiting while it waits, not afterwards
 
 
+# A lock that counts how often it was asked for: used to show that a loading model is looked at now and then, not in a tight loop
 class CountingGate(asyncio.Lock):
     acquisitions = 0
 
@@ -229,6 +255,8 @@ class CountingGate(asyncio.Lock):
         return await super().acquire()
 
 
+# While a model loads, the waiting enlargement must look again gently (about every half second), not spin: count how often it asked
+# for the gate in 1.2 seconds.
 def test_a_model_that_is_loading_is_looked_at_now_and_then_not_in_a_tight_loop(client):
     jobs = client.app.state.jobs
     older = wide_run(client)["images"][0]
@@ -236,6 +264,7 @@ def test_a_model_that_is_loading_is_looked_at_now_and_then_not_in_a_tight_loop(c
     CountingGate.acquisitions = 0
     jobs._gpu_gate = CountingGate()
 
+    # pretend the worker is loading a model, as above
     async def set_state(state: str) -> None:
         jobs._set_worker_state(state)
 
@@ -251,6 +280,8 @@ def test_a_model_that_is_loading_is_looked_at_now_and_then_not_in_a_tight_loop(c
     assert 1 <= looks <= 6  # about every half second
 
 
+# Two requests for the same picture: if the copy is made by someone else while this one waits, its turn must find it there and do
+# nothing (200, not 201, and the upscaler is never called).
 def test_a_copy_that_appeared_while_it_waited_is_not_made_again(client_factory):
     client = client_factory(fake_step_delay_ms=60)
     older = wide_run(client)["images"][0]
@@ -262,16 +293,20 @@ def test_a_copy_that_appeared_while_it_waited_is_not_made_again(client_factory):
         time.sleep(0.4)
         assert waiting(client) == [older["id"]]
         storage = client.app.state.storage
+        # make the copy ourselves, as another request would have done while this one waited
         asyncio.run(FakeUpscaler().enlarge(storage.abs(older_path(client, older)), storage.enlarged_path(older_path(client, older))))
         response = future.result()
     assert response.status_code == 200 and stub.calls == 0  # there already; nothing was made when its turn came
     assert waiting(client) == []
 
 
+# The stored path of the picture (the test builds the copy's path from it)
 def older_path(client, image: dict) -> str:
     return client.app.state.db.get_image(image["id"])["path"]
 
 
+# A shutdown while an enlargement still waits must cancel it, instead of letting it start a process in the middle of the shutdown (a
+# real flaw that these tests found; DESIGN.md §28.9).
 def test_stopping_the_server_cancels_an_enlargement_that_is_still_waiting(client_factory):
     client = client_factory(fake_step_delay_ms=60)
     older = wide_run(client)["images"][0]
@@ -283,6 +318,7 @@ def test_stopping_the_server_cancels_an_enlargement_that_is_still_waiting(client
         future = pool.submit(lambda: enlarge(client, older))
         time.sleep(0.4)
         assert waiting(client) == [older["id"]]
+        # the request that is in progress, remembered so that we can check afterwards that it was cancelled
         flight = jobs._enlarging[older["id"]]
         close(client)
         assert flight.cancelled() and stub.calls == 0 and jobs._enlarge_waiting == []

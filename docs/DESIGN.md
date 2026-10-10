@@ -1,6 +1,6 @@
 # Qwen-Image Web Studio — Design Specification
 
-Living document. **Last brought up to date 2026-10-10, for version 1.13** (the number the page shows in its title).
+Living document. **Last brought up to date 2026-10-10, for version 1.13** (the number the page shows in its title). §31 to §34 are proposals for 1.14 to 1.17 (Vector is 1.17); nothing in them is built.
 
 **How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, §25 specifies **1.7**, loading the model ahead of time, §26 specifies **1.8 and 1.9**, music, and §27 specifies **1.10**, Make 4K. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
@@ -26,6 +26,9 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.11 | **Enlarge**: the same picture, bigger and sharper. A button beside Make 4K on every picture the studio holds (results and an edit's source images) enlarges it to the 4K frame with an upscaler model (Real-ESRGAN x2plus, one or two ×2 passes, then one resize to the exact size), up to a 4× enlargement; the copy replaces a Make 4K copy and the original stays. Needs the model file, which you download; says why when it is missing | §28 | (this PR) | §22 of `SPARK_TEST.md` not yet reported back; **the upscaler has never run on the Spark, so how it looks and how long it takes are unknown** |
 | 1.12 | **The Kept view**: a filter bar above the history (All \| Kept, with the count of kept runs) that applies to both tabs and is remembered; a running job stays visible at the top of the Kept view; un-keeping there removes the card with a toast that says when it will be deleted, and Undo; the server filters the pages, and the filter shape is built to take more filters. **Also: Enlarge waits for a picture that is being made** instead of failing with an out-of-memory error | §29, §28.9 | (this PR) | §22(g) of `SPARK_TEST.md` is the check for the Enlarge fix; the Kept view needs no Spark |
 | 1.13 | **The bin**: a **Deleted** option in the filter bar; Delete (and the daily expiry) moves a run to the bin for 30 days; **Restore**, **Delete forever** and **Empty bin** | §30 | (this PR) | The bin needs no Spark; `SPARK_TEST.md` §24 is the short check |
+| 1.14 | **Project folders** (proposed, not built): a **Project** button on every card (a drop-down of your projects, or a new one made on the spot) files the run and keeps it; Keep is locked while a run is filed; a **Project** drop-down in the filter bar and a **Manage** dialog | §32 | — | Not built; nothing for the Spark to check yet |
+| 1.15 | **Delete a picture from a run** (proposed, not built): a **Delete picture** button in the viewer sends one picture to the bin for 30 days (the last picture sends the whole run); the Deleted view shows the deleted pictures with **Restore** and **Delete forever** | §33 | — | Not built; nothing for the Spark to check yet |
+| 1.16 | **16:9 is the default shape** of a picture (proposed, not built): Generate starts at 2752×1536 instead of 2048×2048 on the page, in the API and in `scripts/qwen_image.py`; a browser's saved 1:1 is moved to 16:9 once; Edit stays on Auto | §34 | — | Not built; one Spark run at the default size to compare time and memory (§34.6 criterion 184) |
 | 1.17 | **Vector** (proposed, not built): an SVG from a prompt in N colours, one layer per colour, for a laser | §31 | — | Needs the test-sheet results and answers 5, 7 and 8 in §31.7 first; the Spark would run a laser test sheet and a model probe (§31.9) |
 
 **Tests today (1.13):** backend 1009 (pytest; 65 more run only where `torch` is installed: 28 for the real music pipeline, which also needs `diffusers` 0.40.0, 17 for the upscaler probe's tiling, and 20 for Enlarge's real loading path, which also need `spandrel`), front end 369 (Vitest) and 171 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
@@ -119,6 +122,9 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 48 | A Kept view, and filters that more can join (1.12) | You asked for the history to be filtered to **only the runs you have kept**, and answered the questions: with Kept chosen, **Generate stays in Kept and the running job stays visible at the top** until it finishes (then it leaves unless you kept it); **un-keeping in the Kept view removes the card with a toast and Undo, and the toast says when it will be deleted**; the choice applies to **both tabs**; and the design must let **other filters join later**. A **filter bar** (All \| Kept, with the count of kept runs on the tab) above the history; the server filters (`GET /api/runs?kept=`) because the history comes in pages of twenty; one filter shape on the server, the page and the store so the next filter is a short change (§29). A recoverable delete (*Deleted* view) is a release of its own, **1.13, and needs your answers** (§29.9) | DECIDED (your four answers); details PROPOSED; built in 1.12 |
 | 49 | The bin: a Deleted view that holds a deleted run for 30 days (1.13) | You asked that a deleted run be recoverable, and answered: **it stays in the Deleted view for 30 days before it is really deleted, and there should be an option to empty the garbage bin.** A **Deleted** option beside All and Kept in the filter bar; **Delete** moves a finished run to the bin (with a toast and Undo); the daily clean-up moves expired runs there too; after 30 days (`STUDIO_BIN_DAYS`) they go for good; **Restore** puts a run back as it was, with a fresh clock if it is un-kept; **Delete forever** and **Empty bin** ask first. The other questions of §29.9 are my defaults, listed in §30.6 for you to veto (§30) | DECIDED (your 30 days and your Empty bin); the rest PROPOSED; built in 1.13 |
 | 50 | Vector: an SVG made from a prompt, in a number of colours, one layer per colour, for a laser (1.17, **proposed**) | You asked for an SVG instead of a PNG from a prompt, to say **how many colours** it has (*black and white is 2; black, white, red and green is 4*), to have **layers**, and for each layer to be **cut on your xTool P2 or engraved with your Gweike G3 Ultra**; and for **the best open-source model**. Proposed: a **Vector** tab; the artwork is made by a model and a **clean-up I write and test guarantees** at most N exact colours, closed shapes, one layer per colour, no doubled edges and a real size in millimetres. **Engine A, draw and trace** (Qwen-Image makes a flat picture, code reduces and traces it) first; **Engine B, a native SVG model** (OmniSVG 1.1 is the candidate) only if a probe on the Spark shows it is better. I cannot name "the best" model from here: §31.2 says what is verified and what is not, and §31.9 is the probe that decides. **You have answered eight of the eleven questions; sizes (5), other formats (7) and the engine (8) are open, with defaults, in §31.7, and I am waiting for what you see in XCS and LightBurn with the test sheet (§31.9)** (§31) | PROPOSED; nothing built |
+| 51 | Project folders (1.14) | You asked for **project folders**: when you like a generation you add it to a drop-down of projects, or make a new one right then, and once it is in a project it is **also kept**, so that it is not deleted by accident. You answered: **the whole run** is what is filed; **one project at a time**; **Keep is locked while a run is in a project** (taking it out leaves it kept); and you browse with a **Project drop-down in the filter bar**. A project is a label in the database (no file moves); deleting a project never deletes a run; the other details are my defaults, listed in §32.6 for you to veto (§32) | DECIDED (your four answers); the rest PROPOSED; not built |
+| 52 | Delete a picture from a run, into the bin (1.15) | You said you also need to **delete the pictures you do not like from a run**. You answered: on **any finished run**; a deleted picture goes **into the bin for 30 days**, like a run; deleting a run's **last** picture sends **the run** to the bin; a picture's **4K and Enlarge copies go with it**. The Deleted view shows one card per run with its deleted pictures, each with **Restore** and **Delete forever**; the number beside Deleted counts runs and pictures; the other details are my defaults, listed in §33.4 for you to veto (§33) | DECIDED (your four answers); the rest PROPOSED; not built |
+| 53 | 16:9 is the default shape of a picture (1.16) | You asked that **16:9 be the default image aspect ratio for any generation**, replacing the 1:1, 2048×2048 of decision #20. You answered: a browser's **saved 1:1 is moved to 16:9, once**, with a note; **Edit stays on Auto** (decision #28); and the **API and the command-line script change too**, so one default holds everywhere. 16:9 is the model card's 2752×1536 (about 4.23 MP, the cost of the old square); the other details are my defaults, listed in §34.5 for you to veto (§34) | DECIDED (your three answers); the rest PROPOSED; not built |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -137,6 +143,8 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #46 | **Yes** (1.11): Enlarge with an upscaler model. Qwen redrawing (#47) is proposed, not built. |
 | #48 | **Yes** (1.12): the Kept view and the filter framework. The *Deleted* view followed in 1.13 (#49). |
 | #49 | **Yes** (1.13): the bin, with your 30 days and your Empty bin; the other defaults are in §30.6. |
+| #51, #52 | **Not built.** Decided by your answers (project folders in 1.14, §32; deleting a picture in 1.15, §33); the other defaults are in §32.6 and §33.4. |
+| #53 | **Not built.** Decided by your three answers (1.16, §34); the other defaults are in §34.5. It changes the default of decision #20 (size) and leaves #28 (Edit's Auto) as it is. |
 | #38 | Yes (1.5). |
 | #39 | Yes (1.7). |
 | #43 | **Yes** (1.8). |
@@ -395,7 +403,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 - **Operations.** Healthcheck `GET /api/health`; logs to stdout; **build on the Spark itself** (arm64).
 - A `compose.yaml` and the equivalent `docker run` one-liner ship in the repo. `compose.yaml` itself reads a few variables that are not studio settings: `STUDIO_UID` and `STUDIO_GID` (the user the container runs as), `STUDIO_BIND` (the host address the port is published on; `127.0.0.1` keeps it off the LAN) and `HF_CACHE_DIR` (the host's model cache). It passes the studio settings of §13 through to the container, including the 1.3 draft limits.
 - **Updating:** `git pull && docker compose up -d --build` (README "Updating and rebuilding"). The page's title shows which version is actually running, and `index.html` is revalidated on every load, so a rebuilt page appears on the next reload (§5.1).
-- **Backups:** `scripts/backup.sh` and `scripts/restore.sh` (README "Backing up and restoring") save and restore the four things that live outside the container: `./data`, `.env`, the built image and, optionally, the model cache. A backup is **one `.tar` file** (an ordinary tar of already-compressed pieces plus a manifest and checksums) so it can be copied to a NAS; it is re-read and its checksums checked before it gets its final name, and `restore.sh --verify` checks a copy without Docker. The studio is stopped only while `./data` is packed (SQLite in WAL mode must be at rest), and a restore reads the `.tar` in place and never deletes anything: what is in the way is moved aside. Their tests, `scripts/tests/backup_restore_test.sh`, run without Docker.
+- **Backups:** `scripts/backup.sh` and `scripts/restore.sh` (README "Backing up and restoring") save and restore the four things that live outside the container: `./data`, `.env`, the built image and **the studio's models in the Hugging Face cache, which are included by default** (`--no-model` leaves them out; `--model`, the old way of asking for the image model alone, is still accepted and changes nothing, so an old cron line keeps working). **"The studio's models" are exactly three, found from the settings the studio itself reads:** the image model (`STUDIO_MODEL`, a `hub/models--…` folder), the music model (`STUDIO_MUSIC_MODEL`, likewise) and the Enlarge upscaler file (`STUDIO_UPSCALER_MODEL`, by default `upscalers/RealESRGAN_x2plus.pth`); **nothing else in the cache is touched**, because Hermes' vLLM and other tools share that folder. **A model that is not there is skipped with a warning that names it, never an error** (it was never downloaded; the setting is a folder path rather than a Hugging Face name; the upscaler is outside `/models`; a name the restore would refuse), so a fresh install or a scheduled run is still backed up; `MANIFEST.txt` says exactly which are inside (`model_paths`, and `format=2` when there are any; a backup without models is still `format=1`, as before). A restore puts back each model that is not already in the cache and leaves the others alone (with `--force` the cached copy is moved aside, never deleted), and still reads the older backups that hold one model (`format=1`, `model_dir`). A backup is **one `.tar` file** (an ordinary tar of already-compressed pieces plus a manifest and checksums) so it can be copied to a NAS; it is re-read and its checksums checked before it gets its final name, and `restore.sh --verify` checks a copy without Docker. The studio is stopped only while `./data` is packed (SQLite in WAL mode must be at rest), and a restore reads the `.tar` in place and never deletes anything: what is in the way is moved aside. Their tests, `scripts/tests/backup_restore_test.sh`, run without Docker.
 - The unified-memory caveats are in §9a.
 
 ## 13. Configuration reference (PROPOSED; every studio setting, as of 1.5)
@@ -1755,3 +1763,258 @@ You have answered eight of the eleven questions in the first draft. I have kept 
 - Qwen-Image-Layered (raster layers): <https://docs.comfy.org/tutorials/image/qwen/qwen-image-layered>
 - xTool P2 listing: <https://www.matterhackers.com/store/l/xtool-p2-co2-laser-engraver-and-laser-cutter-55w/sk/MGD5TP18> (the file-format list is from P2S listings: <https://top3dshop.com/product/xtool-p2s-55w-co2-laser-cutter-and-engraver>)
 - Gweike G3 Ultra listing: <https://woodartsupply.com/products/gweike-g3-ultra-60w-mopa-40w-diode-dual-laser-engraver-3d-grayscale-color-metal-engraving-16mp-smart-camera-15-000mm-s-fast-fiber-laser-cutter-and-laser-engraver-machine-for-metal-wood-acrylic>
+
+---
+
+## 32. Version 1.14: project folders (decision #51 DECIDED for what you said; the rest PROPOSED; nothing built)
+
+You asked for **project folders**: when you like a generation you want to add it to a drop-down of project folders, or make a new folder right then and there, and **once a generation is in a project it is also kept, so that it is not deleted by accident**. You also said you need to delete the pictures you do not like from a run; that is a release of its own (§33, 1.15). I asked four questions and you answered them:
+
+| # | Question | Your answer |
+|---|---|---|
+| 1 | What gets filed: the whole run, or single pictures? | **The whole run** (§32.2). |
+| 2 | Can a run be in more than one project? | **One project at a time** (§32.2). |
+| 3 | What does the Keep button do while a run is in a project? | **Locked while filed** (§32.3). |
+| 4 | Where do you browse a project? | **A Project drop-down in the filter bar** (§32.1). |
+
+*Numbering.* §31 (Vector) is a proposal too, and nothing in it is built. So that nothing collides, this section and §33 take §32 and §33, decisions #51 and #52, versions 1.14 and 1.15, schemas 5 and 6, and criteria from 146 on; §34 takes version 1.16, decision #53 and criteria 177 to 184. Vector is built after them, so it is version 1.17 with schema 7 and keeps its criteria, 135 to 145.
+
+### 32.1 What it looks like
+
+- **On every card** (a picture run or a music run), in the row of buttons beside **Keep**: a **Project** button. On a run that is in no project it says **Add to project ▾**. On a run that is in one it shows the project's name, **Logo ▾**, and the card shows its **Kept** badge as ever.
+- **The drop-down** lists your projects, A to Z (ignoring case), then a line, then **New project…**. Choosing a project files the run in it (and keeps it, §32.3). Choosing **New project…** turns the drop-down into a one-line field, *Name of the new project*, with **Create** (Enter) and **Cancel** (Esc); **Create** makes the project **and files the run in it, right then**. On a card that is already filed the list shows a tick beside its project, choosing another project **moves** the run, and a last line, **Take out of project**, takes it out.
+- **Every filing and every move says so, with Undo** (a toast, 12 seconds, as in §29.4): *Filed "a red fox in the snow…" in Logo. It is kept.* · *Moved "…" from Logo to Pitch.* · *Taken out of Logo. It is still kept.* **Undo** puts the run back exactly as it was before the click (§32.3 item 3).
+- **A filed card's Keep button is pressed and locked**, with the tooltip *Kept because it is in the project "Logo". Take it out of the project first.* (§32.3).
+- **The filter bar** (§29.1) gets a second control beside **Show: All | Kept | Deleted**: **Project**, a drop-down with **Any project** (the default), **No project**, and then each project with the number of runs in it on the tab you are looking at (*Logo 4*). Next to it a small **Manage** button opens the projects dialog (below). Like the other filters the choice **applies to both tabs**, **combines with All, Kept and Deleted**, and is **remembered by this browser**. With a project chosen, the three numbers beside All, Kept and Deleted are for **that project on this tab** (§32.5), so *All 4 | Kept 4 | Deleted 0* is a true description of what you would see.
+- **Manage** opens a dialog: a *New project* field; the list of projects with how many pictures and tracks each holds; **Rename** on each (in place; a name already taken is refused) and **Delete project**, which asks first: *Delete the project "Logo"? Its 4 runs (3 pictures, 1 track) are not deleted: they stay kept and are no longer in a project.*
+- **Empty states.** A project with nothing on this tab says *Nothing in "Logo" on Images yet. Use Add to project on a card to file one here.* (it names the tab, because the other tab may have runs in it) with **Show any project**. **No project** with nothing to show says *Every run on this tab is in a project.*
+- **A project that has gone.** If the project this browser remembers no longer exists (another page deleted it), the filter falls back to **Any project** and a toast says *That project no longer exists.*
+- **A card in the bin** (§30.1) shows its project's name as a chip that cannot be pressed, and has no Project button (§32.3 item 7).
+
+### 32.2 What is filed, and what a project is
+
+- **The whole run** is filed (your answer 1): every picture of a generation, or the tracks of a music run, moves together, because Keep, the bin and the expiry are all per run today and a run must not end up half in a project.
+- **One project at a time** (your answer 2), like a real folder: choosing another project moves the run. A run is in exactly one project or in none.
+- **Both tabs.** There is one list of projects. A project can hold pictures and tracks; each tab shows its own part of it. A queued or running run can be filed too (it is kept when it finishes, as with Keep, §29.7 item 9).
+- **A project is a name, not a folder on the disk.** It is a label in the database: the files stay where they are (`images/<run>/`, `audio/<run>/`), so filing is instant, moves no file, and the backups (which contain the database) already contain your projects.
+
+### 32.3 Keep and projects (your answer 3)
+
+1. **Filing a run keeps it**, in the same step: there is no moment when a filed run is not kept.
+2. **While a run is filed, Keep cannot be turned off.** The card's button is locked (§32.1) and the server refuses `{"pinned": false}` for it with `409` `run_in_project`. Pressing Keep on a run that is kept already is still fine (`{"pinned": true}`).
+3. **Taking a run out of a project leaves it kept**, so that it cannot expire by surprise; to stop keeping it, take it out and then press **Keep**. The one exception is **Undo of a filing**, which puts the run back exactly as it was before (if it was not kept before, it is not kept now; the toast said it would be).
+4. **The daily clean-up never expires a filed run.** The run is kept, and the clean-up's condition also says *not in a project* (§5.6, §30.5), so that it holds even if something cleared the flag by hand.
+5. **A filed run can still be deleted by hand** (Delete is a question and goes to the bin for 30 days, §30). The question names the project: *It is in the project "Logo". It moves to Deleted and stays there for 30 days; restoring it puts it back in the project. After that it is gone for good.* A run in the bin keeps its project, so **Restore** puts it back there, kept.
+6. **Deleting a project never deletes a run.** The runs stay kept and are no longer in a project, including runs that are in the bin (they come back from the bin unfiled and kept).
+7. **A run in the bin cannot be filed** (restore it first): `409` `run_in_bin`.
+
+### 32.4 The server
+
+- **Schema 5.** A table `projects` (`id`, `name`, `name_key`, `created_at`) and a column `runs.project_id` (null, or a project's id), with an index. `name_key` is the name trimmed, with runs of spaces made one, and lower-cased; it is **unique**, so *Logo* and *logo* are the same project. A copy of the database is made first, as for every schema change (`studio.sqlite.before-schema-5`); the migration is tested on a 1.7, a 1.12 and a 1.13 database.
+- **A name** is 1 to 60 characters after trimming, with no control characters (`capabilities.limits.project_name_max` says 60, so the page can say it). Refused with `422` `bad_name`; a name already taken (ignoring case) with `409` `name_taken`. A project can be renamed to a different spelling of its own name.
+- **Routes.**
+  - `GET /api/projects` → `{"projects": [{"id", "name", "created_at", "counts": {"image": 3, "music": 1}}]}` (the counts are runs in the history, not in the bin), A to Z.
+  - `POST /api/projects` `{"name"}` → `201` with the project.
+  - `PATCH /api/projects/{id}` `{"name"}` → `200`; `404`; `409`; `422`.
+  - `DELETE /api/projects/{id}` → `200` `{"unfiled": n}`; `404`. Its runs lose their `project_id` and stay kept.
+  - `PUT /api/runs/{id}/project` `{"project_id"}` → `200` with the run. **Files the run and keeps it in one transaction**; the same call **moves** a filed run. `404` (no such run or project), `409` `run_in_bin`.
+  - `DELETE /api/runs/{id}/project` → `200` with the run, leaving it kept. With `?keep=false` it also stops keeping it (this is what **Undo** of a filing sends). `404`, `409` `not_in_project`.
+  - `PATCH /api/runs/{id}` (Keep) with `pinned: false` on a filed run → `409` `run_in_project`.
+- **`RunFilter.project`** (`runfilter.py`, §29.5): `None` is *any project*, `"none"` is *no project* (`project_id IS NULL`), a project's id is that project (`project_id = ?`). It is one fixed SQL condition with a bound value, like the others, and an unknown value is a `422` while a project id that does not exist is simply an empty list. `GET /api/runs?project=<id>|none` and `GET /api/runs/counts?project=<id>|none` take it, and the counts apply it to every counted filter.
+- **The run's payload** gains `project_id` (null or the id); the page has the project's name from its own list.
+- **Events.** A change to a project (made, renamed, deleted) sends one **`projects.changed`**; the page asks for `GET /api/projects` again (after a quiet 250 ms, as it does for the counts). A change to a run sends `run.updated` as it does for Keep; deleting a project sends `run.updated` for each run it unfiled.
+- **The janitor** (§30.5) expires only runs that are not in a project.
+
+### 32.5 The page
+
+- `HistoryFilter` (§29.5) gets its third field, `project: "any" | "none" | <id>`: **the first filter that holds a value and not a yes-or-no**, so `filterKey`, `filterParams` and `matches` each gain one case and the filter bar one control; the store keeps one view per filter key, so nothing else changes. What the browser remembers gains the project; **an old stored value still reads as it did** (with *any project*), and a project the page no longer knows becomes *any project* (§32.1).
+- **Counts follow the project.** `GET /api/runs/counts` is asked with the project chosen, so the numbers beside All, Kept and Deleted are for that project on the tab shown. The numbers inside the Project drop-down are the per-project counts of `GET /api/projects`.
+- **The store** holds the list of projects and keeps it current from `projects.changed`. The Project button on a card, the drop-down in the filter bar and the Manage dialog all read it.
+- **Undo** belongs to the page that filed the run, as in §29.4; if the run has changed in between, Undo says so instead of overwriting it.
+
+### 32.6 The small choices I made (tell me if you want any changed)
+
+1. **Both tabs share one list of projects** (a project can be *a logo and its jingle*).
+2. **The Project button is on the card only** in 1.14, not in the picture viewer, because you file a run you like, and the card is where its Keep button already is. Putting it in the viewer as well is a small addition.
+3. **Undo of a filing restores the old state exactly** (including *not kept*), while **Take out of project** on purpose leaves the run kept (§32.3 item 3). The two are different clicks with different promises, and each toast says which.
+4. **The numbers beside All, Kept and Deleted follow the project you chose** (§32.5), so they match what is on the screen.
+5. **A project's runs are ordered like every history**: newest first, by when the run was made, not when it was filed.
+6. **No limit on the number of projects**, and no nesting: a project is one flat folder. Names are 60 characters at most, and *Logo* and *logo* are one project.
+7. **Deleting a project keeps its runs** and does not un-keep them; the question says so.
+8. **Delete on a filed run is the same question as ever** with one added line naming the project, not a second hurdle: it goes to the bin for 30 days and comes back to the project on Restore.
+9. **The drop-down on a card is a small pop-up menu with a text field.** If it needs a library that is not installed yet (the page has one, for dialogs), I would pin it like the others and say so in the pull request. It works with the keyboard (arrow keys, Enter, Esc; focus returns to the Project button) and fits a phone.
+10. **A working run can be filed**, and is kept when it finishes.
+11. **Not in the address bar**, like the other filters (§29.7 item 8).
+
+### 32.7 Acceptance criteria (continue §30.7; §31 holds 135 to 145 on its branch)
+
+146. Every card has a **Project** button, **Add to project ▾** or the project's name; its drop-down lists the projects A to Z, **New project…**, and on a filed card a tick, the others and **Take out of project**; it works with the keyboard and fits a phone. (1.14)
+147. Choosing a project files the run **and keeps it** in one step; a toast says so with **Undo**, and Undo puts the run back as it was (filed or not, kept or not). (1.14)
+148. **New project…** asks for a name in the drop-down; **Create** makes the project and files the run in it; an empty name, one over 60 characters and one that matches an existing name ignoring case are refused with a message and nothing is made. (1.14)
+149. Moving a run to another project, and taking it out, each show a toast with **Undo**; taking it out leaves the run kept. (1.14)
+150. A filed run's **Keep** is pressed and locked with a tooltip that says why; `PATCH {"pinned": false}` on it is `409` `run_in_project`; `{"pinned": true}` still works. (1.14)
+151. The daily clean-up never expires a filed run, **including one whose `pinned` flag has been cleared by hand in the database**. (1.14)
+152. The filter bar has a **Project** drop-down (**Any project**, **No project**, each project with its count for the tab shown); the choice applies to both tabs, combines with All, Kept and Deleted, and is remembered; a remembered project that no longer exists becomes *Any project* with a toast. (1.14)
+153. With a project chosen, the list, *Show older* and the numbers beside All, Kept and Deleted are for that project, and the empty state names the project and the tab. (1.14)
+154. **Manage** makes, renames (a taken name is refused) and deletes projects; deleting asks first and says the runs stay kept. (1.14)
+155. Deleting a project deletes, un-keeps and moves no run's files; its runs are unfiled and kept, including those in the bin. (1.14)
+156. **Delete** on a filed run names the project in its question; in Deleted the card shows the project as a chip and has no Project button; **Restore** puts it back in the project (or unfiled, if the project is gone), kept. (1.14)
+157. A run in the bin cannot be filed (`409` `run_in_bin`). (1.14)
+158. `GET /api/projects`, `POST /api/projects`, `PATCH` and `DELETE /api/projects/{id}`, `PUT` and `DELETE /api/runs/{id}/project` (with `?keep=false`), and `?project=` on the list and the counts answer as §32.4 says. (1.14)
+159. **Schema 5** is made from a 1.7, a 1.12 and a 1.13 database without losing a run; a copy of the old database is made first; a migrated database is the same as a fresh one. (1.14)
+160. Every open page follows live: a run filed, moved or taken out, and a project made, renamed or deleted. (1.14)
+161. On a **phone** the Project button's drop-down, the filter bar with its two controls, and the Manage dialog fit with no sideways scroll. (1.14)
+162. The server's rule and the page's `matches` agree on the shared table of cases, now with a project field in it (§29.5). (1.14)
+
+### 32.8 Not in 1.14
+
+Nested folders; a description, colour or note on a project; **downloading a project** as one zip; a Project button in the picture viewer; sharing or exporting a project; and any change to where the files are on the disk. Each is a small step from here if you want it.
+
+---
+
+## 33. Version 1.15: delete a picture from a run, into the bin (decision #52 DECIDED for what you said; the rest PROPOSED; nothing built)
+
+You said that, with projects, **you also need to delete the pictures you do not like from a run** (§32). I asked four questions and you answered them:
+
+| # | Question | Your answer |
+|---|---|---|
+| 1 | On which runs can you delete a single picture? | **Any finished run**, kept, filed or not (§33.2). |
+| 2 | Where does a deleted picture go? | **Into the bin for 30 days**, like a run (§33.1). |
+| 3 | What if it is the run's last picture? | **The run goes to the bin** (§33.2). |
+| 4 | A separate *delete the 4K copy* button? | **No**: the 4K and Enlarge copies go with their picture (§33.2). |
+
+This is the bin of §30 taught to hold **a single picture** as well as a whole run. It does not depend on projects (§32) and they do not depend on it; I would build projects first, because they are what you asked for first.
+
+### 33.1 What it looks like
+
+- **In the picture viewer** (the large view that opens when you press a picture): a **Delete picture** button beside Make 4K and Enlarge, on every **result** picture of a finished run. (An edit's **source** pictures are not offered: they are the run's inputs, §21.7. A picture of a run that is still working is not offered.) It asks first: *Delete this picture? (image 2 of 4, seed 1234.) It moves to Deleted and stays there for 30 days; you can restore it from there. Its 4K and Enlarge copies go with it.* If the run is in a project the question adds *The run stays in the project "Logo" with its other pictures.* If it is the **last** picture the question says *This is the last picture of this run, so the whole run moves to Deleted.* instead.
+- **Afterwards** the picture is gone from the card and the viewer at once: the viewer shows the next picture (or the previous one, if it was the last), or closes if the run left the history. The remaining pictures **keep their seeds and are numbered again by position** (a card of 4 with the second deleted shows *image 1 of 3, 2 of 3, 3 of 3*). A toast says *Deleted image 2 of "…". It stays in Deleted for 30 days.* with **Undo** (which is **Restore**, §33.3).
+- **Music:** a music run with more than one version has a **Delete track** button on each track's row, with the same question, toast and rules (a run's only track is its last picture: the run goes to the bin).
+- **The Deleted view** (§30.1) gets a second kind of card: **a run that is in the history but has pictures in the bin** shows one card with the run's prompt (*From a run made on 12 Oct: "a red fox in the snow…"*, and its project's chip), and under it **the deleted pictures**, each with its thumbnail, its seed, *In the bin since 14 Oct. It will be gone for good around 13 Nov, in 29 days.* and **Restore** and **Delete forever** (it asks first). Pressing a picture opens it in the viewer, read-only. A run that is itself in the bin shows as in §30.1 with the pictures it has, and **not** its separately deleted pictures (§33.2 item 5).
+- **The number beside Deleted** counts **things in the bin**: each run in the bin counts one, and each deleted picture (or track) of a run that is still in the history counts one. **Empty bin** says so: *Delete 12 runs and 5 pictures for good (…)? This cannot be undone.*
+
+### 33.2 The rules
+
+1. **Any finished run** (done, failed or canceled; your answer 1), whether it is kept, filed in a project or neither. Keep and projects protect the *run* from the clean-up and from accidents; deleting one picture is a deliberate act with a question first.
+2. **A deleted picture goes to the bin for `bin_days`** (30, `STUDIO_BIN_DAYS`; your answer 2). Its file, its thumbnail and its 4K and Enlarge copies stay on the disk meanwhile, and go for good together (your answer 4). With the bin turned off (`STUDIO_BIN_DAYS=0`) a deleted picture is deleted for good at once, and the question says so.
+3. **The last picture** of a run is not deleted separately: deleting it **moves the run to the bin** as **Delete** on the run does (§30.2), with the question saying so (your answer 3). Its pictures and its prompt and settings are all recoverable from Deleted. So deleting pictures never leaves a run with none of its pictures in the history (a run that failed, and so never had any, is another matter).
+4. **A run that is working, or in the bin, cannot have a picture deleted** (`409` `run_not_finished` / `run_in_bin`), and a picture that Make 4K or Enlarge is working on, or has waiting, is refused with `409` `image_busy` (the copy being written would be left behind).
+5. **A picture is in the bin separately only while its run is in the history.** If the run goes to the bin, the pictures deleted before it stay marked with their own clocks and are not listed (the run's card is); if the run is restored they appear again as deleted pictures, and if their time runs out meanwhile the clean-up deletes them for good. When a run is deleted for good, everything of it goes, deleted pictures included.
+6. **Restore** puts a picture back into its run **at its own place** (pictures keep their order). It needs the run to be in the history (`409` `run_in_bin` otherwise: restore the run first).
+7. **The clean-up** (§30.5) deletes for good the pictures whose time in the bin is over, as it does runs, wherever their run is; **Empty bin** deletes all of them with the runs in the bin; **Delete forever** on a deleted picture deletes just that picture.
+8. **A picture's copies are made by "Make 4K" and "Enlarge" next to it** (`<n>-4k.png`, `<n>-4k-enlarged.png`, §27.3, §28.2); there is no separate way to delete just a copy (your answer 4).
+
+### 33.3 The server
+
+- **Schema 6** adds `deleted_at` to `images` and to `tracks` (null, or when the picture went to the bin); a copy of the database is made first (`studio.sqlite.before-schema-6`), and the migration is tested on a 1.7, a 1.12, a 1.13 and a 1.14 database.
+- **Routes.**
+  - `POST /api/images/{id}/bin` → `200` `{"moved": "picture" | "run", "run": <payload>}`; `404`; `409` `run_not_finished`, `run_in_bin`, `image_busy`, `not_a_result` (an edit's source), `bin_off`.
+  - `POST /api/images/{id}/restore` → `200` with the run; `404`; `409` `not_in_bin`, `run_in_bin`.
+  - `DELETE /api/images/{id}` → `204`: **for good**, in or out of the bin, as `DELETE /api/runs/{id}` is for a run. If it is the last picture the run is deleted for good too. The same three routes exist for tracks under `/api/tracks/{id}`.
+  - `DELETE /api/bin` (Empty bin, §30.5) also deletes the deleted pictures and tracks, and answers `{"deleted": <runs>, "pictures": <pictures and tracks of runs that stay>}`.
+- **The run's payload.** `images` (and `tracks`) are the pictures that are **not** in the bin, so every existing use (the card, the viewer, the numbering) is right without change. New: `binned_images` (and `binned_tracks`), each picture as before plus `deleted_at` and `purge_at`; **empty for a run that is in the bin** (§33.2 item 5).
+- **`RunFilter.deleted`** (§30.5): `True` now means *the run is in the bin, **or** it has a picture or track in the bin*; `False` (the history) is unchanged. `matches` has the same rule from the payload (`deleted_at` set, or a non-empty `binned_images` or `binned_tracks`). **The counts** for Deleted become a count of **things** (§33.1), so it is one more function beside the generic one, tested on the shared table (§29.5).
+- **Events.** A picture moved to the bin, restored or deleted sends `run.updated` for its run; a run that moves instead sends what §30.5 says.
+- **Files.** The storage layer gets one function that removes a picture's file, thumbnail and 4K and Enlarge copies together (the run's folder is not removed).
+
+### 33.4 The small choices I made (tell me if you want any changed)
+
+1. **Delete picture is in the viewer, and on a music track's row, not on the picture thumbnails of a card**: you look at a picture before you decide it is bad, and a button on every thumbnail is a button pressed by accident.
+2. **Deleted pictures are one card per run** in the Deleted view, not one card per picture, so four pictures deleted from one run do not make four cards.
+3. **Pictures are numbered again by position** after one is deleted, and keep their seeds (the seed is what names a picture).
+4. **A source picture of an edit cannot be deleted by itself.** It belongs to its run and goes with it.
+5. **The Deleted view is ordered by when the run was made**, as in §30.6 item 7, so a deleted picture sits where its run is.
+6. **Delete forever on a deleted picture asks first**, as it does for a run.
+7. **A run's `num_images`** (the number you asked for) is left as it was; the card counts the pictures that are there.
+8. **The counts treat a run in the bin and a deleted picture alike**, one each, because both are things you can restore.
+
+### 33.5 Acceptance criteria (continue §32.7)
+
+163. The viewer has **Delete picture** on every result picture of a finished run (not on an edit's sources, not on a working run); the question names the picture, the bin and its days, the project if there is one, and says when it is the last picture. (1.15)
+164. A deleted picture leaves the card and the viewer at once; the others keep their seeds and are numbered again; the viewer moves on or closes; a toast with **Undo** (Restore) is shown. (1.15)
+165. Deleting the last picture moves the whole run to the bin, and Undo restores the run. (1.15)
+166. A deleted picture's file, thumbnail and 4K and Enlarge copies stay on the disk while it is in the bin, and are deleted for good together when its days are over, on **Delete forever**, on **Empty bin**, or when its run is deleted for good. (1.15)
+167. The Deleted view shows, for a run that is in the history, one card with its deleted pictures (since, until, **Restore**, **Delete forever**); a run that is in the bin shows its remaining pictures and not its earlier deleted ones. (1.15)
+168. **Restore** puts a picture back at its place in its run; it is refused while the run is in the bin. (1.15)
+169. The number beside **Deleted** and the question of **Empty bin** count runs and pictures (and tracks). (1.15)
+170. `POST /api/images/{id}/bin`, `POST /api/images/{id}/restore`, `DELETE /api/images/{id}` (and the three for tracks), `DELETE /api/bin` with `pictures`, and `binned_images` and `binned_tracks` in the payload answer as §33.3 says; `images` and `tracks` leave out what is in the bin. (1.15)
+171. With `STUDIO_BIN_DAYS=0` a deleted picture is deleted for good at once and the question says so. (1.15)
+172. A picture that Make 4K or Enlarge is working on or waiting for cannot be deleted (`409` `image_busy`). (1.15)
+173. **Schema 6** is made from a 1.7, a 1.12, a 1.13 and a 1.14 database without losing a run or a picture; a copy of the old database is made first; a migrated database is the same as a fresh one. (1.15)
+174. Every open page follows live: a picture deleted, restored or deleted for good, and a run moved by deleting its last picture. (1.15)
+175. On a **phone** the Delete picture button and question, a deleted-pictures card and the dialogs fit with no sideways scroll. (1.15)
+176. The server's rule and the page's `matches` agree on the shared table of cases, now with a run that has pictures in the bin (§29.5). (1.15)
+
+### 33.6 Not in 1.15
+
+A way to delete just a picture's 4K or Enlarge copy (your answer 4); deleting an edit's source pictures; deleting several pictures at once (select and delete); deleting a picture from the card without opening the viewer. Each is a small step from here if you want it.
+
+---
+
+## 34. Version 1.16: 16:9 is the default shape of a picture (decision #53 DECIDED for what you said; the rest PROPOSED; nothing built)
+
+You asked that **16:9 be the default image aspect ratio for any generation**. Today the default is **1:1, 2048×2048** (decision #20, §6): it is what Options starts with, what *Reset* goes back to, and what the server makes when a request names no size. I asked three questions and you answered them:
+
+| # | Question | Your answer |
+|---|---|---|
+| 1 | A browser that has used the studio has already saved its size (1:1 unless you changed it), and a saved choice beats the default. What should 1.16 do about that? | **Move a saved 1:1 to 16:9, once** (§34.2). |
+| 2 | Edit's size is *Auto* (the shape of your last source picture). Default it to 16:9 too? | **No: leave Edit on Auto** (§34.3). |
+| 3 | The API (a request with no size) and the command-line script `scripts/qwen_image.py` have the same default. Change them too? | **Yes, everywhere** (§34.4). |
+
+This is a change to a default, not a new feature: no database change, no new control, no new route.
+
+### 34.1 What changes
+
+- **The default size of Generate is 16:9, 2752×1536** (the model card's 16:9 preset, the one Options already offers). It is about **4.23 megapixels**, against the 4.19 of 2048×2048, so a picture costs the same time and memory as before and stays inside the 4.5 MP limit (§6).
+- **A browser with nothing saved**, a private window, and the **Reset** button in Options all give 16:9 for Generate. The **Custom** width and height start at 2752×1536 (they start at the default size).
+- **The scale picker (100%, 75%, 50%, 25%) on the prompt bar, and Draft,** work on whatever size is selected, as ever; at 100% a new picture is 2752×1536.
+- **Any other choice is untouched**: another preset, Custom, the scale, the steps, the seed, the number of pictures. Only the one choice that *was the old default* moves (§34.2).
+
+### 34.2 The one-time move of a saved 1:1 (your answer 1)
+
+Every browser that has used the studio has saved a size, and unless it moved off the default that size is **1:1**. A plain change of the default would therefore change nothing on your own page. So **the first time a browser opens the studio after 1.16**:
+
+- if its saved Generate size is **exactly the 1:1 preset**, it becomes **16:9**, and a **one-time note** says so: *The default size is now 16:9, and your saved 1:1 was changed to it. Choose 1:1 in Options to go back.*;
+- any other saved size (another preset, Custom, even a Custom of 2048×2048) is **left as it is**;
+- the saved **Edit** size is not touched (§34.3).
+
+**It happens once.** The page keeps a second small saved value that says *this browser has been moved*, and writes it on that first load **whether or not anything was moved**; so a 1:1 you choose afterwards stays 1:1, and a browser that starts empty never sees the note. With the browser's storage blocked (a private window) there is nothing saved to move: the page works in memory and starts at 16:9.
+
+**The catch, as I told you:** the page cannot tell *a 1:1 you chose on purpose* from *the old default*, so someone who deliberately kept 1:1 is moved once, and told. One click in Options gives it back.
+
+### 34.3 What does not change (your answer 2, and the rest)
+
+- **Edit mode's size stays Auto** (decision #28, §21.4): an edit takes the shape of your last source picture at about 1 MP unless you pick a size. A saved Edit size, and Reset for Edit, are as before. (Choosing 16:9 for an edit is one click in Options, as now.)
+- **Runs that already exist** keep their size. **Reuse** and **Retry** restore *that run's own* size, not the new default; **Regenerate larger**, **Make 4K** and **Enlarge** are unaffected.
+- **An explicit size is honoured as ever**: a request that names a width and height, or a preset, gets that. The limits (§6, 256 to 4096 a side, multiples of 32, at most 4.5 MP) are unchanged.
+- **Music** has no size and is unaffected.
+
+### 34.4 Where the default lives (your answer 3)
+
+One value, so that every way of making a picture agrees:
+
+- **The server.** `DEFAULT_ASPECT` and `DEFAULT_SIZE` in `backend/studio/presets.py` become `"16:9"` and 2752×1536. They feed `GET /api/capabilities` (`defaults.aspect_ratio`, `width`, `height`, which is how the page learns its default) and the rule in `runspec.py` that gives a **Generate request with no size** the default size. An **Edit request with no size** is still sized by the pipeline (§21.4).
+- **The page** reads its default from the capabilities, as it does now; it needs no number of its own. What changes in the page is the one-time move of §34.2.
+- **The script `scripts/qwen_image.py`**: `generate` with no size makes **2752×1536**, and its help text, its example comment and the hint in its out-of-memory message (*"--aspect-ratio 1:1 is 2048x2048"*) say so. `--aspect-ratio 1:1` still makes a square.
+- **A script of yours that calls the API without a size** will now get a landscape picture where it got a square one. That is the point of your answer, and it is the one place the change can surprise a caller.
+
+### 34.5 The small choices I made (tell me if you want any changed)
+
+1. **The shape is the model card's 16:9 preset, 2752×1536**, not 1920×1080: the pipeline works on a grid of 32 pixels and 1080 is not on it (the studio refuses such a size, §6).
+2. **It is a built-in default, not a setting.** There is no `STUDIO_DEFAULT_ASPECT`, as there was none for 1:1. If you want to change it without a release, a setting is a small addition.
+3. **Only the shape moves.** A saved scale (say 50%), steps or seed are left alone, so a browser that was at 1:1 and 50% becomes 16:9 and 50% (1376×768).
+4. **The note about the move is a plain toast**, shown once, and nothing else announces it.
+5. **The Custom fields start at the new default size** for a browser with nothing saved; a saved Custom size is never replaced.
+6. **Tests that meant "a square" will say 1:1.** A good many tests rely on the old default without saying so; when I build this they name the square they mean instead of leaning on the default, so that the next change of default does not touch them. This is most of the work of the release.
+7. **The text that says the default is 1:1** (decision #20, the Size row of the Options table in §5, the README, the Spark test checklists) is updated when this is built, not now, because today it is still true.
+
+### 34.6 Acceptance criteria (continue §33.5)
+
+177. A browser with nothing saved starts Generate at **16:9** (Options shows the 16:9 preset selected, the size is 2752×1536, and Custom starts at 2752×1536); **Reset** gives the same for Generate. (1.16)
+178. On the first load after 1.16, a saved Generate size of exactly the **1:1 preset** becomes 16:9 and a one-time note says so; any other saved size, including a Custom of 2048×2048, and the saved Edit size are left as they were. (1.16)
+179. The move **happens once**: after it, choosing 1:1 and reloading keeps 1:1 with no note; a browser that starts empty gets no note; with storage blocked the page works and starts at 16:9. (1.16)
+180. **Edit's** default size is still **Auto**, and Reset leaves it there. (1.16)
+181. `GET /api/capabilities` gives `defaults.aspect_ratio` `"16:9"`, `width` 2752 and `height` 1536; a **Generate request with no size** makes a 2752×1536 picture (the run, the file and its download name say so); a request that names a size, and an **Edit request with no size**, are unchanged. (1.16)
+182. `scripts/qwen_image.py generate` with no size makes 2752×1536 and its help says so; `--aspect-ratio 1:1` still makes 2048×2048. (1.16)
+183. Runs made before 1.16 are unchanged, and **Reuse** and **Retry** restore their own size, not the new default. (1.16)
+184. A 16:9 picture at the default size needs no more memory than the old square one did: **checked on the Spark** with one run at the default size, writing down the time and the memory (`SPARK_TEST.md`, added when this is built). (1.16)

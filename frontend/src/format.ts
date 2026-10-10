@@ -67,6 +67,7 @@ export function seedText(run: ImageRun): string {
   return n > 1 ? `seeds ${first}–${first + n - 1}` : `seed ${first}`;
 }
 
+// A prompt cut to one line of at most `max` characters, for a toast
 function shorten(text: string, max = 48): string {
   const flat = text.trim().replace(/\s+/g, " ");
   return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
@@ -79,12 +80,18 @@ export function unkeptText(
   now: number = Date.now(),
   format: { locale?: string; timeZone?: string } = {},
 ): string {
+  // The toast has three parts: what happened (`lead`), how to undo it (`again`), and when the run will be deleted (chosen below)
   const lead = `No longer kept: “${shorten(run.prompt)}”.`;
   const again = "unless you Keep it again";
+  // the time left until the run's expiry date (its age plus the retention); NaN when it has none
   const left = run.expires_at ? Date.parse(run.expires_at) - now : Number.NaN;
+  // no usable date (the retention may be off): say only that it will be deleted when it is old enough
   if (!Number.isFinite(left)) return `${lead} It will be deleted when it is old enough, ${again}.`;
+  // already past its time: the daily clean-up takes it next
   if (left <= 0) return `${lead} It is past its time, so it will be deleted at the next daily clean-up, ${again}.`;
+  // less than a day left: a date would mislead, since the clean-up runs once a day
   if (left < DAY_MS) return `${lead} It will be deleted within a day, ${again}.`;
+  // more than a day left: say the date, and the number of whole days to it
   const days = Math.floor(left / DAY_MS);
   const date = new Date(run.expires_at as string).toLocaleDateString(format.locale, { day: "numeric", month: "short", timeZone: format.timeZone });
   return `${lead} It will be deleted around ${date}, in ${days} ${days === 1 ? "day" : "days"}, ${again}.`;
@@ -106,6 +113,7 @@ export function binnedText(run: { prompt: string }, binDays: number): string {
 
 /** The toast after a restore (§30.4): a kept run is still kept; any other has a fresh clock, so it says how long that is. */
 export function restoredText(run: { prompt: string; pinned: boolean; expires_at: string | null }, now: number = Date.now()): string {
+  // A kept run is still kept; any other run has a fresh clock, so say how long it is (rounded, never less than one day)
   const lead = `Restored “${shorten(run.prompt)}”.`;
   if (run.pinned) return `${lead} It is still kept.`;
   const left = run.expires_at ? Date.parse(run.expires_at) - now : Number.NaN;
@@ -122,11 +130,15 @@ export function binNote(
   format: { locale?: string; timeZone?: string } = {},
 ): string | null {
   if (!run.deleted_at) return null;
+  // a short date such as "12 Oct", in the given locale and time zone (the defaults are the browser's)
   const day = (iso: string) => new Date(iso).toLocaleDateString(format.locale, { day: "numeric", month: "short", timeZone: format.timeZone });
   const since = `In the bin since ${day(run.deleted_at)}.`;
   const left = run.purge_at ? Date.parse(run.purge_at) - now : Number.NaN;
+  // no purge date from the server (the bin may be off): say only since when
   if (!Number.isFinite(left)) return since;
+  // already past its time: the daily clean-up takes it next
   if (left <= 0) return `${since} It will be deleted for good at the next daily clean-up.`;
+  // less than a day left: a date would mislead, since the clean-up runs once a day
   if (left < DAY_MS) return `${since} It will be deleted for good within a day.`;
   const days = Math.floor(left / DAY_MS);
   return `${since} It will be deleted for good around ${day(run.purge_at as string)}, in ${days} ${days === 1 ? "day" : "days"}.`;

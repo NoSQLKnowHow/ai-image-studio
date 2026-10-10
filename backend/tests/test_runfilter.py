@@ -15,6 +15,7 @@ from studio.runfilter import COUNTED, KINDS, RunFilter
 TABLE = json.loads((Path(__file__).parent / "filter_cases.json").read_text())
 
 
+# One run as the database wants it (a dict of columns). The letter names the run (a to f), `seq` fixes how old it is, and `deleted` puts it in the bin.
 def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False) -> dict:
     return {
         "id": f"{ord(letter):032x}", "created_at": f"2026-10-01T00:00:{seq:02d}Z", "status": status, "mode": mode,
@@ -24,6 +25,7 @@ def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bo
     }
 
 
+# the run's letter back from its id (an id is the letter's code point in hex, so ids sort and read easily)
 def letter(run_id: str) -> str:
     return chr(int(run_id, 16))
 
@@ -38,20 +40,25 @@ def db(tmp_path):
     database.close()
 
 
+# a case's filter, as written in the JSON table, becomes a RunFilter
 def as_filter(spec: dict) -> RunFilter:
     return RunFilter(**spec)
 
 
+# Keep or un-keep a run through the API
 def keep(client, run_id: str, kept: bool) -> None:
     assert client.patch(f"/api/runs/{run_id}", json={"pinned": kept}).status_code == 200
 
 
+# Every case of the shared table: a filter, and the letters of the runs it must give, newest first. The page's own tests run the same
+# table through its `matches()`, so the two sides cannot drift apart.
 @pytest.mark.parametrize("case", TABLE["cases"], ids=[case["name"] for case in TABLE["cases"]])
 def test_every_case_of_the_table_gives_the_listed_runs_in_order(db, case):
     rows, more = db.list_runs(100, None, as_filter(case["filter"]))
     assert [letter(r["id"]) for r in rows] == case["expect"] and not more
 
 
+# the table also lists the counts the server must give for each tab
 def test_the_counts_are_the_tables(db):
     assert db.run_counts(COUNTED) == TABLE["counts"]
 
@@ -60,6 +67,7 @@ def test_the_kinds_are_the_tabs():
     assert KINDS == {"image": ("generate", "edit"), "music": ("music",)}
 
 
+# conditions() is the whole SQL contract: nothing set adds nothing, and kept=True or False binds 1 or 0
 def test_a_filter_with_nothing_set_adds_no_condition():
     assert RunFilter(deleted=None).conditions() == ([], [])
     assert RunFilter(deleted=None, kept=True).conditions() == (["pinned = ?"], [1])
@@ -68,6 +76,7 @@ def test_a_filter_with_nothing_set_adds_no_condition():
     assert RunFilter(deleted=True).conditions() == (["deleted_at IS NOT NULL"], [])
 
 
+# paging inside a filter: the cursor continues among the matching runs only
 def test_pages_continue_within_the_filter(db):
     first, more = db.list_runs(2, None, RunFilter(kept=True))
     assert [letter(r["id"]) for r in first] == ["f", "c"] and more
@@ -103,9 +112,11 @@ def test_no_filter_is_what_it_was(db):
 
 # ------------------------------------------------------------------ the API
 def test_the_api_lists_kept_runs_only_and_pages_within_them(client):
+    # make six runs whose prompts say which will be kept, and wait for them all
     made = [create_run(client, f"keep me {n}" if n % 2 == 0 else f"let go {n}")["id"] for n in range(6)]
     for run_id in made:
         wait_for(client, run_id)
+    # keep every other one
     for n in (0, 2, 4):
         keep(client, made[n], True)
     page = client.get("/api/runs", params={"kept": "true", "limit": 2}).json()
@@ -118,6 +129,7 @@ def test_the_api_lists_kept_runs_only_and_pages_within_them(client):
     assert len(everything) == 6
 
 
+# a value that is not true or false is refused by validation (422), never passed on to SQL
 @pytest.mark.parametrize("value", ["maybe", "2", ""])
 def test_an_unknown_value_for_kept_is_refused(client, value):
     assert client.get("/api/runs", params={"kept": value}).status_code == 422
@@ -142,6 +154,7 @@ def test_the_counts_say_how_many_runs_each_tab_holds_and_how_many_are_kept(clien
     assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0}
 
 
+# /api/runs/counts must reach the counts handler, not be read as a run called "counts"; a real but unknown id is still a 404
 def test_counts_is_not_mistaken_for_a_run_id(client):
     assert client.get("/api/runs/counts").status_code == 200
     assert client.get("/api/runs/" + "f" * 32).status_code == 404

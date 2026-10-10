@@ -386,6 +386,7 @@ test("Keep and Delete work on a track; deleted it waits in the bin, and deleted 
   expect((await page.request.get(src)).status()).toBe(200); // in the bin, with its audio (DESIGN.md §30)
   await expect(form(page).getByLabel("Genre")).toBeFocused(); // the list is empty, so focus goes to the form
 
+  // now delete it for good from the bin: this is when its audio leaves the server
   await page.locator("[data-filter-bar]:visible").getByRole("radio", { name: /^Deleted/ }).click();
   await page.locator("article.music-card").first().getByRole("button", { name: "Delete forever" }).click();
   const forGood = page.getByRole("alertdialog", { name: "Delete this run for good?" });

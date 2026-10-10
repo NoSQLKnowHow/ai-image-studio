@@ -70,7 +70,7 @@ def test_a_version_1_database_is_upgraded_in_place_and_nothing_is_lost(tmp_path)
     make_v1(path)
     db = Database(path)
     try:
-        assert SCHEMA_VERSION == 4 and version(path) == "4"
+        assert SCHEMA_VERSION == 4 and version(path) == "4"   # schema 4 is current (the bin, DESIGN.md §30): an old database is upgraded all the way in one start
         assert "run_inputs" in tables(path)
         run = db.get_run(RUN_ID)
         assert run["prompt"] == "a lighthouse" and run["status"] == "done"

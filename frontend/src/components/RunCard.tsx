@@ -139,6 +139,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
         <div className="run-head">
           <span className={`badge badge-${run.status}`}>{label}</span>
           {run.pinned && <span className="badge badge-kept"><PinIcon /> Kept</span>}
+          {/* a run in the bin says so */}
           {inBin && <span className="badge badge-deleted"><TrashIcon /> Deleted</span>}
           {run.options.draft && <span className="badge badge-draft" title="A small, quick try. The full-size image will look different.">Draft</span>}
           {run.mode === "edit" && <span className="badge">Edit</span>}
@@ -163,18 +164,23 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
 
         {expiry && <p className="run-expiry">{expiry}. Press <strong>Keep</strong> to save it.</p>}
 
+        {/* in the Kept view only because it is working: say so, so that the card being there is not a surprise */}
         {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
 
+        {/* since when it is in the bin, and until when */}
         {inBin && <p className="run-note" data-note="in-bin">{binNote(run, now)}</p>}
 
         {run.status === "failed" && run.error && (
           <div className="run-error" role="alert">
             <p>{run.error.message}</p>
             {run.error.hint && <p className="hint">{run.error.hint}</p>}
+            {/* no Retry in the bin: restore the run first */}
             {!inBin && <button type="button" className="button small" onClick={onRetry}><ReuseIcon /> Retry</button>}
           </div>
         )}
 
+        {/* In the bin a card has only what is safe there: Restore, Reuse and Copy (they only read the run) and Delete forever. No Keep, Cancel, */}
+        {/* Retry, Make 4K, Enlarge or Edit: nothing that changes the run or makes more files for it. */}
         {inBin ? (
           <div className="run-actions">
             <button type="button" className="button small" data-action="restore" onClick={onRestore}
@@ -233,6 +239,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
             </button>
           )}
           <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy prompt</button>
+          {/* Keep is offered on a card that is still working too: it is how a run that is shown only while it works gets kept */}
           <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
             aria-pressed={run.pinned} onClick={onToggleKeep}
             title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>

@@ -96,6 +96,7 @@ def test_a_full_gpu_is_not_reported_as_a_damaged_model_file(tiny, monkeypatch):
     assert str(info.value) == upscale_job.OUT_OF_MEMORY and "model file" not in str(info.value) and "could not be moved" not in str(info.value)
 
 
+# The same answer when it is loading the model's file that runs out of memory (a MemoryError), not only the move onto the GPU
 def test_running_out_of_memory_while_loading_the_file_is_the_same_answer(tiny, monkeypatch):
     import spandrel
 
@@ -108,6 +109,8 @@ def test_running_out_of_memory_while_loading_the_file_is_the_same_answer(tiny, m
     assert info.value.code == upscale_job.EXIT_OUT_OF_MEMORY
 
 
+# The other side of the rule: a failed move that is NOT out of memory still names its real reason, so that a GPU that is genuinely
+# unusable is not hidden behind "try again".
 def test_a_move_that_fails_for_another_reason_is_still_reported_as_that(tiny, monkeypatch):
     import spandrel
 

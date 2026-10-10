@@ -181,6 +181,7 @@ class JobManager:
         return {
             "version": __version__,
             "worker": self.worker_status(),
+            # enlarge_waiting: the pictures whose Enlarge is queued behind the run that is going; the page shows "Waiting…" on them
             "queue": {"running": self._current, "queued": self.db.count_queued(), "cap": self.settings.queue_cap,
                       "enlarge_waiting": list(self._enlarge_waiting)},
             "memory": self.memory_status(),
@@ -256,6 +257,7 @@ class JobManager:
     def expires_at(self, row: sqlite3.Row) -> Optional[str]:
         """When the run will be deleted, or None if it never will be (kept, still pending, or expiry off)."""
         days = self.settings.retention_days
+        # no expiry for: expiry off, kept runs, runs that have not finished, and runs in the bin (the bin has its own clock, `purge_at`)
         if days <= 0 or row["pinned"] or row["status"] not in FINISHED or row["deleted_at"]:
             return None
         return format_ts(parse_ts(row["restored_at"] or row["created_at"]) + timedelta(days=days))  # from the later of the two (§30.4)
@@ -469,8 +471,10 @@ class JobManager:
             source, target = self.storage.abs(image["path"]), self.storage.enlarged_path(image["path"])
         except StorageError as exc:
             raise ImageNotFound(image["id"]) from exc
+        # Wait for the GPU. From here to the `finally`, this enlargement holds the gate, so no run can start while it works.
         await self._take_gpu_turn(image["id"])
         try:
+            # Another request for the same picture may have finished while this one waited: then there is nothing left to do
             if fourk.file_size(target) is not None:
                 return False
             try:
@@ -478,6 +482,7 @@ class JobManager:
             except FileNotFoundError as exc:  # the original is gone: its run was deleted under us
                 raise ImageNotFound(image["id"]) from exc
         finally:
+            # always give the GPU back, even when the upscaler failed
             self._gpu_gate.release()
         with suppress(OSError, StorageError):
             self.storage.four_k_path(image["path"]).unlink(missing_ok=True)
@@ -487,19 +492,27 @@ class JobManager:
         """Wait until nothing else is using the GPU, and return holding `_gpu_gate` (the caller releases it). Something is using it
         while a run is going (the loop holds the gate) and while a model is being loaded by the Load button (a worker that is
         `loading`). Whoever has to wait is announced in `enlarge_waiting`, so the page can say so; one that does not is not."""
+        # True once this request has been announced as waiting: it has to be taken out of `enlarge_waiting` however this ends
         waiting = False
         try:
             while True:
+                # If something is using the GPU, say once that this enlargement is waiting (the page then shows "Waiting…"). If the GPU is free
+                # it starts at once, without a word.
                 if (self._gpu_gate.locked() or self._worker_state["state"] == "loading") and not waiting:
                     waiting = True
                     self._enlarge_waiting.append(image_id)
                     self._publish_queue()
+                # Queue for the gate. A lock hands itself on in the order it was asked, so an enlargement asked for during a run goes next, ahead
+                # of the runs still queued.
                 await self._gpu_gate.acquire()
+                # Got the gate. But a model that is still loading (the Load button) is using the GPU without holding it: if so, give the gate
+                # back and look again in a moment.
                 if self._worker_state["state"] != "loading":
                     return
                 self._gpu_gate.release()  # a model is loading: let the loop go on, and look again in a moment
                 await asyncio.sleep(0.5)
         finally:
+            # however this ended (done, or cancelled by a shutdown), the request is no longer waiting
             if waiting:
                 self._enlarge_waiting.remove(image_id)
                 self._publish_queue()
@@ -538,6 +551,8 @@ class JobManager:
         """Delete for good every run in the bin, with its files. Returns how many."""
         return await self._purge_bin(None)
 
+    # Delete runs from the bin for good, `SWEEP_BATCH` at a time so that a big bin never holds the database for long: the rows go first, in one
+    # transaction; then their files, in a worker thread (the server stays responsive); then every open page is told.
     async def _purge_bin(self, cutoff: Optional[str]) -> int:
         removed = 0
         while True:
@@ -558,16 +573,19 @@ class JobManager:
         runs that are queued or running, are never touched. Returns how many runs were deleted for good."""
         bin_days = self.settings.bin_days
         now = datetime.now(timezone.utc)
+        # 1. Delete for good what has been in the bin long enough (all of it when there is no bin)
         removed = await self._purge_bin(format_ts(now - timedelta(days=bin_days)) if bin_days > 0 else None)
         if removed:
             log.info("deleted %d run(s) that had been in the bin for %d day(s) (STUDIO_BIN_DAYS)", removed, bin_days)
         days = self.settings.retention_days
         if days <= 0:
             return removed
+        # 2. Expire. Finished runs older than the retention move to the bin, or are deleted outright when there is no bin.
         cutoff = format_ts(now - timedelta(days=days))
         moved = 0
         expired = 0
         while True:
+            # with a bin: only mark the runs (their files stay, and every page is told that the run changed)
             if bin_days > 0:
                 ids = self.db.expire_to_bin(cutoff, utcnow(), SWEEP_BATCH)
                 if not ids:
@@ -576,6 +594,7 @@ class JobManager:
                     self._publish_run(run_id)
                 moved += len(ids)
             else:
+                # without a bin: delete the rows and the files, as it was before the bin existed
                 ids = self.db.delete_expired(cutoff, SWEEP_BATCH)
                 if not ids:
                     break

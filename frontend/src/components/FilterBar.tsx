@@ -58,6 +58,7 @@ export function FilterBar({ filter, keptCount, deletedCount, binTotal, onChange,
           </button>
         ))}
       </div>
+      {/* Empty bin is only offered while the bin is on show, and is disabled when the whole bin (both tabs) is already empty */}
       {filter.deleted === true && (
         <button type="button" className="button small danger" data-action="empty-bin" disabled={binTotal === 0} onClick={onEmptyBin}
           title={binTotal === 0 ? "The bin is empty" : "Delete everything in the bin for good"}>
@@ -114,6 +115,7 @@ export function EmptyHistory({ kind, filter, binDays, onShowAll }: { kind: "imag
   }
   return (
     <div className="empty-state">
+      {/* no filter: the tab is simply empty, so say how to fill it */}
       <p className="empty-title">{EMPTY_ALL[kind].title}</p>
       <p>{EMPTY_ALL[kind].body}</p>
     </div>

@@ -3,9 +3,11 @@ import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { card, clearHistory, expect, promptBox, test, unique, useOptions, type Locator, type Page } from "./helpers";
 
+// the studio's API wants this header on every write: its guard against requests from other web pages
 const ASK = { "X-Studio-Client": "1" };
 type ApiRun = { id: string; status: string; pinned: boolean; prompt: string; created_at: string };
 
+// Locators for the parts of the page these tests use. `bar` is the filter bar that is on screen (the other tab's bar is hidden).
 const bar = (page: Page): Locator => page.locator("[data-filter-bar]:visible");
 const allOption = (page: Page): Locator => bar(page).getByRole("radio", { name: "All" });
 const keptOption = (page: Page): Locator => bar(page).getByRole("radio", { name: /^Kept/ });
@@ -15,6 +17,7 @@ const trackCard = (page: Page, text: string): Locator => page.locator("article.m
 const musicTab = (page: Page): Locator => page.getByRole("tab", { name: "Music" });
 const imagesTab = (page: Page): Locator => page.getByRole("tab", { name: "Images" });
 
+// the run as the SERVER has it: the tests check the server's truth as well as what the page shows
 async function status(page: Page, id: string): Promise<ApiRun> {
   return (await (await page.request.get(`/api/runs/${id}`)).json()) as ApiRun;
 }
@@ -28,6 +31,7 @@ async function makeRun(page: Page, prompt: string, extra: Record<string, unknown
   return id;
 }
 
+// the same for a short music track
 async function makeTrack(page: Page, prompt: string): Promise<string> {
   const posted = await page.request.post("/api/runs", { headers: ASK, data: { mode: "music", prompt, options: { duration: 30 } } });
   expect(posted.ok(), await posted.text()).toBe(true);
@@ -36,6 +40,7 @@ async function makeTrack(page: Page, prompt: string): Promise<string> {
   return id;
 }
 
+// Keep or un-keep a run through the API, behind the page's back
 async function keep(page: Page, id: string, pinned = true): Promise<void> {
   const response = await page.request.patch(`/api/runs/${id}`, { headers: ASK, data: { pinned } });
   expect(response.ok(), await response.text()).toBe(true);
@@ -44,6 +49,7 @@ async function keep(page: Page, id: string, pinned = true): Promise<void> {
 /** Make a run look `days` old, behind the server's back (it computes expiry from the stored time). */
 function ageRun(runId: string, days: number) {
   const python = process.env.STUDIO_PYTHON ?? resolve("../backend/.venv/bin/python");
+  // a tiny Python script that rewrites the run's created_at in the studio's database file: the server has no way to age a run
   const script = [
     "import sqlite3, sys, datetime as d",
     "t = (d.datetime.now(d.timezone.utc) - d.timedelta(days=float(sys.argv[3]))).isoformat(timespec='milliseconds').replace('+00:00', 'Z')",
@@ -52,6 +58,7 @@ function ageRun(runId: string, days: number) {
   execFileSync(python, ["-c", script, `${process.env.STUDIO_E2E_DATA_DIR}/studio.sqlite`, runId, String(days)]);
 }
 
+// The basic switch: three runs, one kept. All shows three, Kept shows one, and the choice is remembered across a reload.
 test("Kept shows only the kept runs, All shows them all, and the choice survives a reload", async ({ page }) => {
   await clearHistory(page);
   const [a, b, c] = [unique("harbour"), unique("mountain"), unique("forest")];
@@ -79,9 +86,11 @@ test("Kept shows only the kept runs, All shows them all, and the choice survives
   await expect(card(page, a)).toHaveCount(0);
 });
 
+// Keyboard use: the bar follows the radio-group pattern (arrows move and select, they wrap, Home and End jump, one tab stop).
 test("the filter bar is a radio group: arrow keys, Home and End move between the options", async ({ page }) => {
   await clearHistory(page);
   await page.goto("/");
+  // Deleted is the third option, so the arrows, the wrap-around and Home/End are checked across all three
   const deleted = bar(page).getByRole("radio", { name: /^Deleted/ });
   await allOption(page).focus();
   await page.keyboard.press("ArrowRight");
@@ -105,6 +114,7 @@ test("the filter bar is a radio group: arrow keys, Home and End move between the
   await expect(deleted).toHaveAttribute("tabindex", "0");
 });
 
+// One choice for both tabs: Kept on the Images tab is Kept on the Music tab too, and each tab counts its own kept runs.
 test("the choice applies to both tabs, and each tab counts its own kept runs", async ({ page }) => {
   await clearHistory(page);
   const picture = unique("a kept picture");
@@ -133,6 +143,8 @@ test("the choice applies to both tabs, and each tab counts its own kept runs", a
   await expect(card(page, other)).toBeVisible();
 });
 
+// The count on the bar is live: Keep and un-keep change it at once. In All, un-keeping removes nothing from the list, so no
+// "No longer kept" toast appears.
 test("the count follows Keep without a reload", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("count me");
@@ -147,6 +159,8 @@ test("the count follows Keep without a reload", async ({ page }) => {
   await expect(toastWith(page, "No longer kept")).toHaveCount(0);
 });
 
+// Paging inside a filter. With 22 runs of which 21 are kept, the Kept list's first page holds the newest twenty kept ones, and Load older
+// runs finds the last. Switching back to All must NOT suddenly show runs that All has not paged down to: that would put old runs out of order.
 test("a kept run beyond the newest twenty is reached with Load older runs, and All does not show it until it has paged down that far", async ({ page }) => {
   test.setTimeout(120_000);
   await clearHistory(page);
@@ -181,6 +195,8 @@ test("a kept run beyond the newest twenty is reached with Load older runs, and A
   await expect(cards).toHaveCount(22);
 });
 
+// A run started while Kept is chosen is not kept yet, but it must not vanish while it works: it stays at the top with a note, and when
+// it is done the page says that it left the view (with a Show all button).
 test("generating with Kept chosen: the job stays at the top with a note, leaves when done unless kept, and a toast says so", async ({ page }) => {
   await useOptions(page, { steps: 100, numImages: 3 }); // about three seconds of work
   await clearHistory(page);
@@ -199,6 +215,7 @@ test("generating with Kept chosen: the job stays at the top with a note, leaves 
   await expect(page.locator("article.run-card").first()).toContainText(prompt); // at the top
   await expect(c.locator("[data-note=working-in-kept]")).toHaveText("Shown while it works. It stays in this view only if you Keep it.");
 
+  // when it finishes without being kept it leaves the view, and the toast explains why
   const toast = toastWith(page, "is done. It is not kept, so it is not in this view.");
   await expect(toast).toBeVisible({ timeout: 30_000 });
   await expect(toast).toContainText(prompt);
@@ -210,6 +227,8 @@ test("generating with Kept chosen: the job stays at the top with a note, leaves 
   await expect(toast).toHaveCount(0);
 });
 
+// Pressing Keep on a card that is still working makes it belong to the view at once: the note goes immediately, and when the run
+// finishes it stays, with no toast.
 test("a job kept while it works stays in the Kept view when it is done, with no toast", async ({ page }) => {
   await useOptions(page, { steps: 100, numImages: 4 }); // about four seconds of work
   await clearHistory(page);
@@ -230,6 +249,8 @@ test("a job kept while it works stays in the Kept view when it is done, with no 
   expect((await status(page, (await c.getAttribute("data-run-id"))!)).pinned).toBe(true);
 });
 
+// The un-keep flow in the Kept view: the card leaves; a toast gives the deletion date and an Undo; keyboard focus moves to the filter
+// bar (the card that had it is gone); and Undo puts the card back.
 test("stopping to keep a run in the Kept view: the card goes, a toast gives the date and Undo, focus moves to the bar, Undo brings it back", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("a paper boat");
@@ -256,6 +277,8 @@ test("stopping to keep a run in the Kept view: the card goes, a toast gives the 
   expect((await status(page, id)).pinned).toBe(true);
 });
 
+// A kept run older than the retention: once un-kept, the clean-up would take it at once, so the toast says "next daily clean-up"
+// instead of promising a date. `ageRun` makes the run look 40 days old.
 test("a run that is past its time says it goes at the next clean-up", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("an old one");
@@ -268,6 +291,7 @@ test("a run that is past its time says it goes at the next clean-up", async ({ p
   await expect(toastWith(page, "No longer kept")).toContainText("It is past its time, so it will be deleted at the next daily clean-up, unless you Keep it again.");
 });
 
+// Undo on a run that someone deleted in the meantime must say so (a 404), not pretend that it worked
 test("Undo for a run that was deleted meanwhile says so", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("deleted under the toast");
@@ -283,6 +307,7 @@ test("Undo for a run that was deleted meanwhile says so", async ({ page }) => {
   await expect(toastWith(page, "no longer exists, so it cannot be kept again")).toBeVisible();
 });
 
+// Two open pages: a run kept on one appears live in the other's Kept view. Only the page that pressed the button gets the toast.
 test("a change made on another open page shows live in the Kept view, without a toast", async ({ page, context }) => {
   await clearHistory(page);
   const prompt = unique("kept elsewhere");
@@ -302,6 +327,7 @@ test("a change made on another open page shows live in the Kept view, without a 
   await expect(toastWith(page, "No longer kept")).toHaveCount(0); // whoever did it was told; this page was not the one
 });
 
+// The empty Kept view says how to keep a run, separately for each tab, with a Show all button
 test("nothing kept: the tab says so and how to keep a run, with Show all", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("not kept");
@@ -319,6 +345,8 @@ test("nothing kept: the tab says so and how to keep a run, with Show all", async
   await expect(card(page, prompt)).toBeVisible();
 });
 
+// A tab whose kept runs are all on a later page must not say "none yet". The test intercepts the list requests: the first page is
+// twenty music tracks and the picture is on the second, so the page has to read on by itself (exactly two reads).
 test("a tab whose kept runs are all further down is not told it has none: the next page is read", async ({ page }) => {
   await clearHistory(page);
   const picture = unique("a kept picture far down");
@@ -326,6 +354,7 @@ test("a tab whose kept runs are all further down is not told it has none: the ne
   const trackId = await makeTrack(page, unique("Genre: ambient. a kept tune"));
   await keep(page, pictureId);
   await keep(page, trackId);
+  // read the two real kept runs from the server, to copy their shape for the scripted pages
   const real = (await (await page.request.get("/api/runs?kept=true&limit=10")).json()) as { runs: (ApiRun & { mode: string })[] };
   const track = real.runs.find((run) => run.mode === "music")!;
   const image = real.runs.find((run) => run.mode !== "music")!;
@@ -347,6 +376,7 @@ test("a tab whose kept runs are all further down is not told it has none: the ne
   await expect(page.getByText("No kept images yet")).toHaveCount(0);
 });
 
+// If the first page of the Kept list cannot be read, the page says so and Try again reads it. The request fails (400) first, then is let through.
 test("when the Kept list cannot be read the page says so and Try again reads it", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("kept but unreachable");
@@ -366,6 +396,7 @@ test("when the Kept list cannot be read the page says so and Try again reads it"
   await expect(problem).toHaveCount(0);
 });
 
+// On a phone-sized screen (375 px wide) the filter bar and the toast with its Undo button must fit, with no sideways scrolling, and Undo must be pressable
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
