@@ -27,6 +27,7 @@ from .events import EventBus
 from .runspec import ResolvedRun, RunRequestError
 from .serialize import format_ts, parse_ts, run_payload, utcnow
 from .storage import Storage, StorageError
+from .upscaler import UpscalerUnavailable, make_upscaler
 from .worker_client import WorkerClient, WorkerGone, worker_env
 
 log = logging.getLogger("studio.jobs")
@@ -92,6 +93,9 @@ class JobManager:
         self._progress: dict[str, dict[str, Any]] = {}
         self._cancel_requested: set[str] = set()  # running runs the user has asked to stop
         self._making_4k: dict[str, asyncio.Future] = {}  # image id -> the build in progress (DESIGN.md §27.3)
+        self._enlarging: dict[str, asyncio.Future] = {}  # image id -> the enlargement in progress (DESIGN.md §28.3)
+        self._enlarge_lock = asyncio.Lock()  # one enlargement at a time: it is the heavy one
+        self.upscaler = make_upscaler(settings)
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
@@ -221,17 +225,19 @@ class JobManager:
             for r in rows
         ]
 
-    def _four_k_files(self, rows: list[sqlite3.Row]) -> dict[str, dict[str, int]]:
-        """The 4K copy of each picture that has one (DESIGN.md §27.3): its file's size in bytes and its width and height, read
-        from the file's header. The file's existence is the whole record, there is no database row. Every picture is looked
-        for, not only the ones the rule offers now, so a copy made under an earlier rule is still shown."""
-        found: dict[str, dict[str, int]] = {}
+    def _four_k_files(self, rows: list[sqlite3.Row]) -> dict[str, dict[str, Any]]:
+        """The 4K copy of each picture that has one (DESIGN.md §27.3, §28.2): its file's size in bytes, its width and height read
+        from the file's header, and how it was made (`model` for an Enlarge copy, which is the better one and wins, else `resize`).
+        The file's existence is the whole record, there is no database row. Every picture is looked for, not only the ones the
+        rule offers now, so a copy made under an earlier rule is still shown."""
+        found: dict[str, dict[str, Any]] = {}
         for row in rows:
             try:
-                path = self.storage.four_k_path(row["path"])
-                size = fourk.file_size(path)
-                if size is not None:
-                    found[row["id"]] = {"bytes": path.stat().st_size, "width": size[0], "height": size[1]}
+                for method, path in (("model", self.storage.enlarged_path(row["path"])), ("resize", self.storage.four_k_path(row["path"]))):
+                    size = fourk.file_size(path)
+                    if size is not None:
+                        found[row["id"]] = {"bytes": path.stat().st_size, "width": size[0], "height": size[1], "method": method}
+                        break
             except (OSError, StorageError):
                 pass
         return found
@@ -394,10 +400,65 @@ class JobManager:
             raise ImageNotFound(image["id"]) from exc
         if fourk.file_size(target) is not None:  # there already, and a real PNG (a damaged leftover is made again)
             return False
+        if fourk.file_size(self.storage.enlarged_path(image["path"])) is not None:  # the better copy is there: no plain one beside it
+            return False
         try:
             fourk.make_4k(source, target)
         except FileNotFoundError as exc:  # the original is gone: its run was deleted under us
             raise ImageNotFound(image["id"]) from exc
+        return True
+
+    def upscaler_status(self) -> dict[str, Any]:
+        """Whether Enlarge can run, and if not why and what to do (DESIGN.md §28.3): `capabilities.upscaler`."""
+        return self.upscaler.availability().as_dict()
+
+    async def enlarge(self, image_id: str) -> tuple[dict[str, Any], bool]:
+        """Enlarge a picture to the 4K frame with the upscaler model, if it has no Enlarge copy yet (DESIGN.md §28). Returns the
+        updated run and whether this call made the file. Raises ImageNotFound, fourk.NotEligible (before any file work, from the
+        stored size), UpscalerError (no model, or it failed), or the OSError of a full disk. Requests for one picture that overlap
+        share one enlargement, and one enlargement runs at a time."""
+        image = self.db.get_image(image_id)
+        if image is None or image["run_id"] is None:  # an image no run owns (a staged upload) is not part of the history
+            raise ImageNotFound(image_id)
+        fourk.plan_enlarge(image["width"], image["height"])  # NotEligible, with the reason, before touching any file
+        try:
+            already = fourk.file_size(self.storage.enlarged_path(image["path"])) is not None
+        except StorageError as exc:
+            raise ImageNotFound(image_id) from exc
+        flight = self._enlarging.get(image_id)
+        first = flight is None
+        if not already and flight is None:
+            availability = self.upscaler.availability()
+            if not availability.available:
+                raise UpscalerUnavailable(availability.reason or "Enlarge is not available.", availability.hint)
+            flight = asyncio.ensure_future(self._build_enlarged(image))
+            self._enlarging[image_id] = flight
+            # Whoever asked first may go away (a closed tab) while the process still runs; its outcome is still collected.
+            flight.add_done_callback(lambda done: (self._enlarging.pop(image_id, None), done.cancelled() or done.exception()))
+        made = False if flight is None else await asyncio.shield(flight)
+        if first and made:
+            self._publish_run(image["run_id"])  # other open pages show Download 4K
+        payload = self.payload(image["run_id"])
+        if payload is None:  # the run was deleted while the file was being made
+            raise ImageNotFound(image_id)
+        return payload, first and made
+
+    async def _build_enlarged(self, image: sqlite3.Row) -> bool:
+        """Make the Enlarge copy unless it is there. True if it was made now. The plain copy of the same picture, if there is
+        one, is removed: the better copy replaces it."""
+        try:
+            source, target = self.storage.abs(image["path"]), self.storage.enlarged_path(image["path"])
+        except StorageError as exc:
+            raise ImageNotFound(image["id"]) from exc
+        async with self._enlarge_lock:
+            if fourk.file_size(target) is not None:
+                return False
+            try:
+                await self.upscaler.enlarge(source, target)
+            except FileNotFoundError as exc:  # the original is gone: its run was deleted under us
+                raise ImageNotFound(image["id"]) from exc
+        with suppress(OSError, StorageError):
+            self.storage.four_k_path(image["path"]).unlink(missing_ok=True)
         return True
 
     async def delete(self, run_id: str) -> None:

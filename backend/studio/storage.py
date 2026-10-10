@@ -95,6 +95,12 @@ class Storage:
         path = self.abs(image_rel)
         return path.with_name(f"{path.stem}-4k.png")
 
+    def enlarged_path(self, image_rel: str) -> Path:
+        """Where the Enlarge copy of an image lives (DESIGN.md §28.2): beside it, `<idx>-4k-enlarged.png`. It replaces the Make 4K
+        copy (`four_k_path`) of the same image, and goes with the run's folder."""
+        path = self.abs(image_rel)
+        return path.with_name(f"{path.stem}-4k-enlarged.png")
+
     def accept_worker_image(self, rel: str, run_id: str) -> Path:
         """Validate a path reported by the worker: inside this run's folder, an existing file."""
         path = self.abs(rel)

@@ -7,7 +7,7 @@ import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from .fourk import plan_or_none
+from .fourk import enlarge_plan_or_none, plan_or_none
 
 
 def utcnow() -> str:
@@ -23,25 +23,38 @@ def format_ts(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
-def four_k_fields(row: sqlite3.Row, base: str, copy: Optional[dict[str, int]]) -> dict[str, Any]:
-    """What a picture says about Make 4K (DESIGN.md §27.3): `can_4k` is the server's rule for whether it is offered,
-    `four_k_size` is what it would make (null if it is not offered), and `four_k` is the copy if one has been made (`copy`
-    is its file's size in bytes and its width and height), else None. The same for a result and for an edit's source."""
+def four_k_fields(row: sqlite3.Row, base: str, copy: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """What a picture says about Make 4K and Enlarge (DESIGN.md §27.3, §28.2): `can_4k` is the server's rule for whether Make 4K
+    is offered, `four_k_size` is what it would make (null if it is not offered); `can_enlarge` and `enlarge_size` are the same for
+    Enlarge (the same frame, up to 4x, with how many x2 passes of the model it takes). `four_k` is the copy if one has been made
+    (`copy` is its file's size in bytes, its width and height, and its `method`, `resize` or `model`), else None. The same for a
+    result and for an edit's source. An Enlarge copy replaces a Make 4K copy at the same address, so its URLs carry the method:
+    a browser that kept the old one (the address is immutable) fetches the new one."""
     plan = plan_or_none(row["width"], row["height"])
-    return {
-        "can_4k": plan is not None,
-        "four_k_size": None if plan is None else {"width": plan.out_width, "height": plan.out_height, "trimmed": plan.trimmed},
-        "four_k": None if copy is None else {
+    enlarge = enlarge_plan_or_none(row["width"], row["height"])
+    four_k = None
+    if copy is not None:
+        suffix = "?method=model" if copy.get("method") == "model" else ""
+        four_k = {
             "width": copy["width"],
             "height": copy["height"],
             "bytes": copy["bytes"],
-            "url": f"{base}/4k",
-            "download_url": f"{base}/4k?download=1",
+            "method": copy.get("method", "resize"),
+            "url": f"{base}/4k{suffix}",
+            "download_url": f"{base}/4k{suffix}{'&' if suffix else '?'}download=1",
+        }
+    return {
+        "can_4k": plan is not None,
+        "four_k_size": None if plan is None else {"width": plan.out_width, "height": plan.out_height, "trimmed": plan.trimmed},
+        "can_enlarge": enlarge is not None,
+        "enlarge_size": None if enlarge is None else {
+            "width": enlarge.plan.out_width, "height": enlarge.plan.out_height, "trimmed": enlarge.plan.trimmed, "passes": enlarge.passes,
         },
+        "four_k": four_k,
     }
 
 
-def image_payload(row: sqlite3.Row, four_k: Optional[dict[str, int]] = None) -> dict[str, Any]:
+def image_payload(row: sqlite3.Row, four_k: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     base = f"/api/images/{row['id']}"
     return {
         "id": row["id"],
@@ -72,7 +85,7 @@ def track_payload(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def input_payload(row: sqlite3.Row, four_k: Optional[dict[str, int]] = None) -> dict[str, Any]:
+def input_payload(row: sqlite3.Row, four_k: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """An image an edit was given: its place in the order the model sees them (1 = "image 1") and its role."""
     base = f"/api/images/{row['id']}"
     return {
@@ -97,7 +110,7 @@ def run_payload(
     expires_at: Optional[str] = None,
     inputs: Optional[list[sqlite3.Row]] = None,
     tracks: Optional[list[sqlite3.Row]] = None,
-    four_k: Optional[dict[str, dict[str, int]]] = None,
+    four_k: Optional[dict[str, dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
