@@ -9,6 +9,7 @@ type ApiProject = { id: string; name: string; counts: { image: number; music: nu
 // Locators for the parts of the page these tests use. `bar` is the filter bar that is on screen (the other tab's bar is hidden).
 const bar = (page: Page): Locator => page.locator("[data-filter-bar]:visible");
 const projectSelect = (page: Page): Locator => bar(page).locator("[data-filter-project]");
+const allOption = (page: Page): Locator => bar(page).getByRole("radio", { name: /^All/ });
 const keptOption = (page: Page): Locator => bar(page).getByRole("radio", { name: /^Kept/ });
 const deletedOption = (page: Page): Locator => bar(page).getByRole("radio", { name: /^Deleted/ });
 const toastWith = (page: Page, text: string | RegExp): Locator => page.locator(".toast", { hasText: text });
@@ -198,6 +199,7 @@ test("the card's Project drop-down works from the keyboard", async ({ page }) =>
   const id = await makeRun(page, prompt);
   await page.goto("/");
   const c = card(page, prompt);
+  await expect(projectSelect(page).locator("option")).toHaveCount(4); // the projects have arrived: the menu takes its first focus when it opens
   await projectButton(c).focus();
   await page.keyboard.press("Enter");
   await expect(menu(page)).toBeVisible();
@@ -369,6 +371,7 @@ test("Manage: make, rename and delete projects; deleting one keeps its runs, kep
   expect((await projects(page)).length).toBe(2);
   await brandRow.getByRole("button", { name: "Delete project" }).click();
   await expect(manage.locator("[data-project-row]", { hasText: "Brand" })).toHaveCount(0);
+  await expect(toastWith(page, "Deleted the project “Brand”. Its runs are kept.")).toBeVisible(); // said, since the runs it held are not gone
   expect(await status(page, id)).toMatchObject({ project_id: null, pinned: true, status: "done", deleted_at: null });
   await manage.getByRole("button", { name: "Close" }).click();
   await expect(chip(card(page, prompt))).toHaveCount(0); // the card follows
@@ -442,6 +445,126 @@ test("Empty bin while a project is chosen says it empties the whole bin", async 
   expect((await status(page, b)).deleted_at).not.toBeNull(); // nothing was deleted
 });
 
+// ------------------------------------------------------------------ what mutation checking found missing
+// Each of these was a change to the page that all the scenarios above let through.
+
+// Filing a run out of the view it is looked at in takes its card away, and the keyboard goes on from the filter bar, as it does when Keep takes a
+// card out of Kept (§29.4): the focus was on the card's button, which is gone. Both ways out of a view: filing from No project, and taking out of a
+// project.
+test("filing a run out of No project, or taking it out of a project, moves keyboard focus to the filter bar", async ({ page }) => {
+  await clearHistory(page);
+  await makeProject(page, "Logo");
+  const prompt = unique("leaving a view");
+  await makeRun(page, prompt);
+  await page.goto("/");
+  await projectSelect(page).selectOption({ label: "No project" });
+  const c = card(page, prompt);
+  await expect(c).toBeVisible();
+  await projectButton(c).focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Enter"); // the first choice: Logo
+  await expect(c).toHaveCount(0); // it left No project
+  await expect(allOption(page)).toBeFocused();
+
+  await projectSelect(page).selectOption({ label: "Logo (1)" });
+  await expect(c).toBeVisible();
+  await projectButton(c).focus();
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("End"); // the last choice: Take out of project
+  await page.keyboard.press("Enter");
+  await expect(c).toHaveCount(0); // it left Logo
+  await expect(allOption(page)).toBeFocused();
+});
+
+// A project made, renamed or deleted on another page (or by a script) is in this page's drop-down with no reload. No run changes, so the run events
+// that keep the list fresh in the scenario above do not fire: this is the `projects.changed` event on its own.
+test("a project made, renamed or deleted elsewhere is in the drop-down with no reload", async ({ page }) => {
+  await clearHistory(page);
+  await page.goto("/");
+  await expect(projectSelect(page).locator("option")).toHaveText(["Any project", "No project"]);
+  const made = await makeProject(page, "Made elsewhere");
+  await expect(projectSelect(page).locator("option")).toHaveText(["Any project", "No project", "Made elsewhere (0)"]);
+  const renamed = await page.request.patch(`/api/projects/${made.id}`, { headers: ASK, data: { name: "Renamed elsewhere" } });
+  expect(renamed.ok()).toBe(true);
+  await expect(projectSelect(page).locator("option")).toHaveText(["Any project", "No project", "Renamed elsewhere (0)"]);
+  expect((await page.request.delete(`/api/projects/${made.id}`, { headers: ASK })).ok()).toBe(true);
+  await expect(projectSelect(page).locator("option")).toHaveText(["Any project", "No project"]);
+});
+
+// A project that was deleted on another page while the Manage dialog was open: renaming it is refused with a 404, and the dialog says so in
+// its own words (the page's, not the server's "Project not found."), quietly.
+test("renaming a project that is already gone says so in the dialog", async ({ page }) => {
+  await clearHistory(page);
+  const logo = await makeProject(page, "Logo");
+  await page.goto("/");
+  await bar(page).getByRole("button", { name: /Manage/ }).click();
+  const manage = page.getByRole("dialog", { name: "Projects" });
+  await expect(manage).toBeVisible();
+  await page.route(`**/api/projects/${logo.id}`, (route) =>
+    route.request().method() === "PATCH"
+      ? route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "Project not found.", code: "not_found" }) })
+      : route.continue());
+  await manage.locator("[data-project-row]", { hasText: "Logo" }).getByRole("button", { name: "Rename Logo" }).click();
+  await manage.getByLabel("New name for Logo").fill("Brand");
+  await page.keyboard.press("Enter");
+  await expect(manage.getByRole("alert")).toHaveText("That project no longer exists.");
+});
+
+// What the person has just done shows at once; the page's list of projects is read again from the server a moment after every change, and that
+// answer is made slow here (6 s) to tell the two apart: a page that only waited for the server's list would still be showing the old one. The card
+// names a project that was made from its own drop-down, the Manage dialog lists a new project in its place A to Z (it is made second, and
+// sorts first), and a deleted project is out of the dialog.
+test("a project just made or deleted is in the page's list at once, in order, without waiting for the server's list", async ({ page }) => {
+  await clearHistory(page);
+  const prompt = unique("at once");
+  await makeRun(page, prompt);
+  await page.goto("/");
+  await expect(card(page, prompt)).toBeVisible();
+  await page.route("**/api/projects", async (route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    await new Promise((resolve) => setTimeout(resolve, 6000));
+    await route.continue().catch(() => undefined); // the test may be over by then
+  });
+
+  await projectButton(card(page, prompt)).click();
+  await menu(page).getByRole("menuitem", { name: /New project/ }).click();
+  await page.getByLabel("Name of the new project").fill("Zebra");
+  await page.keyboard.press("Enter");
+  await expect(chip(card(page, prompt))).toContainText("Zebra", { timeout: 2500 });
+
+  await bar(page).getByRole("button", { name: /Manage/ }).click();
+  const manage = page.getByRole("dialog", { name: "Projects" });
+  await manage.getByLabel("New project").fill("Apple");
+  await manage.getByRole("button", { name: "Create" }).click();
+  await expect(manage.locator(".project-row-name")).toHaveText(["Apple", "Zebra"], { timeout: 2500 });
+
+  const apple = manage.locator("[data-project-row]", { hasText: "Apple" });
+  await apple.getByRole("button", { name: "Delete Apple" }).click();
+  await apple.getByRole("button", { name: "Delete project" }).click();
+  await expect(manage.locator(".project-row-name")).toHaveText(["Zebra"], { timeout: 2500 });
+});
+
+// Choosing a project: the numbers beside Kept and Deleted are the project's, and until the project's numbers have arrived the bar shows none, rather
+// than the numbers of the view that was left (which would be taken for the project's, and could even say "none" for a project that has runs). The
+// project's numbers are made slow (4 s) to see the wait.
+test("while a project's numbers are on their way the filter bar shows no numbers, then the project's", async ({ page }) => {
+  await clearHistory(page);
+  const logo = await makeProject(page, "Logo");
+  const [a, b] = [unique("filed"), unique("loose")];
+  const [idA] = [await makeRun(page, a), await makeRun(page, b)];
+  await file(page, idA, logo.id);
+  await page.goto("/");
+  await expect(bar(page).locator(".filter-count")).toHaveCount(2); // the whole history's, beside Kept and Deleted
+  await page.route(/\/api\/runs\/counts\?project=/, async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 4000));
+    await route.continue().catch(() => undefined);
+  });
+  await projectSelect(page).selectOption({ label: "Logo (1)" });
+  await expect(bar(page).locator(".filter-count")).toHaveCount(0, { timeout: 2000 });
+  await expect(bar(page).locator(".filter-count")).toHaveCount(2, { timeout: 10_000 }); // then the project's
+  await expect(keptOption(page)).toContainText("1");
+});
+
 // ------------------------------------------------------------------ live, and a phone
 // Criterion 160: another open page follows live (the chip, the lock, the drop-down's number) with no reload.
 test("another open page follows a filing live", async ({ page, context }) => {
@@ -484,9 +607,12 @@ test("a refusal to stop keeping a filed run is shown as the server words it, not
   await expect(page.locator(".toast-error")).toHaveCount(0); // it is said as information, not as a failure
 });
 
-// Criterion 161: on a phone the drop-down, the filter bar with its two controls and the Manage dialog fit with no sideways scroll.
+// Criterion 161: on a phone the drop-down, the filter bar with its two controls and the Manage dialog fit with no sideways scroll. The width is 320,
+// the narrowest phone: at 375 the Project button sits far enough left for the menu to fit without being moved (found by mutation checking: with
+// the code that keeps the menu inside the window taken out, this test passed at 375 and the menu ran 3 px off the right of a 320 screen).
 test("on a phone the Project drop-down, the filter bar and the Manage dialog fit the screen", async ({ page }) => {
-  await page.setViewportSize({ width: 375, height: 700 });
+  const width = 320;
+  await page.setViewportSize({ width, height: 700 });
   await clearHistory(page);
   await makeProject(page, "A project with a rather long name to see how it wraps");
   const prompt = unique("phone");
@@ -498,11 +624,11 @@ test("on a phone the Project drop-down, the filter bar and the Manage dialog fit
   await projectButton(card(page, prompt)).click();
   await expect(menu(page)).toBeVisible();
   const box = await menu(page).boundingBox();
-  expect(box && box.x >= 0 && box.x + box.width <= 375, `the menu is inside the window: ${JSON.stringify(box)}`).toBe(true);
+  expect(box && box.x >= 0 && box.x + box.width <= width, `the menu is inside the window: ${JSON.stringify(box)}`).toBe(true);
   expect(await sideways()).toBe(false);
   await menu(page).getByRole("menuitem", { name: /New project/ }).click();
   const field = await page.getByLabel("Name of the new project").boundingBox();
-  expect(field && field.x >= 0 && field.x + field.width <= 375, `the field is inside the window: ${JSON.stringify(field)}`).toBe(true);
+  expect(field && field.x >= 0 && field.x + field.width <= width, `the field is inside the window: ${JSON.stringify(field)}`).toBe(true);
   await page.keyboard.press("Escape");
   await page.keyboard.press("Escape");
 
@@ -510,6 +636,6 @@ test("on a phone the Project drop-down, the filter bar and the Manage dialog fit
   const manage = page.getByRole("dialog", { name: "Projects" });
   await expect(manage).toBeVisible();
   const dialogBox = await manage.boundingBox();
-  expect(dialogBox && dialogBox.x >= 0 && dialogBox.x + dialogBox.width <= 375, `the dialog is inside the window: ${JSON.stringify(dialogBox)}`).toBe(true);
+  expect(dialogBox && dialogBox.x >= 0 && dialogBox.x + dialogBox.width <= width, `the dialog is inside the window: ${JSON.stringify(dialogBox)}`).toBe(true);
   expect(await sideways()).toBe(false);
 });

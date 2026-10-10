@@ -436,8 +436,8 @@ export default function App() {
   // deleted, and offers Undo (DESIGN.md §29.4); and keyboard focus, which was on the card, moves to the filter bar.
   const toggleKeep = (run: Run) =>
     once(`keep:${run.id}`, async () => {
-      // A run in a project stays kept (DESIGN.md §32.3): the card's button is locked, so this is only a guard against a stale card
-      if (run.project_id !== null) return;
+      // (A run in a project stays kept, DESIGN.md §32.3, and its card's Keep button is locked, so this is not reached for one. A stale card, one
+      // that does not know yet that the run was filed on another page, gets the server's refusal instead: see the catch below.)
       // Stopping to keep a run takes its card out of the Kept view. A run that is still working stays: it is shown while it works.
       const leaves = run.pinned && filter.kept === true && !working(run);
       try {
@@ -541,12 +541,14 @@ export default function App() {
     });
 
   // The Undo of a filing, a move or a taking out: the run goes back to where it was. From no project it is taken out, and un-kept if it was not
-  // kept before (keep=false); from a project it is filed back there (it stays kept either way).
+  // kept before (keep=false); from a project it is filed back there (it stays kept either way). No keyboard focus is looked after here, as it is
+  // for filing and taking out: those are done from a card that is in the view and may leave it, but an Undo comes from the toast, and puts a card
+  // back where it was shown (a card that the action had taken out of the view comes back into it; one that was filed into the view was not in it
+  // before, so the view it is Undone in is never one that shows it).
   const undoFiling = (run: Run, before: { projectId: string | null; pinned: boolean }) =>
     once(`file:${run.id}`, async () => {
       try {
         const back = before.projectId === null ? await api.unfileRun(run.id, before.pinned) : await api.fileRun(run.id, before.projectId);
-        if (matches(run, filter) && !matches(back, filter)) refocus.current = true;
         dispatch({ type: "runUpsert", run: back });
       } catch (error) {
         const err = error as ApiError;
