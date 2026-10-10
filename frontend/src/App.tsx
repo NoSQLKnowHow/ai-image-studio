@@ -424,9 +424,7 @@ export default function App() {
         const updated = await api.keepRun(run.id, !run.pinned);
         dispatch({ type: "runUpsert", run: updated });
         if (leaves && !updated.pinned) {
-          setTimeout(() => {
-            if (!document.activeElement || document.activeElement === document.body) focusFilterBar(); // the card (and its button) is gone
-          }, 0);
+          refocus.current = true; // see the effect below: once the list has been drawn without the card
           push("info", unkeptText(updated), { label: "Undo", run: () => void keepAgain(updated) });
         }
       } catch (error) {
@@ -506,6 +504,15 @@ export default function App() {
   useEffect(() => {
     if (lookingForMore && !loadingOlder) void loadOlder();
   }, [lookingForMore, loadingOlder, view?.nextBefore]);
+
+  // The card that had keyboard focus has just left the Kept view: when the list has been drawn without it, focus is on the page and
+  // goes to the filter bar instead (DESIGN.md §29.4). Done here, after the draw, because the card is still there until then.
+  const refocus = useRef(false);
+  useEffect(() => {
+    if (!refocus.current) return;
+    refocus.current = false;
+    if (!document.activeElement || document.activeElement === document.body) focusFilterBar();
+  }, [visible]);
 
   // A run that is in a filtered view only while it works leaves it when it is done, unless it was kept; the page says so (§29.3).
   const watched = useRef(new Set<string>());
