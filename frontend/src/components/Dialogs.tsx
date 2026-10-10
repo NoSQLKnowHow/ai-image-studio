@@ -82,7 +82,7 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
                   {/* Delete picture (DESIGN.md §33.1): on a RESULT of a finished run that is not in the bin; never on an edit's source, which is the run's
                       input, and never while Make 4K or Enlarge is working on this picture (the copy being written would be left behind) */}
-                  {result && !readOnly && run.status !== "queued" && run.status !== "running" && item?.kind === "result" && (
+                  {result && !readOnly && run.status !== "queued" && run.status !== "running" && (
                     <button type="button" className="button small danger" data-action="delete-picture"
                       disabled={making4k.has(result.id) || enlarging.has(result.id) || enlargeWaiting.has(result.id)}
                       title={making4k.has(result.id) || enlarging.has(result.id) || enlargeWaiting.has(result.id)
