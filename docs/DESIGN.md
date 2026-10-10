@@ -1372,7 +1372,7 @@ You would like Qwen itself to redraw fine detail in the enlarged picture. It is 
 5. **Full precision** for now: it is the safe choice and the model is small.
 6. **No automatic download of the model.**
 7. **The probe and the studio share one tiling implementation** (`studio/tiling.py`), so the tested code is the code that runs.
-8. **(1.12) Enlarge goes before the runs still queued**, not after them. Enlarge is quick and you are looking at the picture; a queue of runs behind the running one is not made to wait more than a few seconds for it. The other order is a one-line change if you prefer it.
+8. **(1.12) Enlarge goes right after the run that is going, before the runs still queued.** **Your answer:** *"it should go after the current run, if there is one running currently"* (I had offered the other order, after the queue, as a one-line change). With no run going it starts at once. Enlarge is quick and you are looking at the picture, so the queue behind the running run is not made to wait more than a few seconds for it.
 9. **(1.12) The wait is the open request**, as the work itself was: nothing new to cancel, and a closed page loses nothing. The cost is that the request is open for as long as the wait, which is as long as the running picture (and, if it is a long run, many minutes).
 
 ### 28.7 Acceptance criteria (continue §27.9)
