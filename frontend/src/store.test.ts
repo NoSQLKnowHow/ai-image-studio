@@ -403,6 +403,7 @@ describe("the words for the bin (DESIGN.md §30.1, §30.4)", () => {
   it("says 'within a day' and 'at the next daily clean-up' near and after the end", () => {
     expect(note(at(-29.5), at(0.5))).toContain("It will be deleted for good within a day.");
     expect(note(at(-31), at(-1))).toContain("It will be deleted for good at the next daily clean-up.");
+    expect(note(at(-30), at(0))).toContain("It will be deleted for good at the next daily clean-up."); // the very moment it is due
   });
 
   it("says only since when when there is no end (a run that is not in the bin has no line at all)", () => {
