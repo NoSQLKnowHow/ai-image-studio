@@ -66,3 +66,35 @@ export function seedText(run: ImageRun): string {
   const n = run.options.num_images;
   return n > 1 ? `seeds ${first}–${first + n - 1}` : `seed ${first}`;
 }
+
+function shorten(text: string, max = 48): string {
+  const flat = text.trim().replace(/\s+/g, " ");
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/** The toast after Keep was pressed on a kept run in the Kept view (DESIGN.md §29.4): what happened and when the run will be deleted.
+ *  The date is the card's own (`expires_at`: its age plus the retention), and "around" because the clean-up runs once a day. */
+export function unkeptText(
+  run: { prompt: string; expires_at: string | null },
+  now: number = Date.now(),
+  format: { locale?: string; timeZone?: string } = {},
+): string {
+  const lead = `No longer kept: “${shorten(run.prompt)}”.`;
+  const again = "unless you Keep it again";
+  const left = run.expires_at ? Date.parse(run.expires_at) - now : Number.NaN;
+  if (!Number.isFinite(left)) return `${lead} It will be deleted when it is old enough, ${again}.`;
+  if (left <= 0) return `${lead} It is past its time, so it will be deleted at the next daily clean-up, ${again}.`;
+  if (left < DAY_MS) return `${lead} It will be deleted within a day, ${again}.`;
+  const days = Math.floor(left / DAY_MS);
+  const date = new Date(run.expires_at as string).toLocaleDateString(format.locale, { day: "numeric", month: "short", timeZone: format.timeZone });
+  return `${lead} It will be deleted around ${date}, in ${days} ${days === 1 ? "day" : "days"}, ${again}.`;
+}
+
+/** The toast when a run that was shown in the Kept view only while it worked has finished without being kept (§29.3). */
+export function leftTheViewText(run: { prompt: string; status: string }): string {
+  const what = run.status === "done" ? "is done" : run.status === "failed" ? "failed" : "was canceled";
+  return `“${shorten(run.prompt)}” ${what}. It is not kept, so it is not in this view.`;
+}
+
+/** The note on a card that is in the Kept view only because it is working (§29.3). */
+export const WORKING_IN_KEPT_NOTE = "Shown while it works. It stays in this view only if you Keep it.";

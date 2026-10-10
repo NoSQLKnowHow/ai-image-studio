@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { toApiError } from "./api";
-import { EXPIRY_WARNING_DAYS, canceledText, duration, expiryText, seedText, timeAgo } from "./format";
+import { EXPIRY_WARNING_DAYS, WORKING_IN_KEPT_NOTE, canceledText, duration, expiryText, leftTheViewText, seedText, timeAgo, unkeptText } from "./format";
+import { NO_FILTER, ONLY_KEPT } from "./history";
 import { initialState, reducer, type State } from "./store";
 import { STATUS, makeRun } from "./testdata";
 
@@ -62,10 +63,10 @@ describe("run list reducer", () => {
   });
 
   it("is not ready (so it doesn't claim 'no images yet') until the first snapshot", () => {
-    expect(initialState.runsReady).toBe(false);
+    expect(initialState.views.all?.ready).toBeUndefined();
     const older = reducer(initialState, { type: "runsLoaded", page: { runs: [makeRun()], next_before: null }, append: true });
-    expect(older.runsReady).toBe(false);
-    expect(withRuns().runsReady).toBe(true);
+    expect(older.views.all.ready).toBe(false);
+    expect(withRuns().views.all.ready).toBe(true);
   });
 
   it("a snapshot that is the whole history drops older runs it doesn't list", () => {
@@ -240,3 +241,116 @@ describe("expiry and cancel wording", () => {
     expect(canceledText({ ...base, images: [image, { ...image, id: "j", idx: 1 }] })).toBe("Canceled. 2 of 4 images finished and kept.");
   });
 });
+
+describe("one view for each filter (DESIGN.md §29.5)", () => {
+  const at = (n: number) => `2026-10-02T10:${String(n).padStart(2, "0")}:00.000Z`;
+  const kept = (id: string, n: number) => makeRun({ id, created_at: at(n), pinned: true });
+
+  it("a filtered first page makes the filtered view ready and leaves the other view alone", () => {
+    const state = reducer(withRuns(makeRun({ id: "x" })), { type: "runsLoaded", page: { runs: [kept("k", 5)], next_before: null }, append: false, filter: ONLY_KEPT });
+    expect(state.views.kept).toEqual({ ready: true, nextBefore: null, boundary: null });
+    expect(state.views.all.ready).toBe(true);
+    expect(state.runs.k).toBeDefined();
+  });
+
+  it("a page that is not the last records where the view has loaded down to, and the next page moves it", () => {
+    let state = reducer(initialState, { type: "runsLoaded", page: { runs: [kept("a", 9), kept("b", 8)], next_before: "b" }, append: false, filter: ONLY_KEPT });
+    expect(state.views.kept).toEqual({ ready: true, nextBefore: "b", boundary: { created_at: at(8), id: "b" } });
+    state = reducer(state, { type: "runsLoaded", page: { runs: [kept("c", 7)], next_before: null }, append: true, filter: ONLY_KEPT });
+    expect(state.views.kept).toEqual({ ready: true, nextBefore: null, boundary: null });
+  });
+
+  it("a filtered first page only adds: a run missing from it is not taken to be deleted", () => {
+    const start = withRuns(makeRun({ id: "was-kept", created_at: at(6), pinned: false }), makeRun({ id: "other", created_at: at(5) }));
+    const state = reducer(start, { type: "runsLoaded", page: { runs: [kept("k", 7)], next_before: null }, append: false, filter: ONLY_KEPT });
+    expect(state.order).toEqual(["k", "was-kept", "other"]);
+  });
+
+  it("a filtered first page read again keeps the deeper place its view had reached", () => {
+    let state = reducer(initialState, { type: "runsLoaded", page: { runs: [kept("a", 9), kept("b", 8)], next_before: "b" }, append: false, filter: ONLY_KEPT });
+    state = reducer(state, { type: "runsLoaded", page: { runs: [kept("c", 7), kept("d", 6)], next_before: "d" }, append: true, filter: ONLY_KEPT });
+    state = reducer(state, { type: "runsLoaded", page: { runs: [kept("a", 9), kept("b", 8)], next_before: "b" }, append: false, filter: ONLY_KEPT });
+    expect(state.views.kept).toMatchObject({ nextBefore: "d", boundary: { id: "d" } });
+  });
+
+  it("the unfiltered snapshot still drops what was deleted in its window, whatever the Kept view loaded", () => {
+    const ancientKept = kept("ancient", 1);
+    let state = reducer(initialState, { type: "runsLoaded", page: { runs: [ancientKept], next_before: null }, append: false, filter: ONLY_KEPT });
+    state = reducer(state, { type: "runUpsert", run: makeRun({ id: "gone", created_at: at(55) }) });
+    state = reducer(state, { type: "runsLoaded", page: { runs: [makeRun({ id: "kept-now", created_at: at(50) })], next_before: "kept-now" }, append: false });
+    expect(state.order).toEqual(["kept-now", "ancient"]); // "gone" lies inside the page's window and is not in the page; the old kept run is below it
+    expect(state.views.all).toMatchObject({ ready: true, nextBefore: "kept-now" });
+  });
+
+  it("the counts are kept as the server gave them", () => {
+    const counts = { image: { all: 3, kept: 1 }, music: { all: 2, kept: 0 } };
+    expect(reducer(initialState, { type: "counts", counts }).counts).toEqual(counts);
+  });
+
+  it("the counts are stale after a run is made, deleted, kept or un-kept, and not otherwise", () => {
+    let state = withRuns(makeRun({ id: "r", pinned: false }));
+    const base = state.countsStale;
+    state = reducer(state, { type: "runUpsert", run: makeRun({ id: "new", created_at: "2026-10-02T12:00:00.000Z" }) });
+    expect(state.countsStale).toBe(base + 1);
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, pinned: true } });
+    expect(state.countsStale).toBe(base + 2);
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, pinned: true } });
+    expect(state.countsStale).toBe(base + 2); // the same again: nothing moved
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.new, prompt: "edited", status: "running" } });
+    expect(state.countsStale).toBe(base + 2); // progress is not a change in the counts
+    state = reducer(state, { type: "runDeleted", id: "r" });
+    expect(state.countsStale).toBe(base + 3);
+    state = reducer(state, { type: "runDeleted", id: "never-loaded" }); // a clean-up of a run this page never held
+    expect(state.countsStale).toBe(base + 4);
+  });
+
+  it("views are named by their filter", () => {
+    expect(Object.keys(reducer(initialState, { type: "runsLoaded", page: { runs: [], next_before: null }, append: false, filter: NO_FILTER }).views)).toEqual(["all"]);
+  });
+});
+
+describe("the words for the Kept view (DESIGN.md §29.3, §29.4)", () => {
+  const NOW = Date.parse("2026-10-10T12:00:00.000Z");
+  const when = (days: number) => new Date(NOW + days * 86_400_000).toISOString();
+  const words = (expires_at: string | null, prompt = "a harbour at dawn") => unkeptText({ prompt, expires_at }, NOW, { locale: "en-GB", timeZone: "UTC" });
+
+  it("names the run, and says when it will be deleted, with the date and the days left", () => {
+    expect(words(when(19))).toBe("No longer kept: “a harbour at dawn”. It will be deleted around 29 Oct, in 19 days, unless you Keep it again.");
+  });
+
+  it("rounds the days down, so that it never promises more time than there is, and says 1 day once", () => {
+    expect(words(when(1.9))).toBe("No longer kept: “a harbour at dawn”. It will be deleted around 12 Oct, in 1 day, unless you Keep it again.");
+  });
+
+  it("says 'within a day' when less than a day is left", () => {
+    expect(words(when(0.5))).toBe("No longer kept: “a harbour at dawn”. It will be deleted within a day, unless you Keep it again.");
+  });
+
+  it("says the next clean-up when the time has passed", () => {
+    expect(words(when(-3))).toBe("No longer kept: “a harbour at dawn”. It is past its time, so it will be deleted at the next daily clean-up, unless you Keep it again.");
+    expect(words(when(0))).toContain("past its time");
+  });
+
+  it("does not promise a date for a run that has none", () => {
+    expect(words(null)).toBe("No longer kept: “a harbour at dawn”. It will be deleted when it is old enough, unless you Keep it again.");
+  });
+
+  it("shortens a long prompt to one line", () => {
+    const text = words(when(5), `a very long description ${"that goes on and on ".repeat(8)}\nwith a second line`);
+    const quoted = /^No longer kept: “([^”]*)”\./.exec(text)?.[1] ?? "";
+    expect(quoted.startsWith("a very long description that goes on and on")).toBe(true);
+    expect(quoted.endsWith("…") && quoted.length <= 48).toBe(true);
+    expect(text).not.toContain("\n");
+  });
+
+  it("says what became of a run that finished without being kept", () => {
+    expect(leftTheViewText({ prompt: "a harbour", status: "done" })).toBe("“a harbour” is done. It is not kept, so it is not in this view.");
+    expect(leftTheViewText({ prompt: "a harbour", status: "failed" })).toBe("“a harbour” failed. It is not kept, so it is not in this view.");
+    expect(leftTheViewText({ prompt: "a harbour", status: "canceled" })).toBe("“a harbour” was canceled. It is not kept, so it is not in this view.");
+  });
+
+  it("has a note for the card that is there only while it works", () => {
+    expect(WORKING_IN_KEPT_NOTE).toBe("Shown while it works. It stays in this view only if you Keep it.");
+  });
+});
+

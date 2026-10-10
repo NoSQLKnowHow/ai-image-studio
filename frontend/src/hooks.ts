@@ -24,10 +24,16 @@ export function useNarrow(query = "(max-width: 520px)"): boolean {
 }
 
 export type ToastKind = "info" | "success" | "error";
+/** A button on a toast (Undo, Show all): pressing it runs `run` and closes the toast. */
+export interface ToastAction {
+  label: string;
+  run: () => void;
+}
 export interface Toast {
   id: number;
   kind: ToastKind;
   text: string;
+  action?: ToastAction;
 }
 
 export function useToasts(timeoutMs = 6000) {
@@ -35,10 +41,10 @@ export function useToasts(timeoutMs = 6000) {
   const nextId = useRef(1);
   const dismiss = useCallback((id: number) => setToasts((all) => all.filter((t) => t.id !== id)), []);
   const push = useCallback(
-    (kind: ToastKind, text: string) => {
+    (kind: ToastKind, text: string, action?: ToastAction) => {
       const id = nextId.current++;
-      setToasts((all) => [...all.slice(-3), { id, kind, text }]);
-      setTimeout(() => dismiss(id), kind === "error" ? timeoutMs * 2 : timeoutMs);
+      setToasts((all) => [...all.slice(-3), { id, kind, text, action }]);
+      setTimeout(() => dismiss(id), kind === "error" || action ? timeoutMs * 2 : timeoutMs); // long enough to reach the button
     },
     [dismiss, timeoutMs],
   );

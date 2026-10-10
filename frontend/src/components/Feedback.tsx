@@ -9,6 +9,11 @@ export function Toasts({ toasts, onDismiss }: { toasts: Toast[]; onDismiss: (id:
       {toasts.map((t) => (
         <div key={t.id} className={`toast toast-${t.kind}`} role={t.kind === "error" ? "alert" : "status"}>
           <span>{t.text}</span>
+          {t.action && (
+            <button type="button" className="button small" data-action="toast-action" onClick={() => { t.action?.run(); onDismiss(t.id); }}>
+              {t.action.label}
+            </button>
+          )}
           <button type="button" className="button ghost icon-only small" aria-label="Dismiss" onClick={() => onDismiss(t.id)}>
             <CloseIcon />
           </button>

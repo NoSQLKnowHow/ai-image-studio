@@ -5,12 +5,15 @@ import { MusicPanel } from "./components/MusicPanel";
 import { Tabs, panelId, tabId } from "./components/Tabs";
 import { ConfirmCancel, ConfirmDelete, Lightbox, cardReuseButton, type ViewerNotice } from "./components/Dialogs";
 import { ConnectionBanner, QueueBar, Toasts } from "./components/Feedback";
+import { EmptyHistory, FilterBar, focusFilterBar } from "./components/FilterBar";
 import { OptionsDrawer } from "./components/OptionsDrawer";
 import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
+import { leftTheViewText, unkeptText } from "./format";
+import { NO_FILTER, filterKey, isDefault, matches, readFilter, saveFilter, visibleRuns, working, type HistoryFilter } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -65,6 +68,9 @@ export default function App() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
   const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images or Music (DESIGN.md §26.1), remembered
+  const [filter, setFilter] = useState<HistoryFilter>(() => readFilter(store)); // All or Kept, for both tabs (DESIGN.md §29), remembered
+  const [filterProblem, setFilterProblem] = useState<string | null>(null); // why the filtered list could not be loaded
+  const [loadOlderFailed, setLoadOlderFailed] = useState(false);
   const { toasts, push, dismiss } = useToasts();
   const now = useNow(30_000);
   const promptRef = useRef<HTMLTextAreaElement>(null);
@@ -72,6 +78,19 @@ export default function App() {
   const { caps, status } = state;
   const tray = useTray(caps);
   const version = status?.version;
+  const key = filterKey(filter);
+  const view = state.views[key];
+  const runsReady = !!view?.ready;
+  const more = !!view?.nextBefore;
+  const visible = useMemo(() => visibleRuns(state.runs, state.order, view, filter), [state.runs, state.order, view, filter]);
+  // Each tab shows only its own runs (DESIGN.md §26.1); the queue they share is on both.
+  const imageRuns = useMemo(() => visible.filter(isImageRun), [visible]);
+  const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
+  const tabKind = tab === "music" ? "music" : "image";
+  const tabRuns = tab === "music" ? musicRuns : imageRuns;
+  const countName = filter.kept === true ? "kept" : filter.kept === null ? "all" : null;
+  const knownEmpty = !!state.counts && countName !== null && state.counts[tabKind][countName] === 0; // the server says this tab has none
+  const lookingForMore = runsReady && tabRuns.length === 0 && more && !knownEmpty && !loadOlderFailed; // none on this tab yet: the next page may have some
   const waitingList = status?.queue.enlarge_waiting;
   const enlargeWaiting = useMemo<ReadonlySet<string>>(() => new Set(waitingList ?? []), [waitingList]); // Enlarge requests queued behind a picture (§28.3)
 
@@ -396,13 +415,33 @@ export default function App() {
     if (run) void cancel(run);
   };
 
+  // Keep or stop keeping. In the Kept view, stopping takes the card out of the list, so a toast says so, says when the run will be
+  // deleted, and offers Undo (DESIGN.md §29.4); and keyboard focus, which was on the card, moves to the filter bar.
   const toggleKeep = (run: Run) =>
     once(`keep:${run.id}`, async () => {
+      const leaves = run.pinned && filter.kept === true && !working(run);
       try {
-        dispatch({ type: "runUpsert", run: await api.keepRun(run.id, !run.pinned) });
+        const updated = await api.keepRun(run.id, !run.pinned);
+        dispatch({ type: "runUpsert", run: updated });
+        if (leaves && !updated.pinned) {
+          setTimeout(() => {
+            if (!document.activeElement || document.activeElement === document.body) focusFilterBar(); // the card (and its button) is gone
+          }, 0);
+          push("info", unkeptText(updated), { label: "Undo", run: () => void keepAgain(updated) });
+        }
       } catch (error) {
         const err = error as ApiError;
         push("error", err.status === 404 ? "That run no longer exists." : `Couldn't ${run.pinned ? "stop keeping" : "keep"} it: ${err.message}`);
+      }
+    });
+
+  const keepAgain = (run: Run) =>
+    once(`keep:${run.id}`, async () => {
+      try {
+        dispatch({ type: "runUpsert", run: await api.keepRun(run.id, true) });
+      } catch (error) {
+        const err = error as ApiError;
+        push(err.status === 404 ? "info" : "error", err.status === 404 ? "That run no longer exists, so it cannot be kept again." : `Couldn't keep it again: ${err.message}`);
       }
     });
 
@@ -419,16 +458,73 @@ export default function App() {
   };
 
   const loadOlder = async () => {
-    if (!state.nextBefore) return;
+    if (!view?.nextBefore) return;
     setLoadingOlder(true);
     try {
-      dispatch({ type: "runsLoaded", page: await api.listRuns(state.nextBefore), append: true });
+      dispatch({ type: "runsLoaded", page: await api.listRuns(view.nextBefore, filter), append: true, filter });
     } catch (error) {
+      setLoadOlderFailed(true);
       push("error", `Couldn't load older runs: ${(error as Error).message}`);
     } finally {
       setLoadingOlder(false);
     }
   };
+
+  const changeFilter = (next: HistoryFilter) => {
+    setFilter(next);
+    saveFilter(next, store);
+  };
+
+  // The stream's own first page is unfiltered, so the first page of a filtered list is read from the server: when the filter is chosen,
+  // and again whenever the connection comes back, so that a run kept or un-kept meanwhile is not missed (DESIGN.md §29.5).
+  const loadFirstPage = useCallback(async (which: HistoryFilter) => {
+    setFilterProblem(null);
+    try {
+      dispatch({ type: "runsLoaded", page: await api.listRuns(null, which), append: false, filter: which });
+    } catch (error) {
+      setFilterProblem((error as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    if (isDefault(filter) || state.connection !== "open") return;
+    void loadFirstPage(filter);
+  }, [key, state.connection, loadFirstPage]);
+
+  // The counts on the filter bar are the server's; asked for again, after a short pause, whenever a run is made, deleted, kept or un-kept.
+  useEffect(() => {
+    if (state.connection !== "open") return;
+    const timer = setTimeout(() => {
+      void api.runCounts().then((counts) => dispatch({ type: "counts", counts })).catch(() => undefined);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [state.connection, state.countsStale]);
+
+  // A tab with nothing to show yet, while older runs are still to be read: read them, rather than say there is nothing (§29.1).
+  useEffect(() => {
+    setLoadOlderFailed(false);
+  }, [key, tab]);
+  useEffect(() => {
+    if (lookingForMore && !loadingOlder) void loadOlder();
+  }, [lookingForMore, loadingOlder, view?.nextBefore]);
+
+  // A run that is in a filtered view only while it works leaves it when it is done, unless it was kept; the page says so (§29.3).
+  const watched = useRef(new Set<string>());
+  useEffect(() => {
+    if (isDefault(filter)) {
+      watched.current.clear();
+      return;
+    }
+    for (const run of Object.values(state.runs)) if (working(run) && !matches(run, filter)) watched.current.add(run.id);
+    for (const id of [...watched.current]) {
+      const run = state.runs[id];
+      if (!run || (working(run) && matches(run, filter))) {
+        watched.current.delete(id); // deleted, or kept while it worked: nothing to say
+      } else if (!working(run)) {
+        watched.current.delete(id);
+        if (!matches(run, filter)) push("info", leftTheViewText(run), { label: "Show all", run: () => changeFilter(NO_FILTER) });
+      }
+    }
+  }, [state.runs, filter]);
 
   if (startupError) {
     return (
@@ -442,10 +538,18 @@ export default function App() {
 
   const found = lightbox ? state.runs[lightbox.runId] : undefined;
   const lightboxRun = found && isImageRun(found) ? found : null;
-  // Each tab shows only its own runs (DESIGN.md §26.1); the queue they share is on both.
-  const imageRuns = state.order.map((id) => state.runs[id]).filter(isImageRun);
-  const musicRuns = state.order.map((id) => state.runs[id]).filter(isMusicRun);
-  const working = (run: Run) => run.status === "queued" || run.status === "running";
+  const transient = (run: Run) => !isDefault(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
+  const filterBar = <FilterBar filter={filter} keptCount={state.counts?.[tabKind].kept ?? null} onChange={changeFilter} />;
+  const problem =
+    filterProblem && !isDefault(filter) ? (
+      <div className="empty-state" role="alert">
+        <p className="empty-title">Couldn't load your kept runs</p>
+        <p>{filterProblem}</p>
+        <button type="button" className="button small" onClick={() => void loadFirstPage(filter)}>Try again</button>
+      </div>
+    ) : null;
+  const emptyFor = (kind: "image" | "music") =>
+    lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : <EmptyHistory kind={kind} filter={filter} onShowAll={() => changeFilter(NO_FILTER)} />;
   const musicAvailable = !!caps?.modes.includes("music");
   const canEdit = !!caps?.modes.includes("edit");
   const editing = options?.mode === "edit";
@@ -508,14 +612,12 @@ export default function App() {
             />
             <QueueBar status={status} />
             <UpscalePicture busy={upscaling} onPick={(file) => void upscalePicture(file)} />
+            {filterBar}
             <section className="timeline" aria-label="Your runs">
-              {!state.runsReady ? (
-                <p className="loading" role="status">Loading your runs…</p>
+              {!runsReady ? (
+                problem ?? <p className="loading" role="status">Loading your runs…</p>
               ) : imageRuns.length === 0 ? (
-                <div className="empty-state">
-                  <p className="empty-title">No images yet</p>
-                  <p>Describe something above and press Generate. Every run lands here with its prompt and settings.</p>
-                </div>
+                emptyFor("image")
               ) : (
                 imageRuns.map((run) => {
                   const id = run.id;
@@ -529,6 +631,7 @@ export default function App() {
                       making4k={making4k}
                       enlarging={enlarging}
                       enlargeWaiting={enlargeWaiting}
+                      transient={transient(run)}
                       upscaler={caps?.upscaler ?? null}
                       onReuse={() => reuse(run)}
                       onRegenerateLarger={() => void regenerateLarger(run)}
@@ -548,7 +651,7 @@ export default function App() {
                   );
                 })
               )}
-              {state.nextBefore && (
+              {more && (
                 <button type="button" className="button load-more" onClick={() => void loadOlder()} disabled={loadingOlder}>
                   {loadingOlder ? "Loading…" : "Load older runs"}
                 </button>
@@ -571,8 +674,12 @@ export default function App() {
               status={status}
               store={store}
               runs={musicRuns}
-              runsReady={state.runsReady}
-              more={!!state.nextBefore}
+              runsReady={runsReady}
+              filterBar={filterBar}
+              loadProblem={problem}
+              empty={emptyFor("music")}
+              isTransient={transient}
+              more={more}
               loadingOlder={loadingOlder}
               now={now}
               push={push}

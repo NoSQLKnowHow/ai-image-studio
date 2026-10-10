@@ -1,4 +1,5 @@
 import { filenameFromDisposition } from "./fourk";
+import { NO_FILTER, filterParams, type Counts, type HistoryFilter } from "./history";
 import type { Capabilities, CreateMusicBody, CreateRunBody, ImageRun, ModelName, MusicRun, Run, RunsPage, Status, UploadResult } from "./types";
 
 export interface FieldError {
@@ -133,8 +134,12 @@ export const api = {
   // The model is named, so a button on one tab never acts on the other tab's model (DESIGN.md §26.3).
   loadModel: (model: ModelName) => request<Status>("/api/model/load", { method: "POST", body: JSON.stringify({ model }) }),
   unloadModel: (model: ModelName) => request<Status>("/api/model/unload", { method: "POST", body: JSON.stringify({ model }) }),
-  listRuns: (before?: string | null, limit = 20) =>
-    request<RunsPage>(`/api/runs?limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ""}`),
+  // One page of the history, newest first: those a filter lets through (DESIGN.md §29.6), starting after `before`.
+  listRuns: (before?: string | null, filter: HistoryFilter = NO_FILTER, limit = 20) => {
+    const query = new URLSearchParams({ limit: String(limit), ...(before ? { before } : {}), ...filterParams(filter) });
+    return request<RunsPage>(`/api/runs?${query}`);
+  },
+  runCounts: () => request<Counts>("/api/runs/counts"),
   createRun: (body: CreateRunBody) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createMusicRun: (body: CreateMusicBody) => request<MusicRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   cancelRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),

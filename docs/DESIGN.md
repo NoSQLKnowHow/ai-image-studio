@@ -1429,7 +1429,7 @@ You asked for the history to be filtered so that it shows **only the runs you ha
 - **A filter bar** above the history, under the Images | Music tabs: *Show* and a two-way switch, **All** and **Kept 12**. The number is the count of kept runs on the tab you are looking at (the server counts them; §29.6). The switch is the same kind of control as the other two-way switches on the page (a radio group; arrow keys move between the options).
 - **One choice for both tabs**, remembered by this browser (the rest of the page remembers its choices the same way). The bar is a row that can hold more controls later; on a phone it wraps.
 - **Kept chosen:** the list shows only kept runs, newest first, with the same *Show older* button as All. A run that is queued or running is also shown, at the top (§29.3).
-- **Nothing kept:** *Nothing is kept yet. Press Keep on a run to keep it here; kept runs are never deleted automatically.* and a **Show all** button. The page never says this while older kept runs are still waiting to be loaded; it loads them first.
+- **Nothing kept on this tab:** *No kept images yet* (or *No kept music yet*): *Press Keep on a run to keep it here. Kept runs are never deleted automatically.* and a **Show all** button. The page never says this while older kept runs are still waiting to be loaded; it loads them first.
 - The cards are the same as ever: a kept run shows its **Kept** badge and its pressed **Keep** button.
 
 ### 29.2 Which runs the Kept view shows, in short
@@ -1479,6 +1479,8 @@ One shape, used in three places, so that the next filter is a short, mechanical 
 6. **12 seconds for the toast with Undo**, as for an error (6 seconds is for plain notes).
 7. **Focus goes to the switch**, not to the next card, because the next card may not exist and the switch always does.
 8. **Not in the address bar.** The choice is remembered by the browser; a link that opens the Kept view is easy to add later through `filterKey`.
+9. **Keep is offered on a card that is still working.** It was hidden until the run finished, because nothing needs saving from expiry while a run works; but the Kept view's note says *"it stays in this view only if you Keep it"*, so the button has to be there to press. A run kept while it works is kept when it finishes.
+10. **The empty Kept view names the tab:** *No kept images yet* or *No kept music yet*, not *Nothing is kept yet*, because the other tab may have kept runs.
 
 ### 29.8 Acceptance criteria (continue §28.7)
 
