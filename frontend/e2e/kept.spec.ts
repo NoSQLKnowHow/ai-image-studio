@@ -137,6 +137,8 @@ test("the count follows Keep without a reload", async ({ page }) => {
   await expect(keptOption(page)).toHaveText("Kept 1");
   await keepButton(card(page, prompt)).click();
   await expect(keptOption(page)).toHaveText("Kept 0");
+  await expect(card(page, prompt)).toBeVisible(); // in All nothing leaves, so nothing is said
+  await expect(toastWith(page, "No longer kept")).toHaveCount(0);
 });
 
 test("a kept run beyond the newest twenty is reached with Load older runs, and All does not show it until it has paged down that far", async ({ page }) => {
