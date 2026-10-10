@@ -156,6 +156,8 @@ class ModelUpscaler:
             raise OSError(message)
         if code == 3:
             raise UpscalerUnavailable(message, "Check the container's GPU and that the image was built with version 1.11 or later.")
+        # Exit code 9: not enough GPU memory because something outside the studio is using it. It answers 503 "try again", not 500, which would
+        # blame the model file.
         if code == 9:
             raise UpscalerBusy(message, "Enlarge waits for a picture the studio is making; if nothing is generating, something else is using the GPU memory.")
         if code == 4:

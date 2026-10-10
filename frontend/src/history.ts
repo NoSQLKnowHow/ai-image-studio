@@ -15,6 +15,7 @@ export interface HistoryFilter {
   deleted: boolean | null;
 }
 
+// The filters the page offers: everything, only the runs that are kept, and only the runs in the bin (the Deleted view, DESIGN.md §30)
 export const NO_FILTER: HistoryFilter = { kept: null, deleted: false };
 export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false };
 export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true };
@@ -103,6 +104,9 @@ export function visibleRuns(runs: Record<string, Run>, order: readonly string[],
   for (const id of order) {
     const run = runs[id];
     if (!run) continue;
+    // In a filtered view (the bin excepted: a run in the bin has finished) a run that is still working is always shown, at the top,
+    // even if it doesn't match: it is in the view only while it works. Every other run must match the filter AND lie within what this
+    // view has loaded.
     if (showsWorking(filter) && working(run)) active.push(run);
     else if (matches(run, filter) && within(run, boundary)) shown.push(run);
   }
@@ -115,7 +119,9 @@ export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, 
   const next = new Set<string>();
   const left: Run[] = [];
   if (!showsWorking(filter)) return { watched: next, left }; // nothing is shown only for working in the unfiltered list or the bin
+  // watch every run that is working and doesn't match the filter: it is in the view only for now
   for (const run of Object.values(runs)) if (working(run) && !matches(run, filter)) next.add(run.id);
+  // of those watched last time, report each that has since finished without matching: it has just left the view
   for (const id of watched) {
     const run = runs[id];
     if (!run) continue; // deleted

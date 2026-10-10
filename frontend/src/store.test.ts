@@ -242,7 +242,10 @@ describe("expiry and cancel wording", () => {
   });
 });
 
+// Each history filter has its own view: has its first page arrived, where does its next page start, and how far has it loaded (see
+// history.ts). These tests drive the reducer the way the page does.
 describe("one view for each filter (DESIGN.md §29.5)", () => {
+  // `at(n)`: a time n minutes in, so that runs can be ordered; `kept(id, n)`: a kept run made at that time
   const at = (n: number) => `2026-10-02T10:${String(n).padStart(2, "0")}:00.000Z`;
   const kept = (id: string, n: number) => makeRun({ id, created_at: at(n), pinned: true });
 
@@ -273,6 +276,8 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     expect(state.views.kept).toMatchObject({ nextBefore: "d", boundary: { id: "d" } });
   });
 
+  // The unfiltered snapshot (the event stream's first page) is the truth for its own window, so a run in that window that is missing
+  // was deleted. A kept run older than the window, loaded earlier for the Kept view, must survive it.
   it("the unfiltered snapshot still drops what was deleted in its window, whatever the Kept view loaded", () => {
     const ancientKept = kept("ancient", 1);
     let state = reducer(initialState, { type: "runsLoaded", page: { runs: [ancientKept], next_before: null }, append: false, filter: ONLY_KEPT });
@@ -297,6 +302,8 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     expect(reducer(initialState, { type: "counts", counts }).counts).toEqual(counts);
   });
 
+  // `countsStale` is a counter the page watches. It goes up when something that changes a count happens (a new run, Keep, un-keep, a
+  // delete), and only then, so the page asks the server for fresh counts exactly when it needs to.
   it("the counts are stale after a run is made, deleted, kept or un-kept, and not otherwise", () => {
     let state = withRuns(makeRun({ id: "r", pinned: false }));
     const base = state.countsStale;
@@ -325,6 +332,8 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
   });
 });
 
+// The wording is made by pure functions of the run and of "now", so it is tested with a fixed clock, locale and time zone: the date in a
+// toast must not depend on where the tests run.
 describe("the words for the Kept view (DESIGN.md §29.3, §29.4)", () => {
   const NOW = Date.parse("2026-10-10T12:00:00.000Z");
   const when = (days: number) => new Date(NOW + days * 86_400_000).toISOString();

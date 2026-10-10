@@ -163,6 +163,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
 
         {expiry && <p className="run-expiry">{expiry}. Press <strong>Keep</strong> to save it.</p>}
 
+        {/* in the Kept view only because it is working: say so, so that the card being there is not a surprise */}
         {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
 
         {inBin && <p className="run-note" data-note="in-bin">{binNote(run, now)}</p>}
@@ -233,6 +234,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
             </button>
           )}
           <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy prompt</button>
+          {/* Keep is offered on a card that is still working too: it is how a run that is shown only while it works gets kept */}
           <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
             aria-pressed={run.pinned} onClick={onToggleKeep}
             title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
