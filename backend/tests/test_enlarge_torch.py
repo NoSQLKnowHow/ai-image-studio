@@ -74,6 +74,53 @@ def test_a_file_that_is_not_a_model_is_refused_with_the_reason(tmp_path):
     assert info.value.code == upscale_job.EXIT_MODEL and "junk.pth could not be loaded" in str(info.value)
 
 
+class FullGpuModel:
+    """What spandrel hands back, whose move onto the GPU fails the way it does on the GB10 while a picture is being generated."""
+
+    purpose, scale = "SR", 2
+    architecture = type("Architecture", (), {"name": "ESRGAN"})()
+
+    def to(self, *args, **kwargs):
+        raise type("AcceleratorError", (RuntimeError,), {})("CUDA error: out of memory\nSearch for `cudaErrorMemoryAllocation'")
+
+
+def test_a_full_gpu_is_not_reported_as_a_damaged_model_file(tiny, monkeypatch):
+    """The screenshot that led to Enlarge waiting its turn: 'The upscaler model could not be moved to cuda: AcceleratorError: CUDA error:
+    out of memory. Check the model file.' The model was fine; the GPU was full."""
+    import spandrel
+
+    monkeypatch.setattr(spandrel.ModelLoader, "load_from_file", lambda self, path: FullGpuModel())
+    with pytest.raises(upscale_job.Problem) as info:
+        upscale_job.load_engine(tiny, "cpu")
+    assert info.value.code == upscale_job.EXIT_OUT_OF_MEMORY == 9
+    assert str(info.value) == upscale_job.OUT_OF_MEMORY and "model file" not in str(info.value) and "could not be moved" not in str(info.value)
+
+
+def test_running_out_of_memory_while_loading_the_file_is_the_same_answer(tiny, monkeypatch):
+    import spandrel
+
+    def exhausted(self, path):
+        raise MemoryError()
+
+    monkeypatch.setattr(spandrel.ModelLoader, "load_from_file", exhausted)
+    with pytest.raises(upscale_job.Problem) as info:
+        upscale_job.load_engine(tiny, "cpu")
+    assert info.value.code == upscale_job.EXIT_OUT_OF_MEMORY
+
+
+def test_a_move_that_fails_for_another_reason_is_still_reported_as_that(tiny, monkeypatch):
+    import spandrel
+
+    class Broken(FullGpuModel):
+        def to(self, *args, **kwargs):
+            raise RuntimeError("CUDA error: no kernel image is available for execution on the device")
+
+    monkeypatch.setattr(spandrel.ModelLoader, "load_from_file", lambda self, path: Broken())
+    with pytest.raises(upscale_job.Problem) as info:
+        upscale_job.load_engine(tiny, "cpu")
+    assert info.value.code == upscale_job.EXIT_MODEL and "could not be moved to cpu" in str(info.value) and "no kernel image" in str(info.value)
+
+
 @pytest.mark.skipif(torch.cuda.is_available(), reason="this machine has a GPU")
 def test_asking_for_cuda_without_a_gpu_is_an_environment_problem(tiny):
     with pytest.raises(upscale_job.Problem) as info:

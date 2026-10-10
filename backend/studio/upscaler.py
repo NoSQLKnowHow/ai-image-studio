@@ -47,6 +47,12 @@ class UpscaleFailed(UpscalerError):
     status, code = 500, "upscale_failed"
 
 
+class UpscalerBusy(UpscalerError):
+    """Not enough memory right now: try again in a moment (the GPU is being used by something the studio does not control)."""
+
+    status, code = 503, "upscaler_busy"
+
+
 class UpscaleTimeout(UpscalerError):
     status, code = 504, "upscale_timeout"
 
@@ -150,6 +156,8 @@ class ModelUpscaler:
             raise OSError(message)
         if code == 3:
             raise UpscalerUnavailable(message, "Check the container's GPU and that the image was built with version 1.11 or later.")
+        if code == 9:
+            raise UpscalerBusy(message, "Enlarge waits for a picture the studio is making; if nothing is generating, something else is using the GPU memory.")
         if code == 4:
             raise UpscaleFailed(message, "Check the model file: it should be Real-ESRGAN's RealESRGAN_x2plus.pth (or another ×2 upscaler).")
         raise UpscaleFailed(message or f"The upscaler stopped unexpectedly (exit code {code}).")

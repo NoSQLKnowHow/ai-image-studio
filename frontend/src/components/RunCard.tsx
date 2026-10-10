@@ -12,6 +12,7 @@ interface Props {
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   enlarging: ReadonlySet<string>; // ids of the images being enlarged with the upscaler model (DESIGN.md §28)
+  enlargeWaiting: ReadonlySet<string>; // ids of the images whose Enlarge is waiting for the picture being made (§28.3)
   upscaler: UpscalerStatus | null; // whether Enlarge can run here (from the capabilities)
   onReuse: () => void;
   onRegenerateLarger: () => void;
@@ -110,7 +111,7 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, enlargeWaiting, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
@@ -191,7 +192,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, u
             </a>
           )}
           {run.images.length === 1 && (
-            <FourKButton image={run.images[0]} making={making4k.has(run.images[0].id)} enlarging={enlarging.has(run.images[0].id)}
+            <FourKButton image={run.images[0]} making={making4k.has(run.images[0].id)} enlarging={enlarging.has(run.images[0].id)} waiting={enlargeWaiting.has(run.images[0].id)}
               upscaler={upscaler} className="button small ghost" onMake={() => onMake4K(run.images[0])}
               onEnlarge={() => onEnlarge(run.images[0])} />
           )}

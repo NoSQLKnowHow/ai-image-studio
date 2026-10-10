@@ -11,6 +11,7 @@ export type FourKControl =
 
 export type EnlargeControl =
   | { kind: "enlarge"; label: string; title: string }
+  | { kind: "waiting"; label: string; title: string } // asked for, but the GPU is busy with a picture: it starts by itself (DESIGN.md §28.3)
   | { kind: "enlarging"; label: string; title: string }
   | { kind: "unavailable"; label: string; title: string }; // offered, but the model is not installed: shown disabled, with the reason
 
@@ -42,6 +43,9 @@ export function fourKControl(target: FourKTarget, making: boolean): FourKControl
   return { kind: "make", label: "Make 4K", title: makeTitle(target.four_k_size) };
 }
 
+/** The tooltip of a waiting Enlarge: why, and that nothing has to be done about it. */
+export const WAITING_TITLE = "Waiting for the picture that is being made to finish. Enlarge starts by itself, between pictures, and you can keep working.";
+
 /** The tooltip of Enlarge: what it will make, and what it is (the model's guess at detail) and costs (time). */
 export function enlargeTitle(size: EnlargeSize | null): string {
   const frame = size && size.height > size.width ? "9:16" : "16:9";
@@ -55,9 +59,12 @@ export function enlargeTitle(size: EnlargeSize | null): string {
 
 /** The Enlarge control for one picture, or null when it has none: the server does not offer it, or the picture already has an
  *  enlarged copy (the better one; Download 4K is then all there is). Without the model file it is shown disabled with the
- *  server's reason, so the person can see why. `upscaler` is null until the capabilities have arrived: then it is offered. */
-export function enlargeControl(target: FourKTarget, enlarging: boolean, upscaler: UpscalerStatus | null): EnlargeControl | null {
+ *  server's reason, so the person can see why. `upscaler` is null until the capabilities have arrived: then it is offered.
+ *  `waiting` is the server's word that this picture's Enlarge is queued behind the studio's own work (it says so for a request from
+ *  any page), and then it is "Waiting…" whether or not this page asked. */
+export function enlargeControl(target: FourKTarget, enlarging: boolean, upscaler: UpscalerStatus | null, waiting = false): EnlargeControl | null {
   if (!target.can_enlarge || target.four_k?.method === "model") return null;
+  if (waiting) return { kind: "waiting", label: "Waiting…", title: WAITING_TITLE };
   if (enlarging) return { kind: "enlarging", label: "Enlarging…", title: "Enlarging with the upscaler model. It can take a minute or more." };
   if (upscaler && !upscaler.available) {
     const why = [upscaler.reason, upscaler.hint].filter(Boolean).join(" ");

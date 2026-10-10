@@ -13,17 +13,18 @@ import { DownloadIcon, UpscaleIcon, ZoomInIcon } from "./icons";
  *
  *  Enlarge without its model file is shown dimmed, with the reason as its tooltip; pressing it asks the server anyway, so that the
  *  reason and what to do about it appear as a message (a phone has no tooltips). */
-export function FourKButton({ image, making, enlarging, upscaler, className, onMake, onEnlarge }: {
+export function FourKButton({ image, making, enlarging, waiting, upscaler, className, onMake, onEnlarge }: {
   image: FourKTarget;
   making: boolean;
   enlarging: boolean;
+  waiting: boolean; // the server has this picture's Enlarge queued behind the picture being made
   upscaler: UpscalerStatus | null;
   className: string;
   onMake: () => void;
   onEnlarge: () => void;
 }) {
   const control = fourKControl(image, making);
-  const enlarge = enlargeControl(image, enlarging, upscaler);
+  const enlarge = enlargeControl(image, enlarging, upscaler, waiting);
   const kind = control?.kind;
   const enlargeKind = enlarge?.kind;
   const link = useRef<HTMLAnchorElement>(null);
@@ -31,7 +32,7 @@ export function FourKButton({ image, making, enlarging, upscaler, className, onM
 
   useEffect(() => {
     if (!pressed.current) return;
-    if (kind === "making" || enlargeKind === "enlarging") return; // still being made
+    if (kind === "making" || enlargeKind === "enlarging" || enlargeKind === "waiting") return; // still being made, or waiting its turn
     pressed.current = false; // answered: made (a link, or no Enlarge button any more) or failed (the buttons are back)
     if (kind !== "download") return;
     const active = document.activeElement;
@@ -61,7 +62,7 @@ export function FourKButton({ image, making, enlarging, upscaler, className, onM
         <button type="button" className={className} data-action="enlarge" title={enlarge.title}
           aria-disabled={enlarge.kind !== "enlarge" || undefined} data-unavailable={enlarge.kind === "unavailable" || undefined}
           onClick={() => {
-            if (enlarge.kind === "enlarging") return;
+            if (enlarge.kind === "enlarging" || enlarge.kind === "waiting") return;
             pressed.current = true;
             onEnlarge();
           }}>

@@ -38,9 +38,17 @@ describe("run list reducer", () => {
 
   it("updates queue positions and the status counters", () => {
     const state = withRuns(makeRun({ id: "q1", status: "queued", queue_position: 2 }), makeRun({ id: "q2", status: "queued", queue_position: 3 }));
-    const next = reducer(state, { type: "queue", running: "r0", positions: { q1: 1, q2: 2 } });
+    const next = reducer(state, { type: "queue", running: "r0", positions: { q1: 1, q2: 2 }, enlargeWaiting: [] });
     expect([next.runs.q1.queue_position, next.runs.q2.queue_position]).toEqual([1, 2]);
     expect(next.status?.queue).toMatchObject({ running: "r0", queued: 2 });
+  });
+
+  it("keeps the images whose Enlarge is waiting for the GPU, and clears them when the queue event says none is (DESIGN.md §28.3)", () => {
+    const state = withRuns(makeRun({ id: "r0", status: "running" }));
+    const waiting = reducer(state, { type: "queue", running: "r0", positions: {}, enlargeWaiting: ["img1", "img2"] });
+    expect(waiting.status?.queue.enlarge_waiting).toEqual(["img1", "img2"]);
+    const later = reducer(waiting, { type: "queue", running: null, positions: {}, enlargeWaiting: [] });
+    expect(later.status?.queue.enlarge_waiting).toEqual([]);
   });
 
   it("a refresh drops runs deleted while disconnected but keeps older pages", () => {

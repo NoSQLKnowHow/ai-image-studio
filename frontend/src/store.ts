@@ -37,7 +37,7 @@ export type Action =
   | { type: "runUpsert"; run: Run }
   | { type: "runProgress"; id: string; progress: Progress }
   | { type: "runDeleted"; id: string }
-  | { type: "queue"; running: string | null; positions: Record<string, number> }
+  | { type: "queue"; running: string | null; positions: Record<string, number>; enlargeWaiting: string[] }
   | { type: "connection"; value: Connection }
   | { type: "serverStopping" };
 
@@ -120,7 +120,7 @@ export function reducer(state: State, action: Action): State {
         }
       }
       const status = state.status
-        ? { ...state.status, queue: { ...state.status.queue, running: action.running, queued: Object.keys(action.positions).length } }
+        ? { ...state.status, queue: { ...state.status.queue, running: action.running, queued: Object.keys(action.positions).length, enlarge_waiting: action.enlargeWaiting } }
         : null;
       return { ...state, runs: changed ? runs : state.runs, status };
     }

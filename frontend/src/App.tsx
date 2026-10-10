@@ -72,6 +72,8 @@ export default function App() {
   const { caps, status } = state;
   const tray = useTray(caps);
   const version = status?.version;
+  const waitingList = status?.queue.enlarge_waiting;
+  const enlargeWaiting = useMemo<ReadonlySet<string>>(() => new Set(waitingList ?? []), [waitingList]); // Enlarge requests queued behind a picture (§28.3)
 
   // The tab says which build the server is running, too.
   useEffect(() => {
@@ -526,6 +528,7 @@ export default function App() {
                       canEdit={canEdit}
                       making4k={making4k}
                       enlarging={enlarging}
+                      enlargeWaiting={enlargeWaiting}
                       upscaler={caps?.upscaler ?? null}
                       onReuse={() => reuse(run)}
                       onRegenerateLarger={() => void regenerateLarger(run)}
@@ -590,6 +593,7 @@ export default function App() {
         canEdit={canEdit}
         making4k={making4k}
         enlarging={enlarging}
+        enlargeWaiting={enlargeWaiting}
         upscaler={caps?.upscaler ?? null}
         onMake4K={(image) => void make4k(image)}
         onEnlarge={(image) => void enlargeImage(image)}

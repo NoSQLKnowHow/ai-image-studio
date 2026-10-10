@@ -16,8 +16,8 @@ from PIL import Image, UnidentifiedImageError
 
 from studio import fourk
 from studio.config import ConfigError, Settings, UPSCALER_DEVICES
-from studio.upscaler import (Availability, FakeUpscaler, ModelUpscaler, TIMEOUT_SECONDS, UpscaleFailed, UpscaleTimeout, UpscalerError,
-                             UpscalerUnavailable, make_upscaler)
+from studio.upscaler import (Availability, FakeUpscaler, ModelUpscaler, TIMEOUT_SECONDS, UpscaleFailed, UpscaleTimeout, UpscalerBusy,
+                             UpscalerError, UpscalerUnavailable, make_upscaler)
 from studio.worker_client import BACKEND_ROOT
 
 
@@ -184,7 +184,7 @@ def test_success_returns_quietly(tmp_path):
 
 @pytest.mark.parametrize("code,error", [
     (2, fourk.NotEligible), (7, FileNotFoundError), (8, UnidentifiedImageError), (6, OSError),
-    (3, UpscalerUnavailable), (4, UpscaleFailed), (5, UpscaleFailed), (1, UpscaleFailed), (137, UpscaleFailed),
+    (3, UpscalerUnavailable), (4, UpscaleFailed), (5, UpscaleFailed), (9, UpscalerBusy), (1, UpscaleFailed), (137, UpscaleFailed),
 ])
 def test_each_exit_code_becomes_the_error_the_server_answers_with(tmp_path, code, error):
     with pytest.raises(error) as info:
@@ -193,7 +193,8 @@ def test_each_exit_code_becomes_the_error_the_server_answers_with(tmp_path, code
 
 
 def test_the_answers_status_code_and_hint_come_with_the_error(tmp_path):
-    expected = {3: (503, "upscaler_unavailable", True), 4: (500, "upscale_failed", True), 5: (500, "upscale_failed", False)}
+    expected = {3: (503, "upscaler_unavailable", True), 4: (500, "upscale_failed", True), 5: (500, "upscale_failed", False),
+                9: (503, "upscaler_busy", True)}
     for code, (status, name, has_hint) in expected.items():
         with pytest.raises(UpscalerError) as info:
             run(scripted(tmp_path, code, stderr="ENLARGE FAILED: x").enlarge(tmp_path / "s.png", tmp_path / "d.png"))
@@ -203,8 +204,8 @@ def test_the_answers_status_code_and_hint_come_with_the_error(tmp_path):
 
 def test_an_unknown_exit_says_the_upscaler_stopped_and_how(tmp_path):
     with pytest.raises(UpscaleFailed) as info:
-        run(scripted(tmp_path, 9).enlarge(tmp_path / "s.png", tmp_path / "d.png"))
-    assert str(info.value) == "The upscaler stopped unexpectedly (exit code 9)."
+        run(scripted(tmp_path, 11).enlarge(tmp_path / "s.png", tmp_path / "d.png"))
+    assert str(info.value) == "The upscaler stopped unexpectedly (exit code 11)."
 
 
 def test_the_reason_is_the_last_failed_line_else_the_last_line_else_nothing():
