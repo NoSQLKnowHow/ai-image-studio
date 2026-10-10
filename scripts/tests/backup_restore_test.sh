@@ -280,7 +280,7 @@ equals "the manifest says so" "$(member MANIFEST.txt | grep '^included=')" "incl
 equals "and it is format 1, as it always was without a model" "$(member MANIFEST.txt | grep '^format=')" "format=1"
 equals "with no model_paths line" "$(member MANIFEST.txt | grep -c '^model_paths=' || true)" 0
 contains "the summary says no models, and why" "$out" "models:  no (--no-model)"
-out=$(bk "$DEST" 2>&1); rc=$?
+out=$(bk --model "$DEST" 2>&1); rc=$?
 equals "--model is accepted: exits 0" "$rc" 0
 B=$(latest)
 check "and it changes nothing: the models are in" bash -c "tar -tf '$B' | grep -qx model-cache.tar"
