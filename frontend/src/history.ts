@@ -99,8 +99,8 @@ export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, 
   for (const run of Object.values(runs)) if (working(run) && !matches(run, filter)) next.add(run.id);
   for (const id of watched) {
     const run = runs[id];
-    if (!run || next.has(id)) continue; // deleted; or still working and still not kept: watched on
-    if (!working(run) && !matches(run, filter)) left.push(run); // finished without being kept; otherwise it was kept, and stays
+    if (!run) continue; // deleted
+    if (!working(run) && !matches(run, filter)) left.push(run); // finished without being kept; one still working is watched on, one kept stays
   }
   return { watched: next, left };
 }
