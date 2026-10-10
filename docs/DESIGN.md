@@ -1,6 +1,6 @@
 # Qwen-Image Web Studio — Design Specification
 
-Living document. **Last brought up to date 2026-10-10, for version 1.13** (the number the page shows in its title). §32 and §33 are proposals for 1.14 and 1.15; nothing in them is built.
+Living document. **Last brought up to date 2026-10-10, for version 1.13** (the number the page shows in its title). §32 to §34 are proposals for 1.14 to 1.16; nothing in them is built.
 
 **How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, §25 specifies **1.7**, loading the model ahead of time, §26 specifies **1.8 and 1.9**, music, and §27 specifies **1.10**, Make 4K. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
@@ -28,6 +28,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.13 | **The bin**: a **Deleted** option in the filter bar; Delete (and the daily expiry) moves a run to the bin for 30 days; **Restore**, **Delete forever** and **Empty bin** | §30 | (this PR) | The bin needs no Spark; `SPARK_TEST.md` §24 is the short check |
 | 1.14 | **Project folders** (proposed, not built): a **Project** button on every card (a drop-down of your projects, or a new one made on the spot) files the run and keeps it; Keep is locked while a run is filed; a **Project** drop-down in the filter bar and a **Manage** dialog | §32 | — | Not built; nothing for the Spark to check yet |
 | 1.15 | **Delete a picture from a run** (proposed, not built): a **Delete picture** button in the viewer sends one picture to the bin for 30 days (the last picture sends the whole run); the Deleted view shows the deleted pictures with **Restore** and **Delete forever** | §33 | — | Not built; nothing for the Spark to check yet |
+| 1.16 | **16:9 is the default shape** of a picture (proposed, not built): Generate starts at 2752×1536 instead of 2048×2048 on the page, in the API and in `scripts/qwen_image.py`; a browser's saved 1:1 is moved to 16:9 once; Edit stays on Auto | §34 | — | Not built; one Spark run at the default size to compare time and memory (§34.6 criterion 184) |
 
 **Tests today (1.13):** backend 1009 (pytest; 65 more run only where `torch` is installed: 28 for the real music pipeline, which also needs `diffusers` 0.40.0, 17 for the upscaler probe's tiling, and 20 for Enlarge's real loading path, which also need `spandrel`), front end 369 (Vitest) and 171 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
@@ -121,6 +122,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 49 | The bin: a Deleted view that holds a deleted run for 30 days (1.13) | You asked that a deleted run be recoverable, and answered: **it stays in the Deleted view for 30 days before it is really deleted, and there should be an option to empty the garbage bin.** A **Deleted** option beside All and Kept in the filter bar; **Delete** moves a finished run to the bin (with a toast and Undo); the daily clean-up moves expired runs there too; after 30 days (`STUDIO_BIN_DAYS`) they go for good; **Restore** puts a run back as it was, with a fresh clock if it is un-kept; **Delete forever** and **Empty bin** ask first. The other questions of §29.9 are my defaults, listed in §30.6 for you to veto (§30) | DECIDED (your 30 days and your Empty bin); the rest PROPOSED; built in 1.13 |
 | 51 | Project folders (1.14) | You asked for **project folders**: when you like a generation you add it to a drop-down of projects, or make a new one right then, and once it is in a project it is **also kept**, so that it is not deleted by accident. You answered: **the whole run** is what is filed; **one project at a time**; **Keep is locked while a run is in a project** (taking it out leaves it kept); and you browse with a **Project drop-down in the filter bar**. A project is a label in the database (no file moves); deleting a project never deletes a run; the other details are my defaults, listed in §32.6 for you to veto (§32) | DECIDED (your four answers); the rest PROPOSED; not built |
 | 52 | Delete a picture from a run, into the bin (1.15) | You said you also need to **delete the pictures you do not like from a run**. You answered: on **any finished run**; a deleted picture goes **into the bin for 30 days**, like a run; deleting a run's **last** picture sends **the run** to the bin; a picture's **4K and Enlarge copies go with it**. The Deleted view shows one card per run with its deleted pictures, each with **Restore** and **Delete forever**; the number beside Deleted counts runs and pictures; the other details are my defaults, listed in §33.4 for you to veto (§33) | DECIDED (your four answers); the rest PROPOSED; not built |
+| 53 | 16:9 is the default shape of a picture (1.16) | You asked that **16:9 be the default image aspect ratio for any generation**, replacing the 1:1, 2048×2048 of decision #20. You answered: a browser's **saved 1:1 is moved to 16:9, once**, with a note; **Edit stays on Auto** (decision #28); and the **API and the command-line script change too**, so one default holds everywhere. 16:9 is the model card's 2752×1536 (about 4.23 MP, the cost of the old square); the other details are my defaults, listed in §34.5 for you to veto (§34) | DECIDED (your three answers); the rest PROPOSED; not built |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -140,6 +142,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | #48 | **Yes** (1.12): the Kept view and the filter framework. The *Deleted* view followed in 1.13 (#49). |
 | #49 | **Yes** (1.13): the bin, with your 30 days and your Empty bin; the other defaults are in §30.6. |
 | #51, #52 | **Not built.** Decided by your answers (project folders in 1.14, §32; deleting a picture in 1.15, §33); the other defaults are in §32.6 and §33.4. |
+| #53 | **Not built.** Decided by your three answers (1.16, §34); the other defaults are in §34.5. It changes the default of decision #20 (size) and leaves #28 (Edit's Auto) as it is. |
 | #38 | Yes (1.5). |
 | #39 | Yes (1.7). |
 | #43 | **Yes** (1.8). |
@@ -1792,3 +1795,73 @@ This is the bin of §30 taught to hold **a single picture** as well as a whole r
 ### 33.6 Not in 1.15
 
 A way to delete just a picture's 4K or Enlarge copy (your answer 4); deleting an edit's source pictures; deleting several pictures at once (select and delete); deleting a picture from the card without opening the viewer. Each is a small step from here if you want it.
+
+---
+
+## 34. Version 1.16: 16:9 is the default shape of a picture (decision #53 DECIDED for what you said; the rest PROPOSED; nothing built)
+
+You asked that **16:9 be the default image aspect ratio for any generation**. Today the default is **1:1, 2048×2048** (decision #20, §6): it is what Options starts with, what *Reset* goes back to, and what the server makes when a request names no size. I asked three questions and you answered them:
+
+| # | Question | Your answer |
+|---|---|---|
+| 1 | A browser that has used the studio has already saved its size (1:1 unless you changed it), and a saved choice beats the default. What should 1.16 do about that? | **Move a saved 1:1 to 16:9, once** (§34.2). |
+| 2 | Edit's size is *Auto* (the shape of your last source picture). Default it to 16:9 too? | **No: leave Edit on Auto** (§34.3). |
+| 3 | The API (a request with no size) and the command-line script `scripts/qwen_image.py` have the same default. Change them too? | **Yes, everywhere** (§34.4). |
+
+This is a change to a default, not a new feature: no database change, no new control, no new route.
+
+### 34.1 What changes
+
+- **The default size of Generate is 16:9, 2752×1536** (the model card's 16:9 preset, the one Options already offers). It is about **4.23 megapixels**, against the 4.19 of 2048×2048, so a picture costs the same time and memory as before and stays inside the 4.5 MP limit (§6).
+- **A browser with nothing saved**, a private window, and the **Reset** button in Options all give 16:9 for Generate. The **Custom** width and height start at 2752×1536 (they start at the default size).
+- **The scale picker (100%, 75%, 50%, 25%) on the prompt bar, and Draft,** work on whatever size is selected, as ever; at 100% a new picture is 2752×1536.
+- **Any other choice is untouched**: another preset, Custom, the scale, the steps, the seed, the number of pictures. Only the one choice that *was the old default* moves (§34.2).
+
+### 34.2 The one-time move of a saved 1:1 (your answer 1)
+
+Every browser that has used the studio has saved a size, and unless it moved off the default that size is **1:1**. A plain change of the default would therefore change nothing on your own page. So **the first time a browser opens the studio after 1.16**:
+
+- if its saved Generate size is **exactly the 1:1 preset**, it becomes **16:9**, and a **one-time note** says so: *The default size is now 16:9, and your saved 1:1 was changed to it. Choose 1:1 in Options to go back.*;
+- any other saved size (another preset, Custom, even a Custom of 2048×2048) is **left as it is**;
+- the saved **Edit** size is not touched (§34.3).
+
+**It happens once.** The page keeps a second small saved value that says *this browser has been moved*, and writes it on that first load **whether or not anything was moved**; so a 1:1 you choose afterwards stays 1:1, and a browser that starts empty never sees the note. With the browser's storage blocked (a private window) there is nothing saved to move: the page works in memory and starts at 16:9.
+
+**The catch, as I told you:** the page cannot tell *a 1:1 you chose on purpose* from *the old default*, so someone who deliberately kept 1:1 is moved once, and told. One click in Options gives it back.
+
+### 34.3 What does not change (your answer 2, and the rest)
+
+- **Edit mode's size stays Auto** (decision #28, §21.4): an edit takes the shape of your last source picture at about 1 MP unless you pick a size. A saved Edit size, and Reset for Edit, are as before. (Choosing 16:9 for an edit is one click in Options, as now.)
+- **Runs that already exist** keep their size. **Reuse** and **Retry** restore *that run's own* size, not the new default; **Regenerate larger**, **Make 4K** and **Enlarge** are unaffected.
+- **An explicit size is honoured as ever**: a request that names a width and height, or a preset, gets that. The limits (§6, 256 to 4096 a side, multiples of 32, at most 4.5 MP) are unchanged.
+- **Music** has no size and is unaffected.
+
+### 34.4 Where the default lives (your answer 3)
+
+One value, so that every way of making a picture agrees:
+
+- **The server.** `DEFAULT_ASPECT` and `DEFAULT_SIZE` in `backend/studio/presets.py` become `"16:9"` and 2752×1536. They feed `GET /api/capabilities` (`defaults.aspect_ratio`, `width`, `height`, which is how the page learns its default) and the rule in `runspec.py` that gives a **Generate request with no size** the default size. An **Edit request with no size** is still sized by the pipeline (§21.4).
+- **The page** reads its default from the capabilities, as it does now; it needs no number of its own. What changes in the page is the one-time move of §34.2.
+- **The script `scripts/qwen_image.py`**: `generate` with no size makes **2752×1536**, and its help text, its example comment and the hint in its out-of-memory message (*"--aspect-ratio 1:1 is 2048x2048"*) say so. `--aspect-ratio 1:1` still makes a square.
+- **A script of yours that calls the API without a size** will now get a landscape picture where it got a square one. That is the point of your answer, and it is the one place the change can surprise a caller.
+
+### 34.5 The small choices I made (tell me if you want any changed)
+
+1. **The shape is the model card's 16:9 preset, 2752×1536**, not 1920×1080: the pipeline works on a grid of 32 pixels and 1080 is not on it (the studio refuses such a size, §6).
+2. **It is a built-in default, not a setting.** There is no `STUDIO_DEFAULT_ASPECT`, as there was none for 1:1. If you want to change it without a release, a setting is a small addition.
+3. **Only the shape moves.** A saved scale (say 50%), steps or seed are left alone, so a browser that was at 1:1 and 50% becomes 16:9 and 50% (1376×768).
+4. **The note about the move is a plain toast**, shown once, and nothing else announces it.
+5. **The Custom fields start at the new default size** for a browser with nothing saved; a saved Custom size is never replaced.
+6. **Tests that meant "a square" will say 1:1.** A good many tests rely on the old default without saying so; when I build this they name the square they mean instead of leaning on the default, so that the next change of default does not touch them. This is most of the work of the release.
+7. **The text that says the default is 1:1** (decision #20, the Size row of the Options table in §5, the README, the Spark test checklists) is updated when this is built, not now, because today it is still true.
+
+### 34.6 Acceptance criteria (continue §33.5)
+
+177. A browser with nothing saved starts Generate at **16:9** (Options shows the 16:9 preset selected, the size is 2752×1536, and Custom starts at 2752×1536); **Reset** gives the same for Generate. (1.16)
+178. On the first load after 1.16, a saved Generate size of exactly the **1:1 preset** becomes 16:9 and a one-time note says so; any other saved size, including a Custom of 2048×2048, and the saved Edit size are left as they were. (1.16)
+179. The move **happens once**: after it, choosing 1:1 and reloading keeps 1:1 with no note; a browser that starts empty gets no note; with storage blocked the page works and starts at 16:9. (1.16)
+180. **Edit's** default size is still **Auto**, and Reset leaves it there. (1.16)
+181. `GET /api/capabilities` gives `defaults.aspect_ratio` `"16:9"`, `width` 2752 and `height` 1536; a **Generate request with no size** makes a 2752×1536 picture (the run, the file and its download name say so); a request that names a size, and an **Edit request with no size**, are unchanged. (1.16)
+182. `scripts/qwen_image.py generate` with no size makes 2752×1536 and its help says so; `--aspect-ratio 1:1` still makes 2048×2048. (1.16)
+183. Runs made before 1.16 are unchanged, and **Reuse** and **Retry** restore their own size, not the new default. (1.16)
+184. A 16:9 picture at the default size needs no more memory than the old square one did: **checked on the Spark** with one run at the default size, writing down the time and the memory (`SPARK_TEST.md`, added when this is built). (1.16)
