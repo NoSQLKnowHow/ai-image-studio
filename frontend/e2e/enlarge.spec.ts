@@ -218,6 +218,22 @@ test("in the viewer the answer is shown inside the viewer, and keyboard focus la
   await expect(download4k(v)).toHaveCount(0);
 });
 
+test("in the viewer the button says Enlarging… while it works, and a second press does nothing", async ({ page }) => {
+  await useOptions(page, { ...NEAR, numImages: 2 });
+  await page.goto("/");
+  await clearHistory(page);
+  const c = await done(page, unique("slow in the viewer"));
+  await c.locator(".thumb").first().click();
+  const v = viewer(page);
+  const requests = await slow(page, 800);
+  await enlarge(v).click();
+  await expect(enlarge(v)).toHaveText("Enlarging…");
+  await expect(enlarge(v)).toHaveAttribute("aria-disabled", "true");
+  await enlarge(v).click({ force: true });
+  await expect(download4k(v)).toBeVisible({ timeout: 30_000 });
+  expect(requests.posts()).toBe(1);
+});
+
 test("a keyboard user on a card lands on Download 4K, whether or not a plain copy was there before", async ({ page }) => {
   await useOptions(page, NEAR);
   await page.goto("/");
