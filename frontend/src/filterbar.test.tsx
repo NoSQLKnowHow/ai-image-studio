@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import { EmptyHistory, FilterBar } from "./components/FilterBar";
 import { NO_FILTER, ONLY_DELETED, ONLY_KEPT } from "./history";
 
+// a callback that does nothing: these tests only look at the HTML that is drawn
 const nothing = () => undefined;
+// render the empty-list message for a tab and a filter (`binDays` is the STUDIO_BIN_DAYS that the server reported)
 const empty = (kind: "image" | "music", filter = ONLY_DELETED, binDays = 30) =>
   renderToStaticMarkup(<EmptyHistory kind={kind} filter={filter} binDays={binDays} onShowAll={nothing} />);
+// render the filter bar for a filter and counts (a count is null while the server has not said)
 const bar = (filter = NO_FILTER, counts: { kept: number | null; deleted: number | null; total: number | null } = { kept: 2, deleted: 3, total: 5 }) =>
   renderToStaticMarkup(<FilterBar filter={filter} keptCount={counts.kept} deletedCount={counts.deleted} binTotal={counts.total} onChange={nothing} onEmptyBin={nothing} />);
 
@@ -49,6 +52,7 @@ describe("the filter bar (DESIGN.md §29.1, §30.1)", () => {
   });
 
   it("checks the option that is chosen, and only that", () => {
+    // read the `data-filter` and `aria-checked` of every option out of the HTML: which ones are checked
     const checked = (filter: typeof NO_FILTER) => [...bar(filter).matchAll(/data-filter="(\w+)"[^>]*aria-checked="(true|false)"/g)].filter((m) => m[2] === "true").map((m) => m[1]);
     expect(checked(NO_FILTER)).toEqual(["all"]);
     expect(checked(ONLY_KEPT)).toEqual(["kept"]);

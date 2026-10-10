@@ -129,7 +129,7 @@ def test_a_1_7_database_is_migrated_and_nothing_is_lost(tmp_path):
     make_v2(path)
     db = Database(path)
     try:
-        assert SCHEMA_VERSION == 4
+        assert SCHEMA_VERSION == 4   # schema 4 is current (the bin, DESIGN.md §30)
         a, b = db.get_run(RUN_A), db.get_run(RUN_B)
         assert (a["prompt"], a["status"], a["pinned"], a["started_at"], a["finished_at"]) == (
             "a lighthouse", "done", 1, "2026-10-01T10:00:01.000Z", "2026-10-01T10:00:09.000Z")

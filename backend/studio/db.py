@@ -208,6 +208,7 @@ class Database:
     def _add_bin_columns(self) -> None:
         """Schema 4: the columns of the bin (DESIGN.md §30.5), added to a table that lacks them; then the index on them, which cannot be
         made before the column exists, so it is not in `_SCHEMA`."""
+        # the columns the table has already: a database from before schema 4 has neither, a new one has both
         have = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
         for column in ("deleted_at", "restored_at"):
             if column not in have:
@@ -349,10 +350,13 @@ class Database:
             return cur.rowcount == 1
 
     # An expiry counts from the later of when a run was made and when it was last restored (DESIGN.md §30.4).
+    # Which runs the clean-up may take: not kept, not already in the bin, finished (never one that is queued or running), and old enough.
+    # Old enough counts from the later of when the run was made and when it was last restored, so a restore starts a fresh clock.
     _EXPIRED = ("pinned=0 AND deleted_at IS NULL AND status IN ('done','failed','canceled') "
                 "AND COALESCE(restored_at, created_at) < ?")
 
     @staticmethod
+    # the one place that removes a run and what hangs off it (its pictures and tracks); every delete goes through here, so none forgets a table
     def _delete_rows(c: sqlite3.Connection, ids: Sequence[str]) -> None:
         for run_id in ids:
             c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
@@ -374,6 +378,7 @@ class Database:
         with self.tx() as c:
             ids = [r["id"] for r in c.execute(f"SELECT id FROM runs WHERE {self._EXPIRED} ORDER BY seq LIMIT ?", (cutoff, limit)).fetchall()]
             for run_id in ids:
+                # mark each as binned, all with the same moment; the files stay where they are
                 c.execute("UPDATE runs SET deleted_at=? WHERE id=?", (now, run_id))
             return ids
 
@@ -385,6 +390,7 @@ class Database:
                 return "not_found"
             if row["status"] not in ("done", "failed", "canceled"):
                 return "not_finished"
+            # binning a run that is already in the bin is not an error and does not move its date: the first time counts
             if row["deleted_at"] is None:
                 c.execute("UPDATE runs SET deleted_at=? WHERE id=?", (now, run_id))
             return "binned"
@@ -397,12 +403,14 @@ class Database:
                 return "not_found"
             if row["deleted_at"] is None:
                 return "not_in_bin"
+            # out of the bin, and the expiry clock starts again from now (`restored_at` wins over `created_at` in `_EXPIRED`)
             c.execute("UPDATE runs SET deleted_at=NULL, restored_at=? WHERE id=?", (now, run_id))
             return "restored"
 
     def purge_bin(self, cutoff: Optional[str], limit: int) -> list[str]:
         """Delete for good up to `limit` runs that went into the bin before `cutoff` (all of them when `cutoff` is None), and return their ids."""
         with self.tx() as c:
+            # no cutoff means the whole bin (Empty bin, or no bin is configured); otherwise only what went in before the cutoff
             if cutoff is None:
                 rows = c.execute("SELECT id FROM runs WHERE deleted_at IS NOT NULL ORDER BY seq LIMIT ?", (limit,)).fetchall()
             else:

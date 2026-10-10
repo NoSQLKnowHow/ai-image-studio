@@ -257,6 +257,7 @@ class JobManager:
     def expires_at(self, row: sqlite3.Row) -> Optional[str]:
         """When the run will be deleted, or None if it never will be (kept, still pending, or expiry off)."""
         days = self.settings.retention_days
+        # no expiry for: expiry off, kept runs, runs that have not finished, and runs in the bin (the bin has its own clock, `purge_at`)
         if days <= 0 or row["pinned"] or row["status"] not in FINISHED or row["deleted_at"]:
             return None
         return format_ts(parse_ts(row["restored_at"] or row["created_at"]) + timedelta(days=days))  # from the later of the two (§30.4)
@@ -550,6 +551,8 @@ class JobManager:
         """Delete for good every run in the bin, with its files. Returns how many."""
         return await self._purge_bin(None)
 
+    # Delete runs from the bin for good, `SWEEP_BATCH` at a time so that a big bin never holds the database for long: the rows go first, in one
+    # transaction; then their files, in a worker thread (the server stays responsive); then every open page is told.
     async def _purge_bin(self, cutoff: Optional[str]) -> int:
         removed = 0
         while True:
@@ -570,16 +573,19 @@ class JobManager:
         runs that are queued or running, are never touched. Returns how many runs were deleted for good."""
         bin_days = self.settings.bin_days
         now = datetime.now(timezone.utc)
+        # 1. Delete for good what has been in the bin long enough (all of it when there is no bin)
         removed = await self._purge_bin(format_ts(now - timedelta(days=bin_days)) if bin_days > 0 else None)
         if removed:
             log.info("deleted %d run(s) that had been in the bin for %d day(s) (STUDIO_BIN_DAYS)", removed, bin_days)
         days = self.settings.retention_days
         if days <= 0:
             return removed
+        # 2. Expire. Finished runs older than the retention move to the bin, or are deleted outright when there is no bin.
         cutoff = format_ts(now - timedelta(days=days))
         moved = 0
         expired = 0
         while True:
+            # with a bin: only mark the runs (their files stay, and every page is told that the run changed)
             if bin_days > 0:
                 ids = self.db.expire_to_bin(cutoff, utcnow(), SWEEP_BATCH)
                 if not ids:
@@ -588,6 +594,7 @@ class JobManager:
                     self._publish_run(run_id)
                 moved += len(ids)
             else:
+                # without a bin: delete the rows and the files, as it was before the bin existed
                 ids = self.db.delete_expired(cutoff, SWEEP_BATCH)
                 if not ids:
                     break

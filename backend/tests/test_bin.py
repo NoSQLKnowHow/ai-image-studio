@@ -17,16 +17,20 @@ from studio.serialize import format_ts, parse_ts
 MS = timedelta(milliseconds=1)
 
 
+# the ids of some rows, in order
 def run_ids(rows) -> list[str]:
     return [r["id"] for r in rows]
 
 
+# set one column of one run directly, to reach a state the API would not let us make (an old restore date, say)
 def set_column(db: Database, run_id: str, column: str, value) -> None:
     with db.tx() as c:
         c.execute(f"UPDATE runs SET {column}=? WHERE id=?", (value, run_id))
 
 
 # ------------------------------------------------------------------ the database
+# One run's whole life in the database: binned (with a date), binned again (the date does not move), restored (`deleted_at` cleared,
+# `restored_at` set), restored again (refused, and nothing changes).
 def test_a_finished_run_goes_to_the_bin_and_comes_back(seeded):
     db, storage = seeded
     run = seed_run(db, storage, 1, age_days=2)
@@ -43,12 +47,14 @@ def test_a_finished_run_goes_to_the_bin_and_comes_back(seeded):
 
 
 @pytest.mark.parametrize("status", ["done", "failed", "canceled"])
+# done, failed and canceled are all finished, so all of them can be binned
 def test_every_finished_state_can_go_to_the_bin(seeded, status):
     db, storage = seeded
     assert db.bin_run(seed_run(db, storage, 1, age_days=1, status=status), "2026-10-05T10:00:00.000Z") == "binned"
 
 
 @pytest.mark.parametrize("status", ["queued", "running"])
+# a queued or running run is not finished: it cannot be binned (it is cancelled, or deleted for good while it only waits)
 def test_a_run_that_has_not_finished_cannot_go_to_the_bin(seeded, status):
     db, storage = seeded
     run = seed_run(db, storage, 1, age_days=1, status=status)
@@ -62,6 +68,7 @@ def test_an_unknown_run_is_not_found(seeded):
     assert db.restore_run("f" * 32, "2026-10-05T10:00:00.000Z") == "not_found"
 
 
+# list_runs: the default filter shows the history WITHOUT the bin, deleted=True only the bin, deleted=None both
 def test_the_history_leaves_the_bin_out_and_the_bin_holds_only_the_bin(seeded):
     db, storage = seeded
     here, gone = seed_run(db, storage, 1, age_days=1), seed_run(db, storage, 2, age_days=1)
@@ -71,6 +78,7 @@ def test_the_history_leaves_the_bin_out_and_the_bin_holds_only_the_bin(seeded):
     assert sorted(run_ids(db.list_runs(10, None, RunFilter(deleted=None))[0])) == sorted([here, gone])
 
 
+# "Delete forever" is the old delete: it works on a binned run, and takes its pictures with it
 def test_deleting_for_good_works_on_a_run_in_the_bin(seeded):
     db, storage = seeded
     run = seed_run(db, storage, 1, age_days=1)
@@ -79,8 +87,11 @@ def test_deleting_for_good_works_on_a_run_in_the_bin(seeded):
     assert db.get_run(run) is None and db.images_for_runs([run])[run] == []
 
 
+# The clean-up's selection. Only old, un-kept, finished runs that are not already in the bin move there; kept, recent, waiting, running
+# and already-binned runs must stay exactly as they are.
 def test_expiry_moves_old_unkept_finished_runs_to_the_bin_and_nothing_else(seeded):
     db, storage = seeded
+    # one run of each kind the clean-up has to treat differently, then the move
     old = [seed_run(db, storage, n, age_days=40, status=s) for n, s in enumerate(("done", "failed", "canceled"), 1)]
     kept = seed_run(db, storage, 4, age_days=400, pinned=True)
     recent = seed_run(db, storage, 5, age_days=2)
@@ -96,6 +107,7 @@ def test_expiry_moves_old_unkept_finished_runs_to_the_bin_and_nothing_else(seede
         assert db.get_run(run_id)["deleted_at"] is None
 
 
+# A restore restarts the expiry clock: a run made 90 days ago but restored 3 days ago has not expired; one restored 45 days ago has.
 def test_expiry_counts_from_the_later_of_when_a_run_was_made_and_when_it_was_restored(seeded):
     db, storage = seeded
     fresh, stale = seed_run(db, storage, 1, age_days=90), seed_run(db, storage, 2, age_days=90)
@@ -104,12 +116,14 @@ def test_expiry_counts_from_the_later_of_when_a_run_was_made_and_when_it_was_res
     assert db.expire_to_bin(days_ago(30), "2026-10-10T00:00:00.000Z", 100) == [stale]
 
 
+# the clean-up moves at most `limit` runs in one batch, oldest first (in the order the runs were made)
 def test_expiry_honours_its_limit_oldest_first(seeded):
     db, storage = seeded
     runs = [seed_run(db, storage, n, age_days=40 + n) for n in range(1, 5)]  # run 4 is the oldest, but 1 was made first
     assert db.expire_to_bin(days_ago(30), "2026-10-10T00:00:00.000Z", 2) == runs[:2]
 
 
+# the no-bin delete (STUDIO_BIN_DAYS=0) leaves a binned run alone, and honours a restore date too
 def test_delete_expired_leaves_the_bin_alone_and_honours_a_restore(seeded):
     db, storage = seeded
     binned, restored, plain = (seed_run(db, storage, n, age_days=90) for n in (1, 2, 3))
@@ -119,6 +133,7 @@ def test_delete_expired_leaves_the_bin_alone_and_honours_a_restore(seeded):
     assert db.get_run(binned) is not None and db.get_run(restored) is not None
 
 
+# Purging the bin: by age (what went in before the cutoff), all at once (no cutoff), and in batches (the limit).
 def test_the_bin_is_purged_by_age_or_all_at_once_or_a_batch_at_a_time(seeded):
     db, storage = seeded
     runs = [seed_run(db, storage, n, age_days=1) for n in range(1, 5)]
@@ -136,6 +151,7 @@ def test_the_bin_is_purged_by_age_or_all_at_once_or_a_batch_at_a_time(seeded):
     assert len(db.purge_bin(None, 2)) == 2 and len(db.purge_bin(None, 2)) == 2
 
 
+# the bin is its own count, and a kept run in the bin counts as deleted, not as kept
 def test_the_counts_know_the_bin(seeded):
     db, storage = seeded
     here, gone, kept_gone = seed_run(db, storage, 1, age_days=1), seed_run(db, storage, 2, age_days=1), seed_run(db, storage, 3, age_days=1, pinned=True)
@@ -162,6 +178,7 @@ def v3_database(path):
     conn.close()
 
 
+# the column names and types of a table, read straight from the file (so it works on the way-back copy too)
 def columns(path, table="runs") -> list[tuple[str, str]]:
     conn = sqlite3.connect(path)
     try:
@@ -170,6 +187,7 @@ def columns(path, table="runs") -> list[tuple[str, str]]:
         conn.close()
 
 
+# The upgrade: a database as 1.12 left it opens, keeps its run (and its Keep), and the new columns work.
 def test_a_1_12_database_gets_the_bin_and_loses_nothing(tmp_path):
     path = tmp_path / "studio.sqlite"
     v3_database(path)
@@ -184,6 +202,8 @@ def test_a_1_12_database_gets_the_bin_and_loses_nothing(tmp_path):
         db.close()
 
 
+# Before the upgrade the old database is copied to `.before-schema-4`: a way back, exactly as it was (schema 3, without the bin's
+# columns).
 def test_the_1_12_database_is_copied_first_as_a_way_back(tmp_path):
     path = tmp_path / "studio.sqlite"
     v3_database(path)
@@ -199,6 +219,8 @@ def test_the_1_12_database_is_copied_first_as_a_way_back(tmp_path):
     assert "deleted_at" not in dict(columns(copy))
 
 
+# Starting again changes nothing (the way-back copy is not overwritten), and a migrated database ends up with the same tables as a
+# fresh one.
 def test_a_second_start_changes_nothing_and_a_migrated_database_is_the_same_as_a_fresh_one(tmp_path):
     migrated, fresh = tmp_path / "migrated.sqlite", tmp_path / "fresh.sqlite"
     v3_database(migrated)
@@ -218,15 +240,18 @@ def test_a_second_start_changes_nothing_and_a_migrated_database_is_the_same_as_a
 
 
 # ------------------------------------------------------------------ the API
+# make a run and wait until it is done
 def finished(client, prompt: str = "a harbour at dawn") -> dict:
     return wait_for(client, create_run(client, prompt)["id"])
 
 
+# press Delete (the bin route)
 def bin_it(client, run_id: str):
     return client.post(f"/api/runs/{run_id}/bin")
 
 
 @contextmanager
+# collect every event published on the server's event bus while the block runs, as an open page would see them
 def captured(client):
     bus = client.app.state.bus
     sub = bus.subscribe()
@@ -239,6 +264,8 @@ def captured(client):
         bus.unsubscribe(sub)
 
 
+# Moving a run to the bin keeps its files and the run itself, takes it out of the history, and tells every page with a `run.updated` event
+# (not `run.deleted`, which means gone for good).
 def test_moving_a_run_to_the_bin_keeps_its_files_and_takes_it_out_of_the_history(client):
     run = finished(client)
     storage = client.app.state.storage
@@ -255,6 +282,7 @@ def test_moving_a_run_to_the_bin_keeps_its_files_and_takes_it_out_of_the_history
     assert [data for name, data in events if name == "run.deleted"] == []
 
 
+# A binned run carries `purge_at` (`deleted_at` plus STUDIO_BIN_DAYS) and no `expires_at`; a run that is not in the bin has the reverse.
 def test_a_run_in_the_bin_says_when_it_will_be_deleted_for_good_and_does_not_expire(client_factory):
     client = client_factory(bin_days=10)
     run = finished(client)
@@ -265,6 +293,7 @@ def test_a_run_in_the_bin_says_when_it_will_be_deleted_for_good_and_does_not_exp
     assert plain["deleted_at"] is None and plain["purge_at"] is None and plain["expires_at"] is not None
 
 
+# Keep survives a trip to the bin and back
 def test_a_kept_run_in_the_bin_is_still_kept(client):
     run = finished(client)
     assert client.patch(f"/api/runs/{run['id']}", json={"pinned": True}).status_code == 200
@@ -272,8 +301,10 @@ def test_a_kept_run_in_the_bin_is_still_kept(client):
     assert client.post(f"/api/runs/{run['id']}/restore").json()["pinned"] is True
 
 
+# A running run and a waiting one cannot be binned (409 `run_not_finished`).
 def test_binning_a_run_that_is_not_finished_is_refused(client_factory):
     client = client_factory(fake_step_delay_ms=80)
+    # one run going (slowly, so that it is still running below) and one waiting behind it
     running = create_run(client, "going now", steps=20)
     wait_for(client, running["id"], frozenset({"running"}))
     waiting = create_run(client, "waiting its turn", steps=3)
@@ -285,12 +316,14 @@ def test_binning_a_run_that_is_not_finished_is_refused(client_factory):
     wait_for(client, waiting["id"])
 
 
+# ids that do not exist, or are not ids at all (even a path trick), are a 404, never an error
 def test_unknown_and_malformed_ids_are_404_for_every_bin_route(client):
     for bad in ("f" * 32, "nope", "../x"):
         assert client.post(f"/api/runs/{bad}/bin").status_code == 404
         assert client.post(f"/api/runs/{bad}/restore").status_code == 404
 
 
+# Like every route that changes something, the bin routes refuse a request without the X-Studio-Client header (the guard against other web pages).
 def test_the_bin_routes_need_the_client_header_like_every_change(client):
     run = finished(client)
     plain = client.__class__(client.app)  # no X-Studio-Client
@@ -301,6 +334,7 @@ def test_the_bin_routes_need_the_client_header_like_every_change(client):
         plain.close()
 
 
+# With STUDIO_BIN_DAYS=0 there is no bin: the route says so (409 `bin_off`) and leaves the run as it was.
 def test_with_no_bin_the_bin_route_says_so(client_factory):
     client = client_factory(bin_days=0)
     run = finished(client)
@@ -309,6 +343,8 @@ def test_with_no_bin_the_bin_route_says_so(client_factory):
     assert client.get(f"/api/runs/{run['id']}").json()["deleted_at"] is None
 
 
+# A restore starts a fresh expiry clock: a run made 50 days ago (so it was due to expire, which is why it was binned) has about 30 days
+# again, rather than being expired at once.
 def test_restoring_puts_the_run_back_with_a_fresh_expiry_clock(client_factory):
     client = client_factory(quiet=True, retention_days=30)
     run = finished(client)
@@ -324,12 +360,14 @@ def test_restoring_puts_the_run_back_with_a_fresh_expiry_clock(client_factory):
     assert [data["id"] for name, data in events if name == "run.updated"] == [run["id"]]
 
 
+# restoring a run that is not in the bin is a 409, not a silent success
 def test_restoring_a_run_that_is_not_in_the_bin_is_refused(client):
     run = finished(client)
     response = client.post(f"/api/runs/{run['id']}/restore")
     assert response.status_code == 409 and response.json()["code"] == "not_in_bin"
 
 
+# DELETE /api/runs/{id} still means "for good", also for a binned run: its files go and the pages hear `run.deleted`
 def test_deleting_a_run_in_the_bin_deletes_it_for_good(client):
     run = finished(client)
     bin_it(client, run["id"])
@@ -340,12 +378,14 @@ def test_deleting_a_run_in_the_bin_deletes_it_for_good(client):
     assert [data for name, data in events if name == "run.deleted"] == [{"id": run["id"]}]
 
 
+# ...and for a run that was never binned: this is what the route did before the bin existed
 def test_deleting_a_run_outside_the_bin_still_deletes_it_for_good(client):
     run = finished(client)
     assert client.delete(f"/api/runs/{run['id']}").status_code == 204
     assert client.get(f"/api/runs/{run['id']}").status_code == 404 and not on_disk(client.app.state.storage, run["id"])
 
 
+# Empty bin deletes everything in the bin and nothing else, tells the pages, and answers how many; emptying an empty bin answers 0.
 def test_emptying_the_bin_deletes_what_is_in_it_and_only_that(client):
     one, two, kept = finished(client, "one"), finished(client, "two"), finished(client, "three")
     for run in (one, two):
@@ -361,6 +401,7 @@ def test_emptying_the_bin_deletes_what_is_in_it_and_only_that(client):
     assert client.delete("/api/bin").json() == {"deleted": 0}
 
 
+# /api/runs/counts moves a run from "all" to "deleted" when it is binned, and back when it is restored
 def test_the_counts_follow_the_bin(client):
     run, other = finished(client, "a picture"), finished(client, "another")
     assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0}
@@ -371,6 +412,7 @@ def test_the_counts_follow_the_bin(client):
     assert other
 
 
+# paging works inside the bin and inside the history separately, and a bad value for `deleted` is a 422
 def test_the_list_pages_within_the_bin_and_the_history_separately(client):
     ids = [finished(client, f"run {n}")["id"] for n in range(5)]
     for run_id in ids[:3]:
@@ -383,16 +425,20 @@ def test_the_list_pages_within_the_bin_and_the_history_separately(client):
     assert client.get("/api/runs", params={"deleted": "maybe"}).status_code == 422
 
 
+# the page learns how long the bin keeps a run from the capabilities (0 means there is no bin)
 def test_the_capabilities_say_how_long_the_bin_keeps_a_run(client_factory):
     assert client_factory(bin_days=7).get("/api/capabilities").json()["limits"]["bin_days"] == 7
     assert client_factory(bin_days=0).get("/api/capabilities").json()["limits"]["bin_days"] == 0
 
 
 # ------------------------------------------------------------------ the daily clean-up
+# run the daily clean-up once, now, instead of waiting for the janitor's timer
 def sweep(client) -> int:
     return client.portal.call(client.app.state.jobs.sweep_expired)
 
 
+# With a bin, the clean-up MOVES an expired run there instead of deleting it: its files stay, the pages are told that it changed, nothing counts
+# as deleted, and the next clean-up does not move it again.
 def test_the_clean_up_moves_an_expired_run_to_the_bin_instead_of_deleting_it(seeded, client_factory):
     db, storage = seeded
     old = seed_run(db, storage, 1, age_days=40)
@@ -410,6 +456,7 @@ def test_the_clean_up_moves_an_expired_run_to_the_bin_instead_of_deleting_it(see
     assert sweep(client) == 0 and client.get(f"/api/runs/{old}").json()["deleted_at"] == row["deleted_at"]  # not moved again
 
 
+# ...and deletes for good what has been in the bin longer than STUDIO_BIN_DAYS (31 days against 29), telling the pages that it is gone
 def test_the_clean_up_deletes_for_good_a_run_whose_time_in_the_bin_is_over(seeded, client_factory):
     db, storage = seeded
     over, still, never = (seed_run(db, storage, n, age_days=1) for n in (1, 2, 3))
@@ -425,6 +472,7 @@ def test_the_clean_up_deletes_for_good_a_run_whose_time_in_the_bin_is_over(seede
     assert [data for name, data in events if name == "run.deleted"] == [{"id": over}]
 
 
+# A run the clean-up binned can be restored, and is then not moved again: its clock restarted (it is 60 days old but was restored just now).
 def test_a_run_moved_to_the_bin_by_the_clean_up_can_be_restored_and_is_not_moved_again(seeded, client_factory):
     db, storage = seeded
     old = seed_run(db, storage, 1, age_days=60)
@@ -437,6 +485,7 @@ def test_a_run_moved_to_the_bin_by_the_clean_up_can_be_restored_and_is_not_moved
     assert client.get(f"/api/runs/{old}").json()["deleted_at"] is None  # a fresh 30 days: it is 60 days old and stays
 
 
+# With no bin the clean-up deletes as it did before, and also empties any run still in the bin from an earlier setting.
 def test_with_no_bin_the_clean_up_deletes_as_it_did_before_and_empties_what_is_there(seeded, client_factory):
     db, storage = seeded
     expired, binned, recent = seed_run(db, storage, 1, age_days=40), seed_run(db, storage, 2, age_days=2), seed_run(db, storage, 3, age_days=2)
@@ -449,6 +498,7 @@ def test_with_no_bin_the_clean_up_deletes_as_it_did_before_and_empties_what_is_t
     assert client.get(f"/api/runs/{recent}").status_code == 200
 
 
+# With expiry off (retention 0) nothing expires, but the bin still empties by age.
 def test_with_expiry_off_the_bin_still_empties_by_age(seeded, client_factory):
     db, storage = seeded
     over, old = seed_run(db, storage, 1, age_days=1), seed_run(db, storage, 2, age_days=400)

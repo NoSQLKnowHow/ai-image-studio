@@ -2,9 +2,12 @@
 // real server with the fake pipeline.
 import { card, clearHistory, expect, test, unique, useOptions, type Locator, type Page } from "./helpers";
 
+// the studio's API wants this header on every write: its guard against requests from other web pages
 const ASK = { "X-Studio-Client": "1" };
 type ApiRun = { id: string; status: string; pinned: boolean; prompt: string; deleted_at: string | null; purge_at: string | null; images: { url: string }[] };
 
+// Locators for the parts of the page these tests use. `bar` is the filter bar that is on screen (the other tab's bar is hidden), and
+// `dialog` finds a confirmation question by its title.
 const bar = (page: Page): Locator => page.locator("[data-filter-bar]:visible");
 const allOption = (page: Page): Locator => bar(page).getByRole("radio", { name: "All" });
 const keptOption = (page: Page): Locator => bar(page).getByRole("radio", { name: /^Kept/ });
@@ -17,10 +20,12 @@ const imagesTab = (page: Page): Locator => page.getByRole("tab", { name: "Images
 const trackCard = (page: Page, text: string): Locator => page.locator("article.music-card", { hasText: text });
 const viewer = (page: Page): Locator => page.locator(".lightbox");
 
+// the run as the SERVER has it: the tests check the server's truth as well as what the page shows
 async function status(page: Page, id: string): Promise<ApiRun> {
   return (await (await page.request.get(`/api/runs/${id}`)).json()) as ApiRun;
 }
 
+// make a small picture over the API and wait for it
 async function makeRun(page: Page, prompt: string, extra: Record<string, unknown> = {}): Promise<string> {
   const posted = await page.request.post("/api/runs", { headers: ASK, data: { prompt, options: { steps: 2, width: 512, height: 512, seed: 3, ...extra } } });
   expect(posted.ok(), await posted.text()).toBe(true);
@@ -29,6 +34,7 @@ async function makeRun(page: Page, prompt: string, extra: Record<string, unknown
   return id;
 }
 
+// the same for a short music track
 async function makeTrack(page: Page, prompt: string): Promise<string> {
   const posted = await page.request.post("/api/runs", { headers: ASK, data: { mode: "music", prompt, options: { duration: 30 } } });
   expect(posted.ok(), await posted.text()).toBe(true);
@@ -37,11 +43,13 @@ async function makeTrack(page: Page, prompt: string): Promise<string> {
   return id;
 }
 
+// move a run to the bin through the API, behind the page's back
 async function bin(page: Page, id: string): Promise<void> {
   const response = await page.request.post(`/api/runs/${id}/bin`, { headers: ASK });
   expect(response.ok(), await response.text()).toBe(true);
 }
 
+// Keep a run through the API
 async function keep(page: Page, id: string): Promise<void> {
   expect((await page.request.patch(`/api/runs/${id}`, { headers: ASK, data: { pinned: true } })).ok()).toBe(true);
 }
@@ -52,6 +60,8 @@ async function deleteViaPage(page: Page, c: Locator, confirmName = "Delete"): Pr
   await dialog(page, /^Delete this run/).getByRole("button", { name: confirmName, exact: true }).click();
 }
 
+// The main flow. Pressing Delete asks (and says that the run moves to Deleted for 30 days); then the card leaves with a toast and Undo,
+// and the run waits in Deleted with its files. In the Deleted view the card offers what is safe there and nothing that would change the run.
 test("Delete moves a run to the bin: the card goes with a toast and Undo, and the run waits in Deleted with its files", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("a harbour at dawn");
@@ -75,13 +85,16 @@ test("Delete moves a run to the bin: the card goes with a toast and Undo, and th
   await expect(c).toBeVisible();
   await expect(c.locator(".badge-deleted")).toHaveText("Deleted");
   await expect(c.locator("[data-note=in-bin]")).toContainText(/^In the bin since .*\. It will be deleted for good around .*, in (29|30) days\.$/);
+  // what a card in the bin offers ...
   for (const name of ["Restore", "Reuse", "Copy prompt", "Delete forever"]) await expect(c.getByRole("button", { name })).toBeVisible();
+  // ... and what it must not offer: anything that changes the run or makes more files for it
   for (const name of ["Keep", "Retry", "Edit this", "Make 4K", "Enlarge", "Regenerate larger"]) await expect(c.getByRole("button", { name })).toHaveCount(0);
   await allOption(page).click();
   await expect(c).toHaveCount(0);
   await expect(emptyBinButton(page)).toHaveCount(0); // Empty bin is for the Deleted view only
 });
 
+// Undo on the toast puts the run back in the history, with a fresh expiry clock
 test("Undo on the toast restores the run to where it was", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("undo the delete");
@@ -96,6 +109,8 @@ test("Undo on the toast restores the run to where it was", async ({ page }) => {
   expect((await status(page, id)).deleted_at).toBeNull();
 });
 
+// Restore from the Deleted view: the card leaves it, a kept run is still kept, and keyboard focus lands on the filter bar (the card that had
+// it is gone).
 test("Restore on a card in the bin: the card leaves Deleted, a kept run is still kept, focus lands on the filter bar", async ({ page }) => {
   await clearHistory(page);
   const plain = unique("restore me");
@@ -126,6 +141,7 @@ test("Restore on a card in the bin: the card leaves Deleted, a kept run is still
   await expect(card(page, plain)).toHaveCount(0); // not kept
 });
 
+// "Delete forever" asks first (and Cancel changes nothing); then the run and its files are gone for good, and the count drops
 test("Delete forever asks first, and then the run and its files are gone for good", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("for good");
@@ -149,6 +165,8 @@ test("Delete forever asks first, and then the run and its files are gone for goo
   await expect(deletedOption(page)).toHaveText("Deleted 0");
 });
 
+// Empty bin: the question says how many there are on each tab; Cancel changes nothing; confirming deletes everything in the bin on both tabs
+// (and nothing in the history), and the button goes off once the bin is empty.
 test("Empty bin asks how many, then deletes everything in the bin on both tabs and nothing else", async ({ page }) => {
   await clearHistory(page);
   const stays = unique("stays in the history");
@@ -182,6 +200,7 @@ test("Empty bin asks how many, then deletes everything in the bin on both tabs a
   await expect(card(page, stays)).toBeVisible();
 });
 
+// One choice for both tabs, as with Kept: each tab counts its own deleted runs, shows them as in the bin, and the choice is remembered across a reload
 test("Deleted applies to both tabs, each with its own count, and is remembered", async ({ page }) => {
   await clearHistory(page);
   const picture = unique("a deleted picture");
@@ -203,6 +222,7 @@ test("Deleted applies to both tabs, each with its own count, and is remembered",
   await expect(deletedOption(page)).toBeChecked();
 });
 
+// Tracks follow the same rules as pictures: delete, restore, and delete for good, from the Music tab
 test("a deleted track can be restored and deleted for good from the Music tab", async ({ page }) => {
   await clearHistory(page);
   const tune = unique("Genre: ambient. delete this tune");
@@ -219,6 +239,8 @@ test("a deleted track can be restored and deleted for good from the Music tab", 
   expect((await status(page, id)).deleted_at).toBeNull();
 });
 
+// Empty bin works on the WHOLE bin, so it is enabled even when the tab being looked at has nothing deleted (the Images count is 0 while a
+// track is in the bin).
 test("Empty bin is on whenever the bin holds anything on either tab, not only on the tab you are looking at", async ({ page }) => {
   await clearHistory(page);
   const tune = unique("Genre: ambient. only the bin has music");
@@ -233,6 +255,8 @@ test("Empty bin is on whenever the bin holds anything on either tab, not only on
   await expect(toastWith(page, "Emptied the bin: 1 run deleted for good.")).toBeVisible();
 });
 
+// The viewer is read-only for a run in the bin: you can look at it and download it, but Make 4K, Enlarge, Regenerate larger and Edit this (which
+// would change it or make more files) are not offered. The first half checks that a run outside the bin does offer Make 4K.
 test("the viewer on a picture in the bin lets you look and download, and offers nothing that changes it", async ({ page }) => {
   await useOptions(page, { aspect: "custom", customWidth: 1920, customHeight: 1088, steps: 2 }); // a size Make 4K takes
   await clearHistory(page);
@@ -250,6 +274,7 @@ test("the viewer on a picture in the bin lets you look and download, and offers 
   for (const name of [/Make 4K/, /Enlarge/, /Regenerate larger/, /Edit this/]) await expect(viewer(page).getByRole("button", { name })).toHaveCount(0); // ... this one does not
 });
 
+// A run that is only waiting made nothing worth keeping: Delete asks "for good" and does not put it in the bin
 test("a run that is only waiting is deleted for good, not put in the bin", async ({ page }) => {
   await useOptions(page, { steps: 100, numImages: 4 }); // about four seconds, so the next job waits behind it
   await clearHistory(page);
@@ -275,6 +300,7 @@ test("a run that is only waiting is deleted for good, not put in the bin", async
   await expect(card(page, first).locator(".badge").first()).toHaveText("Done", { timeout: 40_000 });
 });
 
+// Two open pages: a delete on one leaves the history on the other at once (and shows in its Deleted count), and a restore brings the run back
 test("another open page follows a delete and a restore live", async ({ page, context }) => {
   await clearHistory(page);
   const prompt = unique("followed live");
@@ -297,6 +323,7 @@ test("another open page follows a delete and a restore live", async ({ page, con
   await expect(deletedOption(page)).toHaveText("Deleted 0");
 });
 
+// A run that is kept and then deleted leaves the Kept view and its count, but is still marked Keep: it comes back kept
 test("a deleted run is not in Kept and is not counted there", async ({ page }) => {
   await clearHistory(page);
   const prompt = unique("kept and deleted");
@@ -314,6 +341,7 @@ test("a deleted run is not in Kept and is not counted there", async ({ page }) =
   await expect(card(page, prompt).locator(".badge-kept")).toBeVisible();
 });
 
+// The empty Deleted view says how long deleted runs stay, with Empty bin off and a way back to All
 test("the empty bin says how long deleted runs stay", async ({ page }) => {
   await clearHistory(page);
   await page.goto("/");
@@ -324,6 +352,7 @@ test("the empty bin says how long deleted runs stay", async ({ page }) => {
   await expect(allOption(page)).toBeChecked();
 });
 
+// On a phone-sized screen (375 px wide) the three-option filter bar with Empty bin, a card in the bin, and the questions must all fit, with no sideways scrolling
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 375, height: 812 } });
 

@@ -233,6 +233,7 @@ test("deleting the run for good removes its 4K copy (in the bin it is still ther
   await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
   await expect(card(page, prompt)).toHaveCount(0);
   expect((await page.request.get(url)).status()).toBe(200); // deleted means in the bin, with its files (DESIGN.md §30)
+  // now delete it for good from the bin: this is when its 4K copy goes too
   await page.locator("[data-filter-bar]:visible").getByRole("radio", { name: /^Deleted/ }).click();
   await card(page, prompt).getByRole("button", { name: "Delete forever" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Delete forever" }).click();

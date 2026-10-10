@@ -380,6 +380,8 @@ describe("the words for the Kept view (DESIGN.md §29.3, §29.4)", () => {
 });
 
 
+// The wording is made by pure functions of the run and of "now", so it is tested with a fixed clock, locale and time zone: a date in the
+// bin's note must not depend on where the tests run.
 describe("the words for the bin (DESIGN.md §30.1, §30.4)", () => {
   const NOW = Date.parse("2026-10-10T12:00:00.000Z");
   const at = (days: number) => new Date(NOW + days * 86_400_000).toISOString();

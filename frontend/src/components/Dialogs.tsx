@@ -165,8 +165,12 @@ export function ConfirmDelete({ run, binDays, onCancel, onConfirm }: { run: Run 
   const music = run?.mode === "music";
   const thing = music ? "track" : "image";
   const n = (music ? run?.tracks.length : run?.images.length) ?? 0;
+  // One dialog, three cases. A finished run, with a bin: Delete moves it to Deleted (nothing is lost yet). A run already in the bin:
+  // "Delete forever". Anything else (a run that is only waiting, or any run when there is no bin): deleted for good, with no way back.
   const inBin = !!run?.deleted_at;
+  // it moves to the bin only if there is a bin, it is not already in it, and it has finished (a run still waiting made nothing worth keeping)
   const toBin = !!run && !inBin && binDays > 0 && run.status !== "queued" && run.status !== "running";
+  // what "for good" means: the pictures or tracks are removed from the Spark, not just hidden
   const gone = n ? `Its ${n === 1 ? `${thing} is` : `${n} ${thing}s are`} removed from the Spark.` : "It is removed from the history.";
   const { props: returnFocus, redirectTo } = useReturnFocus();
   const confirm = () => {
@@ -199,6 +203,7 @@ export function ConfirmDelete({ run, binDays, onCancel, onConfirm }: { run: Run 
 export function ConfirmEmptyBin({ open, images, music, onCancel, onConfirm }: { open: boolean; images: number; music: number; onCancel: () => void; onConfirm: () => void }) {
   const { props: returnFocus } = useReturnFocus();
   const total = images + music;
+  // how many are on each tab, so that the question is concrete
   const parts = [images ? `${images} on Images` : "", music ? `${music} on Music` : ""].filter(Boolean).join(", ");
   return (
     <Dialog.Root open={open} onOpenChange={(next) => !next && onCancel()}>

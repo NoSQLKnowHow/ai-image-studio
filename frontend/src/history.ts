@@ -26,6 +26,8 @@ export const isDefault = (filter: HistoryFilter): boolean => filter.kept === nul
 
 /** A stable name for a filter: the key of its view in the store, and what the browser remembers. */
 export function filterKey(filter: HistoryFilter): string {
+  // The name is made of the parts that are set, joined with +; with none set it is "all". So kept alone is "kept", the bin alone is
+  // "deleted", and (not offered today) kept in the bin is "kept+deleted".
   const kept = filter.kept === null ? "" : filter.kept ? "kept" : "not-kept";
   const deleted = filter.deleted === null ? "any" : filter.deleted ? "deleted" : "";
   return [kept, deleted].filter(Boolean).join("+") || "all";
@@ -39,6 +41,7 @@ export function filterParams(filter: HistoryFilter): Record<string, string> {
 
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
 export function matches(run: Pick<Run, "pinned" | "deleted_at">, filter: HistoryFilter): boolean {
+  // a run is in the bin exactly when it has a `deleted_at`; either field set to null means "either"
   return (filter.kept === null || run.pinned === filter.kept) && (filter.deleted === null || (run.deleted_at !== null) === filter.deleted);
 }
 

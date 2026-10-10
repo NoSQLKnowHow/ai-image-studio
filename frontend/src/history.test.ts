@@ -41,6 +41,8 @@ describe("the shared table of cases", () => {
 // ------------------------------------------------------------------ the filter itself
 describe("a history filter", () => {
   it("is named, and the default is only 'either'", () => {
+    // every filter the page can build, and some it cannot (kept in the bin, either): each must have a name of its own, since each gets its
+    // own view in the store
     const filters: HistoryFilter[] = [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false }, ONLY_DELETED, { kept: true, deleted: true }, { kept: null, deleted: null }];
     expect(filters.map(filterKey)).toEqual(["all", "kept", "not-kept", "deleted", "kept+deleted", "any"]);
     expect(new Set(filters.map(filterKey)).size).toBe(filters.length); // every filter has a name of its own: a view each
@@ -64,6 +66,8 @@ describe("a history filter", () => {
     }
   });
 
+  // The core rule of the bin: no filter shows a binned run unless it asks for the bin (so a run that is kept and then deleted is not in
+  // Kept), and the bin shows only binned runs.
   it("keeps the bin out of every filter that does not ask for it, and the history out of the bin", () => {
     const inBin = makeRun({ pinned: true, deleted_at: "2026-10-02T00:00:00.000Z" });
     const plain = makeRun({ pinned: true });
@@ -83,6 +87,8 @@ describe("a history filter", () => {
   });
 });
 
+// The page decides from the run and the setting whether Delete means "to the bin" or "for good". It is a pure function, so it is tested
+// here without a browser.
 describe("whether Delete moves a run to the bin (DESIGN.md §30.2)", () => {
   const deleted = "2026-10-02T00:00:00.000Z";
 

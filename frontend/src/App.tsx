@@ -458,6 +458,8 @@ export default function App() {
     setPendingDelete(null);
     if (!run) return;
     try {
+      // a finished run goes to the bin: the page keeps the run (it now has `deleted_at`, which takes it out of the list) and the toast offers
+      // Undo. Anything else is deleted for good, and the page drops it.
       if (canBin(run, binDays)) {
         const updated = await api.binRun(run.id);
         dispatch({ type: "runUpsert", run: updated });
@@ -482,6 +484,8 @@ export default function App() {
         push("info", restoredText(updated));
       } catch (error) {
         const err = error as ApiError;
+        // 404: someone deleted it for good meanwhile. 409: it is not in the bin any more (restored elsewhere). Both are said quietly, since
+        // nothing is wrong; anything else is an error.
         push(err.status === 404 || err.status === 409 ? "info" : "error",
           err.status === 404 ? "That run no longer exists." : err.status === 409 ? "That run is not in the bin any more." : `Couldn't restore it: ${err.message}`);
       }
@@ -582,6 +586,7 @@ export default function App() {
   const found = lightbox ? state.runs[lightbox.runId] : undefined;
   const lightboxRun = found && isImageRun(found) ? found : null;
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
+  // the whole bin, both tabs: what Empty bin deletes (the count on the bar is only for the tab being looked at)
   const bin = state.counts ? state.counts.image.deleted + state.counts.music.deleted : null;
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
   const filterBar = (

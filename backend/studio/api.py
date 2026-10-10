@@ -342,6 +342,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.post("/api/runs/{run_id}/bin")
     async def bin_run(run_id: str, request: Request) -> Any:
         """Move a finished run to the bin (DESIGN.md §30.5). `DELETE` still means for good."""
+        # With the bin turned off there is nothing to move a run to: refuse. The page knows (`capabilities.limits.bin_days`) and deletes for
+        # good instead.
         if settings.bin_days <= 0:
             return _error(409, "The bin is turned off (STUDIO_BIN_DAYS=0): a deleted run is deleted for good.", "bin_off")
         try:
@@ -353,6 +355,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _error(409, str(exc), "run_not_finished")
         return jobs_of(request).payload(run_id)
 
+    # Take a run out of the bin: 404 if there is no such run, 409 if it is not in the bin
     @app.post("/api/runs/{run_id}/restore")
     async def restore_run(run_id: str, request: Request) -> Any:
         try:
