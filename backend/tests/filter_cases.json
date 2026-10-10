@@ -1,0 +1,17 @@
+{
+  "about": "The cases both sides of a history filter are tested against (DESIGN.md section 29.5): backend/tests/test_runfilter.py runs them through the server's SQL, frontend/src/history.test.ts through the page's matches(). Runs are listed newest first, as the history shows them; mode is the runs table's mode.",
+  "runs": [
+    {"id": "f", "mode": "generate", "status": "queued", "pinned": true},
+    {"id": "e", "mode": "edit", "status": "running", "pinned": false},
+    {"id": "d", "mode": "music", "status": "done", "pinned": false},
+    {"id": "c", "mode": "music", "status": "done", "pinned": true},
+    {"id": "b", "mode": "generate", "status": "done", "pinned": false},
+    {"id": "a", "mode": "generate", "status": "failed", "pinned": true}
+  ],
+  "cases": [
+    {"name": "no filter shows everything", "filter": {"kept": null}, "expect": ["f", "e", "d", "c", "b", "a"]},
+    {"name": "kept shows the kept runs, whatever their state or kind", "filter": {"kept": true}, "expect": ["f", "c", "a"]},
+    {"name": "not kept shows the rest", "filter": {"kept": false}, "expect": ["e", "d", "b"]}
+  ],
+  "counts": {"image": {"all": 4, "kept": 2}, "music": {"all": 2, "kept": 1}}
+}

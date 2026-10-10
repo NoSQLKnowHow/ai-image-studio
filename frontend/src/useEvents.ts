@@ -49,8 +49,9 @@ export function useEventStream(dispatch: (action: Action) => void, handlers: Han
       });
       source.addEventListener("run.deleted", (e) => dispatch({ type: "runDeleted", id: (parse(e) as { id: string }).id }));
       source.addEventListener("queue.updated", (e) => {
-        const data = parse(e) as { running: string | null; positions: Record<string, number> };
-        dispatch({ type: "queue", running: data.running, positions: data.positions });
+        // `enlarge_waiting` is optional: a server older than 1.12 does not send it
+        const data = parse(e) as { running: string | null; positions: Record<string, number>; enlarge_waiting?: string[] };
+        dispatch({ type: "queue", running: data.running, positions: data.positions, enlargeWaiting: data.enlarge_waiting ?? [] });
       });
       source.addEventListener("worker.state", (e) => dispatch({ type: "worker", worker: parse(e) as WorkerStatus }));
       source.addEventListener("capabilities.updated", () => handlersRef.current.onCapabilitiesChanged());

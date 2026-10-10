@@ -16,7 +16,9 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Iterator, Optional, Sequence
+from typing import Any, Iterator, Mapping, Optional, Sequence
+
+from .runfilter import KINDS, RunFilter
 
 SCHEMA_VERSION = 3  # 3: runs accept mode 'music' and have lyrics; the tracks table (DESIGN.md §26.5)
 log = logging.getLogger("studio.db")
@@ -263,16 +265,38 @@ class Database:
     def get_run(self, run_id: str) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM runs WHERE id=?", (run_id,))
 
-    def list_runs(self, limit: int, before_id: Optional[str] = None) -> tuple[list[sqlite3.Row], bool]:
-        """Newest first. Returns (rows, has_more). Raises KeyError for an unknown cursor."""
+    def list_runs(self, limit: int, before_id: Optional[str] = None, run_filter: Optional[RunFilter] = None) -> tuple[list[sqlite3.Row], bool]:
+        """Newest first, only the runs `run_filter` lets through (DESIGN.md §29.5). Returns (rows, has_more). Raises KeyError for an
+        unknown cursor. The cursor may be a run the filter does not show (one un-kept since the page was loaded): it only says where to start."""
+        # The filter's conditions come first. Each is a fixed SQL fragment with a placeholder; its values are bound, never pasted into the
+        # text, so nothing the page sent can become SQL.
+        clauses, values = (run_filter or RunFilter()).conditions()
+        # Paging: `before_id` is the last run of the page before; this page starts just past it, in `seq` order (the order runs were made)
         if before_id is not None:
             cursor = self._one("SELECT seq FROM runs WHERE id=?", (before_id,))
             if cursor is None:
                 raise KeyError(before_id)
-            rows = self._all("SELECT * FROM runs WHERE seq < ? ORDER BY seq DESC LIMIT ?", (cursor["seq"], limit + 1))
-        else:
-            rows = self._all("SELECT * FROM runs ORDER BY seq DESC LIMIT ?", (limit + 1,))
+            clauses.append("seq < ?")
+            values.append(cursor["seq"])
+        # join the conditions with AND (with none there is no WHERE at all)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        # Ask for one row more than a page holds: if it comes, an older page exists (`has_more`), and the extra row is dropped from this page
+        rows = self._all(f"SELECT * FROM runs{where} ORDER BY seq DESC LIMIT ?", (*values, limit + 1))
         return rows[:limit], len(rows) > limit
+
+    def run_counts(self, counted: Mapping[str, RunFilter]) -> dict[str, dict[str, int]]:
+        """How many runs each tab holds, for each named filter: {kind: {name: n}} (DESIGN.md §29.6)."""
+        counts: dict[str, dict[str, int]] = {}
+        # one count per tab (the run modes the tab shows) and per named filter
+        for kind, modes in KINDS.items():
+            counts[kind] = {}
+            for name, run_filter in counted.items():
+                clauses, values = run_filter.conditions()
+                # restrict the count to the tab's modes: one `?` placeholder for each
+                clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
+                row = self._one(f"SELECT COUNT(*) AS n FROM runs WHERE {' AND '.join(clauses)}", (*values, *modes))
+                counts[kind][name] = row["n"]
+        return counts
 
     def queued_ids(self) -> list[str]:
         return [r["id"] for r in self._all(f"SELECT id FROM runs WHERE status='queued' ORDER BY {self._queue_order}")]

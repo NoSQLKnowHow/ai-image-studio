@@ -15,7 +15,7 @@ from conftest import create_edit, create_run, image_bytes, stage, wait_for
 from PIL import Image
 
 from studio.config import Settings
-from studio.upscaler import Availability, FakeUpscaler, ModelUpscaler, UpscaleFailed, UpscaleTimeout, UpscalerUnavailable
+from studio.upscaler import Availability, FakeUpscaler, ModelUpscaler, UpscaleFailed, UpscaleTimeout, UpscalerBusy, UpscalerUnavailable
 
 WIDE = {"width": 2560, "height": 1440, "steps": 2}  # 1.5x to the frame: one pass
 
@@ -279,6 +279,7 @@ def test_without_the_model_it_is_a_503_with_what_to_do_and_nothing_changes(clien
     (UpscalerUnavailable("PyTorch cannot see a GPU", "Check the GPU."), 503, "upscaler_unavailable", "Check the GPU."),
     (UpscaleTimeout("Enlarging took longer than 30 minutes and was stopped.", "Use the GPU."), 504, "upscale_timeout", "Use the GPU."),
     (UpscaleFailed("Out of memory while enlarging."), 500, "upscale_failed", None),
+    (UpscalerBusy("Not enough memory for the upscaler right now.", "Try again in a moment."), 503, "upscaler_busy", "Try again in a moment."),
 ])
 def test_a_failure_of_the_upscaler_is_answered_with_its_status_reason_and_hint(client, error, status, code, hint):
     use(client, Stub(error=error))
@@ -357,19 +358,6 @@ def test_finding_a_copy_that_exists_sends_no_event(client):
     enlarge(client, run["images"][0], 200)
     assert sub.queue.empty()
     client.app.state.bus.unsubscribe(sub)
-
-
-def test_it_works_while_another_run_is_generating_and_does_not_wait_for_it(client_factory):
-    client = client_factory(fake_step_delay_ms=120)
-    done = wide_run(client)
-    busy = create_run(client, "a long one", steps=40)
-    wait_for(client, busy["id"], frozenset({"running"}))
-    started = time.monotonic()
-    enlarge(client, done["images"][0], 201)
-    assert client.get(f"/api/runs/{busy['id']}").json()["status"] == "running"
-    assert time.monotonic() - started < 4
-    client.post(f"/api/runs/{busy['id']}/cancel")
-    wait_for(client, busy["id"])
 
 
 def test_the_copy_goes_with_its_run_and_keep_does_not_disturb_it(client):

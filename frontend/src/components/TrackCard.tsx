@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { duration, expiryText, timeAgo, canceledText } from "../format";
+import { WORKING_IN_KEPT_NOTE, duration, expiryText, timeAgo, canceledText } from "../format";
 import { musicMeta, musicPhases, musicProgressText, musicTitle, trackLabel } from "../music";
 import type { MusicRun, WorkerState } from "../types";
 import { CopyIcon, DownloadIcon, NoteIcon, PinIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
@@ -8,6 +8,7 @@ interface Props {
   run: MusicRun;
   now: number;
   workerState: WorkerState | null;
+  transient: boolean; // in the Kept view only because it is working (DESIGN.md §29.3)
   onReuse: () => void;
   onRetry: () => void;
   onCancel: () => void;
@@ -63,7 +64,7 @@ function MusicProgress({ run, workerState }: { run: MusicRun; workerState: Worke
   );
 }
 
-export function TrackCard({ run, now, workerState, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
+export function TrackCard({ run, now, workerState, transient, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const label = statusLabel(run);
@@ -123,6 +124,9 @@ export function TrackCard({ run, now, workerState, onReuse, onRetry, onCancel, o
 
         {expiry && <p className="run-expiry">{expiry}. Press <strong>Keep</strong> to save it.</p>}
 
+        {/* in the Kept view only because it is working: say so, so that the card being there is not a surprise */}
+        {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
+
         {run.status === "failed" && run.error && (
           <div className="run-error" role="alert">
             <p>{run.error.message}</p>
@@ -144,13 +148,12 @@ export function TrackCard({ run, now, workerState, onReuse, onRetry, onCancel, o
             <ReuseIcon /> Reuse
           </button>
           <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy description</button>
-          {!active && (
-            <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
-              aria-pressed={run.pinned} onClick={onToggleKeep}
-              title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
-              <PinIcon /> Keep
-            </button>
-          )}
+          {/* Keep is offered on a card that is still working too: it is how a run that is shown only while it works gets kept */}
+          <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
+            aria-pressed={run.pinned} onClick={onToggleKeep}
+            title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
+            <PinIcon /> Keep
+          </button>
           <button type="button" className="button small ghost danger" data-action="delete" onClick={onDelete} disabled={run.status === "running"}
             title={run.status === "running" ? "Can't delete while it's being made" : "Delete this run and its tracks"}>
             <TrashIcon /> Delete

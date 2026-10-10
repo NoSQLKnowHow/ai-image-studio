@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
+import { WORKING_IN_KEPT_NOTE, canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
 import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState } from "../types";
 import { FourKButton } from "./FourKButton";
@@ -12,6 +12,8 @@ interface Props {
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   enlarging: ReadonlySet<string>; // ids of the images being enlarged with the upscaler model (DESIGN.md §28)
+  enlargeWaiting: ReadonlySet<string>; // ids of the images whose Enlarge is waiting for the picture being made (§28.3)
+  transient: boolean; // in the Kept view only because it is working (DESIGN.md §29.3)
   upscaler: UpscalerStatus | null; // whether Enlarge can run here (from the capabilities)
   onReuse: () => void;
   onRegenerateLarger: () => void;
@@ -110,7 +112,7 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, enlargeWaiting, transient, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
@@ -158,6 +160,9 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, u
 
         {expiry && <p className="run-expiry">{expiry}. Press <strong>Keep</strong> to save it.</p>}
 
+        {/* in the Kept view only because it is working: say so, so that the card being there is not a surprise */}
+        {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
+
         {run.status === "failed" && run.error && (
           <div className="run-error" role="alert">
             <p>{run.error.message}</p>
@@ -191,7 +196,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, u
             </a>
           )}
           {run.images.length === 1 && (
-            <FourKButton image={run.images[0]} making={making4k.has(run.images[0].id)} enlarging={enlarging.has(run.images[0].id)}
+            <FourKButton image={run.images[0]} making={making4k.has(run.images[0].id)} enlarging={enlarging.has(run.images[0].id)} waiting={enlargeWaiting.has(run.images[0].id)}
               upscaler={upscaler} className="button small ghost" onMake={() => onMake4K(run.images[0])}
               onEnlarge={() => onEnlarge(run.images[0])} />
           )}
@@ -207,13 +212,12 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, u
             </button>
           )}
           <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy prompt</button>
-          {!active && (
-            <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
-              aria-pressed={run.pinned} onClick={onToggleKeep}
-              title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
-              <PinIcon /> Keep
-            </button>
-          )}
+          {/* Keep is offered on a card that is still working too: it is how a run that is shown only while it works gets kept */}
+          <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
+            aria-pressed={run.pinned} onClick={onToggleKeep}
+            title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
+            <PinIcon /> Keep
+          </button>
           {canEdit && run.status === "done" && run.images.length === 1 && (
             <button type="button" className="button small ghost" data-action="edit-this" onClick={onEditThis}
               title="Add this picture to the images you are editing">

@@ -645,10 +645,10 @@ where** (faces, text, foliage). If `pip install` or the run fails, paste the err
 
 ## 22. Enlarge: the same picture, bigger and sharper (new in 1.11)
 
-Update first: `git pull && docker compose up -d --build`; the title should read **v1.11** (reload with Ctrl+Shift+R). The build log
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.12** (reload with Ctrl+Shift+R). The build log
 has a line `check_image: Enlarge: spandrel 0.4.x`; if it says spandrel cannot be imported, send me that line (everything else still
 works, and Enlarge says why it is off). There is no database change. Enlarge uses **a model file you download once** and a **separate
-short-lived process**, so the image model does not have to be loaded and may be generating.
+short-lived process**, so the image model does not have to be loaded. If it is generating, Enlarge **waits for the picture to finish** and then runs (g): the two do not fit on the GPU together.
 
 **a) The model file.** Before you download anything: generate any 16:9 picture (Options, size **16:9**, 2752×1536). Its card has
 **Make 4K** and **Enlarge**, and Enlarge is **dimmed**. Hover it: the tooltip says the model file is not there and says what to do. Press
@@ -675,8 +675,12 @@ Press it. **Write down the time and how it looks** next to the picture you would
 
 **f) A square.** The default 2048×2048: Enlarge makes **3840×3840** (the model's 4096×4096 is reduced). **Write down the time**, and the memory while it runs (`free -g` in another terminal).
 
-**g) While a picture is being made.** Start a long run (many steps), and press Enlarge on an older picture while it runs. **Good:** it finishes, and the running picture is
-not stopped. **Write down** whether the run slowed down (steps per second in the log) and the lowest available memory.
+**g) While a picture is being made.** (This is the check that failed in the first trial, with *CUDA error: out of memory*.) Start a long run (several pictures, many steps),
+and press Enlarge on an older picture while it runs. Queue a second run behind it. **Good:** the button says **Waiting…** and is dimmed (that is not an error; hover it for why); the running
+picture is not stopped or slowed; **when that run finishes** the button says *Enlarging…* **before the second run starts**, and then the note *Enlarged to 3840×2160…* appears and the second run goes on.
+Open the page in a second browser tab while it waits: its button says *Waiting…* too, and shows Download 4K when it is done. **Write down** how long it waited, how long it then took, and whether the log's
+`ENLARGED …` line says `cuda`. If you get *Not enough memory for the upscaler right now…* instead, something other than the studio is holding the GPU (the LLM server?): send me `nvidia-smi` and `free -g` taken at that moment.
+Also try **Load model** and, while it is loading, Enlarge: it should wait for the load to finish.
 
 **h) When it goes wrong.** (1) Rename the model file, reload: Enlarge is dimmed again, with the reason. (2) Put a file that is not a model in its place (`echo x > ~/.cache/huggingface/upscalers/RealESRGAN_x2plus.pth`):
 pressing Enlarge says the model could not be loaded, naming the file. Restore the real file afterwards. (3) Press Enlarge twice quickly: one request, one copy.
@@ -709,6 +713,30 @@ the model, the settings (`--dtype bf16`, the tile overlap) or the whole idea nee
 
 To update later: `git pull && docker compose up -d --build`.
 
+## 23. The Kept view, and Enlarge waiting its turn (new in 1.12)
+
+Update first: `git pull && docker compose up -d --build` (on the branch or `main` that carries 1.12); the title should read **v1.12** (reload with Ctrl+Shift+R).
+There is no database change. The Enlarge part is §22(g) above; this section is the Kept view, which needs no GPU but is worth looking at with your own history.
+
+**a) The filter bar.** Above your runs: **Show**, **All**, **Kept N**. Press **Keep** on two cards. **Good:** the number beside **Kept** goes up by itself;
+choose **Kept** and only those two cards remain; choose **All** and everything is back; reload with **Kept** chosen and it is still chosen. The arrow keys move between the two options.
+
+**b) Both tabs.** With **Kept** chosen on **Images**, open **Music**: the bar there says **Kept** too, with that tab's own count, and shows only kept tracks.
+
+**c) Older kept runs.** If you have more than twenty runs, keep an old one: in **Kept**, it is found without scrolling through everything (*Load older runs* appears only when
+there are more than twenty kept). Back in **All** it is not shown out of order.
+
+**d) Generating while Kept is chosen.** Press **Generate**. **Good:** your job appears **at the top** with the note *Shown while it works. It stays in this view only if you Keep it.*;
+when it finishes (not kept) it leaves and a toast says *"…" is done. It is not kept, so it is not in this view.* with **Show all**. Do it again and press **Keep** on the working card:
+the note goes away and the card stays when the job is done.
+
+**e) Stopping to keep.** In **Kept**, press **Keep** on a kept card. **Good:** the card goes; a toast says *No longer kept: "…". It will be deleted around <date>, in N days, unless you Keep it again.*
+with **Undo**; **Undo** brings the card back in its place. A run older than your retention (30 days) says it will go *at the next daily clean-up*. With the keyboard, focus lands on the filter bar.
+
+**f) A phone.** The bar fits, and the toast with **Undo** can be pressed.
+
+**Send back:** anything that did not match "Good", and whether the date in (e) matched the date you expected from the run's age.
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -728,3 +756,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 13. From step 20 j) to n) (the Music tab on the Spark): the numbers from (k), (l) and (m), whether the track played and seeked on your phone, and a screenshot of anything on the phone that did not fit.
 14. From step 21 (Make 4K): the seconds and the file size from (a) and for a square in (c), what you thought of the picture in (b), whether the rotation of a phone photo and the refusals in (c3) were right, the time for a 12 MP photo in (c3), whether a running job slowed down in (d), and anything that did not match "Good". From (i), if you ran it: the whole probe output and which of the two 4K files looks better to you, and where.
 15. From step 22 (Enlarge): the `ENLARGED …` log lines (time, device, model), the times and sizes from (b), (d), (e), (f) and (i), your verdict on **where Enlarge looks better or worse than Make 4K** from (c) to (e), the memory and slowdown figures from (f) and (g), and anything that did not match "Good".
+16. From step 23 (the Kept view): anything that did not match "Good", and whether the date in (e) was the date you expected.

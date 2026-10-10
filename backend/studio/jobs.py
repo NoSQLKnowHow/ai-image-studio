@@ -94,7 +94,11 @@ class JobManager:
         self._cancel_requested: set[str] = set()  # running runs the user has asked to stop
         self._making_4k: dict[str, asyncio.Future] = {}  # image id -> the build in progress (DESIGN.md §27.3)
         self._enlarging: dict[str, asyncio.Future] = {}  # image id -> the enlargement in progress (DESIGN.md §28.3)
-        self._enlarge_lock = asyncio.Lock()  # one enlargement at a time: it is the heavy one
+        # One heavy thing at a time on the GPU: a run (from picking it up to its last event) or an enlargement (DESIGN.md §28.3). A
+        # lock hands itself on in the order it was asked, so an enlargement asked for during a run goes next, ahead of the runs
+        # still queued, and a run asked for during an enlargement waits the few seconds it takes.
+        self._gpu_gate = asyncio.Lock()
+        self._enlarge_waiting: list[str] = []  # image ids whose enlargement is waiting for its turn, oldest first
         self.upscaler = make_upscaler(settings)
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
         self._worker_info: Optional[dict[str, Any]] = None
@@ -124,6 +128,12 @@ class JobManager:
 
     async def stop(self) -> None:
         busy = self._current is not None  # read before cancelling: the loop clears it on the way out
+        # First, before the loop is cancelled: the loop gives up the GPU gate on its way out, and an enlargement that is waiting for
+        # it would take its turn and start a process of its own in the middle of a shutdown.
+        for flight in list(self._enlarging.values()):  # an enlargement waiting its turn, or its process
+            flight.cancel()
+            with suppress(asyncio.CancelledError, Exception):
+                await flight
         if self._probe_task is not None:
             self._probe_task.cancel()
             with suppress(asyncio.CancelledError):
@@ -171,7 +181,9 @@ class JobManager:
         return {
             "version": __version__,
             "worker": self.worker_status(),
-            "queue": {"running": self._current, "queued": self.db.count_queued(), "cap": self.settings.queue_cap},
+            # enlarge_waiting: the pictures whose Enlarge is queued behind the run that is going; the page shows "Waiting…" on them
+            "queue": {"running": self._current, "queued": self.db.count_queued(), "cap": self.settings.queue_cap,
+                      "enlarge_waiting": list(self._enlarge_waiting)},
             "memory": self.memory_status(),
         }
 
@@ -444,22 +456,58 @@ class JobManager:
         return payload, first and made
 
     async def _build_enlarged(self, image: sqlite3.Row) -> bool:
-        """Make the Enlarge copy unless it is there. True if it was made now. The plain copy of the same picture, if there is
-        one, is removed: the better copy replaces it."""
+        """Make the Enlarge copy unless it is there. True if it was made now. It waits for its turn on the GPU first (a picture
+        being generated holds nearly all of it: DESIGN.md §28.3). The plain copy of the same picture, if there is one, is removed:
+        the better copy replaces it."""
         try:
             source, target = self.storage.abs(image["path"]), self.storage.enlarged_path(image["path"])
         except StorageError as exc:
             raise ImageNotFound(image["id"]) from exc
-        async with self._enlarge_lock:
+        # Wait for the GPU. From here to the `finally`, this enlargement holds the gate, so no run can start while it works.
+        await self._take_gpu_turn(image["id"])
+        try:
+            # Another request for the same picture may have finished while this one waited: then there is nothing left to do
             if fourk.file_size(target) is not None:
                 return False
             try:
                 await self.upscaler.enlarge(source, target)
             except FileNotFoundError as exc:  # the original is gone: its run was deleted under us
                 raise ImageNotFound(image["id"]) from exc
+        finally:
+            # always give the GPU back, even when the upscaler failed
+            self._gpu_gate.release()
         with suppress(OSError, StorageError):
             self.storage.four_k_path(image["path"]).unlink(missing_ok=True)
         return True
+
+    async def _take_gpu_turn(self, image_id: str) -> None:
+        """Wait until nothing else is using the GPU, and return holding `_gpu_gate` (the caller releases it). Something is using it
+        while a run is going (the loop holds the gate) and while a model is being loaded by the Load button (a worker that is
+        `loading`). Whoever has to wait is announced in `enlarge_waiting`, so the page can say so; one that does not is not."""
+        # True once this request has been announced as waiting: it has to be taken out of `enlarge_waiting` however this ends
+        waiting = False
+        try:
+            while True:
+                # If something is using the GPU, say once that this enlargement is waiting (the page then shows "Waiting…"). If the GPU is free
+                # it starts at once, without a word.
+                if (self._gpu_gate.locked() or self._worker_state["state"] == "loading") and not waiting:
+                    waiting = True
+                    self._enlarge_waiting.append(image_id)
+                    self._publish_queue()
+                # Queue for the gate. A lock hands itself on in the order it was asked, so an enlargement asked for during a run goes next, ahead
+                # of the runs still queued.
+                await self._gpu_gate.acquire()
+                # Got the gate. But a model that is still loading (the Load button) is using the GPU without holding it: if so, give the gate
+                # back and look again in a moment.
+                if self._worker_state["state"] != "loading":
+                    return
+                self._gpu_gate.release()  # a model is loading: let the loop go on, and look again in a moment
+                await asyncio.sleep(0.5)
+        finally:
+            # however this ended (done, or cancelled by a shutdown), the request is no longer waiting
+            if waiting:
+                self._enlarge_waiting.remove(image_id)
+                self._publish_queue()
 
     async def delete(self, run_id: str) -> None:
         result = self.db.delete_run(run_id)
@@ -528,7 +576,8 @@ class JobManager:
                     await self._wait_while_idle()
                 continue
             try:
-                await self._execute(row)
+                async with self._gpu_gate:  # not while an enlargement is using the GPU
+                    await self._execute(row)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -897,6 +946,7 @@ class JobManager:
             "running": self._current,
             "positions": self.queue_positions(),
             "cap": self.settings.queue_cap,
+            "enlarge_waiting": list(self._enlarge_waiting),  # enlargements waiting for the picture that is being made
         })
 
     def _set_worker_state(self, state: str, detail: Optional[str] = None, hint: Optional[str] = None) -> None:

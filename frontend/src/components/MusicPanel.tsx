@@ -20,6 +20,10 @@ interface Props {
   store: KeyValueStore;
   runs: MusicRun[]; // newest first
   runsReady: boolean;
+  filterBar: ReactNode; // the filter bar, shared with the Images tab (DESIGN.md §29)
+  loadProblem: ReactNode | null; // shown in place of "Loading…" when the filtered list could not be loaded
+  empty: ReactNode; // what the list says when there is nothing to show for the filter, or that it is still looking
+  isTransient: (run: MusicRun) => boolean; // in the Kept view only because it is working (§29.3)
   more: boolean; // older runs can be loaded
   loadingOlder: boolean;
   now: number;
@@ -72,7 +76,7 @@ const LABELS: Record<FieldName, { label: string; placeholder: string; hint?: str
 };
 
 /** The Music tab (DESIGN.md §26): the form that builds the description, and the tracks made so far. */
-export function MusicPanel({ hidden, caps, status, store, runs, runsReady, more, loadingOlder, now, push, onRun, onLoadOlder, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
+export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, more, loadingOlder, now, push, onRun, onLoadOlder, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
   const ids = useId();
   const idOf = (name: string) => `${ids}-${name}`;
   const root = useRef<HTMLDivElement>(null);
@@ -330,17 +334,15 @@ export function MusicPanel({ hidden, caps, status, store, runs, runsReady, more,
     <div className="tab-panel" role="tabpanel" id={panelId("music")} aria-labelledby={tabId("music")} hidden={hidden} ref={root}>
       {body}
       {caps.modes.includes("music") && <QueueBar status={status} />}
+      {filterBar}
       <section className="timeline" aria-label="Your tracks">
         {!runsReady ? (
-          <p className="loading" role="status">Loading your tracks…</p>
+          loadProblem ?? <p className="loading" role="status">Loading your tracks…</p>
         ) : runs.length === 0 ? (
-          <div className="empty-state">
-            <p className="empty-title">No music yet</p>
-            <p>Describe the music above and press Make music. Every track lands here with its description and settings.</p>
-          </div>
+          empty
         ) : (
           runs.map((run) => (
-            <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null}
+            <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)}
               onReuse={() => reuse(run)} onRetry={() => void retry(run)} onCancel={() => onCancel(run)}
               onToggleKeep={() => onToggleKeep(run)} onDelete={() => onDelete(run)} onCopy={() => onCopy(run)} />
           ))

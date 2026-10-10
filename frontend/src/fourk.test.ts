@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   enlargeControl, enlargeFailedText, enlargeTitle, enlargedText, filenameFromDisposition, fourKControl, fourKFailedText, fourKMadeText,
-  makeTitle, megabytes, saveBlob, upscaleFailedText, upscaledText,
+  makeTitle, megabytes, saveBlob, upscaleFailedText, upscaledText, WAITING_TITLE,
 } from "./fourk";
 import { initialState, reducer } from "./store";
 import { makeRun } from "./testdata";
@@ -147,6 +147,26 @@ describe("a picture from the computer (DESIGN.md §27.9)", () => {
 });
 
 describe("Enlarge (DESIGN.md §28)", () => {
+  // Waiting… (DESIGN.md §28.9): the Enlarge control while the server has this picture's enlargement queued behind the picture being made
+  it("Waiting… when the server has it queued behind the picture being made, and the title says nothing has to be done", () => {
+    expect(enlargeControl(image(), true, READY, true)).toEqual({ kind: "waiting", label: "Waiting…", title: WAITING_TITLE });
+    expect(WAITING_TITLE).toMatch(/starts by itself/);
+  });
+
+  it("Waiting… for a request another page made: the server's word is enough, this page need not have asked", () => {
+    expect(enlargeControl(image(), false, READY, true)?.kind).toBe("waiting");
+  });
+
+  it("waiting is the server's word only while there is something to wait for: no Enlarge, no Waiting…", () => {
+    expect(enlargeControl(image({ can_enlarge: false, enlarge_size: null }), true, READY, true)).toBeNull();
+    expect(enlargeControl(image({ four_k: MODEL_COPY }), true, READY, true)).toBeNull();
+  });
+
+  it("when its turn comes it becomes Enlarging…, and not waiting is the default", () => {
+    expect(enlargeControl(image(), true, READY, false)?.kind).toBe("enlarging");
+    expect(enlargeControl(image(), true, READY)?.kind).toBe("enlarging");
+  });
+
   it("is offered beside Make 4K when the server offers it and the model is there, with a tooltip that says what it will make", () => {
     expect(enlargeControl(image(), false, READY)).toEqual({ kind: "enlarge", label: "Enlarge", title: enlargeTitle(ENLARGE) });
     expect(fourKControl(image(), false)?.kind).toBe("make"); // and Make 4K is still there

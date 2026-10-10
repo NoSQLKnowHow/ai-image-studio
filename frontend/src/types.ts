@@ -183,7 +183,7 @@ export interface WorkerStatus {
 export interface Status {
   version: string;
   worker: WorkerStatus;
-  queue: { running: string | null; queued: number; cap: number };
+  queue: { running: string | null; queued: number; cap: number; enlarge_waiting: string[] }; // enlarge_waiting: images whose Enlarge is waiting for the GPU (DESIGN.md §28.3)
   memory: { total_gb?: number; available_gb?: number; min_free_gb: number | null; music_min_free_gb: number | null; worker_rss_gb: number | null };
 }
 

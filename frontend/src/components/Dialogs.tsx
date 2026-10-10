@@ -15,13 +15,14 @@ export interface ViewerNotice {
   text: string;
 }
 
-export function Lightbox({ run, index, notice, canEdit, making4k, enlarging, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onClose }: {
+export function Lightbox({ run, index, notice, canEdit, making4k, enlarging, enlargeWaiting, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onClose }: {
   run: ImageRun | null;
   index: number;
   notice: ViewerNotice | null;
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   enlarging: ReadonlySet<string>; // ids of the images being enlarged with the upscaler model (DESIGN.md §28)
+  enlargeWaiting: ReadonlySet<string>; // ids of the images whose Enlarge is waiting for the picture being made (§28.3)
   upscaler: UpscalerStatus | null; // whether Enlarge can run here (from the capabilities)
   onIndex: (index: number) => void;
   onRegenerateLarger: (image: ImageInfo) => void;
@@ -77,7 +78,7 @@ export function Lightbox({ run, index, notice, canEdit, making4k, enlarging, ups
                   )}
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
                   {shown && (
-                    <FourKButton image={shown} making={making4k.has(shown.id)} enlarging={enlarging.has(shown.id)} upscaler={upscaler}
+                    <FourKButton image={shown} making={making4k.has(shown.id)} enlarging={enlarging.has(shown.id)} waiting={enlargeWaiting.has(shown.id)} upscaler={upscaler}
                       className="button small" onMake={() => onMake4K(shown)} onEnlarge={() => onEnlarge(shown)} />
                   )}
                   {result?.thumb_url && (

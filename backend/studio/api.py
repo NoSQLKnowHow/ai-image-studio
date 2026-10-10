@@ -26,6 +26,7 @@ from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import ImageNotFound, InputStorageError, JobManager, ModelRefused, QueueFull, RunConflict, RunNotFound
 from .naming import content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename
+from .runfilter import COUNTED, RunFilter
 from .runspec import RunCreate, RunRequestError, resolve_run
 from .security import SecurityMiddleware
 from .serialize import parse_ts, utcnow
@@ -153,9 +154,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def jobs_of(request: Request) -> JobManager:
         return request.app.state.jobs
 
-    def runs_page(request: Request, limit: int, before: Optional[str] = None) -> dict[str, Any]:
-        """One page of runs, newest first. Raises KeyError for an unknown `before` cursor."""
-        rows, has_more = request.app.state.db.list_runs(limit, before)
+    def runs_page(request: Request, limit: int, before: Optional[str] = None, run_filter: Optional[RunFilter] = None) -> dict[str, Any]:
+        """One page of runs, newest first, those `run_filter` lets through. Raises KeyError for an unknown `before` cursor."""
+        rows, has_more = request.app.state.db.list_runs(limit, before, run_filter)
         runs = jobs_of(request).payloads(rows)
         return {"runs": runs, "next_before": runs[-1]["id"] if has_more and runs else None}
 
@@ -287,11 +288,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         request: Request,
         limit: int = Query(20, ge=1, le=100),
         before: Optional[str] = Query(None),
+        kept: Optional[bool] = Query(None, description="true: only kept runs; false: only runs that are not kept; absent: either"),
     ) -> Any:
         try:
-            return runs_page(request, limit, before)
+            return runs_page(request, limit, before, RunFilter(kept=kept))
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
+
+    @app.get("/api/runs/counts")
+    async def run_counts(request: Request) -> Any:
+        """How many runs each tab holds and how many are kept (DESIGN.md §29.6). Declared before `/api/runs/{run_id}`, which would take it."""
+        return request.app.state.db.run_counts(COUNTED)
 
     @app.get("/api/runs/{run_id}")
     async def get_run(run_id: str, request: Request) -> Any:

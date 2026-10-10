@@ -66,3 +66,42 @@ export function seedText(run: ImageRun): string {
   const n = run.options.num_images;
   return n > 1 ? `seeds ${first}–${first + n - 1}` : `seed ${first}`;
 }
+
+// A prompt cut to one line of at most `max` characters, for a toast
+function shorten(text: string, max = 48): string {
+  const flat = text.trim().replace(/\s+/g, " ");
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/** The toast after Keep was pressed on a kept run in the Kept view (DESIGN.md §29.4): what happened and when the run will be deleted.
+ *  The date is the card's own (`expires_at`: its age plus the retention), and "around" because the clean-up runs once a day. */
+export function unkeptText(
+  run: { prompt: string; expires_at: string | null },
+  now: number = Date.now(),
+  format: { locale?: string; timeZone?: string } = {},
+): string {
+  // The toast has three parts: what happened (`lead`), how to undo it (`again`), and when the run will be deleted (chosen below)
+  const lead = `No longer kept: “${shorten(run.prompt)}”.`;
+  const again = "unless you Keep it again";
+  // the time left until the run's expiry date (its age plus the retention); NaN when it has none
+  const left = run.expires_at ? Date.parse(run.expires_at) - now : Number.NaN;
+  // no usable date (the retention may be off): say only that it will be deleted when it is old enough
+  if (!Number.isFinite(left)) return `${lead} It will be deleted when it is old enough, ${again}.`;
+  // already past its time: the daily clean-up takes it next
+  if (left <= 0) return `${lead} It is past its time, so it will be deleted at the next daily clean-up, ${again}.`;
+  // less than a day left: a date would mislead, since the clean-up runs once a day
+  if (left < DAY_MS) return `${lead} It will be deleted within a day, ${again}.`;
+  // more than a day left: say the date, and the number of whole days to it
+  const days = Math.floor(left / DAY_MS);
+  const date = new Date(run.expires_at as string).toLocaleDateString(format.locale, { day: "numeric", month: "short", timeZone: format.timeZone });
+  return `${lead} It will be deleted around ${date}, in ${days} ${days === 1 ? "day" : "days"}, ${again}.`;
+}
+
+/** The toast when a run that was shown in the Kept view only while it worked has finished without being kept (§29.3). */
+export function leftTheViewText(run: { prompt: string; status: string }): string {
+  const what = run.status === "done" ? "is done" : run.status === "failed" ? "failed" : "was canceled";
+  return `“${shorten(run.prompt)}” ${what}. It is not kept, so it is not in this view.`;
+}
+
+/** The note on a card that is in the Kept view only because it is working (§29.3). */
+export const WORKING_IN_KEPT_NOTE = "Shown while it works. It stays in this view only if you Keep it.";
