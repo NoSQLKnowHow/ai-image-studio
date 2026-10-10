@@ -26,6 +26,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.11 | **Enlarge**: the same picture, bigger and sharper. A button beside Make 4K on every picture the studio holds (results and an edit's source images) enlarges it to the 4K frame with an upscaler model (Real-ESRGAN x2plus, one or two ×2 passes, then one resize to the exact size), up to a 4× enlargement; the copy replaces a Make 4K copy and the original stays. Needs the model file, which you download; says why when it is missing | §28 | (this PR) | §22 of `SPARK_TEST.md` not yet reported back; **the upscaler has never run on the Spark, so how it looks and how long it takes are unknown** |
 | 1.12 | **The Kept view**: a filter bar above the history (All \| Kept, with the count of kept runs) that applies to both tabs and is remembered; a running job stays visible at the top of the Kept view; un-keeping there removes the card with a toast that says when it will be deleted, and Undo; the server filters the pages, and the filter shape is built to take more filters. **Also: Enlarge waits for a picture that is being made** instead of failing with an out-of-memory error | §29, §28.9 | (this PR) | §22(g) of `SPARK_TEST.md` is the check for the Enlarge fix; the Kept view needs no Spark |
 | 1.13 | **The bin**: a **Deleted** option in the filter bar; Delete (and the daily expiry) moves a run to the bin for 30 days; **Restore**, **Delete forever** and **Empty bin** | §30 | (this PR) | The bin needs no Spark; `SPARK_TEST.md` §24 is the short check |
+| 1.14 | **Vector** (proposed, not built): an SVG from a prompt in N colours, one layer per colour, for a laser | §31 | — | Needs your answers to §31.7 first; the Spark would run a laser test sheet and a model probe (§31.9) |
 
 **Tests today (1.13):** backend 1009 (pytest; 65 more run only where `torch` is installed: 28 for the real music pipeline, which also needs `diffusers` 0.40.0, 17 for the upscaler probe's tiling, and 20 for Enlarge's real loading path, which also need `spandrel`), front end 369 (Vitest) and 171 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
@@ -117,6 +118,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 46 | Enlarge: the same picture, bigger and sharper (1.11) | You asked why **Regenerate larger** gives another picture, said you want **the same picture, faithful, with extra sharpness** (Qwen redrawing fine detail would be nice as well), and asked for an **Enlarge** button that takes a picture to 4K. **Enlarge** uses an **upscaler model** (Real-ESRGAN x2plus, which keeps the composition because it is not generating anything new), once or twice, then one resize to exactly the 4K frame (the same frame and trim rule as Make 4K), up to a 4× enlargement. It sits **beside Make 4K** on every picture the studio holds; the copy **replaces** a Make 4K copy (one 4K copy per picture). It runs in a short-lived process on the GPU, not in the image worker; the model file is **yours to download** (the studio never fetches it). **Qwen redrawing** is **not built**: how to try it is in §28.5 (decision #47, proposed) (§28) | DECIDED (your request and your answer: faithful first, redrawing as a nice extra); details PROPOSED; built in 1.11; **amended in 1.12** after your Spark trial (it waits for a picture that is being made, §28.9) |
 | 48 | A Kept view, and filters that more can join (1.12) | You asked for the history to be filtered to **only the runs you have kept**, and answered the questions: with Kept chosen, **Generate stays in Kept and the running job stays visible at the top** until it finishes (then it leaves unless you kept it); **un-keeping in the Kept view removes the card with a toast and Undo, and the toast says when it will be deleted**; the choice applies to **both tabs**; and the design must let **other filters join later**. A **filter bar** (All \| Kept, with the count of kept runs on the tab) above the history; the server filters (`GET /api/runs?kept=`) because the history comes in pages of twenty; one filter shape on the server, the page and the store so the next filter is a short change (§29). A recoverable delete (*Deleted* view) is a release of its own, **1.13, and needs your answers** (§29.9) | DECIDED (your four answers); details PROPOSED; built in 1.12 |
 | 49 | The bin: a Deleted view that holds a deleted run for 30 days (1.13) | You asked that a deleted run be recoverable, and answered: **it stays in the Deleted view for 30 days before it is really deleted, and there should be an option to empty the garbage bin.** A **Deleted** option beside All and Kept in the filter bar; **Delete** moves a finished run to the bin (with a toast and Undo); the daily clean-up moves expired runs there too; after 30 days (`STUDIO_BIN_DAYS`) they go for good; **Restore** puts a run back as it was, with a fresh clock if it is un-kept; **Delete forever** and **Empty bin** ask first. The other questions of §29.9 are my defaults, listed in §30.6 for you to veto (§30) | DECIDED (your 30 days and your Empty bin); the rest PROPOSED; built in 1.13 |
+| 50 | Vector: an SVG made from a prompt, in a number of colours, one layer per colour, for a laser (1.14, **proposed**) | You asked for an SVG instead of a PNG from a prompt, to say **how many colours** it has (*black and white is 2; black, white, red and green is 4*), to have **layers**, and for each layer to be **cut on your xTool P2 or engraved with your Gweike G3 Ultra**; and for **the best open-source model**. Proposed: a **Vector** tab; the artwork is made by a model and a **clean-up I write and test guarantees** at most N exact colours, closed shapes, one layer per colour, no doubled edges and a real size in millimetres. **Engine A, draw and trace** (Qwen-Image makes a flat picture, code reduces and traces it) first; **Engine B, a native SVG model** (OmniSVG 1.1 is the candidate) only if a probe on the Spark shows it is better. I cannot name "the best" model from here: §31.2 says what is verified and what is not, and §31.9 is the probe that decides. **Eleven questions for you in §31.7** (§31) | PROPOSED; nothing built |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -1602,3 +1604,139 @@ Built to §30.1–§30.5: **schema 4** (`runs.deleted_at`, `restored_at`) with i
 - **Found while building:** the test helper that clears the history listed only the history, so deleted runs of one browser test leaked into the next (it now empties the bin too); and **three existing tests assumed Delete removes the files at once**, which is no longer true while a run is in the bin: they now check that the files are there in the bin and gone after *Delete forever*. One `ResourceWarning` appeared once in a full backend run; I could not reproduce it in the files this release touches.
 - **Not checked:** the first start on the Spark's **real** database (the migration is tested on constructed 1.7 and 1.12 databases and the first start makes a copy; `SPARK_TEST.md` §24 starts with checking it); how the bin behaves with thousands of runs or many 4K copies (emptying it deletes in batches inside the request, so a very large bin takes a while); the daily clean-up on a real clock (tested by ageing runs in the database); any browser but Chromium.
 - **Known limits:** the first start of 1.13 moves every un-kept run older than 30 days to the bin at once (they were due for deletion; they now wait 30 days), and the disk is only freed when they are purged or the bin is emptied; the Deleted view is ordered by when a run was *made*, not when it was deleted (§30.6 item 7); the Undo toast belongs to the page that deleted the run.
+
+---
+
+## 31. Version 1.14 (proposed, nothing built): Vector, an SVG made from a prompt, in a number of colours you choose, one layer per colour, for a laser (decision #50 PROPOSED; this section is the specification, and it ends with the questions I need you to answer before I build anything)
+
+You asked for three things, in three messages:
+
+1. *"I want to be able to produce a vector image in SVG format from a prompt. So instead of a rasterized PNG, it would instead produce a vector SVG."*
+2. *"One of the things I want to be able to do is to say how many colors are in the vector image. Black and white is 2, but black, white, red, and green, are 4 colors. I also need to support layers."*
+3. *"Ultimately, what I want to be able to do is to have each layer cut out on a laser cutter like my xTool P2 or engraved with my fiber laser, a Weike G3 Ultra."*
+
+And you asked which model would make the pictures, and that it be **the best open-source model for this**. §31.2 answers that as honestly as I can from here.
+
+### 31.1 What this changes about the design
+
+The third message changes what "an SVG" has to be. A picture that merely *looks* like a vector drawing is not enough for a laser. A laser follows paths, one operation at a time, so the file has to be **flat colour regions, exactly the number of colours you asked for, closed shapes, one layer for each colour, no overlaps that would be cut twice, and a real size in millimetres**. Those are properties of the *file*, and a model cannot be trusted to promise them; **the studio can guarantee them with its own code**, after the model has made the picture. So the design is: *a model makes the artwork, and a clean-up step that I write and test makes it laser-ready.* The clean-up is the part I can test completely without a GPU.
+
+What I checked about your machines (the sources are in §31.11), and what I could not:
+
+- **xTool P2** is a 55W CO₂ laser cutter with a bed of 23.6" × 12.1" (about 600 × 307 mm). Its software is **xTool Creative Space** (which also works with **LightBurn**). Listings for the P2 and its successor the P2S say it takes **SVG, DXF, PNG, JPG and BMP**. *Not confirmed:* how Creative Space treats the layers or colours of an SVG, and whether the P2 (not the P2S) takes exactly that list.
+- **Gweike G3 Ultra** pairs a **60W MOPA fibre laser** (adjustable pulse width and frequency, which is what lets a fibre laser colour or deeply engrave metal) with a **40W diode laser** for non-metals; it has a camera for positioning. Gweike publishes a **LightBurn control guide** for the G3. *Not confirmed:* its working area, and which software you use with it.
+
+### 31.2 Which model? The honest answer
+
+**I cannot name "the best open-source model" from here, and I do not want to guess.** No independent benchmark compares open text-to-SVG models on laser-style work, and the rankings I found online are third-party aggregations I could not verify. What I did verify, from the models' own pages:
+
+| Candidate | What it is | What is established | The catch |
+|---|---|---|---|
+| **Qwen-Image, then trace** | The studio's own model draws a flat picture; code reduces it to N colours and traces each colour into closed paths | The model is already installed and running; tracing tools exist (VTracer is MIT-licensed, potrace is GPL) | Tracing flat art works well; photographs make huge, blobby files. Not confirmed: that VTracer installs on the Spark's aarch64 (its README does not say which wheels exist). |
+| **OmniSVG 1.1** (4B and 8B) | A model built to write SVG from text or from an image, fine-tuned from Qwen2.5-VL | Text-to-SVG supported; its card says "from simple icons to intricate anime characters"; code **Apache-2.0**, the model's metadata lists apache-2.0; **16 GB** of GPU memory for the 4B; 7.6 GB download; 4 s for 256 tokens up to 83 s for 4096 | The training dataset (MMSVG) is **CC BY-NC-SA 4.0**, non-commercial; whether that reaches the weights is a licence question to read for yourself. Tested on PyTorch 2.3 / CUDA 12.1 and needs the Cairo library: whether it runs on the Spark's PyTorch and GB10 is unknown. Its SVG has overlapping shapes, gradients and strokes, which need the clean-up. |
+| **StarVector** (1B and 8B) | An SVG generator built on a code model | Apache-2.0; excels at *icons, logos, technical diagrams, graphs and charts* | Its README says it "will not work for natural images or illustrations", and shows no text-only inference example (only image-to-SVG). Not a first choice. |
+| **A general LLM writing SVG code** | Whatever LLM you serve (your Hermes vLLM server offers an OpenAI-compatible API) | Nothing needs loading in the studio | Entirely as good as the LLM you run, and I do not know which that is. Fine for icons and geometry, weak for detailed illustration. |
+| **Qwen-Image-Layered** | A Qwen model that splits a picture into RGBA layers | It exists and is open | Its layers are *raster*, split by object, not by colour, and not SVG. Only useful if "layer" means "object" to you (question 1). |
+
+**My recommendation, for laser work, is two engines that share one clean-up:**
+
+- **Engine A, "Draw and trace" (first, the default):** Qwen-Image draws the artwork in a flat style the studio prescribes; the clean-up reduces it to your N colours and traces it. **Why first:** it needs no new model, no new weights, no model switching (it uses the image worker you already have), Qwen-Image is the strongest picture-maker the studio has, and *the colour count, the closed shapes and the layers come from my code, not from the model's goodwill.*
+- **Engine B, "Write the SVG" (second, only after a probe on the Spark):** OmniSVG 1.1 (4B first; the 8B if it is better), its output passed through the same clean-up. It would be a third model kind next to the image and music models (decision #41: one model in memory at a time). **Why second:** it is a new model with its own dependencies (a Cairo library, a PyTorch version that may not match NVIDIA's), and its strength, a clean *editable* path structure, is not what a laser needs most.
+
+**What decides between them is a probe, not my opinion** (§31.9): the same prompts through each engine on the Spark, with the time, the memory, the file and what the result looks like at 2 and 4 colours. You choose by looking at the pictures. Until it has run, "Engine A first" is a design judgement, not a measurement.
+
+### 31.3 What you choose (the Vector form)
+
+A third tab, **Vector**, beside Images and Music, with:
+
+- **Prompt**, and *what the studio adds to it*, shown in full and editable (as the Music tab shows its description): the flat-design wording, the colours, "no gradients, no shading, thick clean outlines, plain background". A fixed negative prompt keeps out gradients, photographs, text and thin lines.
+- **Kind of artwork:** *Silhouette or stencil* (shape against nothing), *Flat colour art*, *Line art* (outlines only). The kind changes the wording the studio adds and the defaults below.
+- **Colours: 2 to 8** (default 2). **The number is a limit the clean-up enforces:** the result has *at most* N colours, and the page says how many it has (a design that really uses 3 when you asked for 4 has 3; an empty layer is dropped, and the page says so). **You can say which colours** (black, white, red, green… as swatches, or any colour) or let the picture decide.
+- **Does the background count?** *Open question 2.* My default: the background is **nothing** (no layer, nothing to cut), and *Colours* counts only the colours that are drawn, so *black and white is 2* means black shapes and white shapes.
+- **Size in millimetres** (width × height, default 100 × 100), with a **machine preset** for each of your two machines once you tell me their working areas. The SVG is made at that real size.
+- **Layers:** one layer for each colour (my default; *open question 1*), in two arrangements (*open question 4*):
+  - **Side by side:** each layer holds only its own colour's regions; the layers do not overlap. For inlay and for engraving.
+  - **Stacked:** each layer also holds everything above it, so that pieces cut from separate sheets can be glued up with no gaps, with a small **bleed** (default 0.5 mm) so edges overlap rather than meet.
+- **Made for:** *Cut* (each shape as an outline for the laser to follow), *Engrave* (each shape filled), or both as separate layers (*open question 3*).
+- **Smallest feature, in mm** (default 0.5): anything smaller than this, a speck or a gap or a bridge, is removed or flagged, because it will not survive being cut. Your real limit depends on the material and the laser (*open question 5*).
+- **Versions** (1 to 4 pictures from the same prompt) and **seed**, as the Images tab has.
+
+### 31.4 What it makes
+
+- **An SVG at real size**: `width="100mm" height="100mm"`, a `viewBox` in millimetres (a file with no units is read differently by different programs, 96 or 72 dots to the inch, which would make a laser cut the wrong size), **one `<g>` per layer** with an id, a name and the layer's colour as its fill so that it looks right on screen. **Every layer's colour is distinct and exact**, because that is how laser software (LightBurn certainly) assigns a cut or engrave setting to a layer.
+- **Only what a laser can use:** closed paths, holes as sub-paths, no gradients, no transparency, no filters, no text (text becomes outlines), no embedded pictures, no scripts, no links to anything outside the file, paths simplified to a tolerance, **no shared edge drawn twice** (a laser would cut it twice and burn it), and no stray specks.
+- **Per-layer files** in a ZIP (`layer-1-black.svg`, `layer-2-red.svg`…), each at the same size and origin so they register when stacked, **the combined SVG**, and **a PNG at any size you choose** (sharp at 4K from the vector, which is the one thing a raster picture cannot do).
+- **A check, shown on the card:** the number of colours, paths per layer, the smallest feature found, the total cut length per layer (a rough idea of the time), and anything that was removed or that needs a look.
+- **Copy SVG code** and **Download SVG**, as the other tabs have **Keep**, **Reuse** and **Delete** (with the bin of §30). Vector runs join the history filters of §29 (`vector` is a third kind beside *image* and *music*) and the counts.
+
+### 31.5 How it is made
+
+**Engine A, draw and trace** (all of it, apart from the picture, runs on the CPU and is testable without a GPU):
+
+1. The studio builds the prompt (§31.3) and the image worker makes the picture (`mode: "vector"` is an image run with a different recipe; no model is loaded or unloaded).
+2. **Reduce to N colours:** cluster the picture's colours (in a perceptual colour space) to exactly the colours chosen, or to the palette you named; remove the soft fringes at edges; remove regions smaller than the smallest feature.
+3. **Trace** each colour's regions into closed curves (VTracer or potrace; *which* is decided by the probe).
+4. **Clean up for the laser:** simplify the paths; merge, split or offset them to the arrangement (side by side or stacked, with bleed); remove duplicate edges; optionally offset by half the kerf; flag what is smaller than the smallest feature or is a hanging island (the centre of an *O* falls out of a stencil unless it is bridged).
+5. Write the SVG and the per-layer files in millimetres, draw the preview, and keep the check's numbers.
+
+**Engine B, write the SVG** (after the probe): the model's SVG is read by a strict parser (no external entities), **reduced to the allowed elements and attributes**, its colours clustered to N, gradients made solid, strokes made into outlines, overlapping shapes united per colour by a geometry library, and then steps 4 and 5 above. The page offers the engine as a choice only if the probe shows it is worth having.
+
+**Where the work happens:** Engine A's picture is made by the image worker; the rest is a short-lived process of its own, like Enlarge's (§28.3), so a crash cannot take a loaded model down.
+
+### 31.6 What it needs
+
+- **A tracer** (`vtracer`, a Rust extension on PyPI, MIT; or `potrace`, GPL, as a separate program) and **a geometry library** for the clean-up (for example `shapely`, BSD; a polygon-offsetting library for the kerf), in the container. *Not confirmed:* that they install on aarch64 inside NVIDIA's image; the build prints a note, as for `spandrel`, rather than failing, and the probe says.
+- **A schema change** (schema 5): `runs.mode` gains `'vector'`, which SQLite cannot alter in place, so the table is rebuilt as in schema 3, with a copy of the database made first and a migration test from a 1.13 database.
+- **Files:** `data/vector/<run>/<n>.svg`, `<n>-layers.zip`, `<n>.png` (the preview); all go with the run, into the bin and out of it.
+- **Safety:** an SVG is served as `image/svg+xml` with a `Content-Security-Policy` that forbids scripts and everything else, `X-Content-Type-Options: nosniff`, and the page shows it only in an `<img>`, where scripts never run. The studio makes the SVG itself, but Engine B's output comes from a model, so it is cleaned to an allow-list before it is stored.
+
+### 31.7 What I need from you (open questions, with the default I would take)
+
+1. **What does "layer" mean to you?** (a) One layer per **colour** (my default, and what a colour count suggests); (b) layers by **object** (background, middle, foreground), whatever their colours; (c) both.
+2. **White and the background:** is white a colour of its own (white material, white paint), or just empty space? Is the background a layer? (Default: the background is nothing; *black and white is 2* means both are drawn.)
+3. **Cut or engrave, for each machine?** (My guess: the P2 *cuts* each layer, perhaps from a different material or colour of sheet; the G3 Ultra *engraves* each layer, perhaps with different settings for each colour on metal, or cuts thin metal. Please correct me.)
+4. **Stacked or side by side?** Do you glue the cut pieces up in layers, or fit them together like an inlay, or only engrave?
+5. **Sizes and limits:** the typical size of your work in mm; the thinnest bridge or gap each machine and material can hold; the kerf if you compensate for it.
+6. **Software:** do you use *xTool Creative Space* for the P2, and *LightBurn* or something else for the G3 Ultra? **Are you willing to open a small test file in each** (§31.9, step 1) and tell me what you see? How each program reads layers and colours in an SVG is something I cannot find out from here, and it decides how the layers are named and coloured.
+7. **Other formats:** do you also want **DXF** (many laser programs take it) or PDF?
+8. **Engine:** are you content with *draw and trace* first, and a native SVG model only if the probe shows it is better? Or do you want the native SVG model first?
+9. **Where it lives:** a third tab, **Vector**, beside Images and Music?
+10. **Which LLM does your Hermes vLLM server run?** It decides whether an LLM-writes-the-SVG route is worth including.
+11. **Licence:** is any of this for sale? OmniSVG's dataset licence is non-commercial, which matters if Engine B is ever used for goods you sell.
+
+### 31.8 Acceptance criteria (proposed; they continue §30.7)
+
+135. A **Vector** tab makes an SVG from a prompt; the SVG is the result, not a PNG. (1.14)
+136. **Colours (2 to 8)** is enforced by the studio, not requested of the model: the SVG has **at most** that many fill colours, each distinct and exact, and the card says how many it has; named colours are used when given. (1.14)
+137. The SVG has **one layer for each colour** (`<g>` with an id and a name), and the layers are the chosen arrangement: side by side without overlap, or stacked with bleed. (1.14)
+138. The SVG is at **real size**: `width`/`height` in `mm` and a `viewBox` in mm; the per-layer files have the same size and origin. (1.14)
+139. The SVG contains **only** closed paths and groups: no gradient, opacity, filter, text, `<image>`, script, event handler or external reference; no edge shared by two paths is drawn twice; nothing is smaller than the smallest feature, or it is flagged. (1.14)
+140. **Cut** gives each layer as outlines, **Engrave** as fills, or both as separate layers; the card shows the check (colours, paths per layer, smallest feature, cut length per layer). (1.14)
+141. Downloads: the SVG, a ZIP of one SVG per layer, and a **PNG at a size you choose**, drawn from the SVG. (1.14)
+142. The SVG is served as `image/svg+xml` with a script-forbidding `Content-Security-Policy` and `nosniff`, and shown only in an `<img>`. (1.14)
+143. A vector run has Keep, Reuse, Delete, the bin, the filters and the counts like the others; `vector` is a kind beside `image` and `music`; its files go to the bin and back with it. (1.14)
+144. Schema 5 is made from a 1.13 database without losing a run, after a copy of it; a migrated database equals a fresh one. (1.14)
+145. The clean-up is **tested without a GPU** on constructed pictures (exact N, closed shapes, no duplicate edges, the arrangements, the smallest feature, the real size), and mutation-checked like the rest of the studio. (1.14)
+
+### 31.9 What I would build first (small, and it answers your questions)
+
+1. **`scripts/laser_test_sheet.py`**: writes one SVG at 100 × 100 mm with **four layers in four exact colours**, a 10 mm scale bar, a filled shape and an outline of each, so that you can open it in **Creative Space and in your G3 software** and tell me: does it come in at the right size, how are the layers shown, and can each be given its own cut or engrave setting? (An hour of your time; it removes the largest unknown.)
+2. **`scripts/vector_probe.py`** (run in the studio container on the Spark, like `upscale_probe.py`): the same prompts, at 2 and at 4 colours, through *draw and trace* and through OmniSVG 4B (and 8B), reporting time, memory, number of paths, file size, smallest feature and a contact sheet of the pictures, so that you can pick by eye.
+3. **Then, only after your answers (§31.7):** the clean-up and the SVG writer (pure Python, tested without a GPU), the Vector tab, schema 5, and Engine A. Engine B only if the probe says so.
+
+### 31.10 The small choices I made (tell me if you want any changed)
+
+1. **At most N colours, not exactly N.** If the picture really has three colours, you get three layers and a note, not an empty fourth layer.
+2. **Millimetres, always.** There is no unitless export.
+3. **The first colour of a layer is its colour on screen and in the file,** and it is never the same as another layer's, so the software can tell them apart.
+4. **No text in the artwork.** The negative prompt keeps it out, and text from Engine B is outlined. Lettering you want is better added in your laser software, in a font you choose.
+5. **The seed makes the picture, not the clean-up:** the clean-up is deterministic, so the same picture and settings give the same SVG.
+
+### 31.11 Sources
+
+- OmniSVG 1.1 model card: <https://huggingface.co/OmniSVG/OmniSVG1.1_4B>
+- StarVector README: <https://cdn.jsdelivr.net/gh/joanrod/star-vector@main/README.md>
+- VTracer: <https://github.com/visioncortex/vtracer>
+- Qwen-Image-Layered (raster layers): <https://docs.comfy.org/tutorials/image/qwen/qwen-image-layered>
+- xTool P2 listing: <https://www.matterhackers.com/store/l/xtool-p2-co2-laser-engraver-and-laser-cutter-55w/sk/MGD5TP18> (the file-format list is from P2S listings: <https://top3dshop.com/product/xtool-p2s-55w-co2-laser-cutter-and-engraver>)
+- Gweike G3 Ultra listing: <https://woodartsupply.com/products/gweike-g3-ultra-60w-mopa-40w-diode-dual-laser-engraver-3d-grayscale-color-metal-engraving-16mp-smart-camera-15-000mm-s-fast-fiber-laser-cutter-and-laser-engraver-machine-for-metal-wood-acrylic>
