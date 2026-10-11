@@ -1,6 +1,6 @@
 # Qwen-Image Web Studio — Design Specification
 
-Living document. **Last brought up to date 2026-10-10, for version 1.15** (the number the page shows in its title). §32 and §33 are built (1.14, 1.15); §31 and §34 are proposals for 1.17 and 1.16; nothing in them is built.
+Living document. **Last brought up to date 2026-10-11, for version 1.16** (the number the page shows in its title). §32, §33 and §34 are built (1.14, 1.15, 1.16); §31 is a proposal for 1.17; nothing in it is built.
 
 **How to read it.** §1–§20 are the version 1 specification and the design shared by everything since; they have been corrected so that what they say about the behaviour of the studio is true today, and where a later section changed or replaced something they say so. §21 specifies **version 2, editing with several images** (plus the run housekeeping of M6); §22–§24 specify the small releases **1.3 to 1.5** that were built before the editing page, the editing page itself (M5b) is **version 1.6**, §25 specifies **1.7**, loading the model ahead of time, §26 specifies **1.8 and 1.9**, music, and §27 specifies **1.10**, Make 4K. "Version 2" names a set of features, not a version number (decision #32). Where a later section differs from an earlier one, **the later one wins**.
 
@@ -28,7 +28,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.13 | **The bin**: a **Deleted** option in the filter bar; Delete (and the daily expiry) moves a run to the bin for 30 days; **Restore**, **Delete forever** and **Empty bin** | §30 | (this PR) | The bin needs no Spark; `SPARK_TEST.md` §24 is the short check |
 | 1.14 | **Project folders**: a **Project** button on every card (a drop-down of your projects, or a new one made on the spot) files the run and keeps it; Keep is locked while a run is filed; a **Project** drop-down in the filter bar and a **Manage** dialog. A project is a label in the database, so no file moves | §32 | (this PR) | The first start upgrades the database to schema 5, after making a copy; `SPARK_TEST.md` §25 is the short check and needs no GPU work |
 | 1.15 | **Delete a picture from a run**: a **Delete picture** button in the viewer (and **Delete track** on a music run's rows) sends one picture to the bin for 30 days; the last picture sends the whole run. The Deleted view shows one card per run with its deleted pictures, each with **Restore** and **Delete forever**; the count beside Deleted and **Empty bin** count runs and pictures | §33 | (this PR) | The first start upgrades the database to schema 6, after making a copy; `SPARK_TEST.md` §26 is the short check and needs no GPU work |
-| 1.16 | **16:9 is the default shape** of a picture (proposed, not built): Generate starts at 2752×1536 instead of 2048×2048 on the page, in the API and in `scripts/qwen_image.py`; a browser's saved 1:1 is moved to 16:9 once; Edit stays on Auto | §34 | — | Not built; one Spark run at the default size to compare time and memory (§34.6 criterion 184) |
+| 1.16 | **16:9 is the default shape** of a picture: Generate starts at 2752×1536 instead of 2048×2048 on the page, in the API and in `scripts/qwen_image.py`; the first time a browser opens the page a saved 1:1 is moved to 16:9, once, with a note; Edit stays on Auto | §34 | (this PR) | One Spark run at the default size and one at the old square, to compare time and memory (§34.6 criterion 184): `SPARK_TEST.md` §27; the rest needs no Spark |
 | 1.17 | **Vector** (proposed, not built): an SVG from a prompt in N colours, one layer per colour, for a laser | §31 | — | Needs the test-sheet results and answers 5 and 8 in §31.7 first (7 is answered: SVG only); the Spark would run a laser test sheet and a model probe (§31.9) |
 
 **Tests today (1.15):** backend 1140 (pytest; 65 more run only where `torch` is installed: 28 for the real music pipeline, which also needs `diffusers` 0.40.0, 17 for the upscaler probe's tiling, and 20 for Enlarge's real loading path, which also need `spandrel`), front end 502 (Vitest) and 205 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
@@ -92,7 +92,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 17 | Model weights source | Downloaded on first use into a mounted Hugging Face cache volume | DECIDED |
 | 18 | Uploaded source images | Kept with the run; deleted when the run expires or is deleted | DECIDED |
 | 19 | Behaviour when too little memory is free (e.g. Hermes' LLM server is holding most of it) | Pre-flight memory check before loading the model (§9a). If short, **fail fast** with clear instructions; you fix it and click Retry. No waiting in the queue, and the studio never controls the LLM container | DECIDED |
-| 20 | Starting defaults and limits | Size 2048×2048 (1:1), 40 steps, 1 image per click (max 8), queue cap 10, idle unload 30 min, runs expire after 30 days (§6, §13) | DECIDED |
+| 20 | Starting defaults and limits | Size 2752×1536 (16:9; it was 2048×2048, 1:1, up to 1.15: decision #53), 40 steps, 1 image per click (max 8), queue cap 10, idle unload 30 min, runs expire after 30 days (§6, §13) | DECIDED |
 | 21 | Security for v1 | As §11: no login; required custom header plus no CORS; upload validation; strict CSP; non-root container; no Docker socket; `STUDIO_TOKEN` reserved but off (setting it stops the server from starting, so it can't give a false sense of protection) | DECIDED |
 | 22 | Review cadence | I stop after **every milestone** (M1–M8), report what works and what the tests showed, and wait for your go-ahead | DECIDED |
 | 23 | Repository | A dedicated **private** GitHub repository, `NoSQLKnowHow/ai-image-studio` (renamed from the working name `dgx-spark-image-studio`), separate from `LiveLabs-Image-Dev`. Nothing for this project is written to `LiveLabs-Image-Dev` | DECIDED |
@@ -258,7 +258,7 @@ Every value is saved in `localStorage` and restored on the next visit. Server-si
 
 | Option | Applies to | Default | Limits / notes |
 |---|---|---|---|
-| Size | both | 1:1 = 2048×2048 (Edit: Auto — from input) | 7 model-card presets: 1:1 2048×2048, 4:3 2400×1792, 3:4 1792×2400, 3:2 2528×1696, 2:3 1696×2528, 16:9 2752×1536, 9:16 1536×2752; or Custom W×H: each side 256–4096, multiple of 32 (the pipeline only warns about a size off that grid and rounds it down, so the studio refuses one rather than make a different size from the one asked for; §27.1), total ≤ 4.5 MP (limits PROPOSED, to be tested on the Spark) |
+| Size | both | 16:9 = 2752×1536 (Edit: Auto — from input); Custom starts at 2752×1536. It was 1:1 = 2048×2048 up to 1.15 (§34) | 7 model-card presets: 1:1 2048×2048, 4:3 2400×1792, 3:4 1792×2400, 3:2 2528×1696, 2:3 1696×2528, 16:9 2752×1536, 9:16 1536×2752; or Custom W×H: each side 256–4096, multiple of 32 (the pipeline only warns about a size off that grid and rounds it down, so the studio refuses one rather than make a different size from the one asked for; §27.1), total ≤ 4.5 MP (limits PROPOSED, to be tested on the Spark) |
 | Steps | both | 40 | 1–100 |
 | Seed | both | Random each run; Lock seed off | 0–4294967295 |
 | Images per click | both | 1 | 1–8 |
@@ -270,7 +270,7 @@ Every value is saved in `localStorage` and restored on the next visit. Server-si
 
 The prompt lives in the prompt bar, max 8000 characters (env var). Mode is the toggle above it; both are remembered in the browser.
 
-**Persistence rules (PROPOSED):** stored under a versioned key (`studio.options.v1`). On load, each field is validated independently; an invalid or missing field falls back to its default, so a corrupt or old value can never break the page (options saved before 1.3 have no scale and read as 100%). If `localStorage` is unavailable (private window), the page works with in-memory options and shows a small notice.
+**Persistence rules (PROPOSED):** stored under a versioned key (`studio.options.v1`). On load, each field is validated independently; an invalid or missing field falls back to its default, so a corrupt or old value can never break the page (options saved before 1.3 have no scale and read as 100%). If `localStorage` is unavailable (private window), the page works with in-memory options and shows a small notice. A second small saved value, `studio.default16x9.v1`, records that the browser has been through the one-time move of a saved 1:1 to 16:9 (§34.2).
 
 **Not per-run (server configuration):** model id/path, idle timeout, CPU offload, queue cap, retention days, storage path, port, upload limits (§13).
 
@@ -309,7 +309,7 @@ All under `/api`. JSON unless noted. Mutating requests require the header `X-Stu
 
 **Capabilities without a loaded model:** the API process can't inspect a pipeline that isn't loaded, so at start-up it runs a short GPU-free probe subprocess that imports `diffusers` and inspects `QwenImage21Pipeline.__call__` (the same idea as the CLI's early signature check). The result is cached. If the import fails the state is `unavailable` with the reason.
 
-**Download filenames:** `generate_halloween-town-dawn_2048x2048_s42_20260930-141502.png`, using the same scheme as the CLI (`edit_` runs include the source's name). PNG text metadata carries prompt, seed, steps, model.
+**Download filenames:** `generate_halloween-town-dawn_2752x1536_s42_20260930-141502.png`, using the same scheme as the CLI (`edit_` runs include the source's name). PNG text metadata carries prompt, seed, steps, model.
 
 ## 8. Data model and storage (PROPOSED)
 
@@ -649,7 +649,7 @@ These were opened and read in full, not taken from search results. The announcem
 1. `image` is a **flat list**, applied to the one prompt of the run (the studio sends one prompt per run).
 2. The text encoder receives the images **in list order, numbered** `<image1>`, `<image2>`, … So "the first image" or "image 2" in a prompt means list position, and the studio's numbering must be exactly the submit order.
 3. **Every input is resized to about `output_resolution`² pixels**, each keeping its own aspect ratio (sides rounded to multiples of 32), and goes through **both** the text encoder and the VAE. With `output_resolution` 1024 that is about 1 MP per image; at 2048 about 4 MP. So **the cost of an edit grows with (number of images) × (resolution)²**, at least in proportion; the real curve is to be measured on the Spark.
-4. With no explicit height and width, the **output shape follows the last image's aspect ratio**, at about `output_resolution`² pixels (default 1024, so about **1 MP**, not the 2048×2048 that Generate uses). An explicit size sets the output only; the inputs are still resized by `output_resolution`.
+4. With no explicit height and width, the **output shape follows the last image's aspect ratio**, at about `output_resolution`² pixels (default 1024, so about **1 MP**, not the 2752×1536 that Generate uses). An explicit size sets the output only; the inputs are still resized by `output_resolution`.
 5. **Transparent (RGBA) inputs:** the alpha is composited over white only for the text encoder's copy; the VAE still reads all four channels. So the studio must **never flatten an upload**. (The CLI does; see §18 item 11.)
 6. There is **no mask parameter** and no per-image weight. `use_kv_cache` (default on) computes the condition images' keys and values once and reuses them, so extra images should cost mostly once rather than per step (to be measured).
 

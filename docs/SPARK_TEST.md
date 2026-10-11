@@ -131,7 +131,7 @@ In a second terminal on the Spark:
 watch -n1 "grep MemAvailable /proc/meminfo"
 ```
 
-Then, in the page: **Options**, reset to defaults (**2048 × 2048, 40 steps**), and generate one image.
+Then, in the page: **Options**, reset to defaults (**2752 × 1536, which is 16:9, and 40 steps**; before 1.16 the default was 2048 × 2048, and the two cost the same: step 27 checks that), and generate one image.
 
 Note:
 
@@ -202,7 +202,7 @@ cheap insurance.
 **a) Cancel a queued job.** Click Generate twice. The second card says `Queued · #1`. Click
 **Cancel** on it: it turns **Canceled** at once, with no question asked, and the first job carries on.
 
-**b) Cancel a running job, and time it.** Options: 2048 × 2048, 2 images per click. Generate, wait
+**b) Cancel a running job, and time it.** Options: the **1:1** preset (2048 × 2048), 2 images per click. Generate, wait
 until the card shows `step N of 40`, click **Cancel**, then **Stop generating**. Start a stopwatch at
 the click.
 
@@ -336,7 +336,7 @@ Ctrl+Shift+R). There is no database change. Only runs made with 1.4 or later can
 
 **a) From a smaller scale.** Turn **Lock seed** on (Options) and set the prompt bar's **Scale** to **50%**.
 Generate. Good: when the card says Done it has **Regenerate larger** (hover it: it names the size and steps,
-for example "Regenerate at 2048×2048, 40 steps") and a greyed **Upscale** that says it is not built yet.
+for example "Regenerate at 2752×1536, 40 steps" at the default size) and a greyed **Upscale** that says it is not built yet.
 Click **Regenerate larger**. Good: a toast says it is queued at that size, and a second card appears at the
 full size with the **same seed** and prompt, and no button of its own. **Write down both times.** Then look
 at the two pictures: with the same seed they are **not** expected to be the same picture (§23.1). **Write
@@ -591,7 +591,7 @@ equally from both sides), with nothing stretched (circles stay round). It will b
 no detail was added. **Write down what you think**: fine for how you will use it, or soft enough that an upscaler
 (step i) is worth building. Faces, text and fine textures are where it shows.
 
-**c) Other shapes, and where it is not offered.** Make a **1:1** picture (the default 2048×2048) and press Make 4K: the
+**c) Other shapes, and where it is not offered.** Make a **1:1** picture (choose the 1:1 preset in Options: 2048×2048, which was the default until 1.15) and press Make 4K: the
 tooltip says *3840×3840* and **Good** is a 3840×3840 file with nothing cut off (it is big: about 15 MP; **write down the
 seconds and the file size**). A 4:3 or 3:2 picture works too (3840 wide, in proportion). A **Draft**, or any picture
 that would need more than a doubling (anything under 1920×1080 or 1920×1920), has no Make 4K, and neither has one
@@ -673,7 +673,7 @@ Press it. **Write down the time and how it looks** next to the picture you would
 
 **e) Two passes.** A custom size of **960×544**: Enlarge runs the model twice (×4) and then reduces. **Write down the time**, and whether it looks worse than a one-pass picture (a second pass can over-smooth).
 
-**f) A square.** The default 2048×2048: Enlarge makes **3840×3840** (the model's 4096×4096 is reduced). **Write down the time**, and the memory while it runs (`free -g` in another terminal).
+**f) A square.** The 1:1 preset, 2048×2048 (choose it in Options): Enlarge makes **3840×3840** (the model's 4096×4096 is reduced). **Write down the time**, and the memory while it runs (`free -g` in another terminal).
 
 **g) While a picture is being made.** (This is the check that failed in the first trial, with *CUDA error: out of memory*.) Start a long run (several pictures, many steps),
 and press Enlarge on an older picture while it runs. Queue a second run behind it. **Good:** the button says **Waiting…** and is dimmed (that is not an error; hover it for why); the running
@@ -818,6 +818,49 @@ for good around …*; the number beside **Deleted** went up by one; pressing the
 
 **Send back:** the `ls -l data/studio.sqlite*` line, what (c) showed, and anything that did not match "Good".
 
+## 27. The default size, 16:9 (new in 1.16)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.16** (reload with Ctrl+Shift+R). There is no database change.
+**(c) is the one check this release needs the Spark for** (criterion 184 of `DESIGN.md` §34.6); the rest takes a minute each and needs no GPU work.
+
+**a) A browser with nothing saved.** Open the studio in a **private window**. **Good:** the Options button reads **2752×1536 · 40 steps …**; in Options the **16:9** preset is selected and
+**Custom** starts at **2752 × 1536**; **Reset to defaults** gives the same; and no note is shown.
+
+**b) Your own browser (the one you have used before).** Reload it with Ctrl+Shift+R. **Good, if it was on the 1:1 preset:** a toast says *The default size is now 16:9, and your saved 1:1 was changed to it.
+Choose 1:1 in Options to go back.* and Options is on **16:9** (a saved scale such as 50% is kept). Reload again: **no** note. Choose **1:1** in Options and reload: it **stays** 1:1, with no note.
+If it was on another preset or a Custom size, **nothing** is moved and no note is shown. Edit's size is not touched either way.
+
+**c) One run at the default size, and one at the old square: time and memory (criterion 184).** This needs the real model. In a second terminal on the Spark:
+
+```bash
+watch -n1 "grep MemAvailable /proc/meminfo"
+```
+
+In the page turn **Lock seed** on, set **Images per click** to 1 and **Steps** to 40, and use the same prompt for both runs. First choose **16:9** (the default; **Reset to defaults** does it) and generate one image;
+then choose **1:1** (2048 × 2048) and generate one more. If the model has to load for the first, wait for it to be ready before you start counting, so that both runs are measured loaded. For each run **write down**:
+
+- the time on the card (the seconds of the run, without the model load);
+- `MemAvailable` before you click (**A**) and the lowest it reached while the run was going (**B**), so the footprint is **A − B**;
+- the worker's own memory while it was loaded: `curl -s localhost:8080/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'` (`worker_rss_gb`).
+
+**Good:** the 16:9 run takes about as long as the square (it has 0.9% more pixels: 4.23 MP against 4.19) and its **A − B** is no more than the square's, within the noise between two runs.
+**If it is larger, send me both sets of numbers:** the default would have to be thought about again, and `STUDIO_MIN_FREE_GB` (step 9) may need raising.
+
+**d) The command-line script.** `./scripts/qwen_image.py generate "test" --dry-run` (it needs nothing installed) prints `size : 2752x1536` and an output file name with `2752x1536` in it;
+`./scripts/qwen_image.py generate --help` says *generate defaults to 2752x1536 (16:9)*; and `--aspect-ratio 1:1` with `--dry-run` says `2048x2048`. Only if you use the script for real: one image without a size is **2752 × 1536**.
+
+**e) The API with no size.** The request below names no size. **Good:** the answer's `options` has `"width": 2752` and `"height": 1536`, and the finished picture is 2752 × 1536
+(`file` on the downloaded PNG, or the size on the card). A request that names a size (`"width": 1024, "height": 1024`) gets that size.
+
+```bash
+curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' -d '{"prompt": "a lighthouse at dusk", "options": {"steps": 20}}'
+```
+
+**f) What does not change.** Turn **Edit** on: Size is still **Auto** (*from your images*), and **Reset to defaults** leaves it there. Press **Reuse** on a card made before the update (a square):
+Options go to that run's own size (**1:1**), not to 16:9; the same with **Retry** on a failed one.
+
+**Send back:** from (c) the two times and the two sets of memory numbers (and `worker_rss_gb` for each); from (b) whether the note appeared and what it said; and anything that did not match "Good".
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -841,3 +884,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 17. From step 24 (the bin): the `ls -l data/studio.sqlite*` line, what the first clean-up put in Deleted, and anything that did not match "Good".
 18. From step 25 (project folders): the `ls -l data/studio.sqlite*` line, and anything that did not match "Good".
 19. From step 26 (deleting one picture): the `ls -l data/studio.sqlite*` line, what (c) showed, and anything that did not match "Good".
+20. From step 27 (the default size): the time and the memory numbers (A, B, `worker_rss_gb`) for one run at 2752 × 1536 and one at 2048 × 2048 from (c), whether the note in (b) appeared, and anything that did not match "Good".
