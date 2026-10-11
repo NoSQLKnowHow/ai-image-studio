@@ -303,8 +303,8 @@ def resolve_recipe(req: RecipeRequest, settings: Settings) -> V.Recipe:
     chosen = V.VectorOptions(
         colours=req.colours if req.colours is not None else V.COLOURS_DEFAULT, palette=tuple(req.palette or ()),
         kind=req.kind if req.kind is not None else V.KIND_DEFAULT)  # type: ignore[arg-type]
-    # only the three things the words depend on: the options that this body does not carry are the defaults, and are fine
-    errors.extend(((name,), message) for name, message in V.check_options(chosen) if name in ("colours", "palette", "kind"))
+    # the options this body does not carry are the defaults, which are always fine, so any problem found here is with one of the three it does
+    errors.extend(((name,), message) for name, message in V.check_options(chosen))
     if errors:
         raise RunRequestError(errors)
     return _built_recipe(idea, chosen, check_length=True)

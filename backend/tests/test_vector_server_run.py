@@ -9,6 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -63,6 +64,7 @@ def test_a_vector_run_draws_then_traces_and_stores_each_version(vclient):
     # it is not stored as a picture: no row, no thumbnail, no folder left under images
     assert vclient.app.state.db._one("SELECT COUNT(*) AS n FROM images")["n"] == 0
     assert not (storage.images / run["id"]).exists() and not (storage.thumbs / run["id"]).exists()
+    assert vclient.app.state.jobs._tracing is None  # no process is remembered once its job is over
 
 
 def test_the_model_draws_a_flat_picture_at_the_drawing_size_with_the_recipe_and_guidance(vclient):
@@ -365,6 +367,36 @@ def test_a_cancel_that_lands_before_the_clean_up_process_exists_still_stops_it(v
     assert final["status"] == "canceled" and final["vectors"] == [] and time.monotonic() - sent < 5
     calls = job_calls(vclient)
     assert all(process_is_gone(call["pid"]) for call in calls)  # if it started at all, it was killed at once
+
+
+def test_a_cancel_that_lands_between_the_drawing_and_the_first_clean_up_starts_none(vclient, monkeypatch):
+    """After the last drawing and before the first job there is a moment (the image folder is tidied in a thread). A Cancel in it ends the run as
+    canceled without starting a clean-up at all."""
+    from studio import vectorrun as vectorrun_module
+    from studio.jobs import JobManager
+
+    started = []
+    real_run_job = vectorrun_module.run_job
+
+    async def watching(*args, **kwargs):
+        started.append(True)
+        return await real_run_job(*args, **kwargs)
+
+    monkeypatch.setattr("studio.jobs.vectorrun.run_job", watching)
+    real = JobManager._remove_empty_folder
+    inside = threading.Event()
+
+    def slow(folder):
+        inside.set()  # the worker is done and the tidy-up has begun
+        time.sleep(0.6)
+        real(folder)
+
+    monkeypatch.setattr(JobManager, "_remove_empty_folder", staticmethod(slow))
+    run = create_vector(vclient, num_images=2)
+    assert inside.wait(20)
+    assert vclient.post(f"/api/runs/{run['id']}/cancel").status_code == 202
+    final = wait_for(vclient, run["id"], timeout=10)
+    assert final["status"] == "canceled" and final["vectors"] == [] and started == []
 
 
 def test_the_queue_carries_on_after_a_cancel_in_the_trace_stage(vclient, monkeypatch):
