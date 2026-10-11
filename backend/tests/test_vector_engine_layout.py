@@ -15,7 +15,7 @@ import pytest
 from studio.vector import VectorError, VectorOptions, build_vector, engine
 from studio.vector.colours import hex_to_rgb, rgb_to_lab
 
-from vector_engine_support import SHEET_MM, SIZE, as_png, bbox, layers_of, make, mm, picture
+from vector_engine_support import SHEET_MM, as_png, bbox, layers_of, make, mm, picture
 
 BLACK, RED, GREEN, BLUE, WHITE = (0, 0, 0), (255, 0, 0), (0, 120, 0), (0, 0, 255), (255, 255, 255)
 

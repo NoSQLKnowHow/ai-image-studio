@@ -16,8 +16,7 @@ from PIL import Image, ImageDraw
 
 from studio.vector import VectorOptions, build_vector
 
-from vector_engine_support import (INK, SHEET_MM, SIZE, SVG, as_png, bbox, inside, layers_of, length, make, mm, parse, picture, polygon_of,
-                                   segments)
+from vector_engine_support import INK, SHEET_MM, SVG, as_png, bbox, inside, layers_of, length, make, mm, parse, segments
 
 BLACK, RED, GREEN = (0, 0, 0), (255, 0, 0), (0, 160, 0)
 

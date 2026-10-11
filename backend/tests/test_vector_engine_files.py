@@ -26,7 +26,7 @@ from studio.vector.pixels import _give_to_neighbours
 import numpy as np
 from shapely.geometry import GeometryCollection, LineString, Point, Polygon, box
 
-from vector_engine_support import SHEET_MM, SIZE, as_png, layers_of, make, mm, parse, picture
+from vector_engine_support import SHEET_MM, SIZE, as_png, layers_of, make, mm, picture
 
 BACKEND = Path(__file__).resolve().parents[1]
 ROOT = BACKEND.parent

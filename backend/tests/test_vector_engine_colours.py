@@ -16,6 +16,7 @@ from PIL import Image
 
 from studio.vector import VectorError, VectorOptions, build_vector, colour_name
 from studio.vector import engine, pixels
+from studio.vector.pixels import _give_to_neighbours
 from studio.vector.colours import COLOUR_NAMES, COLOUR_REFERENCES, hex_to_rgb, rgb_to_lab
 
 from vector_engine_support import SIZE, SHEET_MM, as_png, bbox, layers_of, make, mm, picture
@@ -131,6 +132,16 @@ def test_an_off_white_background_is_the_bare_material_too():
     """Paper-white is not always #FFFFFF: a cream background (250, 247, 238) is as much bare material as pure white. It does not become a layer."""
     result = make([("ellipse", (mm(10), mm(10), mm(40), mm(40)), BLACK)], colours=3, background=(250, 247, 238))
     assert [layer["colour"] for layer in result.check["layers"]] == ["#000000"] and result.check["white"] is True
+
+
+def test_a_pale_ink_is_still_an_ink_and_a_light_grey_is_still_bare_material():
+    """Near-white is a narrow band: a pale yellow fill (255, 255, 200) is a colour the user drew and gets its layer (3 colours: black and the yellow);
+    a light grey (215, 215, 215) a little further from white than the cream above is nearer to white than to black, so with 2 colours it
+    stays the bare material and only the disc is cut."""
+    pale = make([("ellipse", (mm(3), mm(3), mm(23), mm(23)), BLACK), ("rect", (mm(28), mm(3), mm(46), mm(21)), (255, 255, 200))], colours=3)
+    assert sorted(layer["colour"] for layer in pale.check["layers"]) == ["#000000", "#FFFFC8"]
+    grey = make([("ellipse", (mm(3), mm(3), mm(23), mm(23)), BLACK), ("rect", (mm(28), mm(3), mm(46), mm(21)), (215, 215, 215))], colours=2)
+    assert [layer["paths"] for layer in grey.check["layers"]] == [1] and grey.check["white"] is True
 
 
 def test_a_picture_that_is_all_white_has_nothing_to_cut():
@@ -293,7 +304,8 @@ def test_the_numpy_colour_space_is_the_plain_python_one():
     fast = pixels.srgb_to_lab(sample)
     for row, lab in zip(sample, fast):
         assert np.allclose(lab, rgb_to_lab(tuple(int(v) for v in row)), atol=1e-6)
-    assert np.allclose(fast[1], (100, 0, 0), atol=1e-3)  # white is L 100, no colour: the fixed centre of its cluster is where white really is
+    assert np.allclose(fast[1], (100, 0, 0), atol=1e-3)  # white is L 100, no colour
+    assert pixels.WHITE_LAB == pytest.approx(tuple(fast[1]), abs=1e-3)  # and the fixed centre of white's cluster is where white really is
 
 
 # ---- reading the picture ----------------------------------------------------------------------------------------------------------------
@@ -383,6 +395,100 @@ def test_a_ribbon_between_two_regions_is_split_between_them():
     labels[:, 9:11] = 3
     cleaned = pixels.remove_fringes(labels, 3, 4)
     assert (cleaned[:, :10] == 0).all() and (cleaned[:, 10:] == 2).all()
+
+
+def test_removing_fringes_goes_on_until_what_the_first_pass_uncovered_is_gone_too():
+    """Giving a thin part to its neighbours can leave a new thin part (a label that was wide enough only with the pixels just given away).
+    A worked example, a blocky 8 x 10 map of three labels, pinned as it comes out after the passes (one pass alone gives a different map
+    in rows 4 and 5, where the label 1 is left a column short); the clean-up stops when a pass finds nothing, and never after more than three."""
+    labels = np.array([[0, 0, 0, 0, 2, 2, 1, 1, 0, 0], [0, 0, 0, 0, 2, 2, 1, 1, 0, 0], [2, 2, 2, 2, 0, 0, 2, 2, 2, 2],
+                       [2, 2, 2, 2, 0, 0, 2, 2, 2, 2], [2, 2, 1, 1, 2, 2, 0, 0, 0, 0], [2, 2, 1, 1, 2, 2, 0, 0, 0, 0],
+                       [2, 2, 1, 1, 1, 1, 2, 2, 1, 0], [2, 2, 1, 1, 1, 1, 2, 2, 0, 0]], dtype=np.uint8)
+    expected = np.array([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [2, 2, 0, 0, 0, 0, 0, 0, 0, 0],
+                         [2, 2, 2, 0, 0, 0, 0, 0, 0, 0], [2, 2, 2, 1, 1, 1, 1, 1, 0, 0], [2, 2, 2, 1, 1, 1, 1, 1, 1, 1],
+                         [2, 2, 1, 1, 1, 1, 1, 1, 1, 1], [2, 2, 1, 1, 1, 1, 1, 1, 1, 1]])
+    assert np.array_equal(pixels.remove_fringes(labels, 3, 3), expected)
+
+
+def test_pixels_far_from_any_assigned_pixel_get_their_label_from_the_nearest_ones_over_several_rounds():
+    """A block of unassigned pixels more than two wide is filled from its edge inwards, a round at a time, with the label of the edge it is
+    next to: a stripe of label 1 on the left and five unassigned columns gives label 1 all the way, and a single assigned pixel spreads in
+    all eight directions, through the diagonals as well."""
+    labels = np.zeros((4, 7), dtype=np.int16)
+    labels[:, :2] = 1
+    unassigned = np.zeros((4, 7), dtype=bool)
+    unassigned[:, 2:] = True
+    assert (_give_to_neighbours(labels, unassigned, 3) == 1).all()
+    labels = np.zeros((3, 3), dtype=np.int16)
+    labels[0, 1] = 2
+    unassigned = np.ones((3, 3), dtype=bool)
+    unassigned[0, 1] = False
+    assert (_give_to_neighbours(labels, unassigned, 3) == 2).all()
+
+
+def test_white_and_the_palette_are_fixed_centres_that_never_move():
+    """White is the bare material and a named colour is a promise: neither centre moves to fit the picture, however the picture is made. On many
+    little random pictures of five colours, a pixel is white only if it is nearer to white than to the named colour (or within the band around
+    white), and the named colour's only if it is nearer to that (or far from white); a centre that wandered off to the mean of what it held
+    would break this for some pixel."""
+    rng = np.random.default_rng(0)
+    white_lab = np.array(pixels.WHITE_LAB)
+    checked = 0
+    for _ in range(400):
+        colours = rng.integers(0, 256, size=(5, 3)).astype(np.uint8)
+        colours[0] = (255, 255, 255)
+        image = colours[rng.integers(0, 5, size=(10, 10))]
+        palette = "#%02X%02X%02X" % tuple(rng.integers(0, 256, 3))
+        labels = pixels.reduce_colours(image, 3, (palette,), 1).labels
+        lab = pixels.srgb_to_lab(image.reshape(-1, 3)).reshape(10, 10, 3)
+        to_white = ((lab - white_lab) ** 2).sum(axis=2)
+        to_named = ((lab - np.array(rgb_to_lab(hex_to_rgb(palette)))) ** 2).sum(axis=2)
+        near, far = to_white <= pixels.NEAR_WHITE ** 2, to_white > pixels.BARE_REACH ** 2
+        assert (~(labels == 0) | (to_white <= to_named) | near).all()
+        assert (~(labels == 1) | (to_named <= to_white) | far).all()
+        checked += 1
+    assert checked == 400
+
+
+def test_a_colour_that_was_asked_for_near_white_is_still_white_and_is_reported_missing():
+    """The band around white is white whatever else is near: a cream (250, 247, 238) background, a black disc and the palette colour #FAF7EE
+    (which is the cream) with 3 colours: the cream is the bare material, the palette colour gets no layer and is named as missing."""
+    result = make([("ellipse", (mm(10), mm(10), mm(40), mm(40)), BLACK)], colours=3, background=(250, 247, 238), palette=("#FAF7EE",))
+    assert [layer["colour"] for layer in result.check["layers"]] == ["#000000"] and result.check["white"] is True
+    assert "#FAF7EE" in {n["code"]: n["message"] for n in result.check["notes"]}["empty_layer"]
+
+
+def test_a_picture_in_none_of_the_named_colours_goes_to_the_nearest_named_one():
+    """Palette red and blue, a black disc: black is nearer to red than to blue in Lab, so the red ink holds it, and the blue is missing."""
+    result = make([("ellipse", (mm(10), mm(10), mm(40), mm(40)), BLACK)], colours=3, palette=("#FF0000", "#0000FF"))
+    assert [layer["colour"] for layer in result.check["layers"]] == ["#FF0000"]
+    assert "#0000FF" in {n["code"]: n["message"] for n in result.check["notes"]}["empty_layer"]
+
+
+def test_a_line_too_thin_to_have_an_inside_still_has_the_colour_it_was_drawn_in():
+    """The picture's colour for an ink is the mean of the pixels well inside it; a line two pixels wide has no inside, so its own pixels are used
+    (and not, say, everything else's). With a smallest feature of 0.05 mm the line is kept, and its layer is the colour of the line."""
+    result = make([("rect", (mm(5), mm(20), mm(45), mm(20) + 2), (200, 30, 30))], colours=2, smooth=1, min_feature_mm=0.05)
+    assert [layer["colour"] for layer in result.check["layers"]] == ["#C81E1E"]
+
+
+def test_two_shades_too_alike_to_tell_apart_are_one_colour():
+    """Shades closer than 2 apart in Lab are the same colour to anyone's eye: a red square of two parts, (200, 30, 30) on the small left side and
+    (200, 31, 30) on the large right side, asked for 3 colours, is one ink, not two (and the note says the picture has fewer colours).
+    The smaller shade has the lower colour value, which is the one a careless start would reach for after the real colours run out."""
+    shapes = [("rect", (mm(5), mm(5), mm(11), mm(45)), (200, 30, 30)), ("rect", (mm(11), mm(5), mm(23), mm(45)), (200, 31, 30))]
+    result = make(shapes, colours=3)
+    assert len(result.check["layers"]) == 1 and "fewer_colours" in codes(result)
+
+
+def test_an_inks_colour_moves_to_the_mean_of_what_it_holds_and_so_pulls_in_what_is_near_it():
+    """k-means, not just a starting guess: asked for 2 colours, black (60% of the ink), a dark grey (90) and a mid grey (128) are ONE ink,
+    because once the dark grey has joined the black the ink's centre is lighter, and nearer to the mid grey than white is. Started and left at
+    pure black, the mid grey would stay bare material. One layer, three shapes."""
+    shapes = [("rect", (mm(2), mm(2), mm(32), mm(22)), (0, 0, 0)), ("rect", (mm(2), mm(26), mm(22), mm(46)), (90, 90, 90)),
+              ("rect", (mm(30), mm(30), mm(40), mm(40)), (128, 128, 128))]
+    result = make(shapes, colours=2, smooth=1)
+    assert [layer["paths"] for layer in result.check["layers"]] == [3]
 
 
 def test_the_fringe_window_follows_the_smallest_feature_but_never_exceeds_three_pixels():
