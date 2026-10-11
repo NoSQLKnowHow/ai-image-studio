@@ -47,6 +47,14 @@ RUN cat /app/ngc-pins.txt \
 RUN pip uninstall -y torchao \
     && pip freeze > /app/pip-freeze.txt
 
+# Vector (DESIGN.md section 31.6): the tracer (vtracer) and the geometry library (shapely). A step of their own, and a failure here is a
+# note and not a failed build: Vector then says it is unavailable (capabilities.vector) and the rest of the studio is unaffected.
+# numpy stays NVIDIA's (the pins above are constraints here too).
+COPY backend/requirements-vector.txt /app/backend/
+RUN (pip install -c /app/ngc-pins.txt -r /app/backend/requirements-vector.txt \
+        || echo "NOTE: vtracer and shapely could not be installed; the Vector tab will say it is unavailable (DESIGN.md section 31.6)") \
+    && pip freeze > /app/pip-freeze.txt
+
 # The music worker's own copy of diffusers (DESIGN.md §26.4): the released 0.40.0 has the MiniMax-Music3 pipeline, the
 # commit above has Qwen-Image-2.1, and neither has the other's. Installed without dependencies (the image has them) into
 # a folder that only the music worker puts first on its Python path.
