@@ -80,6 +80,7 @@ def test_each_layer_is_a_group_with_an_id_a_name_and_the_same_name_as_the_inksca
         assert (row["id"], row["name"], row["index"]) == (layer.id, layer.label, int(layer.id.split("-")[1]))
     ids = [path.id for layer in layers for path in layer.paths]
     assert len(ids) == len(set(ids)) and all(path.id.startswith(f"layer{n}-") for n, layer in enumerate(layers, 1) for path in layer.paths)
+    assert [path.id for path in layers[0].paths] == [f"layer1-path{m}" for m in range(1, len(layers[0].paths) + 1)]  # numbered from 1
 
 
 def test_every_layer_has_one_exact_colour_and_no_two_layers_share_one():
@@ -182,6 +183,35 @@ def test_each_layers_own_svg_has_the_same_size_and_origin_and_holds_exactly_that
         assert len(layers) == 1 and layers[0].id == combined.id == own.id and layers[0].label == combined.label == own.name
         assert [(p.id, p.d, p.fill) for p in layers[0].paths] == [(p.id, p.d, p.fill) for p in combined.paths]
         assert own.colour == next(iter(combined.colours()))
+
+
+def test_the_file_has_a_title_and_a_description_that_says_what_it_is():
+    """A title and a description are the only text in the file (laser programs show them as the file's name and note): the studio's name, and the
+    size and number of layers, worded for one layer and for several."""
+    one = make([("rect", (mm(10), mm(10), mm(40), mm(40)), BLACK)], colours=2)
+    many = make(drawing(), colours=4)
+    root_one, root_many = parse(one.svg)[0], parse(many.svg)[0]
+    assert root_one.find(SVG + "title").text == "AI Image Studio Vector"
+    assert root_one.find(SVG + "desc").text.startswith("50 x 50 mm, one unit is one millimetre. 1 layer, each in")
+    assert root_many.find(SVG + "desc").text.startswith("50 x 50 mm, one unit is one millimetre. 3 layers, each in")
+
+
+def test_the_shapes_of_a_layer_are_written_largest_first_and_then_from_the_top_left():
+    """Within a layer the biggest piece comes first (a laser program cuts in file order unless told otherwise; a big piece first is the steadiest
+    cut), and equal pieces go top to bottom, then left to right. Drawn smallest first and scrambled, so that the order is not the drawing's."""
+    shapes = [("rect", (mm(30), mm(30), mm(35), mm(35)), BLACK), ("rect", (mm(5), mm(30), mm(15), mm(40)), BLACK),
+              ("rect", (mm(5), mm(5), mm(25), mm(25)), BLACK), ("rect", (mm(30), mm(5), mm(40), mm(15)), BLACK)]
+    layer = layers_of(make(shapes, colours=2, smooth=1).svg)[0]
+    corners = [min(p for p in path.rings[0]) for path in layer.paths]
+    assert corners == [(5, 5), (30, 5), (5, 30), (30, 30)]  # the 20 mm square, then the two 10 mm ones top first, then the 5 mm one
+
+
+def test_outline_mode_is_in_the_layers_own_files_as_well():
+    """The per-layer files are written in the same mode as the combined file."""
+    result = make(drawing(), colours=4, fill_mode="outline")
+    for own in result.layers:
+        paths = layers_of(own.svg)[0].paths
+        assert paths and all((p.fill, p.stroke, p.stroke_width) == ("none", own.colour, "0.1") for p in paths)
 
 
 # ---- the check tells the truth about the file (criterion 140) -----------------------------------------------------------------------------

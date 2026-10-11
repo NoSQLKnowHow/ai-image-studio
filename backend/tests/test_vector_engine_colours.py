@@ -189,6 +189,7 @@ def test_a_picture_in_other_colours_than_the_palette_is_not_called_empty():
     result = make([("ellipse", (mm(10), mm(10), mm(40), mm(40)), BLACK)], colours=2, palette=("#FF0000",))
     layer = result.check["layers"][0]
     assert (layer["colour"], layer["picture_colour"]) == ("#FF0000", "#000000")
+    assert layer["id"] == "layer-1-red"  # named for the colour the layer is, not for the colour the picture had
 
 
 def test_the_inks_the_palette_does_not_name_come_from_the_picture():
@@ -226,6 +227,13 @@ def test_a_clash_is_nudged_by_the_smallest_step_in_a_fixed_order():
     assert engine._nudge("#112233", {"#112233", "#112234", "#112232", "#112333", "#112133", "#122233", "#102233"}) == "#112235"
     assert engine._nudge("#0000FF", {"#0000FF"}) == "#0000FE"  # blue cannot go up from 255, so it goes down
     assert engine._nudge("#FFFFFF", {"#FFFFFF"}) == "#FFFFFE"
+
+
+def test_two_picture_colours_that_come_out_the_same_are_told_apart_too():
+    """If two inks' colours round to the same #RRGGBB the second is nudged, and a nudged colour counts as taken for the ones after it."""
+    first, second, third = layer_of(ink(1, "#101010")), layer_of(ink(2, "#101010")), layer_of(ink(3, "#101011"))
+    engine._assign_colours([first, second, third])
+    assert (first.colour, second.colour, third.colour) == ("#101010", "#101011", "#101012")  # each nudged off the ones before it
 
 
 def test_a_picture_colour_that_clashes_with_a_named_one_or_with_white_is_the_one_that_moves():

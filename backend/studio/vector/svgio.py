@@ -52,9 +52,10 @@ class SvgLayer:
 
 
 def _ring_points(ring) -> list[tuple[float, float]]:
-    """A ring's points rounded to the file's precision, without the repeated closing point and without points that rounding made equal."""
+    """A ring's points rounded to the file's precision, without the repeated closing point and without points that rounding made equal
+    (a ring in shapely ends where it began, and so can a ring whose last point rounding has moved onto the first)."""
     points: list[tuple[float, float]] = []
-    for x, y in list(ring.coords)[:-1]:
+    for x, y in ring.coords:
         point = (round(x, COORDINATE_DIGITS), round(y, COORDINATE_DIGITS))
         if not points or point != points[-1]:
             points.append(point)
@@ -72,12 +73,12 @@ def path_shape(polygon) -> Optional[PathShape]:
     """A shapely polygon as path data (the outline first, then each hole), or None when rounding left nothing of it. A ring too small to
     survive rounding is dropped; if that is the outline, the shape is."""
     outline = _ring_points(polygon.exterior)
-    if len(outline) < 3 or _area(outline) == 0:
+    if _area(outline) == 0:  # a ring of fewer than three points, or three that rounding put in a line, has no area
         return None
     rings = [outline]
     for hole in polygon.interiors:
         points = _ring_points(hole)
-        if len(points) >= 3 and _area(points) != 0:
+        if _area(points) != 0:
             rings.append(points)
     data = " ".join("M" + " L".join(f"{fmt(x)} {fmt(y)}" for x, y in points) + " Z" for points in rings)
     length = sum(math.dist(a, b) for points in rings for a, b in zip(points, points[1:] + points[:1]))

@@ -12,7 +12,9 @@ import math
 
 import pytest
 
-from studio.vector import VectorError, VectorOptions, build_vector, engine
+from shapely.geometry import box
+
+from studio.vector import VectorError, VectorOptions, build_vector, engine, pixels
 from studio.vector.colours import hex_to_rgb, rgb_to_lab
 
 from vector_engine_support import SHEET_MM, as_png, bbox, layers_of, make, mm, picture
@@ -58,6 +60,24 @@ def test_two_layers_of_the_same_area_are_ordered_darkest_first():
     assert [layer["colour"] for layer in same(BLACK, RED).check["layers"]] == ["#000000", "#FF0000"]  # not the order of drawing
 
 
+def test_a_tie_is_a_tie_even_when_the_last_digit_of_a_float_says_otherwise():
+    """Two squares 15 mm by 15 mm are equal, though the arithmetic of their corners can make one's area bigger by 6e-14 (here the red one's). The
+    area is compared to a millionth of a square millimetre, so the darker colour still comes first: as layers and as pieces."""
+    shapes = [("rect", (mm(32) + 3, mm(3), mm(32) + 153, mm(18)), BLACK), ("rect", (mm(18) - 2, mm(30), mm(18) + 148, mm(45)), RED)]
+    assert [layer["colour"] for layer in make(shapes, colours=3, smooth=1).check["layers"]] == ["#000000", "#FF0000"]
+    pieces = make(shapes, colours=3, smooth=1, layers_by="shape").check["layers"]
+    assert [layer["picture_colour"] for layer in pieces] == ["#000000", "#FF0000"]
+
+
+def test_areas_that_differ_by_a_few_hundredths_are_not_a_tie():
+    """The order is by area first: a lighter layer that is bigger by 0.04 mm2 (a thousandth of its size) comes before a darker one."""
+    dark, light = pixels.Ink(1, None, "#000000", 10, 0.0), pixels.Ink(2, None, "#FF0000", 10, 53.0)
+    layers = [engine._Layer(ink=dark, geometry=box(0, 0, 10, 10)), engine._Layer(ink=light, geometry=box(0, 0, 10, 10.004))]
+    assert [layer.ink.picture for layer in engine._order(layers)] == ["#FF0000", "#000000"]
+    layers = [engine._Layer(ink=light, geometry=box(0, 0, 10, 10 + 1e-13)), engine._Layer(ink=dark, geometry=box(0, 0, 10, 10))]
+    assert [layer.ink.picture for layer in engine._order(layers)] == ["#000000", "#FF0000"]
+
+
 # ---- side by side (item 4) ----------------------------------------------------------------------------------------------------------------
 def test_side_by_side_layers_hold_only_their_own_regions_and_do_not_overlap():
     """Criterion 137: each layer holds only its own colour's regions. Red has the hole where the black disc is, black the hole where the
@@ -98,13 +118,13 @@ def test_the_bleed_grows_every_stacked_layer_outward_by_exactly_that_much():
     """A 20 mm black square with a 6 mm red square on it, stacked with a bleed of 0.5 mm: layer 1 is 21 mm wide, the red layer 7 mm, centred
     where the unbled ones were; round corners, so the area is 440.8 and 36 + 2*6*... (checked on layer 1)."""
     shapes = [square(15, 15, 20, BLACK), square(22, 22, 6, RED)]
-    plain = [bbox(layer) for layer in layers_of(make(shapes, colours=3, arrangement="stacked", bleed_mm=0).svg)]
-    grown = layers_of(make(shapes, colours=3, arrangement="stacked", bleed_mm=0.5).svg)
+    plain = [bbox(layer) for layer in layers_of(make(shapes, colours=3, arrangement="stacked", bleed_mm=0, smooth=1).svg)]
+    grown = layers_of(make(shapes, colours=3, arrangement="stacked", bleed_mm=0.5, smooth=1).svg)
     for before, layer in zip(plain, grown):
         after = bbox(layer)
         assert after == pytest.approx((before[0] - 0.5, before[1] - 0.5, before[2] + 0.5, before[3] + 0.5), abs=0.005)
     side = 20 + 1.0
-    assert grown[0].polygon().area == pytest.approx(side * side - (4 - math.pi) * 0.25, abs=1.0)  # round corners of radius 0.5
+    assert grown[0].polygon().area == pytest.approx(side * side - (4 - math.pi) * 0.25, abs=0.05)  # round corners of radius 0.5, not mitred
 
 
 def test_the_bleed_is_cut_off_at_the_edge_of_the_sheet():
@@ -140,6 +160,8 @@ def test_the_kerf_grows_every_layer_by_half_of_it():
     assert width(outline_after) - width(outline_before) == pytest.approx(0.3, abs=0.005)
     assert width(hole_before) - width(hole_after) == pytest.approx(0.3, abs=0.005)
     assert make(shapes, colours=2, smooth=1, kerf_mm=0).svg == plain.svg
+    fine = layers_of(make(shapes, colours=2, smooth=1, kerf_mm=0.01).svg)[0].paths[0].rings[0]  # a hundredth of a millimetre: half is 5 micrometres
+    assert width(fine) - width(outline_before) == pytest.approx(0.01, abs=0.0006)
 
 
 def test_with_a_kerf_neighbouring_side_by_side_layers_overlap_by_the_kerf():
@@ -336,6 +358,71 @@ def test_the_middle_of_an_o_is_flagged_as_a_hanging_island():
     assert "hanging_island" not in codes(make([ring[0]], colours=2))
     two = [ring[0], ("ellipse", (mm(15), mm(15), mm(21), mm(21)), WHITE), ("ellipse", (mm(29), mm(29), mm(35), mm(35)), WHITE)]
     assert "2 pieces of material" in notes(make(two, colours=2))["hanging_island"]
+
+
+def test_the_smallest_feature_looks_at_every_layer_and_never_beyond_the_sheets_own_height():
+    """The narrowest part may be in any layer, not only the first: a 30 mm black square with a 0.8 mm red bar gives 0.8. And nothing is wider
+    than the sheet is tall: a bar across a 100 x 40 mm sheet is 40 mm wide, which is exactly what is reported (not 100, and not a search's
+    near miss)."""
+    result = make([square(5, 5, 30, BLACK), ("rect", (mm(5), mm(40), mm(35), mm(40) + 8), RED)], colours=3, smooth=1)
+    assert 0.8 <= result.check["smallest_feature_mm"] <= 0.82
+    across = make([("rect", (0, 0, 500, 200), BLACK)], size=(500, 200), width_mm=100, height_mm=40, colours=2, smooth=1)
+    assert across.check["smallest_feature_mm"] == 40.0
+
+
+def test_a_colour_whose_every_part_is_too_small_has_no_layer_and_is_named():
+    """A red line 0.3 mm wide (three pixels: it passes the soft-edge clean-up, which takes only up to two) beside a big black square: all of the
+    red is narrower than the smallest feature, so the red has no layer, and `empty_layer` names it (by the colour the user asked for if it was
+    named, else by the picture's own)."""
+    shapes = [square(5, 5, 20, BLACK), ("rect", (mm(30), mm(5), mm(30) + 3, mm(45)), RED)]
+    result = make(shapes, colours=3, smooth=1)
+    assert [layer["colour"] for layer in result.check["layers"]] == ["#000000"]
+    message = notes(result)["empty_layer"]
+    assert message.startswith("#FF0000 had nothing left to cut") and message.endswith("so it has no layer.")
+    named = make(shapes, colours=3, smooth=1, palette=("#FF1111",))
+    assert notes(named)["empty_layer"].startswith("#FF1111 had nothing left")
+
+
+def test_the_notes_are_worded_for_one_and_for_several():
+    """One speck 'was' removed, two 'were'; one missing colour 'is' not in the picture, two 'are' and 'they' have no layer; one piece left out
+    by the cap is 'one', and the coarse note names the pixel and what it can show."""
+    two_dots = make(dots(4, 4), colours=2, smooth=1)
+    assert notes(two_dots)["specks_removed"] == "2 specks smaller than 0.5 mm were removed."
+    assert notes(make(dots(4), colours=2, smooth=1))["specks_removed"] == "1 speck smaller than 0.5 mm was removed."
+    missing = make([square(10, 10, 30, RED)], colours=4, palette=("#FF0000", "#0000FF", "#00FF00"))
+    assert notes(missing)["empty_layer"] == "#0000FF, #00FF00 are not in the picture, so they have no layer."
+    one = make([square(10, 10, 30, RED)], colours=3, palette=("#FF0000", "#0000FF"))
+    assert notes(one)["empty_layer"] == "#0000FF is not in the picture, so it has no layer."
+    capped = make(leaves(31, small=1), colours=2, layers_by="shape")
+    assert "(1 smaller one was left out)" in notes(capped)["layers_capped"] and "only the 30 largest" in notes(capped)["layers_capped"]
+    assert "(5 smaller ones were left out)" in notes(make(leaves(35, small=5), colours=2, layers_by="shape"))["layers_capped"]
+    coarse = make([("rect", (mm(5), mm(20), mm(35), mm(24)), BLACK)], colours=2, smooth=1, min_feature_mm=0.15)
+    assert notes(coarse)["coarse_drawing"].startswith("The drawing is too coarse to show a feature as small as 0.15 mm: one pixel is 0.100 mm, "
+                                                      "so about 0.20 mm is the smallest it can show.")
+
+
+def test_a_dot_a_pixel_or_two_across_is_a_feature_when_the_smallest_feature_is_under_a_pixel():
+    """With a smallest feature of 0.05 mm (half a pixel here) nothing a pixel can show is too small: dots two and three pixels square, beside
+    the big square, are kept (the quarter-of-a-pixel rule is about rounding, not about pixels). The tracer itself cannot draw anything one
+    pixel wide, which is why the smallest dot is two."""
+    result = make(dots(2, 3), colours=2, smooth=1, min_feature_mm=0.05)
+    assert len(layers_of(result.svg)[0].paths) == 3 and result.check["removed"]["specks"] == 0
+
+
+def test_shapes_are_simplified_to_a_tolerance_of_a_quarter_pixel():
+    """A tracer's shape with a redundant point in the middle of each long side, 0.02 mm off the straight line (under a quarter of the 0.1 mm
+    pixel) comes out with four corners; one 0.03 mm off (over it) keeps its points. This is the one place the engine's own tolerance shows."""
+    from shapely.geometry import Polygon
+
+    def corners_of(offset, monkeypatch):
+        monkeypatch.setattr(engine.geo, "trace_ink", lambda *args, **kwargs: Polygon([(5, 5), (15, 5 + offset), (25, 5), (25, 25), (15, 25 + offset), (5, 25)]))
+        result = make([square(5, 5, 20, BLACK)], colours=2)
+        return len(layers_of(result.svg)[0].paths[0].rings[0])
+
+    with pytest.MonkeyPatch.context() as patch:
+        assert corners_of(0.02, patch) == 4
+    with pytest.MonkeyPatch.context() as patch:
+        assert corners_of(0.03, patch) == 6
 
 
 # ---- options and failures (item 9) ---------------------------------------------------------------------------------------------------------

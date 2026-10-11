@@ -657,3 +657,46 @@ def test_the_supersampling_is_reduced_to_fit_big_masks_and_a_reduced_one_still_d
     monkeypatch.setattr(raster, "MAX_SAMPLES", 5000)
     image = np.array(png_of(svg_of(path("M20 20 L30 20 L30 30 L20 30 Z")), 100).convert("L"))
     assert image[25, 25] == 0 and image[5, 5] == 255 and (image == 0).sum() == pytest.approx(100, abs=25)
+
+
+def test_numbers_are_written_as_short_as_they_can_be():
+    """Three decimals at most, no trailing zeros, no point on a whole number, and never a minus sign in front of a zero."""
+    assert [svgio.fmt(v) for v in (0, -0.0, -0.0004, 100, 100.5, 0.1 + 0.2, 12.3456, -7.25, 0.0005)] == ["0", "0", "0", "100", "100.5", "0.3", "12.346", "-7.25", "0.001"]
+
+
+def test_points_that_rounding_makes_equal_are_written_once_and_a_line_is_not_a_shape():
+    """The file rounds to a thousandth of a millimetre: two points a ten-thousandth apart are one point; a ring whose last point rounds onto its first
+    is closed without repeating it; three points that rounding puts in a line enclose nothing and are not written."""
+    shape = svgio.path_shape(Polygon([(0, 0), (10, 0), (10.0001, 0.0001), (10, 10), (0, 10)]))
+    assert shape.d == "M0 0 L10 0 L10 10 L0 10 Z"
+    assert svgio.path_shape(Polygon([(0, 0), (5, 0), (10, 0.0001)])) is None
+
+
+def test_a_layers_shapes_leave_out_the_ones_rounding_empties():
+    """`_shapes` writes the real shapes largest first and silently leaves out one that rounding to a micrometre makes nothing of."""
+    geometry = box(0, 0, 10, 10).union(box(20, 20, 20.0004, 20.0004)).union(box(30, 0, 33, 3))
+    assert [round(shape.length_mm) for shape in engine._shapes(geometry)] == [40, 12]
+
+
+def test_the_renderer_reads_what_an_svg_does_when_it_says_nothing():
+    """In SVG a path with no fill is filled black, and a stroke with no width is one unit wide; the renderer does the same (the engine always says
+    both, but the test sheet and any file a person edits may not)."""
+    plain = ('<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">'
+             '<path d="M2 2 L8 2 L8 8 L2 8 Z"/></svg>')
+    assert png_of(plain, 100).getpixel((50, 50)) == (0, 0, 0)
+    stroked = ('<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">'
+               '<path d="M2 2 L8 2 L8 8 L2 8 Z" fill="none" stroke="#FF0000"/></svg>')
+    image = png_of(stroked, 100)
+    assert image.getpixel((50, 50)) == (255, 255, 255) and sum(255 - image.getpixel((x, 50))[1] for x in range(15, 26)) == pytest.approx(10 * 255, rel=0.1)
+
+
+@pytest.mark.parametrize("svg", [
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 0 10"><path d="M0 0 L1 0 L1 1 Z"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 -5"><path d="M0 0 L1 0 L1 1 Z"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10"><path d="M0 0 L1 0 L1 1 Z"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0 L1 0 L1 1 Z" fill="abcdefg"/></svg>',
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><path d="M0 0 L1 0 L1 1 Z" fill="#12345"/></svg>',
+])
+def test_a_view_box_or_colour_the_renderer_cannot_use_is_an_error_with_words(svg):
+    with pytest.raises(VectorError):
+        render_png(svg, 100)

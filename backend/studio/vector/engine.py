@@ -53,7 +53,6 @@ class _Layer:
 
     ink: pixels.Ink
     geometry: BaseGeometry
-    area: float = 0.0
     colour: str = ""
 
 
@@ -105,7 +104,7 @@ def _assign_colours(layers: list[_Layer]) -> None:
 def _order(layers: list[_Layer]) -> list[_Layer]:
     """Largest ink area first, ties by darkness (§31.12.3 item 3). The area is rounded to a millionth of a square millimetre so that two
     shapes of the same size, which can differ in the last digit of a float, count as a tie. The ink's index ends the sort so that it is total."""
-    return sorted(layers, key=lambda layer: (-round(layer.area, 6), layer.ink.lightness, layer.ink.index))
+    return sorted(layers, key=lambda layer: (-round(layer.geometry.area, 6), layer.ink.lightness, layer.ink.index))
 
 
 def _name(number: int, label: str) -> tuple[str, str]:
@@ -160,7 +159,7 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
     layers: list[_Layer] = []
     for ink in sorted(reduction.inks, key=lambda i: (-i.pixels, i.lightness, i.index)):
         traced = geo.trace_ink(reduction.labels == ink.index, scale_x, scale_y, tolerance / 2)
-        shape = geo.clip_to_sheet(traced.simplify(tolerance, preserve_topology=True), width, height)
+        shape = traced.simplify(tolerance, preserve_topology=True)
         if not covered.is_empty:
             shape = shape.difference(covered)
         cleaned = geo.clean_layer(shape, r, eps)
@@ -172,12 +171,12 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
             tally.vanished.append(ink.palette or ink.picture)
             continue
         covered = covered.union(final)
-        layers.append(_Layer(ink=ink, geometry=final, area=final.area))
+        layers.append(_Layer(ink=ink, geometry=final))
     if not layers:
         raise VectorError(f"Nothing is left after removing everything narrower than {min_feature:g} mm.",
                           "Lower the smallest feature, or make a bolder drawing with larger shapes.")
     for layer, geometry in zip(layers, geo.fill_narrow_holes([layer.geometry for layer in layers], r)):
-        layer.geometry, layer.area = geometry, geometry.area  # the layers together leave no hairline gap where inks touch
+        layer.geometry = geometry  # the layers together leave no hairline gap where inks touch
     inks_found = len(layers)
     layers = _order(layers)
 
