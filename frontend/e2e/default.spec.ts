@@ -195,11 +195,13 @@ test("Reuse of a square run brings back its own 1:1, not the new default", async
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
   await expect(c.locator(".run-meta")).toContainText("512×512");
 
-  // Go back to the default shape and the full scale, then Reuse the square run.
+  // Go back to the default shape and the full scale (whatever the server says that is: this test is about Reuse, not about the default),
+  // then Reuse the square run.
+  const { defaults } = (await (await page.request.get("/api/capabilities")).json()) as { defaults: { width: number; height: number } };
   await optionsButton(page).click();
   await drawerOf(page).getByRole("button", { name: "Reset to defaults" }).click();
   await page.keyboard.press("Escape");
-  await expect(optionsButton(page)).toContainText("2752×1536 · 40 steps");
+  await expect(optionsButton(page)).toContainText(`${defaults.width}×${defaults.height} · 40 steps`);
   await card(page, prompt).getByRole("button", { name: "Reuse" }).click();
   await expect(promptBox(page)).toHaveValue(prompt);
   await expect(optionsButton(page)).toContainText("512×512 (25%)"); // the run's own size, as 1:1 at 25%
