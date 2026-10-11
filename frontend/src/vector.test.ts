@@ -192,6 +192,7 @@ describe("the form's defaults and limits", () => {
     expect(unavailableText({ ...CAPS, vector: { available: false, reason: "The Vector libraries are not installed here (vtracer).", hint: "Rebuild the image." } }))
       .toEqual({ reason: "The Vector libraries are not installed here (vtracer).", hint: "Rebuild the image." });
     expect(unavailableText({ ...CAPS, vector: { available: false, reason: null, hint: null } })).toEqual({ reason: "Vector can't run on this server as it is set up.", hint: null });
+    expect(unavailableText({ ...CAPS, vector: { available: false, reason: "", hint: null } }).reason).toBe("Vector can't run on this server as it is set up."); // an empty reason is no reason
   });
 });
 
@@ -441,6 +442,10 @@ describe("Reuse", () => {
 
 // ------------------------------------------------------------------ what the browser remembers
 describe("the saved form", () => {
+  it("is kept under the name this version has always used, so what a browser stored is found again", () => {
+    expect(VECTOR_FORM_KEY).toBe("studio.vector.v1");
+  });
+
   it("is saved and read back whole", () => {
     const store = memoryStore();
     const form: VectorForm = { ...FOX, recipeEdited: true, recipeText: "My words." };

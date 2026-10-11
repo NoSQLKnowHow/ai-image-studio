@@ -65,7 +65,8 @@ export const vectorUsable = (caps: Capabilities): boolean => caps.vector.availab
 
 /** What the page says in place of the form when Vector cannot run: the server's own reason and hint, or a plain sentence when it gave none. */
 export function unavailableText(caps: Capabilities): { reason: string; hint: string | null } {
-  return { reason: caps.vector.reason ?? "Vector can't run on this server as it is set up.", hint: caps.vector.hint };
+  // (an empty reason is no reason: the sentence stands in for it as it does for a missing one)
+  return { reason: caps.vector.reason || "Vector can't run on this server as it is set up.", hint: caps.vector.hint };
 }
 
 // ------------------------------------------------------------------ the palette (white is never in it)
