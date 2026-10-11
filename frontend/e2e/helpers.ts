@@ -24,8 +24,20 @@ export const test = base.extend<{ consoleErrors: string[] }>({
 export const FAST = { mode: "generate", aspect: "custom", customWidth: 512, customHeight: 512, steps: 8, seedLocked: false, seed: 42,
   numImages: 1, negativePrompt: "", guidance: null, transparent: false };
 
+/** The key the page saves to say "this browser has been through the one-time move of a saved 1:1 to 16:9" (DESIGN.md §34.2). */
+export const MOVED_KEY = "studio.default16x9.v1";
+
+/** Start the page with these options saved (FAST's, with `overrides` on top). It also marks the browser as already moved: a test that saves
+ *  `aspect: "1:1"` here means a 1:1 chosen on purpose, and without the mark the page's first load would move it to 16:9 and show the one-time
+ *  note (§34.2). The tests of that move itself (e2e/default.spec.ts) save the options by hand, without the mark. */
 export async function useOptions(page: Page, overrides: Record<string, unknown> = {}) {
-  await page.addInitScript((opts) => localStorage.setItem("studio.options.v1", JSON.stringify(opts)), { ...FAST, ...overrides });
+  await page.addInitScript(
+    ({ opts, movedKey }) => {
+      localStorage.setItem("studio.options.v1", JSON.stringify(opts));
+      localStorage.setItem(movedKey, "1");
+    },
+    { opts: { ...FAST, ...overrides }, movedKey: MOVED_KEY },
+  );
 }
 
 export const unique = (text: string) => `${text} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
