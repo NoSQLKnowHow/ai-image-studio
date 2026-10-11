@@ -341,6 +341,30 @@ describe("the card of a Vector run that is not finished or not a success", () =>
     expect(byAction("cancel")?.getAttribute("aria-disabled")).toBe("true");
   });
 
+  it("names each state in the badge: waiting (with or without a place), making, stopping, done, failed, canceled", () => {
+    const label = (patch: Partial<VectorRun>) => {
+      render(<VectorCard {...cardProps(makeVectorRun({ vectors: [], ...patch }))} />);
+      const text = card().querySelector(".run-head .badge:not(.badge-kept):not(.badge-project):not(.badge-deleted)")?.textContent;
+      cleanup();
+      return text;
+    };
+    expect(label({ status: "queued", queue_position: null })).toBe("Queued");
+    expect(label({ status: "queued", queue_position: 3 })).toBe("Queued · #3");
+    expect(label({ status: "running" })).toBe("Making vector");
+    expect(label({ status: "running", canceling: true })).toBe("Stopping");
+    expect(label({ status: "done" })).toBe("Done");
+    expect(label({ status: "failed", error: { message: "x", hint: null } })).toBe("Failed");
+    expect(label({ status: "canceled" })).toBe("Canceled");
+  });
+
+  it("announces its progress to a screen reader (a status region), before and after the first step", () => {
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "running", vectors: [], progress: null }))} />);
+    expect(card().querySelector(".progress")?.getAttribute("role")).toBe("status");
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "running", vectors: [], progress: { image: 1, of: 1, step: 1, steps: 40, stage: "draw" } }))} />);
+    expect(card().querySelector(".progress")?.getAttribute("role")).toBe("status");
+  });
+
   it("shows a queued run with its place, and Cancel", () => {
     render(<VectorCard {...cardProps(makeVectorRun({ status: "queued", vectors: [], queue_position: 2 }))} />);
     expect(card().querySelector(".badge-queued")?.textContent).toBe("Queued · #2");
