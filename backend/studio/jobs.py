@@ -1030,6 +1030,7 @@ class JobManager:
         work = self.storage.vector_dir(run_id) / f"work-{idx}"
         try:
             options_file = await asyncio.to_thread(self._prepare_work, work, options)
+            started = time.monotonic()
             try:
                 result = await vectorrun.run_job(self.settings, source, options_file, work, timeout=self.vector_job_timeout,
                                                  on_start=self._set_tracing)
@@ -1052,6 +1053,10 @@ class JobManager:
                 log.warning("could not store version %d of run %s: %s", idx + 1, run_id, exc)
                 return vectorrun.JobResult(message=f"The clean-up's files could not be stored: {exc.strerror or exc}", hint=vectorrun.SEE_THE_LOG)
             self.db.add_vector(vector_row)
+            # How long the clean-up took is what the Spark checklist asks for (SPARK_TEST.md section 28 (b)): the card shows the whole run,
+            # drawing included, and the drawing and the tracing are different machines' work (the GPU and the CPU).
+            log.info("run %s version %d traced in %.1fs (%d colours, %d layers)", run_id, idx + 1, time.monotonic() - started,
+                     summary.colours, summary.layers)
             return result
         finally:
             await asyncio.to_thread(shutil.rmtree, work, True)

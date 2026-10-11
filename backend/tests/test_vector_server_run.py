@@ -74,6 +74,16 @@ def test_a_vector_run_draws_then_traces_and_stores_each_version(vclient):
     assert (folder / "0.png").read_bytes() != (folder / "0-source.png").read_bytes()  # the preview is not the drawing
 
 
+def test_how_long_each_clean_up_took_is_logged(vclient, caplog):
+    # The Spark checklist asks for the tracing time, and the card only shows the whole run, so the log says it, once for each version.
+    with caplog.at_level("INFO", logger="studio.jobs"):
+        run = make_vector(vclient, "a fox head", seed=5, num_images=2, colours=4, palette=["#FF0000"])
+    lines = [r.getMessage() for r in caplog.records if " traced in " in r.getMessage()]
+    assert len(lines) == 2 and all(line.startswith(f"run {run['id']} version ") for line in lines)
+    assert lines[0].startswith(f"run {run['id']} version 1 traced in ") and lines[1].startswith(f"run {run['id']} version 2 traced in ")
+    assert lines[0].endswith(f" ({run['vectors'][0]['colours']} colours, {run['vectors'][0]['layers']} layers)")
+
+
 def test_a_clean_up_may_take_ten_minutes_before_it_is_stopped(vclient):
     assert vclient.app.state.jobs.vector_job_timeout == vectorrun.JOB_TIMEOUT_SECONDS == 600
 
