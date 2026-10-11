@@ -785,6 +785,42 @@ describe("What the studio sends", () => {
     expect(negativeBox().value).toBe("NEGATIVE-FIXED");
   });
 
+  it("waits 350 ms after the last key before asking, and says it is writing while it waits and until the answer comes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let answer: (value: { positive: string; negative: string }) => void = () => undefined;
+      const asked = vi.spyOn(api, "vectorRecipe").mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+      render(<VectorPanel {...panelProps()} />);
+      expect(recipeBox().getAttribute("aria-busy")).toBe("false");
+      type(idea(), "a fox");
+      expect(recipeBox().getAttribute("aria-busy")).toBe("true"); // it will ask: busy from the first key
+      expect(form().textContent).toContain("Writing these words…");
+      await act(async () => { vi.advanceTimersByTime(349); });
+      expect(asked).not.toHaveBeenCalled(); // not yet
+      await act(async () => { vi.advanceTimersByTime(1); });
+      expect(asked).toHaveBeenCalledTimes(1); // after exactly the pause
+      expect(recipeBox().getAttribute("aria-busy")).toBe("true"); // still waiting for the answer
+      await act(async () => { answer({ positive: "THE WORDS", negative: "N" }); });
+      expect(recipeBox().value).toBe("THE WORDS");
+      expect(recipeBox().getAttribute("aria-busy")).toBe("false");
+      expect(form().textContent).toContain("Written by the studio from your prompt, the kind and the colours. Change it by hand if you like.");
+      expect(form().textContent).not.toContain("Writing these words…");
+      // the hint under the box is what the box is described by
+      expect(document.getElementById(recipeBox().getAttribute("aria-describedby") ?? "")?.textContent).toContain("Written by the studio");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops saying it is writing when the words could not be written", async () => {
+    vi.spyOn(api, "vectorRecipe").mockRejectedValue(new ApiError("No.", 500));
+    render(<VectorPanel {...panelProps()} />);
+    type(idea(), "a fox");
+    await waitFor(() => expect(form().textContent).toContain("Couldn't write these words just now (No.)"));
+    expect(recipeBox().getAttribute("aria-busy")).toBe("false");
+    expect(form().textContent).not.toContain("Writing these words…");
+  });
+
   it("asks again when the kind, the colours or an ink changes (the box follows them while it is not edited)", async () => {
     const asked = fakeRecipe();
     render(<VectorPanel {...panelProps()} />);
@@ -816,6 +852,7 @@ describe("What the studio sends", () => {
     await act(async () => { await new Promise((resolve) => setTimeout(resolve, 450)); });
     expect(asked).toHaveBeenCalledTimes(1);
     expect(recipeBox().value).toBe(""); // no prompt: the box does not keep showing the words of one
+    expect(recipeBox().getAttribute("aria-busy")).toBe("false"); // and is not waiting for any
   });
 
   it("is editable: an edit is kept, the form stops rewriting it, and Rebuild gives the server's words back", async () => {
