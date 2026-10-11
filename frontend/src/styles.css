@@ -688,3 +688,8 @@ fieldset.field { gap: 8px; }
 .vector-png-row .button[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
 .vector-partial p { margin: 0; }
 @media (max-width: 520px) { .tab { padding: 0 8px; } }
+/* the choices of the form (Kind of artwork has three, with long names) wrap on a phone instead of running off the page, each growing to fill its row */
+@media (max-width: 520px) {
+  .vector-form .segmented { display: flex; flex-wrap: wrap; justify-self: stretch; }
+  .vector-form .segmented button { flex: 1 1 auto; justify-content: center; }
+}
