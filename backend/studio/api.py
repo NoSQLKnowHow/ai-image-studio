@@ -204,7 +204,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @app.get("/api/capabilities")
     async def capabilities(request: Request) -> dict[str, Any]:
         jobs = jobs_of(request)
-        width, height = P.DEFAULT_SIZE
+        width, height = P.DEFAULT_SIZE  # the page reads its default shape from "defaults" below and has no number of its own (DESIGN.md §34.4)
         supports = jobs.supports()
         return {
             "pipeline": settings.pipeline,

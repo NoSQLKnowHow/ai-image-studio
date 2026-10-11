@@ -1,6 +1,8 @@
 // Fixtures for unit tests, shaped like the real API responses.
 import type { BinnedImage, BinnedTrack, Capabilities, ImageInfo, ImageRun, MusicRun, Status, TrackInfo } from "./types";
 
+/** The capabilities as GET /api/capabilities answers them. Its `defaults` are the server's: 16:9, 2752×1536 since 1.16 (DESIGN.md §34).
+ *  The page has no default of its own, so a test that needs a particular shape names it (`aspect: "1:1"`) and does not rely on this one. */
 export const CAPS: Capabilities = {
   pipeline: "fake",
   model: "fake-pipeline",
@@ -10,7 +12,7 @@ export const CAPS: Capabilities = {
     "1:1": [2048, 2048], "4:3": [2400, 1792], "3:4": [1792, 2400], "3:2": [2528, 1696],
     "2:3": [1696, 2528], "16:9": [2752, 1536], "9:16": [1536, 2752],
   },
-  defaults: { mode: "generate", aspect_ratio: "1:1", width: 2048, height: 2048, steps: 40, seed: null, num_images: 1, transparent: false },
+  defaults: { mode: "generate", aspect_ratio: "16:9", width: 2752, height: 1536, steps: 40, seed: null, num_images: 1, transparent: false },
   limits: {
     prompt_chars: 8000,
     steps: { min: 1, max: 100 },
@@ -40,7 +42,9 @@ export const CAPS: Capabilities = {
   device: { name: "fake (no GPU used)" },
 };
 
-/** One result picture as the server sends it (DESIGN.md §33.3): `idx` is its place in the run, `seed` what names it. Its id says both. */
+/** One result picture as the server sends it (DESIGN.md §33.3): `idx` is its place in the run, `seed` what names it. Its id says both.
+ *  It is 2048×2048, a picture made before 1.16 (when that was the default), and stays so on purpose: Reuse and Retry must bring back a run's
+ *  own size, and a fixture that is not the current default shows that they do (§34.3). */
 export function makeImage(idx: number, overrides: Partial<ImageInfo> = {}): ImageInfo {
   const id = overrides.id ?? `image${idx}`;
   return {
@@ -68,6 +72,7 @@ export function makeBinnedTrack(idx: number, overrides: Partial<BinnedTrack> = {
 }
 
 let counter = 0;
+/** An image run, made at 2048×2048 like makeImage's pictures: a run from before 1.16, not at the new default shape (see makeImage). */
 export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
   counter += 1;
   return {
@@ -135,7 +140,7 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
 }
 
 export const STATUS: Status = {
-  version: "1.15",
+  version: "1.16",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", model: "image", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10, enlarge_waiting: [] },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },
