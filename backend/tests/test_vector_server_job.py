@@ -231,17 +231,15 @@ def test_a_flat_drawing_is_white_with_a_few_solid_inks_and_nothing_else():
         assert (255, 255, 255) in colours and 2 <= len(colours) <= 4 and colours <= {(255, 255, 255), *FLAT_INKS}, seed
 
 
-def test_a_flat_drawing_leaves_the_edge_bare_and_is_mostly_white():
-    picture = render_flat_image(width=600, height=400, seed=3)
-    margin = 400 // 10
-    for x in range(600):
-        for y in (0, 399):
-            assert picture.getpixel((x, y)) == (255, 255, 255)
-    for y in range(400):
-        for x in (0, 599):
-            assert picture.getpixel((x, y)) == (255, 255, 255)
-    white = dict((colour, n) for n, colour in picture.getcolors(maxcolors=64))[(255, 255, 255)]
-    assert margin == 40 and 0.3 < white / (600 * 400) < 1.0  # the shapes are a part of the sheet, not all of it
+def test_a_flat_drawing_keeps_its_shapes_away_from_the_edge_and_is_mostly_white():
+    for seed in range(60):
+        picture = render_flat_image(width=600, height=400, seed=seed)
+        margin = 400 // 10
+        ink = picture.convert("L").point(lambda value: 255 if value < 255 else 0)  # anything that is not exactly white
+        left, top, right, bottom = ink.getbbox()
+        assert left >= margin and top >= margin and right <= 600 - margin + 1 and bottom <= 400 - margin + 1, seed  # the sheet's edge is bare
+    white = dict((colour, n) for n, colour in render_flat_image(width=600, height=400, seed=3).getcolors(maxcolors=64))[(255, 255, 255)]
+    assert 0.3 < white / (600 * 400) < 1.0  # the shapes are a part of the sheet, not all of it
 
 
 def test_the_same_seed_draws_the_same_picture_and_another_seed_another():

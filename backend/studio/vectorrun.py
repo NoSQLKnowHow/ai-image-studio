@@ -155,10 +155,9 @@ async def run_job(
 
 
 async def _kill(proc: asyncio.subprocess.Process) -> None:
-    """Stop a process that is still running, and wait for it so that it is not left as a zombie."""
-    if proc.returncode is None:
-        try:
-            proc.kill()
-        except ProcessLookupError:  # it ended between the check and the kill
-            pass
+    """Stop a process and wait for it so that it is not left as a zombie. One that has ended already makes `kill` raise, which is no problem."""
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
     await proc.wait()

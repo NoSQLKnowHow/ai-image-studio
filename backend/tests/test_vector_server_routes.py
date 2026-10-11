@@ -261,3 +261,12 @@ def test_a_run_that_vanishes_between_the_two_lookups_costs_only_the_name(made):
     for url in (vector["download_url"], vector["zip_url"], vector["png_download_url"]):
         response = client.get(url)
         assert response.status_code == 200 and "content-disposition" not in response.headers, url
+
+
+def test_the_svg_route_sets_its_own_security_headers_and_relies_on_no_other_layer(vclient_factory, libraries_import, monkeypatch):
+    """The page-wide middleware also adds `nosniff` and a policy, but only where a response has none. With it out of the way the route still sends both."""
+    monkeypatch.setattr("studio.security.SECURITY_HEADERS", [])
+    client = vclient_factory()
+    run = make_vector(client)
+    response = client.get(run["vectors"][0]["url"])
+    assert response.headers.get_list("x-content-type-options") == ["nosniff"] and response.headers.get_list("content-security-policy") == [CSP]

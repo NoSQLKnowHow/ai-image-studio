@@ -718,13 +718,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """(vector row, its run, the file's contents) for one of a vector's three files (`column` is `svg_path`, `zip_path` or `png_path`), or
         (None, None, None) when there is no such vector or its file is gone. Read whole and up front, as `_image_file` does, so that a run deleted
         while it is being fetched gives a clean 404 and not a response cut short after its headers."""
-        try:
-            check_id(vector_id)
-        except StorageError:
-            return None, None, None
         db: Database = request.app.state.db
         storage: Storage = request.app.state.storage
-        vector = db.get_vector(vector_id)
+        vector = db.get_vector(vector_id)  # an id that is not even shaped like one matches no row, and is a 404 like any other
         if vector is None:
             return None, None, None
         run = db.get_run(vector["run_id"])

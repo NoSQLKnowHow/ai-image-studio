@@ -9,8 +9,10 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import threading
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -65,6 +67,15 @@ def test_a_vector_run_draws_then_traces_and_stores_each_version(vclient):
     assert vclient.app.state.db._one("SELECT COUNT(*) AS n FROM images")["n"] == 0
     assert not (storage.images / run["id"]).exists() and not (storage.thumbs / run["id"]).exists()
     assert vclient.app.state.jobs._tracing is None  # no process is remembered once its job is over
+    # each file is the kind of file its name says (the job's three outputs go to three different names)
+    folder = storage.vector_dir(run["id"])
+    assert (folder / "0.svg").read_bytes().startswith(b"<svg") and zipfile.is_zipfile(folder / "0-layers.zip")
+    assert (folder / "0.png").read_bytes().startswith(b"\x89PNG") and (folder / "0-source.png").read_bytes().startswith(b"\x89PNG")
+    assert (folder / "0.png").read_bytes() != (folder / "0-source.png").read_bytes()  # the preview is not the drawing
+
+
+def test_a_clean_up_may_take_ten_minutes_before_it_is_stopped(vclient):
+    assert vclient.app.state.jobs.vector_job_timeout == vectorrun.JOB_TIMEOUT_SECONDS == 600
 
 
 def test_the_model_draws_a_flat_picture_at_the_drawing_size_with_the_recipe_and_guidance(vclient):
@@ -196,6 +207,8 @@ def test_the_payload_of_a_running_run_carries_its_stage_and_the_versions_made_so
     created = create_vector(vclient, num_images=2)
     running = wait_for_stage(vclient, created["id"], "trace", image=2)
     assert running["status"] == "running" and running["progress"] == {"image": 2, "of": 2, "step": 0, "steps": 1, "stage": "trace"}
+    status = vclient.get("/api/status").json()
+    assert status["worker"]["state"] == "ready" and status["queue"]["running"] == created["id"]  # the model is idle while the clean-up works; the run is not over
     assert [v["idx"] for v in running["vectors"]] == [0]  # the first version is already there for the card to show
     assert wait_for(vclient, created["id"])["status"] == "done"
 
@@ -242,6 +255,38 @@ def test_a_job_that_crashes_is_reported_as_stopping_unexpectedly(vclient, monkey
     run = make_vector(vclient, num_images=2)
     assert run["status"] == "done" and [v["idx"] for v in run["vectors"]] == [1]
     assert run["error"] == {"message": "Version 1 could not be made: The clean-up stopped unexpectedly (exit code 3).", "hint": "See the server log for details."}
+
+
+def failing_replace(monkeypatch, ends_with: str):
+    """Make moving a file whose name ends like this fail with 'disk full' (in the job manager only: its `os` is replaced by one that has just `replace`)."""
+    import errno
+    from types import SimpleNamespace
+
+    real = os.replace
+
+    def replace(source, target):
+        if str(target).endswith(ends_with):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real(source, target)
+
+    monkeypatch.setattr("studio.jobs.os", SimpleNamespace(replace=replace))
+
+
+def test_a_version_that_cannot_be_moved_into_place_leaves_no_part_of_itself_behind(vclient, monkeypatch):
+    """The SVG is moved first and the ZIP second: when the ZIP cannot be, the SVG already in place is taken away again."""
+    failing_replace(monkeypatch, "-layers.zip")
+    run = make_vector(vclient, num_images=1)
+    assert run["status"] == "failed" and run["vectors"] == []
+    assert run["error"]["message"] == "Version 1 could not be made: The clean-up's files could not be stored: No space left on device"
+    assert stored_files(vclient, run["id"]) == ["0-source.png"]
+
+
+def test_a_drawing_that_cannot_be_stored_fails_the_run_and_starts_no_clean_up(vclient, monkeypatch):
+    failing_replace(monkeypatch, "-source.png")
+    run = make_vector(vclient, num_images=2)
+    assert run["status"] == "failed" and run["vectors"] == []
+    assert run["error"] == {"message": "A drawing could not be stored: [Errno 28] No space left on device", "hint": "Check free disk space and the server log."}
+    assert job_calls(vclient) == []
 
 
 @pytest.mark.parametrize("answer, message", [

@@ -248,6 +248,7 @@ def test_the_idea_is_required():
 def test_the_idea_has_the_prompt_limit_of_the_other_modes():
     settings = Settings(max_prompt_chars=300)
     assert resolve("x" * 100, settings=settings).prompt == "x" * 100
+    assert resolve("x" * 300, settings=settings).prompt == "x" * 300  # exactly the limit is allowed
     with pytest.raises(RunRequestError) as caught:
         resolve("x" * 301, settings=settings)
     assert caught.value.errors == [(("prompt",), "The prompt is 301 characters; the limit is 300.")]

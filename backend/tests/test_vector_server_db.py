@@ -28,7 +28,8 @@ PROJECT = "1" * 32
 def v6_database(path) -> None:
     """A schema 6 database as 1.16 leaves it: the current tables with the mode CHECK of that time and no `vectors` table, holding three runs that
     use every column schemas 4 to 6 added (a kept run filed in a project and restored from the bin, a music run in the bin with lyrics, a failed edit
-    with an error), their pictures and tracks (one of each in the bin), and the project. Written to be noticed if a migration loses or mangles any of it."""
+    with an error), their pictures and tracks (one of each in the bin), and the project. Their `seq` numbers have gaps (10, 20, 35), as those of a database that has had runs
+    deleted do, so that a rebuild that numbered them again would be noticed. Written to be noticed if a migration loses or mangles any of it."""
     Database(path).close()  # the tables, made by this code
     as_before_vector(path)
     conn = sqlite3.connect(path)
@@ -39,12 +40,12 @@ def v6_database(path) -> None:
         (RUN_MUSIC, "2026-10-02T10:00:00.000Z", "done", "music", "warm piano", 0, "la la la", None, None, "2026-10-06T00:00:00.000Z", None, None),
         (RUN_EDIT, "2026-10-03T10:00:00.000Z", "failed", "edit", "make it blue", 0, None, None, None, None, "boom", "try again"),
     ]
-    for run_id, created, status, mode, prompt, pinned, lyrics, restored, project, deleted, error, hint in runs:
+    for seq, (run_id, created, status, mode, prompt, pinned, lyrics, restored, project, deleted, error, hint) in zip((10, 20, 35), runs):
         conn.execute(
-            "INSERT INTO runs (id, created_at, started_at, finished_at, status, mode, prompt, effective_prompt, negative_prompt, transparent, width, "
+            "INSERT INTO runs (seq, id, created_at, started_at, finished_at, status, mode, prompt, effective_prompt, negative_prompt, transparent, width, "
             "height, steps, cfg_scale, seed, num_images, model_id, input_image_id, error_message, error_hint, pinned, options_json, lyrics, "
-            "deleted_at, restored_at, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'blurry', 1, 256, 128, 20, 4.5, 77, 2, 'm', NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (run_id, created, created, created, status, mode, prompt, prompt + " (sent)", error, hint, pinned, json.dumps({"steps": 20, "n": prompt}),
+            "deleted_at, restored_at, project_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'blurry', 1, 256, 128, 20, 4.5, 77, 2, 'm', NULL, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (seq, run_id, created, created, created, status, mode, prompt, prompt + " (sent)", error, hint, pinned, json.dumps({"steps": 20, "n": prompt}),
              lyrics, deleted, restored, project))
     for n in (1, 2):
         conn.execute("INSERT INTO images (id, run_id, kind, idx, seed, width, height, has_alpha, bytes, path, created_at, deleted_at) "
@@ -126,6 +127,7 @@ def test_a_1_16_database_is_migrated_and_every_run_keeps_every_column(tmp_path):
     assert after[0]["project_id"] == PROJECT and after[0]["restored_at"] == "2026-10-05T00:00:00.000Z" and after[0]["pinned"] == 1
     assert after[1]["deleted_at"] == "2026-10-06T00:00:00.000Z" and after[1]["lyrics"] == "la la la"
     assert after[2]["error_message"] == "boom" and after[2]["cfg_scale"] == 4.5 and after[2]["transparent"] == 1
+    assert [row["seq"] for row in after] == [10, 20, 35]  # and the place each run has in the history, which the cursor of a page is made from
     assert count(path, "images") == 2 and count(path, "tracks") == 2 and count(path, "projects") == 1  # the rows that point at runs survived too
     conn = sqlite3.connect(path)
     try:
@@ -177,15 +179,18 @@ def test_a_migrated_database_is_the_same_as_a_fresh_one(tmp_path, build):
     build(migrated)
     kept = [(row["id"], row["created_at"], row["mode"]) for row in run_rows(migrated)]
     Database(migrated).close()
-    copy = tmp_path / "migrated.sqlite.before-schema-7"
-    first = copy.read_bytes()
-    Database(migrated).close()  # starting it again changes nothing: the copy is not made again, and nothing is rebuilt
-    assert copy.read_bytes() == first
+    # looked at after the FIRST start and before any second one: the next start creates a missing index by itself (`CREATE ... IF NOT EXISTS`), which
+    # would hide a rebuild that forgot one
     Database(fresh).close()
-    assert schema_names(migrated) == schema_names(fresh)  # the same tables and indexes, with the same CREATE statements (the CHECKs included)
+    first_look = schema_names(migrated)
+    assert first_look == schema_names(fresh)  # the same tables and indexes, with the same CREATE statements (the CHECKs included)
     for table in ("runs", "images", "tracks", "run_inputs", "projects", "vectors"):
         assert full_columns(migrated, table) == full_columns(fresh, table), table
     assert [(row["id"], row["created_at"], row["mode"]) for row in run_rows(migrated)] == kept  # no run was lost
+    copy = tmp_path / "migrated.sqlite.before-schema-7"
+    first = copy.read_bytes()
+    Database(migrated).close()  # starting it again changes nothing: the copy is not made again, and nothing is rebuilt
+    assert copy.read_bytes() == first and schema_names(migrated) == first_look
 
 
 @pytest.mark.parametrize("build", [build for build, _ in OLD_DATABASES], ids=[name for _, name in OLD_DATABASES])
