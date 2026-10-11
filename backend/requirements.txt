@@ -4,3 +4,12 @@
 -r requirements-server.txt
 pillow==12.3.0
 typing_extensions==4.16.0
+
+# Vector (DESIGN.md section 31): the clean-up that makes a laser-ready SVG from a picture. numpy does the colour reduction; vtracer
+# (a Rust extension, MIT) traces the pixels of each colour into closed shapes; shapely (BSD-3-Clause, a binding of GEOS) does the geometry:
+# offsets, holes, the smallest feature. Checked on PyPI (2026-10-11) to have prebuilt wheels for Linux aarch64 and x86_64 and Python
+# 3.11 to 3.14 (vtracer 0.6.15 from 3.7, shapely 2.2.0 needs numpy 1.26 or later), so nothing is compiled. In the container numpy is NVIDIA's
+# (see requirements-vector.txt); here it is pinned for the tests.
+numpy==2.4.6
+vtracer==0.6.15
+shapely==2.2.0

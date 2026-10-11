@@ -1,12 +1,11 @@
 """Vector (DESIGN.md §31, version 1.17): an SVG a laser can use, made from a picture.
 
 THIS FILE IS THE CONTRACT BETWEEN THE ENGINE, THE SERVER AND THE PAGE (§31.12). The constants, the records and the signatures below are what the
-server (`studio/runspec.py`, `jobs.py`, `api.py`) imports and what the page's limits come from. The engine owns everything in this package:
-`build_vector`, `pack_zip` and `render_png` raise `NotImplementedError` until it is built, so the server's tests must not depend on them (they
-use a fake job, §31.12.4). The small pure functions (`check_options`, `draw_size`, `to_json` / `from_json`, `available`, and a placeholder
-`build_recipe`) are already real so that the server and the page can be built against them; the engine may refine them (and owns the wording
-of the recipe) but keeps their signatures. Keep the import of this package light: numpy, Pillow, vtracer and shapely are imported inside
-the functions that need them, never at the top, so that the server can import the limits without the libraries.
+server (`studio/runspec.py`, `jobs.py`, `api.py`) imports and what the page's limits come from. The engine (built in 1.17) owns everything
+else in this package: `build_vector`, `pack_zip` and `render_png` do the work in `engine.py`, `raster.py` and `svgio.py`; `build_recipe` has the
+real wording (`recipe.py`); `colour_name` is in `colours.py`; the job the server starts is `python -m studio.vector.job` (`job.py`). Keep the
+import of this package light: numpy, Pillow, vtracer and shapely are imported inside the functions that need them, never at the top, so that
+the server can import the limits without the libraries (`colours.py` and `recipe.py` are plain Python and need none).
 
 Why one file of constants: the limits (how many colours, how big a sheet) are checked by the server, shown by the page through
 `GET /api/capabilities`, and used by the engine, so they live in exactly one place.
@@ -18,6 +17,8 @@ import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, Optional, Union
+
+from .colours import colour_name  # noqa: F401 - part of the package's face: the name a layer is called by (§31.12.3 item 3)
 
 # ---- the limits (DESIGN.md §31.3, §31.12.1) -------------------------------------------------------------------------------------------
 COLOURS_MIN, COLOURS_MAX, COLOURS_DEFAULT = 2, 8, 2  # includes white, the bare material (§31.7 answer 2b)
@@ -159,18 +160,11 @@ class Recipe:
 
 def build_recipe(idea: str, kind: str, colours: int, palette: tuple[str, ...]) -> Recipe:
     """The recipe for an idea: pure text, no model. The page shows `positive` (editable) before a run; the server builds it again when the
-    request has no edited `recipe`.
+    request has no edited `recipe`. The same arguments always give the same text. The wording, and why it is what it is, is `recipe.py`;
+    the negative text is fixed."""
+    from .recipe import NEGATIVE, positive_text
 
-    THIS IS A PLACEHOLDER so that the server and the page can be built against a working route; the engine replaces the wording (it owns it)
-    and keeps the signature and the rule that the same arguments give the same text."""
-    inks = colours - 1
-    style = {"silhouette": "a bold silhouette, one solid shape against nothing", "flat": "flat colour artwork made of solid colour shapes",
-             "line": "clean line art, outlines only"}.get(kind, "flat colour artwork")
-    named = f" Use these colours for the shapes: {', '.join(palette)}." if palette else ""
-    positive = (f"{idea.strip()}. {style}, {inks} colour{'s' if inks != 1 else ''} besides the white background.{named} "
-                "Plain white background, thick clean outlines, no gradients, no shading, no text.")
-    negative = "gradient, shading, shadow, photograph, texture, text, lettering, watermark, thin lines, tiny details, blur"
-    return Recipe(positive=positive, negative=negative)
+    return Recipe(positive=positive_text(idea, kind, colours, tuple(palette)), negative=NEGATIVE)
 
 
 @dataclass(frozen=True)
@@ -208,17 +202,41 @@ def available() -> tuple[bool, Optional[str], Optional[str]]:
     return (True, None, None)
 
 
+def _need_libraries() -> None:
+    """Stop with the card's own wording, and not an ImportError, when a library the clean-up needs is not installed."""
+    usable, reason, hint = available()
+    if not usable:
+        raise VectorError(reason or "The Vector libraries are not installed.", hint)
+
+
 def build_vector(source: Union[Path, bytes], opts: VectorOptions) -> VectorResult:
     """The clean-up (§31.5 steps 2 to 5): reduce the picture to `opts.colours`, trace each colour, make the shapes laser-ready, write the
-    SVGs and the check. Deterministic: the same picture and options give the same bytes. Pure CPU, no model, no network."""
-    raise NotImplementedError("engine")
+    SVGs and the check. Deterministic: the same picture and options give the same bytes. Pure CPU, no model, no network. Raises
+    `VectorError` (with words for the card) for anything that goes wrong, including a library failing; never a library's own exception."""
+    _need_libraries()
+    from . import engine
+
+    return engine.build_vector(source, opts)
 
 
 def pack_zip(result: VectorResult) -> bytes:
-    """A ZIP of one SVG per layer (`layer-1-black.svg`, ...), for the Download layers button."""
-    raise NotImplementedError("engine")
+    """A ZIP of one SVG per layer (`layer-1-black.svg`, ...), for the Download layers button. The same layers always give the same bytes:
+    every entry is dated 1 January 1980, the earliest a ZIP can say, so the archive does not depend on the clock (§31.12.3 item 8)."""
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for layer in result.layers:
+            entry = zipfile.ZipInfo(f"{layer.id}.svg", date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_DEFLATED
+            entry.external_attr = 0o644 << 16  # a plain file that its owner can write, whatever the machine that unpacks it
+            archive.writestr(entry, layer.svg.encode("utf-8"))
+    return buffer.getvalue()
 
 
 def render_png(svg: str, long_side_px: int) -> bytes:
     """A PNG drawn from the SVG's own shapes (never from the model's picture), so it is as sharp as you ask. `long_side_px` is 16 to 8192."""
-    raise NotImplementedError("engine")
+    from .raster import render_svg  # Pillow only: it is in every install, so no library check
+
+    return render_svg(svg, long_side_px)
