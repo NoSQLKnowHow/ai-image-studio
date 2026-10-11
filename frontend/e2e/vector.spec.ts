@@ -472,7 +472,8 @@ test("Delete moves a Vector run to the bin whole: no per-item delete, the files 
   // Undo on the toast of a Delete does the same
   await c.getByRole("button", { name: "Delete", exact: true }).click();
   await dialog(page, "Delete this run?").getByRole("button", { name: "Delete", exact: true }).click();
-  await toastWith(page, /^Deleted “/).getByRole("button", { name: "Undo" }).click();
+  await expect(c).toHaveCount(0);
+  await toastWith(page, /^Deleted “/).last().getByRole("button", { name: "Undo" }).click(); // (the first Delete's toast may still be on screen: the newest is the last)
   await expect(c).toBeVisible();
 });
 
