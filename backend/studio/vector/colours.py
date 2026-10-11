@@ -23,15 +23,16 @@ LAB_EPSILON, LAB_KAPPA = 216 / 24389, 24389 / 27  # the CIE's own constants for 
 # The short fixed list the layer names come from (§31.12.3 item 3): black, grey, white, red, orange, yellow, green, cyan, blue, purple, pink,
 # brown. A colour is called by the NEAREST reference colour in CIE Lab, and the table has several references for the names that cover a lot of
 # ground (a saturated blue, a sky blue and a navy are all "blue"; with one reference each, a light blue would be nearer to grey than to the
-# one blue). The order of the table decides a tie, so black comes before grey. Nothing here is configurable (§31.12.9 item 8).
+# one blue). Every entry matters: a test removes each in turn over a grid of colours and checks that some name changes, so the table has no
+# entry that does nothing. The order of the table decides a tie. Nothing here is configurable (§31.12.9 item 8).
 COLOUR_REFERENCES: tuple[tuple[str, str], ...] = (
-    ("black", "#000000"), ("black", "#202020"),
+    ("black", "#202020"),
     ("grey", "#808080"), ("grey", "#A8A8A8"), ("grey", "#C8C8C8"), ("grey", "#505050"),
-    ("white", "#FFFFFF"), ("white", "#F0F0F0"),
+    ("white", "#F0F0F0"),
     ("red", "#FF0000"), ("red", "#CC2020"), ("red", "#E04040"), ("red", "#800000"),
     ("orange", "#FF8000"), ("orange", "#FFA500"), ("orange", "#E07000"),
     ("yellow", "#FFE000"), ("yellow", "#FFFF00"), ("yellow", "#D4C000"), ("yellow", "#F0E080"),
-    ("green", "#00A000"), ("green", "#00FF00"), ("green", "#006400"), ("green", "#80C000"), ("green", "#20B060"), ("green", "#A0E0A0"),
+    ("green", "#006400"), ("green", "#80C000"), ("green", "#20B060"), ("green", "#A0E0A0"),
     ("cyan", "#00D0D0"), ("cyan", "#00FFFF"), ("cyan", "#008B8B"),
     ("blue", "#0000FF"), ("blue", "#1E78DC"), ("blue", "#000080"), ("blue", "#4060FF"), ("blue", "#80B0E8"),
     ("purple", "#8000C0"), ("purple", "#800080"), ("purple", "#FF00FF"), ("purple", "#4B0082"), ("purple", "#B080E0"),

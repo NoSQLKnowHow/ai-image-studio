@@ -6,13 +6,17 @@ The pictures are constructed (shapes with anti-aliased edges, like a real drawin
 
 from __future__ import annotations
 
+import collections
+import hashlib
+import itertools
+
 import numpy as np
 import pytest
 from PIL import Image
 
 from studio.vector import VectorError, VectorOptions, build_vector, colour_name
 from studio.vector import engine, pixels
-from studio.vector.colours import COLOUR_NAMES, hex_to_rgb, rgb_to_lab
+from studio.vector.colours import COLOUR_NAMES, COLOUR_REFERENCES, hex_to_rgb, rgb_to_lab
 
 from vector_engine_support import SIZE, SHEET_MM, as_png, bbox, layers_of, make, mm, picture
 
@@ -235,12 +239,49 @@ def test_a_colour_is_called_by_the_nearest_name_of_the_fixed_list(colour, name):
     assert colour_name(colour) == name
 
 
+def grid_colours():
+    """A grid of 18 x 18 x 18 colours spread over the whole of RGB (every 15th level, and 255): enough that every entry of the table of names
+    decides the name of some of them."""
+    levels = list(range(0, 256, 15)) + [255]
+    return [("#%02X%02X%02X" % rgb) for rgb in itertools.product(levels, repeat=3)]
+
+
+def test_the_names_of_the_whole_colour_cube_are_a_fixed_list():
+    """§31.12.9 item 8: the names are fixed and not configurable, and the same colour must have the same name in every release (a layer's name is in
+    the file the owner keeps). A fingerprint of the name of each of 6859 colours over the whole cube, so that any change to the table of
+    references or to how the nearest one is chosen shows up here, and a change that is meant is made in two places, on purpose. To renew it,
+    run the same two lines and paste the new digest."""
+    names = [colour_name(colour) for colour in grid_colours()]
+    assert len(names) == 6859
+    assert hashlib.sha256(",".join(names).encode()).hexdigest() == "20cc01072a54c0835ef4fbb8f929a979c4f38823d92acd41f39b54a19220963a"
+    assert collections.Counter(names) == {"green": 1570, "purple": 1074, "blue": 969, "pink": 577, "cyan": 531, "yellow": 475, "brown": 473,
+                                          "grey": 409, "red": 351, "orange": 174, "white": 131, "black": 125}
+
+
+def test_no_entry_in_the_table_of_names_is_idle():
+    """Each reference colour earns its place: without it, some colour on the grid would be called something else. An entry that changes
+    nothing would be tuning nobody can see or test."""
+    colours = grid_colours()
+    lab = pixels.srgb_to_lab(np.array([hex_to_rgb(c) for c in colours], dtype=np.uint8))
+    references = list(COLOUR_REFERENCES)
+    ref_lab = pixels.srgb_to_lab(np.array([hex_to_rgb(h) for _, h in references], dtype=np.uint8))
+
+    def names(skip=None):
+        keep = [i for i in range(len(references)) if i != skip]
+        distance = ((lab[:, None, :] - ref_lab[keep][None, :, :]) ** 2).sum(axis=2)
+        return [references[keep[i]][0] for i in distance.argmin(axis=1)]
+
+    full = names()
+    assert full == [colour_name(c) for c in colours]  # the quick way and colour_name agree
+    assert [i for i in range(len(references)) if names(skip=i) == full] == []
+
+
 def test_names_come_from_the_twelve_and_are_stable():
     assert COLOUR_NAMES == ("black", "grey", "white", "red", "orange", "yellow", "green", "cyan", "blue", "purple", "pink", "brown")
     rng = np.random.default_rng(3)
     for r, g, b in rng.integers(0, 256, size=(200, 3)):
         colour = "#%02X%02X%02X" % (r, g, b)
-        assert colour_name(colour) in COLOUR_NAMES and colour_name(colour) == colour_name(colour.lower().replace("#", "#"))
+        assert colour_name(colour) in COLOUR_NAMES and colour_name(colour) == colour_name(colour.lower())  # either case of hex digit
 
 
 def test_the_numpy_colour_space_is_the_plain_python_one():
