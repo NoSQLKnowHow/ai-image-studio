@@ -298,15 +298,15 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
   });
 
   it("the counts are kept as the server gave them, with the project they describe", () => {
-    const counts = { image: { all: 3, kept: 1, deleted: 1, deleted_items: 0 }, music: { all: 2, kept: 0, deleted: 0, deleted_items: 0 } };
+    const counts = { image: { all: 3, kept: 1, deleted: 1, deleted_items: 0 }, music: { all: 2, kept: 0, deleted: 0, deleted_items: 0 }, vector: { all: 1, kept: 0, deleted: 0, deleted_items: 0 } };
     expect(reducer(initialState, { type: "counts", counts, project: null })).toMatchObject({ counts, countsProject: null });
     // within a project the counts say which: a number for one project must never be shown as another's
     expect(reducer(initialState, { type: "counts", counts, project: "p1" })).toMatchObject({ counts, countsProject: "p1" });
   });
 
   it("the whole history's counts are kept apart from a project's, for Empty bin", () => {
-    const whole = { image: { all: 9, kept: 4, deleted: 3, deleted_items: 0 }, music: { all: 2, kept: 1, deleted: 1, deleted_items: 0 } };
-    const inProject = { image: { all: 2, kept: 2, deleted: 0, deleted_items: 0 }, music: { all: 0, kept: 0, deleted: 0, deleted_items: 0 } };
+    const whole = { image: { all: 9, kept: 4, deleted: 3, deleted_items: 0 }, music: { all: 2, kept: 1, deleted: 1, deleted_items: 0 }, vector: { all: 1, kept: 0, deleted: 0, deleted_items: 0 } };
+    const inProject = { image: { all: 2, kept: 2, deleted: 0, deleted_items: 0 }, music: { all: 0, kept: 0, deleted: 0, deleted_items: 0 }, vector: { all: 0, kept: 0, deleted: 0, deleted_items: 0 } };
     let state = reducer(initialState, { type: "totals", counts: whole });
     state = reducer(state, { type: "counts", counts: inProject, project: "p1" });
     expect(state.totals).toEqual(whole);

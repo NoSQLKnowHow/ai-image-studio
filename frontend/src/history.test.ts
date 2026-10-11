@@ -6,7 +6,7 @@ import {
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
-import { makeBinnedImage, makeBinnedTrack, makeMusicRun, makeRun } from "./testdata";
+import { makeBinnedImage, makeBinnedTrack, makeMusicRun, makeRun, makeVectorRun } from "./testdata";
 import type { Run, RunStatus } from "./types";
 
 // ------------------------------------------------------------------ the table both sides are tested against (DESIGN.md §29.5, criterion 120)
@@ -20,10 +20,16 @@ type TableRun = { id: string; mode: string; status: string; pinned: boolean; del
 function tableRun(entry: TableRun): Run {
   const extra = { id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned, deleted_at: entry.deleted ? "2026-10-02T00:00:00.000Z" : null, project_id: entry.project };
   const items = Array.from({ length: entry.items_in_bin }, (_, i) => i);
+  // a Vector row (DESIGN.md §31.12.6) has no pictures or tracks of its own in the bin: it is binned whole, so `items_in_bin` is 0 for it
+  if (entry.mode === "vector") return makeVectorRun(extra);
   return entry.mode === "music"
     ? makeMusicRun({ ...extra, binned_tracks: items.map((i) => makeBinnedTrack(i)) })
     : makeRun({ ...extra, mode: entry.mode as "generate" | "edit", binned_images: items.map((i) => makeBinnedImage(i)) });
 }
+
+// which tab a run belongs to, as the server's counts name it
+type Kind = "image" | "music" | "vector";
+const kindOf = (run: Run): Kind => (run.mode === "music" ? "music" : run.mode === "vector" ? "vector" : "image");
 
 describe("the shared table of cases", () => {
   const runs = cases.runs.map(tableRun); // newest first, as the table lists them
@@ -38,21 +44,23 @@ describe("the shared table of cases", () => {
   // the page counts the table the way the server counts it in SQL: both must give the numbers the table lists. The bin counts THINGS (DESIGN.md §33.1): each
   // run in it once, and each picture or track in it of a run that is in the history once (one of a run that is itself in the bin is not counted).
   it("the page's counts of the table agree with the server's", () => {
-    const inTab = (kind: "image" | "music", project: string | null) => runs.filter((run) => (run.mode === "music") === (kind === "music") && matches(run, withProject(NO_FILTER, project)));
-    const count = (kind: "image" | "music", filter: HistoryFilter) =>
-      runs.filter((run) => (run.mode === "music") === (kind === "music") && matches(run, filter)).length;
-    const items = (kind: "image" | "music", project: string | null) =>
+    const inTab = (kind: Kind, project: string | null) => runs.filter((run) => kindOf(run) === kind && matches(run, withProject(NO_FILTER, project)));
+    const count = (kind: Kind, filter: HistoryFilter) => runs.filter((run) => kindOf(run) === kind && matches(run, filter)).length;
+    const items = (kind: Kind, project: string | null) =>
       inTab(kind, project).reduce((sum, run) => sum + run.binned_images.length + run.binned_tracks.length, 0); // `inTab` is the history: not the runs in the bin
-    const of = (kind: "image" | "music", project: string | null = null) => ({
+    const of = (kind: Kind, project: string | null = null) => ({
       all: count(kind, withProject(NO_FILTER, project)), kept: count(kind, withProject(ONLY_KEPT, project)),
-      deleted: runs.filter((run) => (run.mode === "music") === (kind === "music") && matches(run, withProject({ ...NO_FILTER, deleted: null }, project)) && run.deleted_at !== null).length
+      deleted: runs.filter((run) => kindOf(run) === kind && matches(run, withProject({ ...NO_FILTER, deleted: null }, project)) && run.deleted_at !== null).length
         + items(kind, project),
       deleted_items: items(kind, project),
     });
-    expect({ image: of("image"), music: of("music") }).toEqual(cases.counts);
+    // the table says which tabs it counts (Images and Music, and Vector once the table has Vector rows: DESIGN.md §31.12.7), and the page must agree on each
+    const kinds = Object.keys(cases.counts) as Kind[];
+    const all = (project: string | null = null) => Object.fromEntries(kinds.map((kind) => [kind, of(kind, project)]));
+    expect(all()).toEqual(cases.counts);
     // ... and within each project, and within "no project": the numbers on the filter bar follow the project chosen (DESIGN.md §32.5)
     for (const [project, expected] of Object.entries(cases.counts_by_project)) {
-      expect({ image: of("image", project), music: of("music", project) }, `within ${project}`).toEqual(expected);
+      expect(all(project), `within ${project}`).toEqual(expected);
     }
   });
 });

@@ -418,15 +418,19 @@ describe("tabs", () => {
     saveTab("music", store);
     expect(store.data[TAB_KEY]).toBe("music");
     expect(readTab(store)).toBe("music");
+    saveTab("vector", store); // the third tab (DESIGN.md §31.12.8) is remembered as well
+    expect(readTab(store)).toBe("vector");
     expect(readTab(memoryStore({ [TAB_KEY]: "video" }))).toBe("images");
   });
-  it("arrow keys move between the tabs and wrap, Home and End go to the ends, other keys do nothing", () => {
+  it("arrow keys move between the three tabs and wrap, Home and End go to the ends, other keys do nothing", () => {
     expect(tabAfterKey("images", "ArrowRight")).toBe("music");
-    expect(tabAfterKey("music", "ArrowRight")).toBe("images");
-    expect(tabAfterKey("images", "ArrowLeft")).toBe("music");
+    expect(tabAfterKey("music", "ArrowRight")).toBe("vector");
+    expect(tabAfterKey("vector", "ArrowRight")).toBe("images"); // wraps round
+    expect(tabAfterKey("images", "ArrowLeft")).toBe("vector"); // ...and the other way
+    expect(tabAfterKey("vector", "ArrowLeft")).toBe("music");
     expect(tabAfterKey("music", "ArrowLeft")).toBe("images");
     expect(tabAfterKey("music", "Home")).toBe("images");
-    expect(tabAfterKey("images", "End")).toBe("music");
+    expect(tabAfterKey("images", "End")).toBe("vector");
     expect(tabAfterKey("images", "Enter")).toBeNull();
     expect(tabAfterKey("images", "a")).toBeNull();
   });

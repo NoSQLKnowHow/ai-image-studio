@@ -135,7 +135,8 @@ function focusAfterDelete(runId: string): HTMLElement | null {
     const button = card?.querySelector<HTMLButtonElement>('button[data-action="delete"]:not(:disabled)');
     if (button) return button;
   }
-  return own?.closest(".tab-panel")?.querySelector<HTMLElement>("#prompt, .music-grid input") ?? document.getElementById("prompt");
+  // (the Vector form's first box is marked `data-first-field`: its own Prompt, not the Images one, which is on a tab that is hidden then)
+  return own?.closest(".tab-panel")?.querySelector<HTMLElement>("#prompt, .music-grid input, [data-first-field]") ?? document.getElementById("prompt");
 }
 
 /** The Reuse button of a run's card: where focus goes when a control that had it disappears. */
@@ -145,8 +146,9 @@ export function cardReuseButton(runId: string): HTMLElement | null {
 
 export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onBack: () => void; onConfirm: () => void }) {
   const music = run?.mode === "music";
-  const thing = music ? "track" : "image";
-  const done = (music ? run?.tracks.length : run?.images.length) ?? 0;
+  const vector = run?.mode === "vector"; // a Vector run's results are its versions (DESIGN.md §31.12.5)
+  const thing = music ? "track" : vector ? "version" : "image";
+  const done = (music ? run?.tracks.length : vector ? run?.vectors.length : run?.images.length) ?? 0;
   const { props: returnFocus, redirectTo } = useReturnFocus();
   const confirm = () => {
     if (run) redirectTo(cardReuseButton(run.id)); // the Cancel button turns into "Stopping…" and then goes away
@@ -165,7 +167,7 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Keep going</Dialog.Close>
-            <button type="button" className="button danger-solid" onClick={confirm}>{music ? "Stop making music" : "Stop generating"}</button>
+            <button type="button" className="button danger-solid" onClick={confirm}>{music ? "Stop making music" : vector ? "Stop making the vector" : "Stop generating"}</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -178,8 +180,9 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
  *  second hurdle, only the one fact that matters. `projectName` is that project's name, or null if the page does not know it. */
 export function ConfirmDelete({ run, binDays, projectName, onCancel, onConfirm }: { run: Run | null; binDays: number; projectName: string | null; onCancel: () => void; onConfirm: () => void }) {
   const music = run?.mode === "music";
-  const thing = music ? "track" : "image";
-  const n = (music ? run?.tracks.length : run?.images.length) ?? 0;
+  const vector = run?.mode === "vector";
+  const thing = music ? "track" : vector ? "version" : "image";
+  const n = (music ? run?.tracks.length : vector ? run?.vectors.length : run?.images.length) ?? 0;
   // One dialog, three cases. A finished run, with a bin: Delete moves it to Deleted (nothing is lost yet). A run already in the bin:
   // "Delete forever". Anything else (a run that is only waiting, or any run when there is no bin): deleted for good, with no way back.
   const inBin = !!run?.deleted_at;

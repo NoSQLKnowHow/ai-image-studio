@@ -1,6 +1,6 @@
 import { useId, useRef, type ReactNode } from "react";
 import { FolderIcon, TrashIcon } from "./icons";
-import { NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, withProject, type HistoryFilter } from "../history";
+import { NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, withProject, type HistoryFilter, type TabKind } from "../history";
 import type { Project } from "../types";
 
 // The filter bar above the history (DESIGN.md §29.1): one choice for both tabs. More controls join it as more filters are added
@@ -22,7 +22,7 @@ export function FilterBar({ filter, keptCount, deletedCount, binTotal, projects,
   deletedCount: number | null;
   binTotal: number | null;
   projects: Project[] | null;
-  tab: "image" | "music";
+  tab: TabKind;
   onChange: (filter: HistoryFilter) => void;
   onEmptyBin: () => void;
   onManageProjects: () => void;
@@ -77,7 +77,11 @@ export function FilterBar({ filter, keptCount, deletedCount, binTotal, projects,
           onChange={(event) => onChange(withProject(filter, event.target.value === "" ? null : event.target.value))}>
           <option value="">Any project</option>
           <option value={NO_PROJECT}>No project</option>
-          {projects?.map((project) => <option key={project.id} value={project.id}>{project.name} ({project.counts[tab]})</option>)}
+          {/* the number is the folder's runs on this tab; on the Vector tab the server's list may not count them (§31.12), and then no number is shown, never a 0 */}
+          {projects?.map((project) => {
+            const count = project.counts[tab];
+            return <option key={project.id} value={project.id}>{count === undefined ? project.name : `${project.name} (${count})`}</option>;
+          })}
           {/* a project this page remembers but has not found in the list (yet): shown as it is, so the control never claims another value */}
           {!known && <option value={projectValue}>…</option>}
         </select>
@@ -107,15 +111,20 @@ export function focusFilterBar(): void {
   }
 }
 
-const EMPTY_ALL = {
+const EMPTY_ALL: Record<TabKind, { title: string; body: string }> = {
   image: { title: "No images yet", body: "Describe something above and press Generate. Every run lands here with its prompt and settings." },
   music: { title: "No music yet", body: "Describe the music above and press Make music. Every track lands here with its description and settings." },
+  vector: { title: "No vectors yet", body: "Describe your idea above and press Make vector. Every SVG lands here with its settings and its layers." },
 };
+// what each tab calls its runs, in the empty states of the Deleted and Kept views, and what the tab is called when a project's view is empty
+const EMPTY_DELETED: Record<TabKind, string> = { image: "No deleted images", music: "No deleted music", vector: "No deleted vectors" };
+const EMPTY_KEPT: Record<TabKind, string> = { image: "No kept images yet", music: "No kept music yet", vector: "No kept vectors yet" };
+const TAB_NAME: Record<TabKind, string> = { image: "Images", music: "Music", vector: "Vector" };
 
 /** What the list says when the tab has nothing to show for the filter (§29.1, §32.1). `project` is the folder chosen, when the filter names one
  *  (null for "no project" or for a project the page does not know). */
 export function EmptyHistory({ kind, filter, binDays, project, onShowAll, onShowAnyProject }: {
-  kind: "image" | "music";
+  kind: TabKind;
   filter: HistoryFilter;
   binDays: number;
   project: Project | null;
@@ -124,7 +133,7 @@ export function EmptyHistory({ kind, filter, binDays, project, onShowAll, onShow
 }): ReactNode {
   // A project is chosen: say that nothing is in it on this tab (naming the tab, because the other tab may have runs in it), and how to fill it
   if (filter.project !== null && filter.project !== NO_PROJECT) {
-    const where = kind === "music" ? "Music" : "Images";
+    const where = TAB_NAME[kind];
     const name = project?.name ?? "this project";
     return (
       <div className="empty-state">
@@ -146,7 +155,7 @@ export function EmptyHistory({ kind, filter, binDays, project, onShowAll, onShow
   if (filter.deleted === true) {
     return (
       <div className="empty-state">
-        <p className="empty-title">{kind === "music" ? "No deleted music" : "No deleted images"}</p>
+        <p className="empty-title">{EMPTY_DELETED[kind]}</p>
         <p>{binDays > 0 ? `Runs you delete stay here for ${binDays} ${binDays === 1 ? "day" : "days"} before they are gone for good.` : "There is no bin: a deleted run is deleted for good."}</p>
         <button type="button" className="button small" onClick={onShowAll}>Show all</button>
       </div>
@@ -155,7 +164,7 @@ export function EmptyHistory({ kind, filter, binDays, project, onShowAll, onShow
   if (filter.kept === true) {
     return (
       <div className="empty-state">
-        <p className="empty-title">{kind === "music" ? "No kept music yet" : "No kept images yet"}</p>
+        <p className="empty-title">{EMPTY_KEPT[kind]}</p>
         <p>Press <strong>Keep</strong> on a run to keep it here. Kept runs are never deleted automatically.</p>
         <button type="button" className="button small" onClick={onShowAll}>Show all</button>
       </div>
