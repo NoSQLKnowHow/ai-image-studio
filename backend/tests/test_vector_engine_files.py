@@ -17,11 +17,14 @@ from PIL import Image
 
 from studio.vector import (KINDS, RECIPE_MAX_CHARS, Recipe, VectorError, VectorOptions, available, build_recipe, build_vector, pack_zip, render_png)
 from studio.vector import job
-from studio.vector.geometry import clean_layer, fill_narrow_holes, polygons_of, trace_ink
+from studio.vector import engine, svgio
+from studio.vector.colours import hex_to_rgb
+from studio.vector.geometry import clean_layer, elongated, fill_narrow_holes, narrowest, polygons_of, trace_ink, _even_odd
 from studio.vector.pathdata import parse_path
+from studio.vector.pixels import _give_to_neighbours
 
 import numpy as np
-from shapely.geometry import Polygon, box
+from shapely.geometry import GeometryCollection, LineString, Point, Polygon, box
 
 from vector_engine_support import SHEET_MM, SIZE, as_png, layers_of, make, mm, parse, picture
 
@@ -460,3 +463,76 @@ def test_the_palette_survives_the_trip_through_the_options_file(tmp_path):
     code, lines, stderr, _ = run_job(tmp_path, options=options)
     assert code == 0, stderr
     assert "#00FF00" in {layer["colour"] for layer in json.loads(lines[0])["check"]["layers"]}
+
+
+# ---- the defensive corners (each is a thing that cannot happen with a picture the studio makes, and must still end in words) --------------
+def test_only_polygons_are_taken_from_what_an_operation_returns():
+    """A boolean operation can hand back a collection with lines and points in it; a laser cannot cut those, so only the polygons are kept."""
+    mixed = GeometryCollection([box(0, 0, 1, 1), LineString([(0, 0), (5, 5)]), Point(3, 3), box(5, 5, 6, 6)])
+    assert [p.area for p in polygons_of(mixed)] == [1.0, 1.0] and polygons_of(LineString([(0, 0), (1, 1)])) == []
+    assert polygons_of(Polygon()) == [] and polygons_of(Polygon([(0, 0), (1, 0), (2, 0)])) == []  # empty and flat ones are not shapes
+
+
+def test_a_ring_that_crosses_itself_is_repaired_and_a_flat_piece_is_not_long_and_thin():
+    """A bow-tie ring (a spline can cross itself by a hair) becomes two triangles, whose area is what was meant; and a piece that has no width
+    at all is not 'elongated' (and does not crash the measure)."""
+    bow = _even_odd([[(0, 0), (2, 2), (2, 0), (0, 2)]])
+    assert bow.area == pytest.approx(2.0)
+    assert elongated(Polygon([(0, 0), (1, 0), (2, 0)])) is False and elongated(box(0, 0, 10, 1)) is True and elongated(box(0, 0, 4, 1.1)) is False
+
+
+def test_the_smallest_feature_measure_skips_empty_shapes_and_says_the_sheet_when_nothing_is_narrower():
+    """An empty layer is skipped; a lone block is as wide as it is (here 10 mm), and a block as wide as the whole ceiling reports the ceiling."""
+    assert narrowest([Polygon(), box(0, 0, 10, 40)], 0.05, 20, 0.001) == pytest.approx(10, abs=0.3)
+    assert narrowest([box(0, 0, 40, 40)], 0.05, 20, 0.001) == 40
+
+
+def test_pixels_with_no_assigned_neighbour_anywhere_go_to_white_rather_than_stay_unassigned():
+    """If nothing in the picture is assigned at all (it cannot be, in a picture with any colour), the clean-up still ends, with white."""
+    labels = np.full((4, 4), 2, dtype=np.int16)
+    assert (_give_to_neighbours(labels, np.ones((4, 4), dtype=bool), 3) == 0).all()
+
+
+def test_a_shape_that_rounding_to_a_micrometre_flattens_is_not_written():
+    """`path_shape` drops a ring the file's precision makes into a point or a line, and a point that rounding made equal to the first closes
+    the ring; a hole that rounds away is dropped and the shape stays."""
+    assert svgio.path_shape(Polygon([(0, 0), (0.0004, 0), (0.0004, 0.0004)])) is None
+    closing = svgio.path_shape(Polygon([(0, 0), (10, 0), (10, 10), (0.0001, 0.0001)]))
+    assert closing.d == "M0 0 L10 0 L10 10 Z"
+    holed = svgio.path_shape(Polygon([(0, 0), (10, 0), (10, 10), (0, 10)], [[(5, 5), (5.0001, 5), (5.0001, 5.0001)]]))
+    assert holed.holes == 0 and holed.d.count("M") == 1
+    real = svgio.path_shape(Polygon([(0, 0), (10, 0), (10, 10), (0, 10)], [[(2, 2), (4, 2), (4, 4), (2, 4)]]))
+    assert real.holes == 1 and real.length_mm == pytest.approx(40 + 8)
+
+
+def test_a_layer_that_rounds_to_nothing_is_dropped_with_a_note_and_if_all_do_the_run_stops(monkeypatch):
+    """A layer with no shape the file can hold is left out and named in `empty_layer`; if every layer is, the card gets words, not an empty file."""
+    real = engine._shapes
+    calls = {"n": 0}
+
+    def first_is_empty(geometry):
+        calls["n"] += 1
+        return [] if calls["n"] == 1 else real(geometry)
+
+    monkeypatch.setattr(engine, "_shapes", first_is_empty)
+    result = make(drawing(), colours=4)
+    assert len(result.check["layers"]) == 2 and "#FF0000" in {n["code"]: n["message"] for n in result.check["notes"]}["empty_layer"]
+    monkeypatch.setattr(engine, "_shapes", lambda geometry: [])
+    with pytest.raises(VectorError) as caught:
+        make(drawing(), colours=4)
+    assert "Nothing is left" in caught.value.message and caught.value.hint
+
+
+def test_the_renderer_draws_nothing_for_a_path_that_is_empty_or_off_the_picture():
+    """A path with no rings, one entirely outside the view box, and a stroked one with nothing to draw leave the page white, without error."""
+    for d in ("M0 0 L1 1 Z", "M200 200 L300 200 L300 300 Z", "M-50 -50 L-10 -50 L-10 -10 Z"):
+        assert png_of(svg_of(path(d)), 50).convert("L").getextrema() == (255, 255)
+        outline = f'<path id="p" d="{d}" fill="none" stroke="#000000" stroke-width="1"/>'
+        assert png_of(svg_of(outline), 50).convert("L").getextrema() == (255, 255)
+
+
+def test_a_colour_that_is_not_a_hex_colour_is_an_error():
+    for bad in ("red", "#12345", "#GG0000", 5, None):
+        with pytest.raises(ValueError):
+            hex_to_rgb(bad)
+    assert hex_to_rgb("#0a0B0c") == (10, 11, 12)
