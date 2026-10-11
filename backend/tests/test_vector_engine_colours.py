@@ -458,6 +458,14 @@ def test_white_and_the_palette_are_fixed_centres_that_never_move():
     assert checked == 400
 
 
+def test_white_does_not_move_to_the_mean_of_an_off_white_background():
+    """White's centre stays where white is even when the paper is (240, 240, 240): were it to move to the paper's grey, the line between white and
+    a named dark grey (#404040) would move with it. A grey of (150, 150, 150), which is nearer the named grey than white is, is the ink's."""
+    shapes = [("rect", (mm(5), mm(5), mm(20), mm(20)), (64, 64, 64)), ("rect", (mm(28), mm(5), mm(43), mm(20)), (150, 150, 150))]
+    result = make(shapes, colours=2, smooth=1, background=(240, 240, 240), palette=("#404040",))
+    assert [layer["paths"] for layer in result.check["layers"]] == [2]
+
+
 def test_a_colour_that_was_asked_for_near_white_is_still_white_and_is_reported_missing():
     """The band around white is white whatever else is near: a cream (250, 247, 238) background, a black disc and the palette colour #FAF7EE
     (which is the cream) with 3 colours: the cream is the bare material, the palette colour gets no layer and is named as missing."""
@@ -485,7 +493,7 @@ def test_two_shades_too_alike_to_tell_apart_are_one_colour():
     (200, 31, 30) on the large right side, asked for 3 colours, is one ink, not two (and the note says the picture has fewer colours).
     The smaller shade has the lower colour value, which is the one a careless start would reach for after the real colours run out."""
     shapes = [("rect", (mm(5), mm(5), mm(11), mm(45)), (200, 30, 30)), ("rect", (mm(11), mm(5), mm(23), mm(45)), (200, 31, 30))]
-    result = make(shapes, colours=3)
+    result = make(shapes, colours=3, smooth=1)  # hard edges: no blurred in-between colours to be chosen instead
     assert len(result.check["layers"]) == 1 and "fewer_colours" in codes(result)
 
 
