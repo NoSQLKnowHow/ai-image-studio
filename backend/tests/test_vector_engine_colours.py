@@ -319,6 +319,22 @@ def test_a_ribbon_between_regions_disappears_a_wide_stripe_stays_and_a_stray_pix
     assert cleaned[10, 30] == 2 and not (cleaned == 1).any()
 
 
+def test_a_fringe_pixel_goes_to_the_neighbour_whose_colour_it_is_nearest_to():
+    """A dark grey pixel between white and black belongs to the black (its colour is nearer), not to white by the luck of a tie of votes: the
+    edge of a black shape sits where the grey stops being dark. Here a one pixel ribbon of (17, 17, 17) is between white and black."""
+    labels = np.zeros((6, 12), dtype=np.uint8)
+    labels[:, 6:] = 1
+    labels[:, 5] = 2  # the ribbon, a label of its own as k-means would have made it
+    colours = np.zeros((6, 12, 3))
+    colours[:, :6] = rgb_to_lab((255, 255, 255))
+    colours[:, 6:] = rgb_to_lab((0, 0, 0))
+    colours[:, 5] = rgb_to_lab((17, 17, 17))
+    centres = np.array([rgb_to_lab((255, 255, 255)), rgb_to_lab((0, 0, 0)), rgb_to_lab((17, 17, 17))])
+    cleaned = pixels.remove_fringes(labels, 3, 3, lambda ys, xs: colours[ys, xs], centres)
+    assert (cleaned[:, :5] == 0).all() and (cleaned[:, 5:] == 1).all()
+    assert (pixels.remove_fringes(labels, 3, 3)[:, 5] == 0).all()  # by votes alone the tie goes to white, which is why the colours are used
+
+
 def test_a_ribbon_between_two_regions_is_split_between_them():
     """The ribbon where white meets label 2 is given half to each side, so the two meet cleanly with no thin colour between them."""
     labels = np.zeros((10, 20), dtype=np.uint8)

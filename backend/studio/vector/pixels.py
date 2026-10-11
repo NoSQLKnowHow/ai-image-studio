@@ -137,10 +137,14 @@ def fringe_window(min_feature_px: float) -> int:
     return int(min(MAX_FRINGE_WINDOW, max(1, np.floor(min_feature_px))))
 
 
-def remove_fringes(labels: np.ndarray, size: int, label_count: int) -> np.ndarray:
+def remove_fringes(labels: np.ndarray, size: int, label_count: int, colour_of=None, centres: Optional[np.ndarray] = None) -> np.ndarray:
     """Remove soft fringes and specks from the label map (§31.5 step 2): any part of a colour that is narrower than `size` pixels is given
     to the colour next to it. Anti-aliased edges between two inks are one or two pixels of in-between colours; once they are given to
-    their neighbours the two inks meet cleanly, with no thin third colour between them to be traced and cut."""
+    their neighbours the two inks meet cleanly, with no thin third colour between them to be traced and cut.
+
+    With `colour_of` (a function from pixel rows and columns to their Lab colours) and the Lab `centres` of the labels, a pixel goes to the
+    neighbouring label whose colour is nearest to its own, so the edge between black and white lands where the grey stops being dark.
+    Without them the most common neighbour wins (tests of the shape rule alone use that)."""
     if size <= 1:
         return labels
     labels = labels.astype(np.int16)
@@ -152,14 +156,15 @@ def remove_fringes(labels: np.ndarray, size: int, label_count: int) -> np.ndarra
                 thin |= mask & ~opening(mask, size)
         if not thin.any():
             break
-        labels = _give_to_neighbours(labels, thin, label_count)
+        labels = _give_to_neighbours(labels, thin, label_count, colour_of, centres)
     return labels
 
 
-def _give_to_neighbours(labels: np.ndarray, unassigned: np.ndarray, label_count: int) -> np.ndarray:
-    """Each unassigned pixel takes the label most common among its eight assigned neighbours; pixels with none yet wait for the next round.
-    Rounds are simultaneous (every pixel looks at the same snapshot), so the answer does not depend on the order pixels are visited in,
-    and a tie goes to the lower label (white is label 0): all of which keeps the result deterministic."""
+def _give_to_neighbours(labels: np.ndarray, unassigned: np.ndarray, label_count: int, colour_of=None, centres=None) -> np.ndarray:
+    """Each unassigned pixel takes one of the labels of its eight assigned neighbours; pixels with none yet wait for the next round. Which one:
+    the label whose centre is nearest to the pixel's own colour, or, without colours, the most common (a tie going to the lower label, white
+    being 0). Rounds are simultaneous (every pixel looks at the same snapshot), so the answer does not depend on the order pixels are
+    visited in: the result is deterministic."""
     labels = labels.copy()
     labels[unassigned] = -1
     ys, xs = np.nonzero(unassigned)
@@ -176,7 +181,13 @@ def _give_to_neighbours(labels: np.ndarray, unassigned: np.ndarray, label_count:
         if not decided.any():  # nothing assigned anywhere near: cannot happen in a picture that has any colour at all
             labels[ys, xs] = 0
             break
-        labels[ys[decided], xs[decided]] = votes.argmax(axis=1)[decided]
+        if colour_of is None:
+            choice = votes.argmax(axis=1)
+        else:
+            own = colour_of(ys, xs)
+            distance = np.stack([((own - centres[k]) ** 2).sum(axis=1) for k in range(label_count)], axis=1)
+            choice = np.where(votes > 0, distance, np.inf).argmin(axis=1)
+        labels[ys[decided], xs[decided]] = choice[decided]
         ys, xs = ys[~decided], xs[~decided]
     return labels
 
@@ -228,7 +239,8 @@ def reduce_colours(rgb: np.ndarray, inks: int, palette: tuple[str, ...], window:
     label_count = len(centres)
     labels = assignment[inverse].reshape(height, width).astype(np.uint8)
     seeded = [None] + list(palette) + [None] * (label_count - fixed)  # the palette colour of each centre, None for white and picture-chosen ones
-    labels = remove_fringes(labels, window, label_count).astype(np.uint8)
+    inverse_2d = inverse.reshape(height, width)
+    labels = remove_fringes(labels, window, label_count, lambda ys, xs: lab[inverse_2d[ys, xs]], np.array(centres)).astype(np.uint8)
 
     found: list[Ink] = []
     missing: list[str] = []

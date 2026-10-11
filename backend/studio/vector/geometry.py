@@ -28,9 +28,9 @@ from .pathdata import parse_path
 # acute corners are cut off (limit 3.0, which is about 39 degrees), which is right: nothing sharper than that can be cut anyway.
 MITRE_LIMIT = 3.0
 QUAD_SEGS = 4  # only matters for round joins (the bleed), where 4 per quarter turn is an error of 0.5% of the radius
-# How elongated a removed part has to be, in smallest features, to be reported as a thin part or a narrow gap: a short stub or the
-# sharp tip of a star is trimmed without a word, a neck or a slit that runs for twice the smallest feature or more is a real finding.
-ELONGATED = 4.0  # in units of r (half the smallest feature), so 2 smallest features long
+# How elongated a gap has to be to be reported as a narrow gap: at least this many times as long as it is wide. A slit between two parts is
+# long and thin; the tip of a notch (the valley between the points of a star, which closing also fills) is short and fat and is not worth a word.
+ELONGATED = 4.0
 _TRANSLATE = re.compile(r"translate\(\s*([-+0-9.eE]+)[\s,]+([-+0-9.eE]+)\s*\)")
 
 
@@ -113,13 +113,14 @@ def closed(geometry: BaseGeometry, r: float) -> BaseGeometry:
     return offset(offset(geometry, r), -r) if r > 0 else geometry
 
 
-def elongated(piece: Polygon, r: float) -> bool:
-    """Is this piece at least `ELONGATED` r long (twice the smallest feature)? Measured on the smallest rectangle that holds it."""
+def elongated(piece: Polygon) -> bool:
+    """Is this piece at least `ELONGATED` times as long as it is wide? Measured on the smallest rectangle that holds it."""
     rectangle = piece.minimum_rotated_rectangle
     if not isinstance(rectangle, Polygon):
         return False
     corners = list(rectangle.exterior.coords)
-    return max(math.dist(corners[i], corners[i + 1]) for i in range(2)) >= ELONGATED * r
+    sides = sorted(math.dist(corners[i], corners[i + 1]) for i in range(2))
+    return sides[1] >= ELONGATED * sides[0]
 
 
 @dataclass
@@ -155,7 +156,7 @@ def narrow_gaps(geometry: BaseGeometry, r: float, eps_area: float) -> list[Polyg
     """The gaps in `geometry` narrower than 2r: what closing it by r would fill, as long as it is long enough to be a gap and not the tip
     of a notch (`elongated`) and big enough not to be rounding (as for a thin part)."""
     return [gap for gap in _polygons(closed(geometry, r).difference(geometry))
-            if gap.area >= max(eps_area, 0.04 * r * r) and elongated(gap, r)]
+            if gap.area >= max(eps_area, 0.04 * r * r) and elongated(gap)]
 
 
 def clean_layer(geometry: BaseGeometry, r: float, eps_area: float) -> Cleaned:
@@ -214,6 +215,23 @@ def narrowest(geometries: list[BaseGeometry], r_floor: float, r_ceiling: float, 
                     low = middle
             best = min(best, 2 * high)
     return best
+
+
+def fill_narrow_holes(geometries: list[BaseGeometry], r: float) -> list[BaseGeometry]:
+    """Fill the bare spots that the layers together enclose and that are narrower than the smallest feature, giving each to the layer that
+    shares the most border with it. One layer's clean-up cannot see them: they are holes only in all the layers together (a hairline
+    where two inks' traced edges do not quite meet, or a speck of white between three inks), and a gap between two inks that touch is
+    not a feature anyone drew. After this the inks that touch leave no gap between them."""
+    union = shapely.union_all(geometries)
+    out = list(geometries)
+    for polygon in _polygons(union):
+        for ring in polygon.interiors:
+            hole = Polygon(ring)
+            if offset(hole, -r).is_empty:
+                reach = hole.buffer(1e-6)
+                best = max(range(len(out)), key=lambda k: out[k].intersection(reach).area)  # the first of equals: the larger ink
+                out[best] = out[best].union(hole)
+    return out
 
 
 # ---- layout ---------------------------------------------------------------------------------------------------------------------------

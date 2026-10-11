@@ -26,16 +26,17 @@ SIZE = SHEET_MM * PX_PER_MM
 
 def picture(shapes, size=(SIZE, SIZE), background=(255, 255, 255), smooth=4) -> Image.Image:
     """A constructed picture: shapes are ("rect", (x0, y0, x1, y1), colour), ("ellipse", box, colour) or ("poly", [(x, y), ...], colour),
-    in pixels, painted in order. They are drawn `smooth` times larger and averaged down, so that every edge has the one or two pixels of
-    in-between colour a real picture has (`smooth=1` gives hard edges, for the tests that need pixel-exact areas)."""
+    in pixels, painted in order. A box is half open, as a size is: (0, 0, 10, 10) is ten pixels across (Pillow itself draws both ends
+    inclusive, so one is taken off). Shapes are drawn `smooth` times larger and averaged down, so that every edge has the one or two pixels
+    of in-between colour a real picture has (`smooth=1` gives hard edges, for the tests that need pixel-exact areas)."""
     width, height = size
     image = Image.new("RGB", (width * smooth, height * smooth), background)
     draw = ImageDraw.Draw(image)
     for kind, geometry, colour in shapes:
-        if kind == "rect":
-            draw.rectangle([v * smooth for v in geometry], fill=colour)
-        elif kind == "ellipse":
-            draw.ellipse([v * smooth for v in geometry], fill=colour)
+        if kind in ("rect", "ellipse"):
+            x0, y0, x1, y1 = geometry
+            box = [x0 * smooth, y0 * smooth, x1 * smooth - 1, y1 * smooth - 1]
+            (draw.rectangle if kind == "rect" else draw.ellipse)(box, fill=colour)
         else:
             draw.polygon([(x * smooth, y * smooth) for x, y in geometry], fill=colour)
     return image.resize(size, Image.Resampling.LANCZOS) if smooth > 1 else image

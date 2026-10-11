@@ -176,6 +176,8 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
     if not layers:
         raise VectorError(f"Nothing is left after removing everything narrower than {min_feature:g} mm.",
                           "Lower the smallest feature, or make a bolder drawing with larger shapes.")
+    for layer, geometry in zip(layers, geo.fill_narrow_holes([layer.geometry for layer in layers], r)):
+        layer.geometry, layer.area = geometry, geometry.area  # the layers together leave no hairline gap where inks touch
     inks_found = len(layers)
     layers = _order(layers)
 
