@@ -441,6 +441,16 @@ describe("the Vector form's start", () => {
     expect(within(form()).getByRole("button", { name: "More colours" })).toHaveProperty("disabled", false);
   });
 
+  it("says in a line what each kind of artwork is, under the choice", () => {
+    render(<VectorPanel {...panelProps()} />);
+    const hint = () => within(form()).getByRole("radiogroup", { name: "Kind of artwork" }).parentElement?.querySelector(".field-hint")?.textContent;
+    expect(hint()).toBe("One bold shape against nothing.");
+    fireEvent.click(radio("Kind of artwork", "Flat colour art"));
+    expect(hint()).toBe("Flat areas of solid colour.");
+    fireEvent.click(radio("Kind of artwork", "Line art"));
+    expect(hint()).toBe("Outlines only.");
+  });
+
   it("explains itself and the model is the image model's (no model note: a Vector run loads nothing an image run would not)", () => {
     render(<VectorPanel {...panelProps()} />);
     expect(form().textContent).toContain("An SVG a laser can use");

@@ -163,6 +163,10 @@ describe("the form's defaults and limits", () => {
     expect(vectorProblem({ ...base, seedLocked: true, seed: -1 }, ODD_CAPS)).toBe("The seed must be from 0 to 4294967295.");
     expect(vectorProblem({ ...base, seedLocked: false, seed: -1 }, ODD_CAPS)).toBeNull(); // an unlocked seed is not sent, so it is not checked
     expect(problem({ idea: "x".repeat(8001) })).toBe("The prompt is 8001 characters; the limit is 8000.");
+    expect(problem({ idea: "x".repeat(8000) })).toBeNull(); // exactly the limit is allowed
+    // a choice the server does not offer is named, so that the person knows which control to look at
+    expect(problem({ layersBy: "size" as never })).toBe("Choose what the layers are by: colour or shape.");
+    expect(problem({ arrangement: "piled" as never })).toBe("Choose an arrangement: side by side or stacked.");
   });
 
   it("needs an idea", () => {
@@ -172,7 +176,7 @@ describe("the form's defaults and limits", () => {
 
   it("checks the hand-written recipe: not empty, and within the server's limit", () => {
     const base: VectorForm = { ...defaultVectorForm(ODD_CAPS), idea: "a fox" };
-    expect(vectorProblem({ ...base, recipeEdited: true, recipeText: "  " }, ODD_CAPS)).toMatch(/words the studio sends are empty/);
+    expect(vectorProblem({ ...base, recipeEdited: true, recipeText: "  " }, ODD_CAPS)).toBe("The words the studio sends are empty: write them, or press Rebuild to have them written again.");
     expect(vectorProblem({ ...base, recipeEdited: true, recipeText: "x".repeat(501) }, ODD_CAPS)).toBe("The words the studio sends are 501 characters; the limit is 500.");
     expect(vectorProblem({ ...base, recipeEdited: true, recipeText: "x".repeat(500) }, ODD_CAPS)).toBeNull();
     expect(vectorProblem({ ...base, recipeEdited: false, recipeText: "" }, ODD_CAPS)).toBeNull(); // not edited: the text is not used, so it is not checked
@@ -232,6 +236,10 @@ describe("the palette", () => {
     expect(setInk(["#FF0000"], 0, "not a colour")).toEqual({ palette: ["#FF0000"], refused: null }); // nothing to change
     expect(setInk(["#FF0000"], 3, "#0000ff").palette).toEqual(["#FF0000"]); // an ink that is not there
     expect(setInk(["#FF0000"], -1, "#0000ff").palette).toEqual(["#FF0000"]);
+    // an ink that is not there is not changed, and a colour the palette has is not a clash with it (no message, nothing changed)
+    expect(setInk(["#FF0000"], 1, "#ff0000")).toEqual({ palette: ["#FF0000"], refused: null }); // the place just after the last
+    expect(setInk(["#FF0000"], -1, "#ff0000")).toEqual({ palette: ["#FF0000"], refused: null });
+    expect(setInk(["#FF0000"], 1, "#ffffff")).toEqual({ palette: ["#FF0000"], refused: null }); // not even white is refused for an ink that does not exist
   });
 
   it("adds an ink with the first suggested colour not in use, and never more inks than there is room for", () => {
@@ -507,6 +515,13 @@ describe("the saved form", () => {
     expect(form).toEqual({ ...defaults, idea: "a fox" });
   });
 
+  it("keeps a hand-written recipe of exactly the longest length, and resets one a character longer", () => {
+    const atLimit = sanitizeVectorForm({ ...FOX, recipeEdited: true, recipeText: "x".repeat(2000) }, CAPS);
+    expect(atLimit.repaired).toBe(false);
+    expect(atLimit.form.recipeText).toHaveLength(2000);
+    expect(sanitizeVectorForm({ ...FOX, recipeEdited: true, recipeText: "x".repeat(2001) }, CAPS).repaired).toBe(true);
+  });
+
   it("an empty hand-written recipe is no recipe", () => {
     expect(sanitizeVectorForm({ ...FOX, recipeEdited: true, recipeText: "  " }, CAPS).form.recipeEdited).toBe(false);
     expect(sanitizeVectorForm({ ...FOX, recipeEdited: true, recipeText: "words" }, CAPS).form.recipeEdited).toBe(true);
@@ -649,12 +664,14 @@ describe("the words on a card", () => {
     expect(vectorMeta(shape, null)).toEqual(["600 × 307.5 mm", "4 colours", "flat colour art", "layers by shape", "seeds 1234–1236"]);
     expect(vectorMeta(makeVectorRun({ options: { ...run.options, arrangement: "stacked" } }), null)[3]).toBe("layers by colour, stacked");
     expect(vectorSeedText(run)).toBe("seed 1234");
+    expect(vectorSeedText(makeVectorRun({ options: { ...run.options, num_images: 2 } }))).toBe("seeds 1234–1235"); // two versions are already a range
   });
 
   it("shortens a long prompt for the card's accessible name", () => {
     expect(vectorTitle({ prompt: "  a   fox\nhead " })).toBe("a fox head");
     expect(vectorTitle({ prompt: "x".repeat(200) })).toBe(`${"x".repeat(79)}…`);
     expect(vectorTitle({ prompt: "x".repeat(80) })).toBe("x".repeat(80));
+    expect(vectorTitle({ prompt: "x".repeat(81) })).toBe(`${"x".repeat(79)}…`); // one over is cut
   });
 
   it("builds the PNG link from the server's own, with the size added", () => {
@@ -684,6 +701,9 @@ describe("progress", () => {
     expect(vectorPhases(at("draw", 99))[0].fraction).toBe(1); // never past full
     expect(vectorPhases(at("draw", -3))[0].fraction).toBe(0);
     expect(vectorPhases(at("draw", 5, 0))[0].fraction).toBe(1); // no steps to divide by: counted as one
+    expect(vectorPhases(at("draw", 1, 1))[0].fraction).toBe(1); // one step of one is all of it, not half
+    // a stage this page does not know (a music one) is read as the drawing, never as the tracing
+    expect(vectorPhases({ image: 1, of: 1, step: 10, steps: 40, stage: "compose" })).toEqual([{ key: "draw", label: "Drawing", fraction: 0.25 }, { key: "trace", label: "Tracing", fraction: 0 }]);
   });
 
   it("when tracing, drawing is full and tracing is under way with nothing to measure (no steps to count)", () => {
@@ -696,6 +716,7 @@ describe("progress", () => {
     expect(vectorProgressText(at("draw", 12), false)).toBe("drawing, step 12 of 40");
     expect(vectorProgressText(at("trace", 1, 1), false)).toBe("tracing the drawing into layers…");
     expect(vectorProgressText(at("draw", 12, 40, 2, 3), false)).toBe("Version 2 of 3 · drawing, step 12 of 40");
+    expect(vectorProgressText(at("draw", 12, 40, 1, 2), false)).toBe("Version 1 of 2 · drawing, step 12 of 40"); // two versions are already named
     expect(vectorProgressText(at("trace", 1, 1, 3, 3), true)).toBe("Version 3 of 3 · tracing the drawing into layers… · stopping at the next step…");
   });
 });
