@@ -2,7 +2,11 @@
 
 THIS FILE IS THE CONTRACT BETWEEN THE ENGINE, THE SERVER AND THE PAGE (§31.12). The constants, the records and the signatures below are what the
 server (`studio/runspec.py`, `jobs.py`, `api.py`) imports and what the page's limits come from. The engine owns everything in this package:
-until it is built, the functions raise `NotImplementedError`, and the server's tests must not depend on them (they use a fake job, §31.12.4).
+`build_vector`, `pack_zip` and `render_png` raise `NotImplementedError` until it is built, so the server's tests must not depend on them (they
+use a fake job, §31.12.4). The small pure functions (`check_options`, `draw_size`, `to_json` / `from_json`, `available`, and a placeholder
+`build_recipe`) are already real so that the server and the page can be built against them; the engine may refine them (and owns the wording
+of the recipe) but keeps their signatures. Keep the import of this package light: numpy, Pillow, vtracer and shapely are imported inside
+the functions that need them, never at the top, so that the server can import the limits without the libraries.
 
 Why one file of constants: the limits (how many colours, how big a sheet) are checked by the server, shown by the page through
 `GET /api/capabilities`, and used by the engine, so they live in exactly one place.
@@ -10,7 +14,8 @@ Why one file of constants: the limits (how many colours, how big a sheet) are ch
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import re
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal, Optional, Union
 
@@ -73,23 +78,75 @@ class VectorOptions:
     fill_mode: FillMode = "filled"  # type: ignore[assignment]
 
     def to_json(self) -> dict:
-        raise NotImplementedError("engine")
+        """The options as plain JSON (the palette as a list), for the job's options file."""
+        data = asdict(self)
+        data["palette"] = list(self.palette)
+        return data
 
     @staticmethod
     def from_json(data: dict) -> "VectorOptions":
-        raise NotImplementedError("engine")
+        """The inverse of `to_json`. An unknown key is a mistake and raises `ValueError`, so the job never silently ignores an option."""
+        known = {name for name in VectorOptions.__dataclass_fields__}
+        unknown = sorted(set(data) - known)
+        if unknown:
+            raise ValueError(f"Unknown Vector option(s): {', '.join(unknown)}.")
+        values = dict(data)
+        if "palette" in values:
+            values["palette"] = tuple(values["palette"])
+        return VectorOptions(**values)
+
+
+_HEX = re.compile(r"^#[0-9A-F]{6}$")
+
+
+def _out_of_range(name: str, value: object, low: float, high: float) -> Optional[tuple[str, str]]:
+    """One range check, with the one wording every number here uses. A bool is not a number (True would pass as 1)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not low <= value <= high:
+        return (name, f"Must be between {low:g} and {high:g}.")
+    return None
 
 
 def check_options(opts: VectorOptions) -> list[tuple[str, str]]:
     """The problems with `opts`, as (field name, message) pairs: the server turns them into the 422 field errors of a run request, so the
     wording is the engine's and is the same wherever it is shown. An empty list means the options can be used."""
-    raise NotImplementedError("engine")
+    errors: list[tuple[str, str]] = []
+    checks = (
+        _out_of_range("colours", opts.colours, COLOURS_MIN, COLOURS_MAX),
+        _out_of_range("width_mm", opts.width_mm, SIZE_MM_MIN, SIZE_MM_MAX),
+        _out_of_range("height_mm", opts.height_mm, SIZE_MM_MIN, SIZE_MM_MAX),
+        _out_of_range("min_feature_mm", opts.min_feature_mm, MIN_FEATURE_MM_MIN, MIN_FEATURE_MM_MAX),
+        _out_of_range("kerf_mm", opts.kerf_mm, KERF_MM_MIN, KERF_MM_MAX),
+        _out_of_range("bleed_mm", opts.bleed_mm, BLEED_MM_MIN, BLEED_MM_MAX),
+        _out_of_range("shape_layer_cap", opts.shape_layer_cap, 1, SHAPE_LAYER_CAP),
+    )
+    errors.extend(error for error in checks if error is not None)
+    if isinstance(opts.colours, int) and not isinstance(opts.colours, bool) and len(opts.palette) > max(opts.colours - 1, 0):
+        inks = max(opts.colours - 1, 0)
+        errors.append(("palette", f"At most {inks} colour{'s' if inks != 1 else ''} besides white (white is always included and counts)."))
+    seen: set[str] = set()
+    for colour in opts.palette:
+        if not isinstance(colour, str) or not _HEX.match(colour):
+            errors.append(("palette", f"{colour!r} is not a colour: write it as #RRGGBB in capitals."))
+        elif colour == "#FFFFFF":
+            errors.append(("palette", "White is always included and is the bare material: list only the other colours."))
+        elif colour in seen:
+            errors.append(("palette", f"{colour} is listed twice."))
+        else:
+            seen.add(colour)
+    for name, value, allowed in (("kind", opts.kind, KINDS), ("layers_by", opts.layers_by, LAYERS_BY), ("arrangement", opts.arrangement, ARRANGEMENTS),
+                                 ("fill_mode", opts.fill_mode, ("filled", "outline"))):
+        if value not in allowed:
+            errors.append((name, f"Must be one of: {', '.join(allowed)}."))
+    return errors
 
 
 def draw_size(width_mm: float, height_mm: float) -> tuple[int, int]:
     """The pixel size of the picture Qwen should draw for a sheet of this shape: long side `DRAW_LONG_SIDE`, the other side in proportion,
     both a multiple of 32 and at least 256 (a very long thin sheet is drawn at 256 on its short side and cropped nowhere)."""
-    raise NotImplementedError("engine")
+    long_mm, short_mm = max(width_mm, height_mm), min(width_mm, height_mm)
+    short_px = round(DRAW_LONG_SIDE * short_mm / long_mm / 32) * 32
+    short_px = min(DRAW_LONG_SIDE, max(256, short_px))
+    return (DRAW_LONG_SIDE, short_px) if width_mm >= height_mm else (short_px, DRAW_LONG_SIDE)
 
 
 @dataclass(frozen=True)
@@ -102,8 +159,18 @@ class Recipe:
 
 def build_recipe(idea: str, kind: str, colours: int, palette: tuple[str, ...]) -> Recipe:
     """The recipe for an idea: pure text, no model. The page shows `positive` (editable) before a run; the server builds it again when the
-    request has no edited `recipe`."""
-    raise NotImplementedError("engine")
+    request has no edited `recipe`.
+
+    THIS IS A PLACEHOLDER so that the server and the page can be built against a working route; the engine replaces the wording (it owns it)
+    and keeps the signature and the rule that the same arguments give the same text."""
+    inks = colours - 1
+    style = {"silhouette": "a bold silhouette, one solid shape against nothing", "flat": "flat colour artwork made of solid colour shapes",
+             "line": "clean line art, outlines only"}.get(kind, "flat colour artwork")
+    named = f" Use these colours for the shapes: {', '.join(palette)}." if palette else ""
+    positive = (f"{idea.strip()}. {style}, {inks} colour{'s' if inks != 1 else ''} besides the white background.{named} "
+                "Plain white background, thick clean outlines, no gradients, no shading, no text.")
+    negative = "gradient, shading, shadow, photograph, texture, text, lettering, watermark, thin lines, tiny details, blur"
+    return Recipe(positive=positive, negative=negative)
 
 
 @dataclass(frozen=True)
@@ -127,7 +194,18 @@ class VectorResult:
 
 def available() -> tuple[bool, Optional[str], Optional[str]]:
     """(usable, reason, hint): whether the libraries the clean-up needs import here. The server turns it into `capabilities.vector`."""
-    raise NotImplementedError("engine")
+    import importlib
+
+    missing = []
+    for name in ("numpy", "PIL", "vtracer", "shapely"):
+        try:
+            importlib.import_module(name)
+        except ImportError:
+            missing.append({"PIL": "Pillow"}.get(name, name))
+    if missing:
+        return (False, f"The Vector libraries are not installed here ({', '.join(missing)}).",
+                "They are in backend/requirements.txt: rebuild the image, or pip install them.")
+    return (True, None, None)
 
 
 def build_vector(source: Union[Path, bytes], opts: VectorOptions) -> VectorResult:
