@@ -201,7 +201,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .banner { background: var(--warning-soft); color: var(--warning); text-align: center; padding: 8px 16px; font-size: 14px; font-weight: 550; border-bottom: 1px solid var(--border); }
 
 /* ------------------------------------------------------------------ prompt card */
-.prompt-card, .music-form {
+.prompt-card, .music-form, .vector-form {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md); padding: 14px; display: grid; gap: 10px;
 }
@@ -626,3 +626,65 @@ fieldset.field { gap: 8px; }
   .binned-item { grid-template-columns: auto minmax(0, 1fr); }
   .binned-actions { grid-column: 1 / -1; justify-content: flex-start; }
 }
+
+/* ------------------------------------------------------------------ the Vector tab (DESIGN.md §31, §31.12.8) */
+.vector-title h2, .vector-unavailable h2 { display: flex; align-items: center; gap: 8px; font-size: 17px; font-weight: 650; }
+.vector-title h2 svg, .vector-unavailable h2 svg { font-size: 19px; color: var(--accent-text); }
+.vector-unavailable { gap: 8px; }
+/* Colours: the stepper, then white and one row for each ink. The buttons are 40 px square so that a thumb can press them */
+.vector-colours-field { gap: 10px; }
+.stepper { display: inline-flex; align-items: center; gap: 10px; justify-self: start; }
+.stepper .button { width: 40px; min-height: 40px; padding: 0; font-size: 18px; }
+.vector-form .stepper output { min-width: 2ch; margin: 0; text-align: center; font-size: 18px; font-weight: 650; color: var(--text); font-variant-numeric: tabular-nums; }
+.inks { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ink { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-height: 40px; font-size: 14px; }
+.ink code { font-size: 13px; color: var(--text-2); }
+.ink input[type="color"] { width: 44px; height: 36px; padding: 2px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); cursor: pointer; }
+/* a colour as a square. White needs its border to be seen on a white card; an ink the picture chooses is a dashed, empty square */
+.swatch { display: inline-block; flex: none; width: 28px; height: 28px; border-radius: 8px; border: 1px solid var(--border-strong); }
+.swatch.small { width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; }
+.swatch.unset { border-style: dashed; background: transparent; }
+.vector-layers-line { font-size: 13px; font-weight: 600; color: var(--accent-text); }
+.vector-size, .vector-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; align-items: start; }
+.vector-recipe .prompt-input { font-size: 14px; field-sizing: content; min-height: 8em; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.vector-recipe .vector-negative { min-height: 3.5em; color: var(--text-2); }
+.vector-negative-label { margin-top: 6px; }
+.vector-recipe-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; }
+.vector-more { border: 1px solid var(--border); border-radius: var(--radius); padding: 0 12px; }
+.vector-more summary { cursor: pointer; padding: 10px 0; font-size: 14px; font-weight: 600; color: var(--text-2); }
+.vector-more-body { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 2px 0 14px; align-items: start; }
+@media (max-width: 640px) {
+  .vector-size, .vector-settings, .vector-more-body { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* the card: a version is the preview beside what the check found, and on a phone the preview above it */
+.vector-card { grid-template-columns: minmax(0, 1fr); }
+.vectors { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+.vector-item { display: grid; grid-template-columns: minmax(0, 240px) minmax(0, 1fr); gap: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); align-items: start; }
+@media (max-width: 640px) { .vector-item { grid-template-columns: minmax(0, 1fr); } }
+/* white behind the preview whatever the theme: white is the material, and a transparent PNG of black shapes would vanish on a dark page */
+.vector-preview { background: #fff; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
+.vector-preview img { width: 100%; height: auto; object-fit: contain; }
+.vector-details { display: grid; gap: 8px; min-width: 0; }
+.vector-summary { font-size: 14px; font-variant-numeric: tabular-nums; }
+.vector-colours, .vector-feature { font-size: 13px; color: var(--text-2); }
+.vector-layers-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.vector-layers { border-collapse: collapse; width: 100%; font-size: 13px; }
+.vector-layers th, .vector-layers td { padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border); font-weight: 450; vertical-align: top; }
+.vector-layers thead th { color: var(--text-3); font-size: 12px; font-weight: 600; }
+.vector-layers tbody tr:last-child th, .vector-layers tbody tr:last-child td { border-bottom: 0; }
+.vector-layers .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.layer-name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.layer-colour { display: block; margin-top: 2px; color: var(--text-3); font-size: 12px; font-weight: 450; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.vector-notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; color: var(--text-2); }
+.vector-notes li { display: flex; align-items: flex-start; gap: 6px; }
+.vector-notes svg { flex: none; margin-top: 3px; color: var(--warning); }
+.vector-downloads { display: flex; flex-wrap: wrap; gap: 6px; }
+.vector-png .field { gap: 4px; }
+.vector-png .field > label { font-size: 13px; }
+.vector-png-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.vector-png-row input { width: 6.5rem; min-height: 32px; padding: 0 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); font-variant-numeric: tabular-nums; }
+.vector-png-row input[aria-invalid="true"] { border-color: var(--danger); }
+.vector-png-row .button[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+.vector-partial p { margin: 0; }
+@media (max-width: 520px) { .tab { padding: 0 8px; } }

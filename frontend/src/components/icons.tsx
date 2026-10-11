@@ -50,3 +50,5 @@ export const NoteIcon = () => <Icon><path d="M9 18V5l11-2v13" /><circle cx="6" c
 export const FolderIcon = () => <Icon><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></Icon>;
 export const ChevronDownIcon = () => <Icon><path d="M6 9l6 6 6-6" /></Icon>;
 export const CheckIcon = () => <Icon><path d="M5 12.5l4.5 4.5L19 7.5" /></Icon>;
+// a pen path: a curve with its two end points drawn as squares, the icon of Vector (DESIGN.md §31)
+export const VectorIcon = () => <Icon><path d="M6 18C6 9 12 15 18 6" /><rect x="3" y="16" width="5" height="5" rx="1" /><rect x="16" y="3" width="5" height="5" rx="1" /></Icon>;

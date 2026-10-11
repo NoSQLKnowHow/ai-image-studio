@@ -14,12 +14,13 @@ import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
+import { VectorPanel } from "./components/VectorPanel";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
 import {
   binContents, binnedText, emptiedText, filedText, itemBinnedText, itemDeletedText, itemRestoredText, leftTheViewText, movedText, restoredText, takenOutText,
   unkeptText, type BinContents, type ItemRef, type ViewScope,
 } from "./format";
-import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withProject, working, type HistoryFilter } from "./history";
+import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withProject, working, type HistoryFilter, type TabKind } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
@@ -42,13 +43,13 @@ import {
 } from "./options";
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
-import { isImageRun, isMusicRun, type BinnedImage, type BinnedTrack, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Project, type Run } from "./types";
+import { isImageRun, isMusicRun, isVectorRun, type BinnedImage, type BinnedTrack, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Project, type Run } from "./types";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
 import { viewerItems, viewerKnown } from "./viewer";
 
 const NO_PROJECTS: Project[] = []; // the list of projects before it has arrived: one array, so nothing re-renders for a new empty one
-const EMPTY_BIN: BinContents = { image: { runs: 0, items: 0 }, music: { runs: 0, items: 0 } }; // what is in the bin before the counts have arrived
+const EMPTY_BIN: BinContents = { image: { runs: 0, items: 0 }, music: { runs: 0, items: 0 }, vector: { runs: 0, items: 0 } }; // what is in the bin before the counts have arrived
 
 function prefersReducedMotion(): boolean {
   return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
@@ -79,7 +80,7 @@ export default function App() {
   const [upscaling, setUpscaling] = useState(false); // a picture from the computer is being upscaled (DESIGN.md §27.9)
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
-  const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images or Music (DESIGN.md §26.1), remembered
+  const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music or Vector (DESIGN.md §26.1, §31.12.8), remembered
   const [filter, setFilter] = useState<HistoryFilter>(() => readFilter(store)); // All or Kept, for both tabs (DESIGN.md §29), remembered
   const [filterProblem, setFilterProblem] = useState<string | null>(null); // why the filtered list could not be loaded
   const [managingProjects, setManagingProjects] = useState(false); // the Manage projects dialog is open (DESIGN.md §32.1)
@@ -98,11 +99,13 @@ export default function App() {
   const runsReady = !!view?.ready;
   const more = !!view?.nextBefore;
   const visible = useMemo(() => visibleRuns(state.runs, state.order, view, filter), [state.runs, state.order, view, filter]);
-  // Each tab shows only its own runs (DESIGN.md §26.1); the queue they share is on both.
+  // Each tab shows only its own runs (DESIGN.md §26.1); the queue they share is on all three.
   const imageRuns = useMemo(() => visible.filter(isImageRun), [visible]);
   const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
-  const tabKind = tab === "music" ? "music" : "image";
-  const tabRuns = tab === "music" ? musicRuns : imageRuns;
+  const vectorRuns = useMemo(() => visible.filter(isVectorRun), [visible]);
+  // what the tab being looked at is called in the counts (`Counts` has a key for each)
+  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image";
+  const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
   const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
   // The counts are asked for within the project that is chosen (DESIGN.md §32.5), so they are only used for the filter they describe: a number
@@ -860,7 +863,7 @@ export default function App() {
   const lightboxRun = found && isImageRun(found) ? (lightbox?.binned ? (found.binned_images.length ? { ...found, inputs: [], images: found.binned_images } : null) : found) : null;
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
   // the whole bin, both tabs, whatever project is chosen: what Empty bin deletes (the counts on the bar are for the tab and the project shown)
-  const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted : null;
+  const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted + state.totals.vector.deleted : null;
   // the same, as runs and pictures per tab, for the question Empty bin asks (DESIGN.md §33.1)
   const binTotals = state.totals ? binContents(state.totals) : EMPTY_BIN;
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
@@ -878,7 +881,7 @@ export default function App() {
       </div>
     ) : null;
   // what an empty list says: that it is still looking (older pages may hold some), or the empty state for this filter
-  const emptyFor = (kind: "image" | "music") =>
+  const emptyFor = (kind: TabKind) =>
     lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : (
       <EmptyHistory kind={kind} filter={filter} binDays={binDays} project={filter.project === null || filter.project === NO_PROJECT ? null : projects.find((project) => project.id === filter.project) ?? null}
         onShowAll={() => changeFilter(NO_FILTER)} onShowAnyProject={() => changeFilter(withProject(filter, null))} />
@@ -898,7 +901,7 @@ export default function App() {
           <p className="loading" role="status">Connecting to the studio…</p>
         ) : (
           <>
-            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working) }} />
+            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working) }} />
             <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
             <PromptBar
               ref={promptRef}
@@ -1036,6 +1039,30 @@ export default function App() {
               onDelete={setPendingDelete}
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
+            />
+            <VectorPanel
+              hidden={tab !== "vector"}
+              caps={caps}
+              status={status}
+              store={store}
+              runs={vectorRuns}
+              runsReady={runsReady}
+              filterBar={filterBar}
+              loadProblem={problem}
+              empty={emptyFor("vector")}
+              isTransient={transient}
+              viewScope={viewScope}
+              projects={projectControls}
+              more={more}
+              loadingOlder={loadingOlder}
+              now={now}
+              push={push}
+              onRun={(run) => dispatch({ type: "runUpsert", run })}
+              onLoadOlder={() => void loadOlder()}
+              onCancel={requestCancel}
+              onToggleKeep={(run) => void toggleKeep(run)}
+              onRestore={(run) => void restore(run, true)}
+              onDelete={setPendingDelete}
             />
           </>
         )}

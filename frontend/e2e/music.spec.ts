@@ -66,8 +66,8 @@ test("Images and Music tabs: the arrow keys switch, only the open one is shown, 
   await musicTab(page).focus();
   await page.keyboard.press("ArrowLeft");
   await expect(imagesTab(page)).toHaveAttribute("aria-selected", "true");
-  await page.keyboard.press("End");
-  await expect(musicTab(page)).toHaveAttribute("aria-selected", "true");
+  await page.keyboard.press("End"); // the last tab is Vector since 1.17 (DESIGN.md §31.12.8)
+  await expect(page.getByRole("tab", { name: "Vector" })).toHaveAttribute("aria-selected", "true");
   await page.keyboard.press("Home");
   await expect(imagesTab(page)).toHaveAttribute("aria-selected", "true");
 });

@@ -1,10 +1,18 @@
 // Fixtures for unit tests, shaped like the real API responses.
-import type { BinnedImage, BinnedTrack, Capabilities, ImageInfo, ImageRun, MusicRun, Status, TrackInfo } from "./types";
+//
+// The Vector fixtures are built from backend/tests/vector_contract.json, the file the server's tests check what it sends against (DESIGN.md §31.12), so the
+// page's test data cannot drift away from the server's. This file is left out of the production build (tsconfig.build.json), which is why it may read a
+// file outside `frontend/`, as `history.test.ts` does with `filter_cases.json`.
+import contract from "../../backend/tests/vector_contract.json";
+import type { BinnedImage, BinnedTrack, Capabilities, ImageInfo, ImageRun, MusicRun, Status, TrackInfo, VectorItem, VectorLimits, VectorRun } from "./types";
+
+/** The contract file as it is, for the tests that compare the page's types and requests with it. Cloned, so a test that changes it changes nothing else. */
+export const VECTOR_CONTRACT = structuredClone(contract);
 
 export const CAPS: Capabilities = {
   pipeline: "fake",
   model: "fake-pipeline",
-  modes: ["generate", "edit", "music"],
+  modes: ["generate", "edit", "music", "vector"],
   supports: { negative_prompt: true, cfg_scale: true, step_progress: true, transparent: true, edit: true, multi_image: true },
   aspect_ratios: {
     "1:1": [2048, 2048], "4:3": [2400, 1792], "3:4": [1792, 2400], "3:2": [2528, 1696],
@@ -33,8 +41,10 @@ export const CAPS: Capabilities = {
       lyrics_chars: 6000,
       field_chars: 400,
     },
+    vector: structuredClone(contract.capabilities.limits_vector) as unknown as VectorLimits, // the contract's own limits
   },
   music: { available: true, state: "done", reason: null, hint: null, model: "fake-music" },
+  vector: structuredClone(contract.capabilities.vector), // available: the libraries import and the image pipeline can generate
   upscaler: { available: true, model: "fake", reason: null, hint: null, max_enlargement: 4 },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },
@@ -96,6 +106,7 @@ export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
     binned_images: [],
     tracks: [],
     binned_tracks: [],
+    vectors: [],
     ...overrides,
   };
 }
@@ -130,6 +141,35 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
     binned_images: [],
     tracks: [],
     binned_tracks: [],
+    vectors: [],
+    ...overrides,
+  };
+}
+
+let vectorCounter = 0;
+/** One finished version of a Vector run: the contract's own `run.vectors[0]` (three layers, one note), with its id, place and seed changed and its links
+ *  rewritten for that id, so that two versions of a run do not share a URL. */
+export function makeVectorItem(idx = 0, overrides: Partial<VectorItem> = {}): VectorItem {
+  const item = structuredClone(contract.run.vectors[0]) as unknown as VectorItem;
+  const id = overrides.id ?? `vector${idx}${"0".repeat(32 - 7)}`.slice(0, 32);
+  const base = `/api/vectors/${id}`;
+  return {
+    ...item, id, idx, seed: item.seed + idx,
+    url: `${base}/svg`, download_url: `${base}/svg?download=1`, zip_url: `${base}/layers.zip`, png_url: `${base}/png`,
+    png_download_url: `${base}/png?download=1`, preview_url: `${base}/png?size=640`,
+    ...overrides,
+  };
+}
+
+/** A Vector run as the server sends it: the contract's `run` (done, one version, 4 colours of which one is white, so three layers and one note). */
+export function makeVectorRun(overrides: Partial<VectorRun> = {}): VectorRun {
+  vectorCounter += 1;
+  const run = structuredClone(contract.run) as unknown as VectorRun;
+  return {
+    ...run,
+    id: overrides.id ?? `vector${String(vectorCounter).padStart(4, "0")}`,
+    created_at: `2026-10-02T12:00:${String(vectorCounter % 60).padStart(2, "0")}.000Z`,
+    vectors: [makeVectorItem(0)],
     ...overrides,
   };
 }
