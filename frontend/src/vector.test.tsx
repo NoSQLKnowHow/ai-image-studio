@@ -618,6 +618,14 @@ describe("Colours, white and the swatches", () => {
     expect(screen.queryByText(/White is the bare material and has no layer\. Pick another/)).toBeNull();
   });
 
+  it("has no message about a refused colour until one is refused", () => {
+    render(<VectorPanel {...panelProps()} />);
+    expect(form().querySelector('.field-error[role="status"]')).toBeNull();
+    fireEvent.click(within(form()).getByRole("button", { name: "Choose a colour for ink 1" }));
+    type(within(form()).getByLabelText("Ink 1 colour"), "#ffffff");
+    expect(form().querySelector('.field-error[role="status"]')).not.toBeNull();
+  });
+
   it("refuses a colour another ink has", () => {
     render(<VectorPanel {...panelProps()} />);
     fireEvent.click(within(form()).getByRole("button", { name: "More colours" }));
@@ -691,6 +699,33 @@ describe("Size, layers, arrangement and More", () => {
     fireEvent.click(radio("Layers by", "Colour"));
     expect(radio("Arrangement", "Stacked").getAttribute("aria-checked")).toBe("true");
     expect(radio("Arrangement", "Stacked").disabled).toBe(false);
+  });
+
+  it("says what each arrangement does, and that by shape there is only one", () => {
+    render(<VectorPanel {...panelProps()} />);
+    const hint = () => within(form()).getByRole("radiogroup", { name: "Arrangement" }).parentElement?.querySelector(".field-hint")?.textContent;
+    expect(hint()).toBe("Each layer holds only its own colour. For inlay and for engraving.");
+    fireEvent.click(radio("Arrangement", "Stacked"));
+    expect(hint()).toBe("Each layer also holds everything above it, a little larger, so sheets cut from the layers glue up with no gaps.");
+    fireEvent.click(radio("Layers by", "Shape"));
+    expect(hint()).toBe("Layers by shape are always side by side.");
+    const layersHint = () => within(form()).getByRole("radiogroup", { name: "Layers by" }).parentElement?.querySelector(".field-hint")?.textContent;
+    expect(layersHint()).toBe("Each separate piece is its own layer, up to 30.");
+    fireEvent.click(radio("Layers by", "Colour"));
+    expect(layersHint()).toBe("One layer for each ink.");
+  });
+
+  it("takes a decimal for each side and each of the three small settings, and steps by a size that suits each", () => {
+    const store = memoryStore();
+    render(<VectorPanel {...panelProps({ store })} />);
+    type(num("Height (mm)"), "45.25");
+    expect(JSON.parse(store.data[VECTOR_FORM_KEY]).heightMm).toBe(45.25);
+    type(num("Smallest feature (mm)"), "0.75");
+    type(num("Kerf (mm)"), "0.125");
+    fireEvent.click(radio("Arrangement", "Stacked"));
+    type(num("Bleed (mm)"), "1.25");
+    expect(JSON.parse(store.data[VECTOR_FORM_KEY])).toMatchObject({ minFeatureMm: 0.75, kerfMm: 0.125, bleedMm: 1.25 });
+    expect([num("Width (mm)"), num("Height (mm)"), num("Smallest feature (mm)"), num("Kerf (mm)"), num("Bleed (mm)")].map((box) => box.getAttribute("step"))).toEqual(["1", "1", "0.05", "0.05", "0.1"]);
   });
 
   it("greys Bleed unless the layers are stacked, under More", () => {
@@ -803,6 +838,14 @@ describe("What the studio sends", () => {
     await recipeShows("WORDS[a fox on a hill|flat|2|]");
     expect(rebuild.disabled).toBe(true);
     expect(form().textContent).not.toContain("You changed this by hand");
+  });
+
+  it("shows how long the words are only once they are close to the limit (80 per cent of it)", () => {
+    const store = memoryStore({ [VECTOR_FORM_KEY]: JSON.stringify({ idea: "a fox", recipeEdited: true, recipeText: "x".repeat(1600) }) });
+    render(<VectorPanel {...panelProps({ store })} />);
+    expect(form().textContent).not.toContain("1600 / 2000");
+    type(recipeBox(), "x".repeat(1601));
+    expect(form().textContent).toContain("1601 / 2000");
   });
 
   it("shows the fixed negative text as read-only", async () => {
@@ -1009,6 +1052,24 @@ describe("when Vector cannot run here", () => {
     expect(screen.getByTestId("filter-bar")).toBeTruthy(); // the history is still there
   });
 
+  it("has a line for the hint only when the server gave one", () => {
+    const withHint: Capabilities = { ...CAPS, vector: { available: false, reason: "No.", hint: "Rebuild it." } };
+    render(<VectorPanel {...panelProps({ caps: withHint })} />);
+    expect(screen.getByRole("region", { name: "Vector is not available" }).querySelectorAll(".hint")).toHaveLength(2); // the hint, and "Images work as usual."
+    cleanup();
+    render(<VectorPanel {...panelProps({ caps: { ...CAPS, vector: { available: false, reason: "No.", hint: null } } })} />);
+    expect(screen.getByRole("region", { name: "Vector is not available" }).querySelectorAll(".hint")).toHaveLength(1);
+  });
+
+  it("shows the queue only while Vector can run", () => {
+    const busy = { ...STATUS, queue: { ...STATUS.queue, running: "some-run", queued: 1 } };
+    render(<VectorPanel {...panelProps({ status: busy })} />);
+    expect(document.querySelector(".queue-bar")?.textContent).toContain("Generating 1 run");
+    cleanup();
+    render(<VectorPanel {...panelProps({ status: busy, caps: { ...CAPS, vector: { available: false, reason: "No.", hint: null } } })} />);
+    expect(document.querySelector(".queue-bar")).toBeNull();
+  });
+
   it("says it in its own sentence when the server gave no reason", () => {
     render(<VectorPanel {...panelProps({ caps: { ...CAPS, vector: { available: false, reason: null, hint: null } } })} />);
     expect(screen.getByRole("status").textContent).toBe("Vector can't run on this server as it is set up.");
@@ -1104,8 +1165,12 @@ describe("Reuse and Retry from a card", () => {
     expect((within(form()).getByLabelText("Lock seed") as HTMLInputElement).checked).toBe(true);
     expect(num("Seed").value).toBe("555");
     expect(props.push).toHaveBeenCalledWith("info", "Loaded the prompt and settings. Seed locked to 555.");
-    expect(window.scrollTo).toHaveBeenCalled();
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "smooth" }); // to the top, where the form is
     expect(document.activeElement).toBe(idea());
+    // ... and focus goes to the prompt without the page jumping a second time
+    const focus = vi.spyOn(HTMLElement.prototype, "focus");
+    fireEvent.click(byAction("reuse") as HTMLElement);
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
   });
 
   it("keeps the box automatic when the run used the server's own words", async () => {
