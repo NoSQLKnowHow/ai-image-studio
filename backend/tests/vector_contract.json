@@ -1,0 +1,236 @@
+{
+  "_what": "The canonical examples of the Vector API (DESIGN.md 31.12). The server's tests check that what it sends has exactly these keys; the page's test data is built from it. Values are examples; the KEYS and the TYPES are the contract. null means the field is present and null.",
+  "create_request": {
+    "mode": "vector",
+    "prompt": "a fox head",
+    "options": {
+      "colours": 4,
+      "palette": [
+        "#FF0000",
+        "#00AA00"
+      ],
+      "kind": "flat",
+      "width_mm": 100.0,
+      "height_mm": 100.0,
+      "layers_by": "colour",
+      "arrangement": "side_by_side",
+      "bleed_mm": 0.5,
+      "min_feature_mm": 0.5,
+      "kerf_mm": 0.0,
+      "steps": 40,
+      "seed": 1234,
+      "num_images": 1,
+      "recipe": null
+    }
+  },
+  "create_request_notes": "`palette` lists the INK colours only (uppercase #RRGGBB, no white, at most colours-1, distinct); fewer than colours-1 means the picture chooses the rest. `recipe` null means the server builds it; a string is the page's edited text. POST /api/runs answers 201 with `run`.",
+  "recipe_request": {
+    "prompt": "a fox head",
+    "kind": "flat",
+    "colours": 4,
+    "palette": [
+      "#FF0000",
+      "#00AA00"
+    ]
+  },
+  "recipe_response": {
+    "positive": "A fox head, flat colour artwork ...",
+    "negative": "gradient, shading, photograph, text, thin lines ..."
+  },
+  "run": {
+    "id": "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+    "status": "done",
+    "mode": "vector",
+    "prompt": "a fox head",
+    "effective_prompt": "A fox head, flat colour artwork ...",
+    "options": {
+      "colours": 4,
+      "palette": [
+        "#FF0000",
+        "#00AA00"
+      ],
+      "kind": "flat",
+      "width_mm": 100.0,
+      "height_mm": 100.0,
+      "layers_by": "colour",
+      "arrangement": "side_by_side",
+      "bleed_mm": 0.5,
+      "min_feature_mm": 0.5,
+      "kerf_mm": 0.0,
+      "steps": 40,
+      "seed": 1234,
+      "num_images": 1,
+      "recipe": "A fox head, flat colour artwork ...",
+      "seed_was_random": false,
+      "negative": "gradient, shading, photograph, text, thin lines ...",
+      "draw_width": 1536,
+      "draw_height": 1536
+    },
+    "model_id": "fake",
+    "created_at": "2026-10-11T01:00:00.000Z",
+    "started_at": "2026-10-11T01:00:01.000Z",
+    "finished_at": "2026-10-11T01:00:09.000Z",
+    "error": null,
+    "pinned": false,
+    "expires_at": "2026-11-10T01:00:09.000Z",
+    "deleted_at": null,
+    "purge_at": null,
+    "project_id": null,
+    "queue_position": null,
+    "progress": null,
+    "canceling": false,
+    "lyrics": null,
+    "inputs": [],
+    "images": [],
+    "tracks": [],
+    "binned_images": [],
+    "binned_tracks": [],
+    "vectors": [
+      {
+        "id": "f9e8d7c6b5a49382716059483726150d",
+        "idx": 0,
+        "seed": 1234,
+        "width_mm": 100.0,
+        "height_mm": 100.0,
+        "colours": 4,
+        "layers": 3,
+        "bytes": 18432,
+        "check": {
+          "colours_asked": 4,
+          "colours_found": 4,
+          "white": true,
+          "size_mm": [
+            100.0,
+            100.0
+          ],
+          "layers_by": "colour",
+          "arrangement": "side_by_side",
+          "svg_bytes": 18432,
+          "layers": [
+            {
+              "index": 1,
+              "id": "layer-1-black",
+              "name": "Layer 1 (black)",
+              "colour": "#000000",
+              "picture_colour": "#101214",
+              "paths": 7,
+              "length_mm": 412.6
+            },
+            {
+              "index": 2,
+              "id": "layer-2-red",
+              "name": "Layer 2 (red)",
+              "colour": "#FF0000",
+              "picture_colour": "#FF0000",
+              "paths": 3,
+              "length_mm": 188.2
+            },
+            {
+              "index": 3,
+              "id": "layer-3-green",
+              "name": "Layer 3 (green)",
+              "colour": "#00AA00",
+              "picture_colour": "#00AA00",
+              "paths": 2,
+              "length_mm": 96.4
+            }
+          ],
+          "smallest_feature_mm": 0.62,
+          "removed": {
+            "specks": 5,
+            "thin_parts": 0
+          },
+          "mm_per_pixel": 0.065,
+          "notes": [
+            {
+              "code": "specks_removed",
+              "message": "5 specks smaller than 0.5 mm were removed."
+            }
+          ]
+        },
+        "url": "/api/vectors/f9e8d7c6b5a49382716059483726150d/svg",
+        "download_url": "/api/vectors/f9e8d7c6b5a49382716059483726150d/svg?download=1",
+        "zip_url": "/api/vectors/f9e8d7c6b5a49382716059483726150d/layers.zip",
+        "png_url": "/api/vectors/f9e8d7c6b5a49382716059483726150d/png",
+        "png_download_url": "/api/vectors/f9e8d7c6b5a49382716059483726150d/png?download=1",
+        "preview_url": "/api/vectors/f9e8d7c6b5a49382716059483726150d/png?size=640"
+      }
+    ]
+  },
+  "capabilities": {
+    "modes": [
+      "generate",
+      "edit",
+      "music",
+      "vector"
+    ],
+    "vector": {
+      "available": true,
+      "reason": null,
+      "hint": null
+    },
+    "limits_vector": {
+      "colours": {
+        "min": 2,
+        "max": 8,
+        "default": 2
+      },
+      "size_mm": {
+        "min": 5,
+        "max": 1200,
+        "default": [
+          100,
+          100
+        ]
+      },
+      "versions": {
+        "min": 1,
+        "max": 4
+      },
+      "min_feature_mm": {
+        "min": 0.05,
+        "max": 10,
+        "default": 0.5
+      },
+      "kerf_mm": {
+        "min": 0,
+        "max": 1,
+        "default": 0
+      },
+      "bleed_mm": {
+        "min": 0,
+        "max": 5,
+        "default": 0.5
+      },
+      "shape_layer_cap": 30,
+      "kinds": [
+        "silhouette",
+        "flat",
+        "line"
+      ],
+      "layers_by": [
+        "colour",
+        "shape"
+      ],
+      "arrangements": [
+        "side_by_side",
+        "stacked"
+      ],
+      "presets": [
+        {
+          "id": "xtool-p2",
+          "name": "xTool P2 bed",
+          "width_mm": 600,
+          "height_mm": 307
+        }
+      ],
+      "defaults": {
+        "kind": "silhouette",
+        "layers_by": "colour",
+        "arrangement": "side_by_side"
+      },
+      "recipe_max_chars": 2000
+    },
+    "_where": "`modes` and `vector` are top-level keys of GET /api/capabilities, like `modes` and `music`; `limits_vector` is the value of `limits.vector` there."
+  }
+}
