@@ -65,7 +65,11 @@ def drain(client, sub) -> list[tuple[str, dict]]:
 
 
 # ------------------------------------------------------------------ capabilities
-def test_the_music_tab_is_offered_and_its_limits_are_published(client):
+def test_the_music_tab_is_offered_and_its_limits_are_published(client, monkeypatch):
+    # This test is about music, so Vector is held out of `modes` whatever the machine has installed: `modes` lists "vector" exactly when its
+    # libraries (vtracer, shapely) import, which is true in the container and on a machine that has installed them, and an exact list here
+    # would then fail for a reason that has nothing to do with music. What `modes` says about Vector is tested in test_vector_server_caps.py.
+    monkeypatch.setattr("studio.vector.available", lambda: (False, "held out: this test is about music", None))
     caps = client.get("/api/capabilities").json()
     deadline = time.monotonic() + 15
     while "music" not in caps["modes"]:  # the start-up check of the music pipeline runs in the background
