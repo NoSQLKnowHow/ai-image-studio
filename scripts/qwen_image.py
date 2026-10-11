@@ -7,11 +7,11 @@ One script, two modes (both use the same QwenImage21Pipeline):
   edit       input image + instruction  -> edited image
 
 Examples:
-  # Text to image (2048x2048, 40 steps, seed 42 unless told otherwise)
+  # Text to image (2752x1536, which is 16:9; 40 steps, seed 42 unless told otherwise)
   ./qwen_image.py generate "A bright neon shop sign, rainy day, wet pavement"
 
-  # Wide image with a custom filename label and a random seed, three variations
-  ./qwen_image.py generate "Halloween town at dawn" --aspect-ratio 16:9 \\
+  # A square (2048x2048) instead, with a custom filename label and a random seed, three variations
+  ./qwen_image.py generate "Halloween town at dawn" --aspect-ratio 1:1 \\
       --name halloween-town --random-seed --num-images 3
 
   # Transparent PNG (wraps the prompt in the model card's RGBA format)
@@ -59,7 +59,6 @@ log = logging.getLogger("qwen_image")
 DEFAULT_MODEL = "Qwen/Qwen-Image-2.1"
 DEFAULT_STEPS = 40
 DEFAULT_SEED = 42
-DEFAULT_ASPECT = "1:1"
 
 # From the model card ("Supported Aspect Ratios"): (width, height)
 ASPECT_RATIOS = {
@@ -71,6 +70,9 @@ ASPECT_RATIOS = {
     "16:9": (2752, 1536),
     "9:16": (1536, 2752),
 }
+# The size `generate` makes when no size is given: 16:9, 2752x1536 (DESIGN.md §34; it was 1:1 up to version 1.15). It is the same default as the
+# studio's server and page (backend/studio/presets.py DEFAULT_ASPECT), so a picture made here and one made there agree; a test holds them together.
+DEFAULT_ASPECT = "16:9"
 
 # From the model card ("Transparent Image Generation (RGBA)")
 TRANSPARENT_PREFIX = "This is an RGBA image with transparency."
@@ -168,9 +170,10 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--num-images", type=_int_arg(1, 64), default=1, metavar="N",
                         help="how many images to make, one after another (default: %(default)s)")
 
+    default_width, default_height = ASPECT_RATIOS[DEFAULT_ASPECT]  # the help names the default from the constant, so it cannot go stale
     size = common.add_argument_group(
-        "size", "generate defaults to 2048x2048 (1:1). edit keeps the pipeline's own sizing "
-                "unless you set one of these.")
+        "size", f"generate defaults to {default_width}x{default_height} ({DEFAULT_ASPECT}). edit keeps the pipeline's own "
+                "sizing unless you set one of these.")
     size.add_argument("--aspect-ratio", choices=list(ASPECT_RATIOS),
                       help="model-card size preset: " + ", ".join(f"{k}={w}x{h}" for k, (w, h) in ASPECT_RATIOS.items()))
     size.add_argument("--width", type=_int_arg(64), help="custom width in pixels (needs --height)")
@@ -274,6 +277,8 @@ def resolve_prompt(args: argparse.Namespace) -> str:
 
 
 def resolve_size(args: argparse.Namespace) -> tuple[Optional[int], Optional[int]]:
+    """The (width, height) to make: a preset or an explicit size if one was given; otherwise the default size for `generate` (16:9, §34) and
+    (None, None) for `edit`, which leaves the sizing to the pipeline."""
     if args.aspect_ratio and (args.width or args.height):
         raise UsageError("Use either --aspect-ratio or --width/--height, not both.")
     if args.aspect_ratio:
@@ -289,7 +294,7 @@ def resolve_size(args: argparse.Namespace) -> tuple[Optional[int], Optional[int]
                         args.width, args.height)
         return args.width, args.height
     if args.command == "generate":
-        return ASPECT_RATIOS[DEFAULT_ASPECT]
+        return ASPECT_RATIOS[DEFAULT_ASPECT]  # no size given: the default, 16:9 (DESIGN.md §34)
     return None, None  # edit: let the pipeline size the result from the input image
 
 
@@ -648,7 +653,10 @@ def load_pipeline(rt: Runtime, job: Job) -> Any:
 def translate_generation_error(exc: Exception, rt: Runtime, job: Job) -> ScriptError:
     text = str(exc).lower()
     if isinstance(exc, getattr(rt.torch.cuda, "OutOfMemoryError", ())) or "out of memory" in text:
-        hints = ["use a smaller size (e.g. --aspect-ratio 1:1 is 2048x2048; try --width 1024 --height 1024)"]
+        # Name the default size and suggest half of it: for 16:9 (2752x1536) that is 1376x768, still on the pipeline's 32-pixel grid and in the same shape.
+        default_width, default_height = ASPECT_RATIOS[DEFAULT_ASPECT]
+        hints = [f"use a smaller size (the default is {default_width}x{default_height}; "
+                 f"try --width {default_width // 2} --height {default_height // 2})"]
         if not job.cpu_offload:
             hints.append("add --cpu-offload")
         if job.num_images > 1:

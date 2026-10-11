@@ -236,6 +236,8 @@ def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
         missing = "width" if width is None else "height"
         errors.append((("options", missing), "Width and height must be given together."))
     elif width is None:
+        # No size at all. Generate gets the studio's default size (16:9, 2752x1536: DESIGN.md §34), so an API caller that names none
+        # and the page's own default agree. An Edit stays None: the pipeline sizes it from the images (§21.4), and 1.16 keeps that.
         if req.mode == "generate":
             width, height = P.DEFAULT_SIZE
     else:

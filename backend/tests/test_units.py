@@ -156,7 +156,7 @@ def errors_of(body: dict, settings: Settings = SETTINGS) -> dict[tuple, str]:
 
 def test_resolve_defaults():
     run = resolve({"prompt": "  a fox  "})
-    assert run.prompt == "a fox" and (run.width, run.height, run.steps, run.num_images) == (2048, 2048, 40, 1)
+    assert run.prompt == "a fox" and (run.width, run.height, run.steps, run.num_images) == (2752, 1536, 40, 1)  # 16:9 is the default size (§34)
     assert run.seed_was_random and 0 <= run.seed <= P.SEED_MAX - SETTINGS.max_images_per_run + 1
     assert run.options_snapshot()["seed"] == run.seed
 
