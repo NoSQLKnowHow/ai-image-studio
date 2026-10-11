@@ -105,12 +105,12 @@ def offset(geometry: BaseGeometry, distance: float, join: str = "mitre") -> Base
 def opened(geometry: BaseGeometry, r: float) -> BaseGeometry:
     """The geometry without anything narrower than 2r: shrink by r, grow back. A part too thin to survive the shrinking does not come
     back (a speck, a neck, a whisker); everything thick enough returns exactly (mitre joins)."""
-    return offset(offset(geometry, -r), r) if r > 0 else geometry
+    return offset(offset(geometry, -r), r)
 
 
 def closed(geometry: BaseGeometry, r: float) -> BaseGeometry:
     """The geometry with every gap narrower than 2r filled: grow by r, shrink back."""
-    return offset(offset(geometry, r), -r) if r > 0 else geometry
+    return offset(offset(geometry, r), -r)
 
 
 def elongated(piece: Polygon) -> bool:
@@ -195,8 +195,6 @@ def narrowest(geometries: list[BaseGeometry], r_floor: float, r_ceiling: float, 
     The answer is at most `2 * r_ceiling` (the sheet's own size: a part cannot be wider), and at least a pixel or so."""
     best = 2 * r_ceiling
     for geometry in geometries:
-        if geometry.is_empty:
-            continue
         for gaps in (False, True):
             # Cheap test first: does this geometry have anything narrower than the best so far? Most layers do not, and are done in one try.
             r_test = best / 2 * 0.98

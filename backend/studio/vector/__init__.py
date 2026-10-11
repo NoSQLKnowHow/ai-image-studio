@@ -5,7 +5,7 @@ server (`studio/runspec.py`, `jobs.py`, `api.py`) imports and what the page's li
 else in this package: `build_vector`, `pack_zip` and `render_png` do the work in `engine.py`, `raster.py` and `svgio.py`; `build_recipe` has the
 real wording (`recipe.py`); `colour_name` is in `colours.py`; the job the server starts is `python -m studio.vector.job` (`job.py`). Keep the
 import of this package light: numpy, Pillow, vtracer and shapely are imported inside the functions that need them, never at the top, so that
-the server can import the limits without the libraries (`colours.py` and `recipe.py` are plain Python, so they are imported here).
+the server can import the limits without the libraries (`colours.py` and `recipe.py` are plain Python and need none).
 
 Why one file of constants: the limits (how many colours, how big a sheet) are checked by the server, shown by the page through
 `GET /api/capabilities`, and used by the engine, so they live in exactly one place.

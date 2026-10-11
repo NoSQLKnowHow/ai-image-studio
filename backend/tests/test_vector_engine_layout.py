@@ -151,9 +151,11 @@ def test_with_a_kerf_neighbouring_side_by_side_layers_overlap_by_the_kerf():
 
 
 def test_a_kerf_never_puts_anything_off_the_sheet():
-    result = make([("rect", (0, 0, mm(20), mm(20)), BLACK)], colours=2, kerf_mm=1.0)
-    x0, y0, _, _ = bbox(layers_of(result.svg)[0])
-    assert (x0, y0) == (0, 0)
+    """Growing a shape that touches the edge must not leave the sheet: on a 100 x 40 mm sheet a full-bleed bar with a 1 mm kerf is still exactly
+    the sheet (the height counts, not only the width), and a bleed likewise."""
+    for options in ({"kerf_mm": 1.0}, {"arrangement": "stacked", "bleed_mm": 2.0}):
+        result = make([("rect", (0, 0, 500, 200), BLACK)], size=(500, 200), width_mm=100, height_mm=40, colours=2, **options)
+        assert bbox(layers_of(result.svg)[0]) == (0, 0, 100, 40)
 
 
 # ---- by shape: one layer for each separate piece (§31.7 answer 1b; item 2) ----------------------------------------------------------
@@ -271,12 +273,13 @@ def test_a_neck_wide_enough_stays_and_is_the_smallest_feature_reported():
     assert result.check["smallest_feature_mm"] == pytest.approx(1.0, abs=0.1)
 
 
-@pytest.mark.parametrize("width_mm_,expected", [(0.8, 0.8), (2.0, 2.0), (6.0, 6.0)])
-def test_the_smallest_feature_is_measured_from_the_shapes(width_mm_, expected):
-    """A bar `width` wide, 30 mm long: the check reports its width, whatever the width (to 0.1 mm), because the measure is of the shapes."""
+@pytest.mark.parametrize("width_mm_", [0.8, 2.0, 6.0])
+def test_the_smallest_feature_is_measured_from_the_shapes(width_mm_):
+    """A bar `width` wide, 30 mm long: the check reports its width, whatever the width, because the measure is of the shapes. The search
+    narrows down on the width from above, so the answer is never below it and within 2.5% over it."""
     px = round(width_mm_ * 10)
     result = make([("rect", (mm(5), mm(20), mm(35), mm(20) + px), BLACK)], colours=2, smooth=1)
-    assert result.check["smallest_feature_mm"] == pytest.approx(expected, abs=0.1)
+    assert width_mm_ <= result.check["smallest_feature_mm"] <= width_mm_ * 1.025
 
 
 def test_the_smallest_feature_option_decides_what_is_removed():
@@ -305,6 +308,15 @@ def test_a_hole_too_small_to_cut_is_filled_and_a_bigger_one_stays():
     small, big = make(block(4), colours=2, smooth=1), make(block(8), colours=2, smooth=1)
     assert len(layers_of(small.svg)[0].paths[0].rings) == 1 and small.check["removed"]["specks"] == 1
     assert len(layers_of(big.svg)[0].paths[0].rings) == 2 and big.check["removed"]["specks"] == 0
+
+
+def test_a_slit_that_is_a_hole_is_filled_and_is_not_also_reported_as_a_gap():
+    """A hole 0.3 mm wide and 5 mm long inside a block is a speck of bare material: filled and counted once, as a speck. It is not also a
+    'gap narrower than the smallest feature' (the gaps are the ones between parts, and are kept), so there is no `small_feature` note."""
+    block = [square(10, 10, 25, BLACK), ("rect", (mm(20), mm(20), mm(20) + 3, mm(25)), WHITE)]
+    result = make(block, colours=2, smooth=1)
+    assert len(layers_of(result.svg)[0].paths[0].rings) == 1 and result.check["removed"]["specks"] == 1
+    assert "small_feature" not in codes(result)
 
 
 def test_a_drawing_too_coarse_for_the_smallest_feature_says_so():

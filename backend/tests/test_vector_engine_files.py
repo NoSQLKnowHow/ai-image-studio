@@ -19,7 +19,7 @@ from studio.vector import (KINDS, RECIPE_MAX_CHARS, Recipe, VectorError, VectorO
 from studio.vector import job
 from studio.vector import engine, svgio
 from studio.vector.colours import hex_to_rgb
-from studio.vector.geometry import clean_layer, elongated, fill_narrow_holes, narrowest, polygons_of, trace_ink, _even_odd
+from studio.vector.geometry import clean_layer, drop_rubbish, elongated, fill_narrow_holes, narrowest, polygons_of, trace_ink, _even_odd
 from studio.vector.pathdata import parse_path
 from studio.vector.pixels import _give_to_neighbours
 
@@ -264,17 +264,54 @@ def test_a_piece_smaller_than_the_smallest_feature_is_a_speck_and_a_gap_is_kept(
     assert len(polygons_of(specks.geometry)) == 1 and specks.specks == 1
 
 
+def test_a_dot_smaller_than_a_quarter_of_a_pixel_is_rounding_and_is_not_counted():
+    """What is smaller than `eps_area` (a quarter of a pixel) is the tracer's rounding, not a part of the picture: dropped, but not reported as a
+    speck. A dot of 0.01 mm square against an `eps_area` of 0.001 mm2 is that; one of 0.1 mm square is a speck."""
+    block = box(0, 0, 10, 10)
+    assert clean_layer(block.union(box(20, 20, 20.01, 20.01)), 0.5, 0.001).specks == 0
+    assert clean_layer(block.union(box(20, 20, 20.1, 20.1)), 0.5, 0.001).specks == 1
+
+
+def test_a_tiny_bump_is_trimmed_without_a_word_and_a_whisker_is_counted():
+    """Opening trims every part narrower than the smallest feature, but only a thin part with some size to it is reported: with r = 0.5 the
+    limit is 0.04 r squared = 0.01 mm2. A bump 0.1 x 0.05 mm on a block is trimmed and not counted; a whisker 0.5 x 0.1 mm is a thin part."""
+    block = box(0, 0, 10, 10)
+    bump = clean_layer(block.union(box(10, 4, 10.1, 4.05)), 0.5, 0.001)
+    assert bump.thin_parts == 0 and bump.geometry.area == pytest.approx(100, abs=0.001)
+    whisker = clean_layer(block.union(box(10, 4, 10.5, 4.1)), 0.5, 0.001)
+    assert whisker.thin_parts == 1 and whisker.geometry.area == pytest.approx(100, abs=0.001)
+
+
+def test_a_gap_with_almost_no_area_is_not_reported_and_a_real_slit_is():
+    """A block and a bar a hair apart (0.005 mm, over a length of 1.2 mm: 0.006 mm2, under the 0.01 of the limit) touch for all anyone can cut:
+    not a gap worth a note. A 0.2 mm slit on the same bar is."""
+    block = box(0, 0, 10, 10)
+    assert clean_layer(block.union(box(10.005, 4, 20, 5.2)), 0.5, 0.001).narrow_gaps == 0
+    assert clean_layer(block.union(box(10.2, 4, 20, 5.2)), 0.5, 0.001).narrow_gaps == 1
+
+
 def test_a_spot_of_bare_material_enclosed_by_two_layers_is_filled_by_the_one_with_more_border():
     """Two inks that meet with a hairline hole between them (a gap in both layers together, a hole in neither of them): filled, and given to the
     layer with the longer shared border. A hole wide enough to cut stays a hole."""
     left, right = box(0, 0, 10, 10), box(10, 0, 20, 10)
-    hairline = box(9.9, 3, 10.1, 4)  # a 0.2 mm slit, enclosed
+    hairline = box(9.8, 3, 10.2, 4)  # a 0.4 mm slit, enclosed: narrower than 1 mm (r = 0.5) but wider than a quarter of that
     a, b = left.difference(hairline.intersection(left)), right.difference(hairline.intersection(right))
     filled = fill_narrow_holes([a, b], 0.5)
     assert filled[0].union(filled[1]).area == pytest.approx(200, abs=0.001) and len(filled[0].union(filled[1]).interiors) == 0
     window = box(8, 3, 12, 7)
     kept = fill_narrow_holes([left.difference(window), right.difference(window)], 0.5)
     assert len(kept[0].union(kept[1]).interiors) == 1
+    # the one with more border gets it: a slit inside the right layer alone is the right layer's
+    inside_right = right.difference(box(15, 3, 15.4, 6))
+    given = fill_narrow_holes([left, inside_right], 0.5)
+    assert given[1].area == pytest.approx(100, abs=0.001) and given[0].area == pytest.approx(100, abs=0.001) and given[0].equals(left)
+
+
+def test_what_boolean_operations_leave_along_a_shared_edge_is_dropped():
+    """`drop_rubbish` removes polygons under a quarter of a pixel (and anything that is not a polygon) and keeps the rest as one shape."""
+    kept = drop_rubbish(box(0, 0, 10, 10).union(box(20, 20, 20.01, 20.01)).union(box(30, 30, 31, 31)), 0.001)
+    assert sorted(p.area for p in polygons_of(kept)) == [1.0, 100.0]
+    assert drop_rubbish(box(0, 0, 0.01, 0.01), 0.001).is_empty
 
 
 def test_tracing_a_mask_gives_shapes_in_millimetres_with_holes_as_holes():
@@ -485,6 +522,8 @@ def test_the_smallest_feature_measure_skips_empty_shapes_and_says_the_sheet_when
     """An empty layer is skipped; a lone block is as wide as it is (here 10 mm), and a block as wide as the whole ceiling reports the ceiling."""
     assert narrowest([Polygon(), box(0, 0, 10, 40)], 0.05, 20, 0.001) == pytest.approx(10, abs=0.3)
     assert narrowest([box(0, 0, 40, 40)], 0.05, 20, 0.001) == 40
+    # a dot of 0.0016 mm2 (between a quarter of a pixel and a pixel, here 0.001 and 0.004) is not a feature of the drawing: it does not set the answer
+    assert narrowest([box(0, 0, 10, 10).union(box(20, 20, 20.04, 20.04))], 0.05, 20, 0.001) == pytest.approx(10, abs=0.3)
 
 
 def test_pixels_with_no_assigned_neighbour_anywhere_go_to_white_rather_than_stay_unassigned():
@@ -554,8 +593,8 @@ def test_a_curve_from_a_tracer_is_flattened_to_the_tolerance_and_put_where_the_p
     fine = trace_ink(mask, 0.5, 0.25, 0.01)  # half a millimetre a pixel across, a quarter down
     assert fine.bounds == pytest.approx((9.0, 2.5, 19.0, 7.5), abs=0.01)  # centre (20 + 8, 15 + 5) pixels = (14, 5) mm; radii 5 mm and 2.5 mm
     assert fine.area == pytest.approx(np.pi * 5 * 2.5, rel=0.003)
-    coarse = trace_ink(mask, 0.5, 0.25, 1.0)
-    assert len(coarse.exterior.coords) < len(fine.exterior.coords) / 4 and len(coarse.exterior.coords) >= 9
+    coarse = trace_ink(mask, 0.5, 0.25, 4.0)  # 4 mm is 8 pixels across: each cubic is one straight piece, four corners and the closing point
+    assert len(coarse.exterior.coords) == 5 and len(fine.exterior.coords) > 40
 
 
 def test_a_big_circle_is_traced_to_within_a_few_tenths_of_a_millimetre_of_the_true_edge():
