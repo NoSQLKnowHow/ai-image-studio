@@ -726,6 +726,18 @@ describe("the one-time move of a saved 1:1 (criteria 178 and 179, DESIGN.md §34
     expect(MOVED_NOTE).toBe("The default size is now 16:9, and your saved 1:1 was changed to it. Choose 1:1 in Options to go back.");
   });
 
+  it("any value of the flag means the browser has been through it", () => {
+    // The page writes "1", but what counts is that the key is there: a flag saved by another build, or by hand, is respected.
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15(), [MOVED_KEY]: "yes" });
+    expect(start(store)).toMatchObject({ moved: false, options: { aspect: "1:1" } });
+  });
+
+  it("an upgraded browser keeps the Custom size it saved (2048×2048 if it never changed it): only an empty one starts Custom at 2752×1536", () => {
+    const { options } = start(memoryStore({ [OPTIONS_KEY]: saved1_15() }));
+    expect([options.customWidth, options.customHeight]).toEqual([2048, 2048]);
+    expect([defaultOptions(CAPS).customWidth, defaultOptions(CAPS).customHeight]).toEqual([2752, 1536]);
+  });
+
   it("the move is saved at once, with the flag, so a second start in the same page finds it done", () => {
     const store = memoryStore({ [OPTIONS_KEY]: saved1_15() });
     start(store);
@@ -736,9 +748,10 @@ describe("the one-time move of a saved 1:1 (criteria 178 and 179, DESIGN.md §34
   });
 
   it("only the shape moves: the scale, steps, seed and Edit's size are left as they were (§34.5 choice 3)", () => {
-    const store = memoryStore({ [OPTIONS_KEY]: saved1_15({ scale: 50, steps: 12, seedLocked: true, seed: 7, editAspect: "3:4", numImages: 3 }) });
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15({ scale: 50, steps: 12, seedLocked: true, seed: 7, editAspect: "3:4", numImages: 3, customWidth: 1024, customHeight: 768 }) });
     const { options } = start(store);
     expect(options).toMatchObject({ aspect: "16:9", scale: 50, steps: 12, seedLocked: true, seed: 7, editAspect: "3:4", numImages: 3 });
+    expect([options.customWidth, options.customHeight]).toEqual([1024, 768]); // a saved Custom size is never replaced (§34.5 choice 5)
     expect(resolveSize(options, CAPS)).toEqual({ width: 1376, height: 768 }); // a 1:1 at 50% becomes 16:9 at 50%
   });
 
