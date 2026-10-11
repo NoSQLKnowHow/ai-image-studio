@@ -536,3 +536,85 @@ def test_a_colour_that_is_not_a_hex_colour_is_an_error():
         with pytest.raises(ValueError):
             hex_to_rgb(bad)
     assert hex_to_rgb("#0a0B0c") == (10, 11, 12)
+
+
+def test_a_curve_from_a_tracer_is_flattened_to_the_tolerance_and_put_where_the_picture_has_it(monkeypatch):
+    """The engine asks vtracer for straight-edged polygons, but its reader also takes the cubic curves and the translation that vtracer's spline
+    mode writes (and the test sheet has curves too). A canned tracer answer, an ellipse of four cubics about its own centre and moved by a
+    translation: the shape ends up where the picture has it (the mask's own offset, the translation and each axis's scale all counted),
+    flattened finely when asked finely and coarsely when asked coarsely."""
+    import vtracer
+
+    k = 0.5522847498 * 10
+    svg = ('<svg xmlns="http://www.w3.org/2000/svg" width="50" height="40"><path d="M10 0 '
+           f'C10 {k} {k} 10 0 10 C-{k} 10 -10 {k} -10 0 C-10 -{k} -{k} -10 0 -10 C{k} -10 10 -{k} 10 0 Z" transform="translate(20,15)"/></svg>')
+    monkeypatch.setattr(vtracer, "convert_raw_image_to_svg", lambda *args, **kwargs: svg)
+    mask = np.zeros((40, 50), dtype=bool)
+    mask[5:35, 8:38] = True  # the tracer was given this part of the picture, which starts at column 8, row 5
+    fine = trace_ink(mask, 0.5, 0.25, 0.01)  # half a millimetre a pixel across, a quarter down
+    assert fine.bounds == pytest.approx((9.0, 2.5, 19.0, 7.5), abs=0.01)  # centre (20 + 8, 15 + 5) pixels = (14, 5) mm; radii 5 mm and 2.5 mm
+    assert fine.area == pytest.approx(np.pi * 5 * 2.5, rel=0.003)
+    coarse = trace_ink(mask, 0.5, 0.25, 1.0)
+    assert len(coarse.exterior.coords) < len(fine.exterior.coords) / 4 and len(coarse.exterior.coords) >= 9
+
+
+def test_a_big_circle_is_traced_to_within_a_few_tenths_of_a_millimetre_of_the_true_edge():
+    """The reason the tracer runs in polygon mode: vtracer's spline mode, measured, can drift 40 pixels from the edge of a large circle. A 40 mm
+    circle at 500 pixels (r = 200 pixels): every vertex of the file is within 0.25 mm of a true circle (2.5 pixels)."""
+    result = make([("ellipse", (mm(5), mm(5), mm(45), mm(45)), (0, 0, 0))], colours=2)
+    points = [p for ring in layers_of(result.svg)[0].paths[0].rings for p in ring]
+    radii = [((x - 25) ** 2 + (y - 25) ** 2) ** 0.5 for x, y in points]
+    assert len(points) > 40 and all(abs(r - 20) < 0.25 for r in radii)
+
+
+def test_the_colour_of_a_layer_is_the_mean_of_the_picture_rounded_not_cut():
+    """A region whose columns alternate between (10, 10, 10) and (11, 11, 11) has the mean 10.5, which rounds to 11 (#0B0B0B): the colour is
+    rounded to the nearest, as the contract says ("rounded to #RRGGBB")."""
+    data = np.full((SIZE, SIZE, 3), 255, dtype=np.uint8)
+    data[100:400, 100:400] = 10
+    data[100:400, 101:400:2] = 11
+    result = build_vector(as_png(Image.fromarray(data)), VectorOptions(colours=2, width_mm=SHEET_MM, height_mm=SHEET_MM))
+    assert result.check["layers"][0]["colour"] == "#0B0B0B"
+
+
+def test_a_picture_exactly_at_the_size_limit_is_accepted(monkeypatch):
+    from studio.vector import pixels
+
+    monkeypatch.setattr(pixels, "MAX_PIXELS", 64 * 64)
+    assert build_vector(as_png(Image.new("RGB", (64, 64), "black")), VectorOptions(width_mm=20, height_mm=20)).check["layers"]
+
+
+def test_every_shape_runs_the_same_way_round_and_every_hole_the_other():
+    """Not only 'a hole is wound against its outline' but every outline the same way: a file that mixed the two would behave differently
+    under the non-zero rule when shapes overlap (stacked layers do). A ring, a dot in it, a bar and a disc, side by side and stacked."""
+    shapes = [("ellipse", (mm(5), mm(5), mm(30), mm(30)), BLACK), ("ellipse", (mm(10), mm(10), mm(25), mm(25)), (255, 255, 255)),
+              ("ellipse", (mm(15), mm(15), mm(20), mm(20)), BLACK), ("rect", (mm(35), mm(5), mm(45), mm(40)), RED)]
+
+    def turn(ring):
+        return sum(x1 * y2 - x2 * y1 for (x1, y1), (x2, y2) in zip(ring, ring[1:] + ring[:1]))
+
+    for arrangement in ("side_by_side", "stacked"):
+        rings = [(i, turn(ring) > 0) for layer in layers_of(make(shapes, colours=3, arrangement=arrangement).svg) for p in layer.paths
+                 for i, ring in enumerate(p.rings)]
+        assert {positive for i, positive in rings if i == 0} == {True} and {positive for i, positive in rings if i > 0} == {False}
+
+
+def test_numbers_in_the_file_have_at_most_three_decimals_and_no_trailing_zeros():
+    """A thousandth of a millimetre is far finer than any laser; the numbers are written as short as they can be."""
+    import re
+
+    result = make(drawing(), colours=4)
+    numbers = re.findall(r"-?\d[\d.]*", " ".join(p.d for layer in layers_of(result.svg) for p in layer.paths))
+    assert numbers and all(re.fullmatch(r"-?\d+(\.\d*[1-9])?", n) and len(n.partition(".")[2]) <= 3 and n != "-0" for n in numbers)
+    assert any("." in n for n in numbers)
+
+
+def test_the_supersampling_is_reduced_to_fit_big_masks_and_a_reduced_one_still_draws(monkeypatch):
+    """`_samples` picks 4 for a small shape and fewer as the mask grows toward the 40 million sample limit; a render with that limit made tiny
+    (so that there is no supersampling at all) still draws the shape in the right place."""
+    from studio.vector import raster
+
+    assert [raster._samples(w, h) for w, h in ((1000, 1000), (2000, 2000), (3000, 3000), (4000, 4000), (10000, 10000))] == [4, 3, 2, 1, 1]
+    monkeypatch.setattr(raster, "MAX_SAMPLES", 5000)
+    image = np.array(png_of(svg_of(path("M20 20 L30 20 L30 30 L20 30 Z")), 100).convert("L"))
+    assert image[25, 25] == 0 and image[5, 5] == 255 and (image == 0).sum() == pytest.approx(100, abs=25)

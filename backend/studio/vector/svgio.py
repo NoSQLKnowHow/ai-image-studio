@@ -55,7 +55,7 @@ def _ring_points(ring) -> list[tuple[float, float]]:
     """A ring's points rounded to the file's precision, without the repeated closing point and without points that rounding made equal."""
     points: list[tuple[float, float]] = []
     for x, y in list(ring.coords)[:-1]:
-        point = (round(x, COORDINATE_DIGITS) + 0.0, round(y, COORDINATE_DIGITS) + 0.0)  # + 0.0 turns -0.0 into 0.0
+        point = (round(x, COORDINATE_DIGITS), round(y, COORDINATE_DIGITS))
         if not points or point != points[-1]:
             points.append(point)
     if len(points) > 1 and points[0] == points[-1]:
