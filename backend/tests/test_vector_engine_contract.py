@@ -39,6 +39,7 @@ def test_each_number_is_accepted_at_its_limits_and_refused_just_outside(field, b
 def test_a_boolean_or_a_string_is_not_a_number():
     """True would pass as 1 and "5" is text: neither is a size."""
     assert fields(colours=True) == ["colours"] and fields(width_mm="50") == ["width_mm"] and fields(kerf_mm=None) == ["kerf_mm"]
+    assert fields(shape_layer_cap=True) == ["shape_layer_cap"]  # True is 1, inside the range, and still not a number
 
 
 @pytest.mark.parametrize("field,bad", [("kind", "blob"), ("layers_by", "size"), ("arrangement", "pile"), ("fill_mode", "dotted")])
@@ -65,6 +66,7 @@ def test_the_options_go_through_json_and_back_unchanged_and_an_unknown_key_is_re
     options = VectorOptions(colours=5, palette=("#FF0000", "#00AA00"), kind="flat", width_mm=120.5, layers_by="shape", arrangement="stacked",
                             bleed_mm=1.5, min_feature_mm=0.8, kerf_mm=0.2, shape_layer_cap=12, fill_mode="outline")
     data = json.loads(json.dumps(options.to_json()))
+    assert options.to_json()["palette"] == ["#FF0000", "#00AA00"] and isinstance(options.to_json()["palette"], list)  # a list, not a tuple, before JSON
     assert data["palette"] == ["#FF0000", "#00AA00"] and VectorOptions.from_json(data) == options
     assert VectorOptions.from_json({}) == VectorOptions()
     with pytest.raises(ValueError, match="sparkle"):

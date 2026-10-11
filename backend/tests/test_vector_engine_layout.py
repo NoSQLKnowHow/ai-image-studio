@@ -366,8 +366,18 @@ def test_the_smallest_feature_looks_at_every_layer_and_never_beyond_the_sheets_o
     near miss)."""
     result = make([square(5, 5, 30, BLACK), ("rect", (mm(5), mm(40), mm(35), mm(40) + 8), RED)], colours=3, smooth=1)
     assert 0.8 <= result.check["smallest_feature_mm"] <= 0.82
-    across = make([("rect", (0, 0, 500, 200), BLACK)], size=(500, 200), width_mm=100, height_mm=40, colours=2, smooth=1)
-    assert across.check["smallest_feature_mm"] == 40.0
+    across = make([("rect", (0, 0, 500, 200), BLACK)], size=(500, 200), width_mm=100, height_mm=39.7, colours=2, smooth=1)
+    assert across.check["smallest_feature_mm"] == 39.7  # exactly: the search stops at the sheet, it does not creep up on it
+
+
+def test_the_clean_up_is_given_half_the_smallest_feature_and_a_quarter_of_a_pixel(monkeypatch):
+    """The two numbers every smallest-feature decision rests on, read off the call: r is half the smallest feature (0.25 mm for 0.5) and
+    `eps_area` a quarter of a pixel in square millimetres (0.1 mm a pixel here: 0.0025 mm2)."""
+    seen = []
+    real = engine.geo.clean_layer
+    monkeypatch.setattr(engine.geo, "clean_layer", lambda geometry, r, eps: (seen.append((r, eps)), real(geometry, r, eps))[1])
+    make([square(5, 5, 20, BLACK)], colours=2)
+    assert seen == [(pytest.approx(0.25), pytest.approx(0.0025))]
 
 
 def test_a_colour_whose_every_part_is_too_small_has_no_layer_and_is_named():

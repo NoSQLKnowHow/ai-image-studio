@@ -39,9 +39,13 @@ def _bounds(points: list[tuple[float, float]], margin: float, size: tuple[int, i
     return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else None
 
 
+# Pillow rounds every vertex to a whole sample and fills both ends of a span, so a filled shape comes out up to one sample (a quarter of a pixel)
+# wider than it is, about half a percent of a 10 mm square at 1000 px and less for bigger shapes. That is the price of using Pillow's polygon
+# fill (a correction would need an inward offset of the shape, which needs a geometry library the PNG route does not otherwise have); the test
+# pins the size of the error.
 def _fill_mask(path: ParsedPath, scale: float, size: tuple[int, int]):
     """The coverage mask (0 to 255) of a filled path and where it goes, or None. Even-odd: each ring flips the inside and the outside."""
-    rings = [[(x * scale, y * scale) for x, y in ring] for ring in path.rings if len(ring) >= 3]
+    rings = [[(x * scale, y * scale) for x, y in ring] for ring in path.rings]  # (parse_path gives rings of three points or more)
     if not rings:
         return None
     box = _bounds([p for ring in rings for p in ring], 0, size)
@@ -61,7 +65,7 @@ def _fill_mask(path: ParsedPath, scale: float, size: tuple[int, int]):
 def _stroke_mask(path: ParsedPath, scale: float, size: tuple[int, int]):
     """The coverage mask of a path drawn as closed lines `stroke_width` wide (the `outline` fill mode), and where it goes, or None."""
     width = max(1.0, path.stroke_width * scale)
-    rings = [[(x * scale, y * scale) for x, y in ring] for ring in path.rings if len(ring) >= 2]
+    rings = [[(x * scale, y * scale) for x, y in ring] for ring in path.rings]
     if not rings:
         return None
     box = _bounds([p for ring in rings for p in ring], width, size)
@@ -79,7 +83,7 @@ def _stroke_mask(path: ParsedPath, scale: float, size: tuple[int, int]):
 
 def render_svg(svg: str, long_side_px: int) -> bytes:
     """The PNG of `svg` with its long side `long_side_px` pixels (16 to 8192), white where nothing is drawn."""
-    if isinstance(long_side_px, bool) or not isinstance(long_side_px, int) or not LONG_SIDE_MIN <= long_side_px <= LONG_SIDE_MAX:
+    if not isinstance(long_side_px, int) or not LONG_SIDE_MIN <= long_side_px <= LONG_SIDE_MAX:  # (True is 1, outside the range too)
         raise VectorError(f"The PNG size must be a whole number of pixels from {LONG_SIDE_MIN} to {LONG_SIDE_MAX}.")
     parsed = parse_svg(svg)
     scale = long_side_px / max(parsed.width, parsed.height)

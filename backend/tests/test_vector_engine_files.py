@@ -96,6 +96,7 @@ def test_the_zip_is_the_same_bytes_every_time_and_does_not_carry_the_date():
     with zipfile.ZipFile(io.BytesIO(first)) as archive:
         assert {info.date_time for info in archive.infolist()} == {(1980, 1, 1, 0, 0, 0)}
         assert all(info.compress_type == zipfile.ZIP_DEFLATED for info in archive.infolist())
+        assert {info.external_attr >> 16 for info in archive.infolist()} == {0o644}  # a plain file, whichever machine packed it
 
 
 def test_a_zip_of_a_by_shape_run_names_the_pieces():
@@ -155,9 +156,10 @@ def test_the_png_shows_the_shapes_where_they_are_in_the_colours_they_have():
 
 def test_a_filled_shape_has_the_area_it_should_with_smooth_edges():
     """A 10 mm square in a 100 mm sheet at 1000 pixels is 100 x 100 pixels: the PNG's coverage (summing how dark each pixel is) is 10,000 pixels
-    to within 1%, so supersampling neither fattens nor thins it, and an edge between two pixels is a grey, not a staircase."""
+    to within 1%, so supersampling neither fattens nor thins it (Pillow's polygon fill is inclusive at both ends, which is a quarter of a pixel
+    of extra width: +0.5% here, and the test says so rather than hide it), and an edge between two pixels is a grey, not a staircase."""
     image = np.array(png_of(svg_of(path("M20.05 20.05 L30.05 20.05 L30.05 30.05 L20.05 30.05 Z")), 1000).convert("L")).astype(float)
-    assert (255 - image).sum() / 255 == pytest.approx(10000, rel=0.01)
+    assert 10000 <= (255 - image).sum() / 255 <= 10080  # never thinner than the shape, and at most 0.8% over
     assert ((image > 0) & (image < 255)).sum() > 100  # the edge is anti-aliased
 
 
@@ -333,7 +335,7 @@ def test_the_recipe_asks_for_flat_artwork_in_the_number_of_colours_and_the_named
     text = recipe.positive
     assert isinstance(recipe, Recipe) and text.startswith("A fox head, flat colour artwork")
     for phrase in ("plain pure white background", "no gradients", "no shading", "no text", "thick", "Exactly 4 colours in total", "3 other solid colours",
-                   "red (#FF0000)", "green (#00AA00)", "one more solid colour"):
+                   "red (#FF0000)", "green (#00AA00)", "one more solid colour that suits the subject"):
         assert phrase in text, phrase
     assert len(text) < RECIPE_MAX_CHARS
 
@@ -358,8 +360,9 @@ def test_the_negative_text_is_fixed_and_the_recipe_is_the_same_every_time():
     negatives = {build_recipe("a rose", kind, n, palette).negative for kind in KINDS for n in (2, 8) for palette in ((), ("#FF0000",))}
     assert len(negatives) == 1
     (negative,) = negatives
-    for word in ("gradient", "shading", "shadow", "photograph", "text", "thin lines", "blur", "texture"):
-        assert word in negative
+    items = negative.split(", ")  # whole items: "texture" must not stand in for "text"
+    for word in ("gradient", "shading", "shadow", "photograph", "text", "lettering", "thin lines", "blur", "texture"):
+        assert word in items
     assert build_recipe("a rose", "flat", 4, ("#FF0000",)) == build_recipe("a rose", "flat", 4, ("#FF0000",))
 
 
@@ -700,3 +703,36 @@ def test_the_renderer_reads_what_an_svg_does_when_it_says_nothing():
 def test_a_view_box_or_colour_the_renderer_cannot_use_is_an_error_with_words(svg):
     with pytest.raises(VectorError):
         render_png(svg, 100)
+
+
+def test_a_hairline_stroke_is_drawn_at_least_one_pixel_wide_and_a_stroke_goes_over_its_own_fill():
+    """A stroke 0.001 mm wide is a line of one pixel, not nothing (programs draw hairlines); and where a path has both a fill and a stroke the
+    stroke is on top: a red square with a wide blue edge has blue where the edge is."""
+    hairline = ('<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">'
+                '<path d="M2 2 L8 2 L8 8 L2 8 Z" fill="none" stroke="#000000" stroke-width="0.001"/></svg>')
+    image = png_of(hairline, 100)
+    assert sum(255 - image.getpixel((x, 50))[0] for x in range(15, 26)) == pytest.approx(255, rel=0.2)
+    both = ('<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">'
+            '<path d="M2 2 L8 2 L8 8 L2 8 Z" fill="#FF0000" stroke="#0000FF" stroke-width="1"/></svg>')
+    image = png_of(both, 100)
+    assert image.getpixel((50, 50)) == (255, 0, 0) and image.getpixel((20, 50)) == (0, 0, 255) and image.getpixel((80, 50)) == (0, 0, 255)
+
+
+def test_a_shape_that_starts_off_the_picture_is_cut_at_its_edge():
+    """A square from -10 to 30 on a 40 unit sheet is drawn from the edge, not shifted or dropped."""
+    svg = svg_of(path("M-10 -10 L30 -10 L30 30 L-10 30 Z"), width=40, height=40)
+    image = png_of(svg, 40)
+    assert image.getpixel((0, 0)) == (0, 0, 0) and image.getpixel((29, 29)) == (0, 0, 0) and image.getpixel((35, 35)) == (255, 255, 255)
+
+
+def test_a_failing_library_is_reported_to_the_log_but_not_to_the_card(monkeypatch, tmp_path, capsys):
+    """The job's answer carries only the words for the card; the library's own error goes to standard error, for the log."""
+    import vtracer
+
+    monkeypatch.setattr(vtracer, "convert_raw_image_to_svg", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("the tracer fell over")))
+    (tmp_path / "s.png").write_bytes(as_png(picture(drawing())))
+    (tmp_path / "o.json").write_text(json.dumps(VectorOptions(colours=4, width_mm=SHEET_MM, height_mm=SHEET_MM).to_json()))
+    assert job.main(["--source", str(tmp_path / "s.png"), "--options", str(tmp_path / "o.json"), "--out", str(tmp_path / "out")]) == 0
+    captured = capsys.readouterr()
+    answer = json.loads(captured.out)
+    assert answer["ok"] is False and "fell over" not in captured.out and "the tracer fell over" in captured.err
