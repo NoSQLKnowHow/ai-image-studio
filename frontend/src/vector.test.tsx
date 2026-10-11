@@ -11,7 +11,7 @@ import { VectorCard } from "./components/VectorCard";
 import { VectorPanel } from "./components/VectorPanel";
 import { NO_FILTER, ONLY_DELETED, ONLY_KEPT, withProject } from "./history";
 import { browserStore, type KeyValueStore } from "./options";
-import { CAPS, STATUS, VECTOR_CONTRACT, makeVectorItem, makeVectorRun } from "./testdata";
+import { CAPS, STATUS, VECTOR_CONTRACT, makeMusicRun, makeRun, makeVectorItem, makeVectorRun } from "./testdata";
 import type { Capabilities, Project, VectorLimits, VectorRecipeRequest, VectorRun } from "./types";
 import { VECTOR_FORM_KEY, defaultVectorForm, saveVectorForm } from "./vector";
 import { workingNote } from "./format";
@@ -1414,7 +1414,7 @@ describe("the filter bar and the empty states on the Vector tab", () => {
     const empty = (filter = NO_FILTER, project: Project | null = null) =>
       renderToStaticMarkup(<EmptyHistory kind="vector" filter={filter} binDays={30} project={project} onShowAll={nothing} onShowAnyProject={nothing} />);
     expect(empty()).toContain("No vectors yet");
-    expect(empty()).toContain("press Make vector");
+    expect(empty()).toContain("Describe your idea above and press Make vector. Every SVG lands here with its settings and its layers.");
     expect(empty(ONLY_KEPT)).toContain("No kept vectors yet");
     expect(empty(ONLY_DELETED)).toContain("No deleted vectors");
     expect(empty(ONLY_DELETED)).toContain("Runs you delete stay here for 30 days before they are gone for good.");
@@ -1436,6 +1436,14 @@ describe("the questions about a Vector run", () => {
     render(<ConfirmDelete run={makeVectorRun({ deleted_at: "2026-10-10T00:00:00.000Z" })} binDays={30} projectName={null} onCancel={nothing} onConfirm={nothing} />);
     expect(screen.getByRole("alertdialog").textContent).toContain("Its version is removed from the Spark.");
     expect(screen.getByRole("button", { name: "Delete forever" })).toBeTruthy();
+  });
+
+  it("Cancel names the work for each kind of run, so that the Vector words did not change the others", () => {
+    render(<ConfirmCancel run={makeRun({ status: "running" })} onBack={nothing} onConfirm={nothing} />);
+    expect(screen.getByRole("button", { name: "Stop generating" })).toBeTruthy();
+    cleanup();
+    render(<ConfirmCancel run={makeMusicRun({ status: "running" })} onBack={nothing} onConfirm={nothing} />);
+    expect(screen.getByRole("button", { name: "Stop making music" })).toBeTruthy();
   });
 
   it("Cancel: says how many versions are kept, and the button names the work", () => {

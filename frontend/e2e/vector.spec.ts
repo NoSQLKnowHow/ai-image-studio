@@ -1,10 +1,12 @@
 // End-to-end: the Vector tab (DESIGN.md §31, §31.12.7 and §31.12.8; criteria 135-143), in a real browser against the real server with the fake pipeline
 // (the image worker draws a stand-in picture and the clean-up turns it into an SVG).
 //
-// WRITTEN BEFORE THE THREE BUILDS WERE MERGED, against the contract (backend/tests/vector_contract.json) and not against a running server. The first run after
-// the merge may find a place where a guess was wrong; an assertion that fails for that reason should be corrected to what the contract says, and one that
-// fails because the server differs from the contract is a finding. What the tests do not assume: how many layers the clean-up finds in the stand-in picture
-// (they check the rules that hold for any picture: at most colours - 1 layers, white never has one, every note shown), and how fast a run is.
+// WRITTEN BEFORE THE THREE BUILDS WERE MERGED, against the contract (backend/tests/vector_contract.json). It has NOT been run against the real server. Its
+// page-side steps were run (all 21 passing) against a stand-in server written from the contract (kept outside the repository), which proves the locators, the
+// page's behaviour and the spec's own logic, and nothing about the real server. The first run after the merge may find a place where a guess about the server
+// was wrong: an assertion that fails for that reason should be corrected to what the contract says, and one that fails because the server differs from the
+// contract is a finding. What the tests do not assume: how many layers the clean-up finds in the stand-in picture (they check the rules that hold for any
+// picture: at most colours - 1 layers, white never has one, every note shown), and how fast a run is.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { clearHistory, expect, generate, test, unique, useOptions, type Locator, type Page } from "./helpers";
