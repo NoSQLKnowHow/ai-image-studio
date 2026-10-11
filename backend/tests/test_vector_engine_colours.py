@@ -459,11 +459,13 @@ def test_white_and_the_palette_are_fixed_centres_that_never_move():
 
 
 def test_white_does_not_move_to_the_mean_of_an_off_white_background():
-    """White's centre stays where white is even when the paper is (240, 240, 240): were it to move to the paper's grey, the line between white and
-    a named dark grey (#404040) would move with it. A grey of (150, 150, 150), which is nearer the named grey than white is, is the ink's."""
-    shapes = [("rect", (mm(5), mm(5), mm(20), mm(20)), (64, 64, 64)), ("rect", (mm(28), mm(5), mm(43), mm(20)), (150, 150, 150))]
-    result = make(shapes, colours=2, smooth=1, background=(240, 240, 240), palette=("#404040",))
-    assert [layer["paths"] for layer in result.check["layers"]] == [2]
+    """White's centre stays where white is even when the paper is (240, 240, 240). Were it to move to the paper's grey, the line between white and a
+    black ink would move with it, from half way (L 50) toward the paper (L 47.5): a small grey square of (117, 117, 117) (L 49.2) is
+    nearer the ink than white, and is the ink's, as it is on white paper. Two paths: the black square and the grey one."""
+    shapes = [("rect", (mm(5), mm(5), mm(25), mm(25)), (0, 0, 0)), ("rect", (mm(30), mm(5), mm(34), mm(9)), (117, 117, 117))]
+    for paper in ((240, 240, 240), (255, 255, 255)):
+        result = make(shapes, colours=2, smooth=1, background=paper)
+        assert [layer["paths"] for layer in result.check["layers"]] == [2], paper
 
 
 def test_a_colour_that_was_asked_for_near_white_is_still_white_and_is_reported_missing():
