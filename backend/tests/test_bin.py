@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from conftest import create_run, wait_for
+from schema_helpers import as_before_vector
 from test_housekeeping import days_ago, on_disk, seed_run, seeded  # noqa: F401  (seeded is a fixture)
 
 from studio.db import SCHEMA_VERSION, Database
@@ -166,6 +167,7 @@ def test_the_counts_know_the_bin(seeded):
 def v3_database(path):
     """A schema 3 database as 1.12 leaves it: the current tables without the bin's columns, and a run."""
     Database(path).close()
+    as_before_vector(path)  # with the mode CHECK of that time, not the current one that allows vector runs
     conn = sqlite3.connect(path)
     conn.execute("DROP INDEX idx_runs_deleted")
     conn.execute("ALTER TABLE runs DROP COLUMN deleted_at")

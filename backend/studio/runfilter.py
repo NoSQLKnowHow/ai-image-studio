@@ -13,8 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from typing import Any, Mapping, Optional
 
-# What the Images and Music tabs hold, as the runs table's `mode`: the page splits the history by tab and counts per tab.
-KINDS: dict[str, tuple[str, ...]] = {"image": ("generate", "edit"), "music": ("music",)}
+# What the Images, Music and Vector tabs hold, as the runs table's `mode`: the page splits the history by tab and counts per tab (DESIGN.md §31.12.7).
+KINDS: dict[str, tuple[str, ...]] = {"image": ("generate", "edit"), "music": ("music",), "vector": ("vector",)}
 
 # The value of `RunFilter.project` that means "runs that are in no project" (DESIGN.md §32.4). A project's id is 32 hex digits, so this can
 # never be one.
