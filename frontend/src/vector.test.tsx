@@ -126,6 +126,17 @@ describe("the card of a finished Vector run (the contract's run)", () => {
     expect(shown.map((li) => li.textContent?.trim())).toEqual(notes.map((note) => note.message));
   });
 
+  it("lists a single note as a list of one, and a single layer as \"1 layer\"", () => {
+    render(<VectorCard {...cardProps(run)} />);
+    const list = within(card()).getByRole("list", { name: "Notes" });
+    expect(Array.from(list.querySelectorAll("li")).map((li) => li.textContent?.trim())).toEqual(["5 specks smaller than 0.5 mm were removed."]);
+    cleanup();
+    const one = makeVectorRun({ vectors: [makeVectorItem(0, { layers: 1, check: { ...item.check, layers: [item.check.layers[0]] } })] });
+    render(<VectorCard {...cardProps(one)} />);
+    expect(card().querySelector(".vector-summary")?.textContent).toContain("· 1 layer ·");
+    expect(card().querySelector("img")?.getAttribute("alt")).toBe("Preview of seed 1234: 100 by 100 mm, 1 layer");
+  });
+
   it("has no list of notes when there are none", () => {
     render(<VectorCard {...cardProps(makeVectorRun({ vectors: [makeVectorItem(0, { check: { ...item.check, notes: [] } })] }))} />);
     expect(within(card()).queryByRole("list", { name: "Notes" })).toBeNull();
@@ -210,6 +221,20 @@ describe("the card of a finished Vector run (the contract's run)", () => {
     expect([props.onReuse, props.onToggleKeep, props.onDelete].map((spy) => (spy as ReturnType<typeof vi.fn>).mock.calls.length)).toEqual([1, 1, 1]);
   });
 
+  it("shows the Kept badge only on a kept run", () => {
+    render(<VectorCard {...cardProps(makeVectorRun({ pinned: false }))} />);
+    expect(card().querySelector(".badge-kept")).toBeNull();
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ pinned: true }))} />);
+    expect(card().querySelector(".badge-kept")?.textContent).toContain("Kept");
+  });
+
+  it("shows a project chip even before the page knows the project's name", () => {
+    render(<VectorCard {...cardProps(makeVectorRun({ project_id: "c".repeat(32), pinned: true }))} />);
+    expect(card().querySelector("[data-project-chip]")?.textContent).toContain("Project");
+    expect(screen.getByRole("button", { name: "Project: a project. Change the project" })).toBeTruthy();
+  });
+
   it("shows Keep pressed on a kept run, and locked, with the reason, on a filed one", () => {
     render(<VectorCard {...cardProps(makeVectorRun({ pinned: true }))} />);
     expect(byAction("keep")?.getAttribute("aria-pressed")).toBe("true");
@@ -268,6 +293,16 @@ describe("a Vector run with several versions", () => {
   });
 });
 
+describe("a Vector run of exactly two versions", () => {
+  it("names each version's buttons already (two are several), and says the seeds of both", () => {
+    const options = { ...makeVectorRun().options, num_images: 2 };
+    const two = makeVectorRun({ options, vectors: [makeVectorItem(0), makeVectorItem(1, { id: "other00000000000000000000000000" })] });
+    render(<VectorCard {...cardProps(two)} />);
+    expect(screen.getAllByRole("link", { name: /^Download SVG, version [12] of 2$/ })).toHaveLength(2);
+    expect(card().querySelector(".run-meta")?.textContent).toContain("seeds 1234–1235");
+  });
+});
+
 describe("the card of a Vector run that is not finished or not a success", () => {
   it("shows the two stages while it works: drawing by its steps, tracing as it goes, and what it is doing", () => {
     const working = makeVectorRun({ status: "running", vectors: [], progress: { image: 1, of: 1, step: 10, steps: 40, stage: "draw" } });
@@ -277,6 +312,7 @@ describe("the card of a Vector run that is not finished or not a success", () =>
     expect(phases.map((phase) => phase.querySelector(".phase-label")?.textContent)).toEqual(["Drawing", "Tracing"]);
     expect(screen.getByRole("progressbar", { name: "Drawing progress" }).getAttribute("aria-valuenow")).toBe("25");
     expect(screen.getByRole("progressbar", { name: "Tracing progress" }).getAttribute("aria-valuenow")).toBe("0");
+    for (const bar of screen.getAllByRole("progressbar")) expect([bar.getAttribute("aria-valuemin"), bar.getAttribute("aria-valuemax")]).toEqual(["0", "100"]);
     expect(card().querySelector(".progress p")?.textContent).toBe("drawing, step 10 of 40");
     expect(card().querySelector(".badge-running")?.textContent).toBe("Making vector");
     expect(byAction("cancel")).not.toBeNull();
@@ -341,6 +377,38 @@ describe("the card of a Vector run that is not finished or not a success", () =>
   it("says what keeps a card in a filtered view while it works", () => {
     render(<VectorCard {...cardProps(makeVectorRun({ status: "running", vectors: [] }), { transient: true, viewScope: "project" })} />);
     expect(card().querySelector('[data-note="working-in-project"]')?.textContent).toBe(workingNote("project"));
+  });
+
+  it("cuts a prompt only when it is longer than 240 characters", () => {
+    render(<VectorCard {...cardProps(makeVectorRun({ prompt: "x".repeat(240) }))} />);
+    expect(card().querySelector(".run-prompt")?.className).not.toContain("clamped");
+    expect(screen.queryByRole("button", { name: "Show full prompt" })).toBeNull();
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ prompt: "x".repeat(241) }))} />);
+    expect(card().querySelector(".run-prompt")?.className).toContain("clamped");
+    expect(screen.getByRole("button", { name: "Show full prompt" })).toBeTruthy();
+  });
+
+  it("has no list of versions and no hint when a run that has made nothing has no hint to give", () => {
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "running", vectors: [], progress: null }))} />);
+    expect(within(card()).queryByRole("list", { name: "Versions" })).toBeNull();
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "failed", vectors: [], error: { message: "It failed.", hint: null } }))} />);
+    expect(card().querySelector(".run-error .hint")).toBeNull();
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "done", error: { message: "Version 2 failed.", hint: null } }))} />);
+    expect(card().querySelector('[data-note="partial"] .hint')).toBeNull();
+  });
+
+  it("says in the Cancel button's tooltip what it will do: leave the queue, or stop after the step, or that it is stopping", () => {
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "queued", vectors: [] }))} />);
+    expect(byAction("cancel")?.getAttribute("title")).toBe("Take this job out of the queue");
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "running", vectors: [] }))} />);
+    expect(byAction("cancel")?.getAttribute("title")).toBe("Stop making this vector (finished versions are kept)");
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "running", vectors: [], canceling: true }))} />);
+    expect(byAction("cancel")?.getAttribute("title")).toBe("Stopping after the current step");
   });
 
   it("shows a long prompt cut short, and all of it on request", () => {
