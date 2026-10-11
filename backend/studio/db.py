@@ -18,9 +18,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
+from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
 
-SCHEMA_VERSION = 4  # 4: runs have deleted_at and restored_at, for the bin (DESIGN.md §30); 3: mode 'music', lyrics, tracks (§26.5)
+# 5: the projects table and runs.project_id, for project folders (DESIGN.md §32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
+# 3: mode 'music', lyrics, tracks (§26.5)
+SCHEMA_VERSION = 5
 log = logging.getLogger("studio.db")
 
 _SCHEMA = """
@@ -54,7 +57,18 @@ CREATE TABLE IF NOT EXISTS runs (
     options_json     TEXT NOT NULL,
     lyrics           TEXT,
     deleted_at       TEXT,
-    restored_at      TEXT
+    restored_at      TEXT,
+    project_id       TEXT
+);
+-- Project folders (DESIGN.md §32.4): a name that runs are filed under. A project is a label in this table, not a folder on the disk, so filing a
+-- run moves no file. `name_key` is the name with its case folded away (see projects.py) and is unique, so "Logo" and "logo" are one project.
+-- `runs.project_id` is a plain column and not a foreign key: deleting a project clears it on its runs in one transaction (`delete_project`), and
+-- a column added to an existing table by ALTER cannot carry the same constraint as one made with it, so the migrated table would differ.
+CREATE TABLE IF NOT EXISTS projects (
+    id         TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    name_key   TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS images (
     id          TEXT PRIMARY KEY,
@@ -140,6 +154,7 @@ class Database:
             if previous is not None and previous < 3:
                 self._rebuild_runs_for_music()
             self._add_bin_columns()
+            self._add_project_column()
             self._record_version(previous)
             self._queue_order = self._choose_queue_order()
 
@@ -214,6 +229,14 @@ class Database:
             if column not in have:
                 self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_deleted ON runs(deleted_at)")
+
+    def _add_project_column(self) -> None:
+        """Schema 5: the column that files a run in a project (DESIGN.md §32.4), added to a table that lacks it; then its index (which cannot
+        be made before the column exists, so it is not in `_SCHEMA`). The `projects` table itself is made by `_SCHEMA`."""
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
+        if "project_id" not in have:
+            self._conn.execute("ALTER TABLE runs ADD COLUMN project_id TEXT")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)")
 
     def _record_version(self, previous: Optional[int]) -> None:
         with self.tx() as c:
@@ -343,16 +366,24 @@ class Database:
                 (status, now, error, hint, run_id),
             )
 
-    def set_pinned(self, run_id: str, pinned: bool) -> bool:
-        """Keep (or stop keeping) a run. False if there is no such run."""
-        with self._lock:
-            cur = self._conn.execute("UPDATE runs SET pinned=? WHERE id=?", (int(pinned), run_id))
-            return cur.rowcount == 1
+    def set_pinned(self, run_id: str, pinned: bool) -> str:
+        """Keep (or stop keeping) a run. Returns 'ok' (also when it already was so), 'not_found', or 'locked': a run that is in a project stays
+        kept (DESIGN.md §32.3), so stopping to keep it is refused. Checked and written in one transaction, so a run filed at the same moment
+        is never left un-kept."""
+        with self.tx() as c:
+            row = c.execute("SELECT project_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                return "not_found"
+            if not pinned and row["project_id"] is not None:
+                return "locked"
+            c.execute("UPDATE runs SET pinned=? WHERE id=?", (int(pinned), run_id))
+            return "ok"
 
     # An expiry counts from the later of when a run was made and when it was last restored (DESIGN.md §30.4).
-    # Which runs the clean-up may take: not kept, not already in the bin, finished (never one that is queued or running), and old enough.
-    # Old enough counts from the later of when the run was made and when it was last restored, so a restore starts a fresh clock.
-    _EXPIRED = ("pinned=0 AND deleted_at IS NULL AND status IN ('done','failed','canceled') "
+    # Which runs the clean-up may take: not kept, not in a project, not already in the bin, finished (never one that is queued or running), and
+    # old enough. Old enough counts from the later of when the run was made and when it was last restored, so a restore starts a fresh clock.
+    # "Not in a project" is said here although a filed run is always kept (§32.3 item 4): it holds even if something clears the Keep flag by hand.
+    _EXPIRED = ("pinned=0 AND project_id IS NULL AND deleted_at IS NULL AND status IN ('done','failed','canceled') "
                 "AND COALESCE(restored_at, created_at) < ?")
 
     @staticmethod
@@ -429,6 +460,84 @@ class Database:
                 return "running"
             self._delete_rows(c, [run_id])
             return "deleted"
+
+    # ---------------------------------------------------------------- projects (DESIGN.md §32)
+    def list_projects(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
+        """The projects, A to Z (ignoring case), each with how many runs of each tab it holds: {id, name, created_at, counts: {image, music}}.
+        The counts are of runs in the history; a run in the bin is not counted (it is not on show). With `project_id`, only that project (a
+        list of one, or empty)."""
+        with self._lock:
+            where, args = ("WHERE id=?", (project_id,)) if project_id is not None else ("", ())
+            projects = self._all(f"SELECT id, name, created_at FROM projects {where} ORDER BY name_key, id", args)
+            found = {p["id"]: {"id": p["id"], "name": p["name"], "created_at": p["created_at"], "counts": {kind: 0 for kind in KINDS}} for p in projects}
+            # one grouped query for all the counts: runs by project and mode, then each mode is added to its tab
+            rows = self._all("SELECT project_id, mode, COUNT(*) AS n FROM runs WHERE project_id IS NOT NULL AND deleted_at IS NULL GROUP BY project_id, mode")
+        for row in rows:
+            project = found.get(row["project_id"])
+            if project is None:
+                continue  # a run filed in a project that is not in the list asked for
+            for kind, modes in KINDS.items():
+                if row["mode"] in modes:
+                    project["counts"][kind] += row["n"]
+        return list(found.values())
+
+    def create_project(self, project_id: str, name: str, now: str) -> str:
+        """Make a project. `name` is already normalised (`projects.normalize_name`). Returns 'created', or 'taken' when another project has the
+        same name ignoring case (the unique `name_key` refuses it, so two requests at once cannot both succeed)."""
+        try:
+            with self.tx() as c:
+                c.execute("INSERT INTO projects (id, name, name_key, created_at) VALUES (?, ?, ?, ?)", (project_id, name, project_name_key(name), now))
+            return "created"
+        except sqlite3.IntegrityError:
+            return "taken"
+
+    def rename_project(self, project_id: str, name: str) -> str:
+        """Rename a project. Returns 'renamed', 'not_found' or 'taken'. A project may be renamed to another spelling of its own name (*logo*
+        to *Logo*): its own row is not a clash with itself."""
+        try:
+            with self.tx() as c:
+                cur = c.execute("UPDATE projects SET name=?, name_key=? WHERE id=?", (name, project_name_key(name), project_id))
+                return "renamed" if cur.rowcount == 1 else "not_found"
+        except sqlite3.IntegrityError:
+            return "taken"
+
+    def delete_project(self, project_id: str) -> Optional[list[str]]:
+        """Delete a project and take its runs out of it, in one transaction; returns the ids of the runs that were in it, or None if there is
+        no such project. No run is deleted or un-kept (DESIGN.md §32.3 item 6): runs in the bin lose the project too, so that a restore
+        cannot put one back into a project that is gone."""
+        with self.tx() as c:
+            if c.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
+                return None
+            ids = [r["id"] for r in c.execute("SELECT id FROM runs WHERE project_id=? ORDER BY seq", (project_id,)).fetchall()]
+            c.execute("UPDATE runs SET project_id=NULL WHERE project_id=?", (project_id,))
+            c.execute("DELETE FROM projects WHERE id=?", (project_id,))
+            return ids
+
+    def file_run(self, run_id: str, project_id: str) -> str:
+        """File a run in a project, and keep it, in one transaction (DESIGN.md §32.3 item 1); the same call moves a run that is filed already.
+        Returns 'filed', 'not_found' (no such run), 'no_project' (no such project) or 'in_bin' (a run in the bin cannot be filed)."""
+        with self.tx() as c:
+            run = c.execute("SELECT deleted_at FROM runs WHERE id=?", (run_id,)).fetchone()
+            if run is None:
+                return "not_found"
+            if c.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone() is None:
+                return "no_project"
+            if run["deleted_at"] is not None:
+                return "in_bin"
+            c.execute("UPDATE runs SET project_id=?, pinned=1 WHERE id=?", (project_id, run_id))
+            return "filed"
+
+    def unfile_run(self, run_id: str, keep: bool = True) -> str:
+        """Take a run out of its project. It stays kept unless `keep` is False (which is what Undo of a filing asks for: the run goes back to
+        exactly what it was, DESIGN.md §32.3 item 3). Returns 'unfiled', 'not_found' or 'not_in_project'."""
+        with self.tx() as c:
+            row = c.execute("SELECT project_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                return "not_found"
+            if row["project_id"] is None:
+                return "not_in_project"
+            c.execute("UPDATE runs SET project_id=NULL" + ("" if keep else ", pinned=0") + " WHERE id=?", (run_id,))
+            return "unfiled"
 
     def recover_interrupted(self, now: str) -> list[str]:
         """Runs left 'running' by a previous process become failed (their finished images are kept)."""

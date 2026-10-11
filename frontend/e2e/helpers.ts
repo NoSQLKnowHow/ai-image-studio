@@ -41,7 +41,8 @@ export async function generate(page: Page, prompt: string): Promise<Locator> {
   return c;
 }
 
-/** Delete every run over the API (waiting out one that's still generating), and empty the bin (DESIGN.md §30), which the list leaves out. */
+/** Delete every run over the API (waiting out one that's still generating), empty the bin (DESIGN.md §30), which the list leaves out, and delete
+ *  every project folder (DESIGN.md §32): they live in the server's database, so one left by a test would be in the next test's drop-down. */
 export async function clearHistory(page: Page) {
   // the studio's API wants this header on every write: its guard against requests from other web pages
   const asked = { "X-Studio-Client": "1" };
@@ -56,5 +57,8 @@ export async function clearHistory(page: Page) {
       return runs.length;
     }, { timeout: 20_000 })
     .toBe(0);
+  // the projects, last: a project that still has runs filed in it is deleted all the same (its runs are gone by now)
+  const { projects } = (await (await page.request.get("/api/projects")).json()) as { projects: { id: string }[] };
+  for (const project of projects) await page.request.delete(`/api/projects/${project.id}`, { headers: asked });
 }
 

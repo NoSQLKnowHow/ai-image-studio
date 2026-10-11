@@ -129,7 +129,7 @@ def test_a_1_7_database_is_migrated_and_nothing_is_lost(tmp_path):
     make_v2(path)
     db = Database(path)
     try:
-        assert SCHEMA_VERSION == 4   # schema 4 is current (the bin, DESIGN.md §30)
+        assert SCHEMA_VERSION >= 4   # the bin and every later schema keep what schema 3 added
         a, b = db.get_run(RUN_A), db.get_run(RUN_B)
         assert (a["prompt"], a["status"], a["pinned"], a["started_at"], a["finished_at"]) == (
             "a lighthouse", "done", 1, "2026-10-01T10:00:01.000Z", "2026-10-01T10:00:09.000Z")
@@ -147,7 +147,7 @@ def test_the_1_7_database_is_copied_first_as_a_way_back(tmp_path):
     path = tmp_path / "studio.sqlite"
     make_v2(path)
     Database(path).close()
-    copy = tmp_path / "studio.sqlite.before-schema-4"
+    copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"
     assert copy.is_file() and count(copy, "runs") == 2
     conn = sqlite3.connect(copy)
     try:
@@ -162,10 +162,10 @@ def test_a_second_start_changes_nothing(tmp_path):
     path = tmp_path / "studio.sqlite"
     make_v2(path)
     Database(path).close()
-    copy_bytes = (tmp_path / "studio.sqlite.before-schema-4").read_bytes()
+    copy_bytes = (tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}").read_bytes()
     before = sql_of(path, "runs")
     Database(path).close()
-    assert sql_of(path, "runs") == before and (tmp_path / "studio.sqlite.before-schema-4").read_bytes() == copy_bytes
+    assert sql_of(path, "runs") == before and (tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}").read_bytes() == copy_bytes
     assert count(path, "runs") == 2
 
 

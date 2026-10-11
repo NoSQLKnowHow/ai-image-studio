@@ -79,10 +79,10 @@ def sweep(client) -> int:
 def test_set_pinned_toggles_and_reports_a_missing_run(seeded):
     db, storage = seeded
     run_id = seed_run(db, storage, 1, age_days=1)
-    assert db.set_pinned(run_id, True) and db.get_run(run_id)["pinned"] == 1
-    assert db.set_pinned(run_id, True)  # asking for what is already so is not an error
-    assert db.set_pinned(run_id, False) and db.get_run(run_id)["pinned"] == 0
-    assert not db.set_pinned("0" * 32, True)
+    assert db.set_pinned(run_id, True) == "ok" and db.get_run(run_id)["pinned"] == 1
+    assert db.set_pinned(run_id, True) == "ok"  # asking for what is already so is not an error
+    assert db.set_pinned(run_id, False) == "ok" and db.get_run(run_id)["pinned"] == 0
+    assert db.set_pinned("0" * 32, True) == "not_found"
 
 
 def test_delete_expired_takes_only_old_finished_runs_that_are_not_kept(seeded):

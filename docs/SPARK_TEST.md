@@ -762,6 +762,35 @@ saying how many on Images and on Music, and then empties both. **Good:** `du -sh
 
 **Send back:** the `ls -l data/studio.sqlite*` line, what (a) showed, anything that did not match "Good".
 
+## 25. Project folders (new in 1.14)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.14** (reload with Ctrl+Shift+R). **This release upgrades the database**
+(schema 5): the first start makes a copy beside it, so check, before anything else: `ls -l data/studio.sqlite*` shows `studio.sqlite.before-schema-5`, and your
+runs are all there, **none of them in a project yet**. (If anything is missing, stop and send me the log; the copy is the way back, with an older studio.)
+This step needs no GPU work: use runs you already have.
+
+**a) The drop-down.** Open the **Project** drop-down above your runs. **Good:** it says **Any project** and **No project**, and no projects yet; **Manage** is beside it.
+
+**b) File a run.** On a card you like press **Add to project ▾**, choose **New project…**, type a name and press **Create**. **Good:** the card shows the project's name and a chip, a toast
+says *Filed … in … It is kept.* with **Undo**, and the card's **Keep** is pressed and does nothing when you press it (hover it: it says why). Press **Undo**: the run is back as it was,
+and if it was not kept before it is not kept now.
+
+**c) Move, take out.** File two runs in one project and a third in another. On one press its project's name and choose the other project: *Moved … from … to …*. Press it again and choose
+**Take out of project**: *Taken out of … It is still kept.*, and now **Keep** works again (and is on).
+
+**d) Browse.** Choose a project in the drop-down above your runs. **Good:** only its runs are shown, the number beside it is for this tab, and the numbers beside **Kept** and **Deleted**
+are the project's. Choose **No project**, then a project and **Kept**: the project stays chosen. Reload the page: the choice is still there. Open the **Music** tab: the same projects, with their
+counts for music.
+
+**e) Manage.** Press **Manage**: make a project, rename one, try a name that is taken (even in other capitals): refused with the reason. Delete a project that holds runs: it asks first and says the runs
+are **not deleted**; afterwards they are still in the list, kept, and in no project.
+
+**f) Delete, Restore.** Press **Delete** on a filed run: the question names the project. In **Deleted** the card shows the project as a chip (and has no Project button); **Restore** puts it back in the project, kept.
+
+**g) A phone.** The **Project** button's drop-down on a card, the filter bar with its two controls and the **Manage** dialog fit the screen with no sideways scroll.
+
+**Send back:** the `ls -l data/studio.sqlite*` line, and anything that did not match "Good".
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -783,3 +812,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 15. From step 22 (Enlarge): the `ENLARGED …` log lines (time, device, model), the times and sizes from (b), (d), (e), (f) and (i), your verdict on **where Enlarge looks better or worse than Make 4K** from (c) to (e), the memory and slowdown figures from (f) and (g), and anything that did not match "Good".
 16. From step 23 (the Kept view): anything that did not match "Good", and whether the date in (e) was the date you expected.
 17. From step 24 (the bin): the `ls -l data/studio.sqlite*` line, what the first clean-up put in Deleted, and anything that did not match "Good".
+18. From step 25 (project folders): the `ls -l data/studio.sqlite*` line, and anything that did not match "Good".

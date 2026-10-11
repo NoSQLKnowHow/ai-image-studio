@@ -160,8 +160,9 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
 }
 
 /** Delete, in its three kinds (DESIGN.md §30): to the bin (a finished run, with a bin), for good out of the bin, and for good without a bin
- *  or for a run that has not made anything. */
-export function ConfirmDelete({ run, binDays, onCancel, onConfirm }: { run: Run | null; binDays: number; onCancel: () => void; onConfirm: () => void }) {
+ *  or for a run that has not made anything. For a run that is filed in a project the question names the project (§32.3 item 5): it is not a
+ *  second hurdle, only the one fact that matters. `projectName` is that project's name, or null if the page does not know it. */
+export function ConfirmDelete({ run, binDays, projectName, onCancel, onConfirm }: { run: Run | null; binDays: number; projectName: string | null; onCancel: () => void; onConfirm: () => void }) {
   const music = run?.mode === "music";
   const thing = music ? "track" : "image";
   const n = (music ? run?.tracks.length : run?.images.length) ?? 0;
@@ -172,6 +173,9 @@ export function ConfirmDelete({ run, binDays, onCancel, onConfirm }: { run: Run 
   const toBin = !!run && !inBin && binDays > 0 && run.status !== "queued" && run.status !== "running";
   // what "for good" means: the pictures or tracks are removed from the Spark, not just hidden
   const gone = n ? `Its ${n === 1 ? `${thing} is` : `${n} ${thing}s are`} removed from the Spark.` : "It is removed from the history.";
+  // a run filed in a project: the project is named, and what happens to the run there is said (a run in the bin keeps its project, and Restore puts it back)
+  const filed = !!run && run.project_id !== null;
+  const project = projectName === null ? "a project" : `the project “${projectName}”`;
   const { props: returnFocus, redirectTo } = useReturnFocus();
   const confirm = () => {
     if (run) redirectTo(focusAfterDelete(run.id));
@@ -185,9 +189,9 @@ export function ConfirmDelete({ run, binDays, onCancel, onConfirm }: { run: Run 
           <Dialog.Title>{inBin ? "Delete this run for good?" : "Delete this run?"}</Dialog.Title>
           <Dialog.Description>
             {toBin
-              ? `It moves to Deleted and stays there for ${binDays} ${binDays === 1 ? "day" : "days"}; you can restore it from there. After that it is gone for good.`
-              : `${gone} This can't be undone.`}
-            {run?.pinned && !inBin ? " You marked it Keep." : ""}
+              ? `${filed ? `It is in ${project}. ` : ""}It moves to Deleted and stays there for ${binDays} ${binDays === 1 ? "day" : "days"}; ${filed ? "restoring it puts it back in the project" : "you can restore it from there"}. After that it is gone for good.`
+              : `${gone} ${filed ? `It is in ${project}, which loses it. ` : ""}This can't be undone.`}
+            {run?.pinned && !inBin && !filed ? " You marked it Keep." : ""}
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Cancel</Dialog.Close>
@@ -200,7 +204,7 @@ export function ConfirmDelete({ run, binDays, onCancel, onConfirm }: { run: Run 
 }
 
 /** Empty bin (DESIGN.md §30.1): everything in the bin, both tabs, for good; the question says how many of each. */
-export function ConfirmEmptyBin({ open, images, music, onCancel, onConfirm }: { open: boolean; images: number; music: number; onCancel: () => void; onConfirm: () => void }) {
+export function ConfirmEmptyBin({ open, images, music, wholeBin, onCancel, onConfirm }: { open: boolean; images: number; music: number; wholeBin: boolean; onCancel: () => void; onConfirm: () => void }) {
   const { props: returnFocus } = useReturnFocus();
   const total = images + music;
   // how many are on each tab, so that the question is concrete
@@ -213,6 +217,8 @@ export function ConfirmEmptyBin({ open, images, music, onCancel, onConfirm }: { 
           <Dialog.Title>Empty the bin?</Dialog.Title>
           <Dialog.Description>
             {`Delete ${total} ${total === 1 ? "run" : "runs"} for good${parts ? ` (${parts})` : ""}, with their files. This can't be undone.`}
+            {/* with a project chosen, the bar on screen shows only that project's part of the bin: say that the whole bin goes */}
+            {wholeBin ? " This is the whole bin, not only the project you are looking at." : ""}
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Cancel</Dialog.Close>

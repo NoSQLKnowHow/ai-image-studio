@@ -24,6 +24,7 @@ from . import wavfile
 from .config import Settings
 from .db import Database
 from .events import EventBus
+from .projects import normalize_name
 from .runspec import ResolvedRun, RunRequestError
 from .serialize import format_ts, parse_ts, run_payload, utcnow
 from .storage import Storage, StorageError
@@ -59,6 +60,14 @@ class RunConflict(Exception):
 
 class ImageNotFound(Exception):
     """No such result image, or its file is gone."""
+
+
+class ProjectNotFound(Exception):
+    """No such project (DESIGN.md §32)."""
+
+
+class ProjectNameTaken(Exception):
+    """Another project already has this name, ignoring case (DESIGN.md §32.4)."""
 
 
 class InputStorageError(Exception):
@@ -385,9 +394,72 @@ class JobManager:
         return "canceling"
 
     async def set_pinned(self, run_id: str, pinned: bool) -> None:
-        if not self.db.set_pinned(run_id, pinned):
+        """Keep a run, or stop keeping it. A run that is in a project stays kept, so stopping is refused with `RunConflict` (DESIGN.md §32.3)."""
+        result = self.db.set_pinned(run_id, pinned)
+        if result == "not_found":
             raise RunNotFound(run_id)
+        if result == "locked":
+            raise RunConflict("This run is in a project, so it stays kept. Take it out of the project first.")
         self._publish_run(run_id)
+
+    # ------------------------------------------------------------ projects (DESIGN.md §32)
+    def list_projects(self) -> list[dict[str, Any]]:
+        """Every project with its counts, A to Z."""
+        return self.db.list_projects()
+
+    async def create_project(self, name: str) -> dict[str, Any]:
+        """Make a project. Raises `projects.BadProjectName` for a name that cannot be used and `ProjectNameTaken` for one that is taken."""
+        name = normalize_name(name)
+        project_id = secrets.token_hex(16)
+        if self.db.create_project(project_id, name, utcnow()) == "taken":
+            raise ProjectNameTaken(name)
+        self._publish_projects()
+        return self.db.list_projects(project_id)[0]
+
+    async def rename_project(self, project_id: str, name: str) -> dict[str, Any]:
+        """Rename a project (`BadProjectName`, `ProjectNameTaken` and `ProjectNotFound` as the API needs them)."""
+        name = normalize_name(name)
+        result = self.db.rename_project(project_id, name)
+        if result == "not_found":
+            raise ProjectNotFound(project_id)
+        if result == "taken":
+            raise ProjectNameTaken(name)
+        self._publish_projects()
+        return self.db.list_projects(project_id)[0]
+
+    async def delete_project(self, project_id: str) -> int:
+        """Delete a project; its runs stay, kept and in no project. Returns how many runs were taken out of it. Every open page is told that
+        each of those runs changed, and that the projects changed."""
+        ids = self.db.delete_project(project_id)
+        if ids is None:
+            raise ProjectNotFound(project_id)
+        for run_id in ids:
+            self._publish_run(run_id)
+        self._publish_projects()
+        return len(ids)
+
+    async def file_run(self, run_id: str, project_id: str) -> None:
+        """File a run in a project and keep it, or move it from the project it is in (DESIGN.md §32.3). `RunNotFound` for a run that is not
+        there, `ProjectNotFound` for a project that is not, `RunConflict` for a run in the bin."""
+        result = self.db.file_run(run_id, project_id)
+        if result == "not_found":
+            raise RunNotFound(run_id)
+        if result == "no_project":
+            raise ProjectNotFound(project_id)
+        if result == "in_bin":
+            raise RunConflict("This run is in the bin. Restore it before filing it in a project.")
+        self._publish_run(run_id)
+        self._publish_projects()  # the counts of two projects may have moved
+
+    async def unfile_run(self, run_id: str, keep: bool = True) -> None:
+        """Take a run out of its project; it stays kept unless `keep` is False. `RunNotFound`, or `RunConflict` if it is in no project."""
+        result = self.db.unfile_run(run_id, keep)
+        if result == "not_found":
+            raise RunNotFound(run_id)
+        if result == "not_in_project":
+            raise RunConflict("This run is not in a project.")
+        self._publish_run(run_id)
+        self._publish_projects()
 
     async def make_4k(self, image_id: str) -> tuple[dict[str, Any], bool]:
         """Make the 4K copy of a result image if it has none (DESIGN.md §27). Returns the updated run and whether this
@@ -1007,6 +1079,11 @@ class JobManager:
         payload = self.payload(run_id)
         if payload is not None:
             self.bus.publish("run.updated", payload)
+
+    def _publish_projects(self) -> None:
+        """Tell every open page that the projects, or how many runs each holds, changed: each page then asks for the list again (DESIGN.md §32.4).
+        The event carries nothing; the list is the page's to read, because its counts depend on nothing but the database."""
+        self.bus.publish("projects.changed", {})
 
     def _publish_queue(self) -> None:
         self.bus.publish("queue.updated", {

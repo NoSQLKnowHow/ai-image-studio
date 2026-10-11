@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { WORKING_IN_KEPT_NOTE, binNote, canceledText, duration, expiryText, seedText, sizeText, timeAgo } from "../format";
+import { binNote, canceledText, duration, expiryText, keepLockedTitle, seedText, sizeText, timeAgo, workingNote, type ViewScope } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
 import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState } from "../types";
 import { FourKButton } from "./FourKButton";
-import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 
 interface Props {
   run: ImageRun;
@@ -13,7 +14,9 @@ interface Props {
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   enlarging: ReadonlySet<string>; // ids of the images being enlarged with the upscaler model (DESIGN.md §28)
   enlargeWaiting: ReadonlySet<string>; // ids of the images whose Enlarge is waiting for the picture being made (§28.3)
-  transient: boolean; // in the Kept view only because it is working (DESIGN.md §29.3)
+  transient: boolean; // in a filtered view only because it is working (DESIGN.md §29.3, §32)
+  viewScope: ViewScope; // which filter that is, so the note says what keeps the card there: Keep it, or add it to the project
+  projects: ProjectControls; // the project folders, and what the Project button does (DESIGN.md §32)
   upscaler: UpscalerStatus | null; // whether Enlarge can run here (from the capabilities)
   onReuse: () => void;
   onRegenerateLarger: () => void;
@@ -113,7 +116,7 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, enlargeWaiting, transient, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onRestore, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, enlargeWaiting, transient, viewScope, projects, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onRestore, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
@@ -128,6 +131,9 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
   const target = largerTarget(run); // the bigger size to regenerate at, when this run was made smaller than selected
   const expiry = run.pinned ? null : expiryText(run.expires_at, now);
   const inBin = run.deleted_at !== null; // in the bin (DESIGN.md §30): look at it, restore it, copy it, or delete it for good
+  // The project it is filed in (DESIGN.md §32). A filed run is always kept, so its Keep button is pressed and locked.
+  const filed = run.project_id !== null;
+  const project = projectOf(run, projects.projects);
 
   return (
     <article className={`run-card status-${run.status}`} data-run-id={run.id} aria-label={`${label}: ${run.prompt.slice(0, 80)}`}>
@@ -139,6 +145,8 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
         <div className="run-head">
           <span className={`badge badge-${run.status}`}>{label}</span>
           {run.pinned && <span className="badge badge-kept"><PinIcon /> Kept</span>}
+          {/* the project it is filed in: shown in the bin too, where it cannot be pressed */}
+          {filed && <span className="badge badge-project" data-project-chip><FolderIcon /> {project?.name ?? "Project"}</span>}
           {/* a run in the bin says so */}
           {inBin && <span className="badge badge-deleted"><TrashIcon /> Deleted</span>}
           {run.options.draft && <span className="badge badge-draft" title="A small, quick try. The full-size image will look different.">Draft</span>}
@@ -164,8 +172,8 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
 
         {expiry && <p className="run-expiry">{expiry}. Press <strong>Keep</strong> to save it.</p>}
 
-        {/* in the Kept view only because it is working: say so, so that the card being there is not a surprise */}
-        {transient && <p className="run-note" data-note="working-in-kept">{WORKING_IN_KEPT_NOTE}</p>}
+        {/* in a filtered view only because it is working: say so, so that the card being there is not a surprise */}
+        {transient && <p className="run-note" data-note={`working-in-${viewScope}`}>{workingNote(viewScope)}</p>}
 
         {/* since when it is in the bin, and until when */}
         {inBin && <p className="run-note" data-note="in-bin">{binNote(run, now)}</p>}
@@ -240,11 +248,13 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
           )}
           <button type="button" className="button small ghost" onClick={onCopy}><CopyIcon /> Copy prompt</button>
           {/* Keep is offered on a card that is still working too: it is how a run that is shown only while it works gets kept */}
+          {/* On a filed run Keep is pressed and locked (DESIGN.md §32.3): the button stays, so the tooltip can say why, but it does nothing */}
           <button type="button" className={`button small ghost keep${run.pinned ? " active" : ""}`} data-action="keep"
-            aria-pressed={run.pinned} onClick={onToggleKeep}
-            title={run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
+            aria-pressed={run.pinned} aria-disabled={filed || undefined} data-locked={filed || undefined} onClick={filed ? undefined : onToggleKeep}
+            title={filed ? keepLockedTitle(project?.name ?? null) : run.pinned ? "Kept: this run is never deleted automatically. Click to stop keeping it." : "Keep this run: it will never be deleted automatically"}>
             <PinIcon /> Keep
           </button>
+          <ProjectMenu run={run} controls={projects} />
           {canEdit && run.status === "done" && run.images.length === 1 && (
             <button type="button" className="button small ghost" data-action="edit-this" onClick={onEditThis}
               title="Add this picture to the images you are editing">

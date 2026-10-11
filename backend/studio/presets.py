@@ -30,6 +30,9 @@ STEPS_MIN, STEPS_MAX, DEFAULT_STEPS = 1, 100, 40
 SEED_MAX = 2**32 - 1
 CFG_MIN, CFG_MAX = 0.1, 20.0
 
+# The longest a project's name may be, in characters, after trimming (DESIGN.md §32.4). The page is told it in the capabilities, so it can say it.
+PROJECT_NAME_MAX = 60
+
 # Edit mode (DESIGN.md §21). Every input is resized to about RESOLUTION x RESOLUTION pixels by the pipeline,
 # and so is the result unless a size is given. 1K is about 1 megapixel, 2K about 4.
 RESOLUTIONS = (1024, 2048)

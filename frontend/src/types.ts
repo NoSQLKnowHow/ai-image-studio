@@ -102,6 +102,14 @@ export interface Progress {
   stage?: MusicStage; // music only: composing (frame by frame), rendering (steps), finishing
 }
 
+/** A project folder (DESIGN.md §32): a name that runs are filed under, with how many runs of each tab it holds (runs in the bin are not counted). */
+export interface Project {
+  id: string;
+  name: string;
+  created_at: string;
+  counts: { image: number; music: number };
+}
+
 /** What every run has, pictures or music. */
 interface RunBase {
   id: string;
@@ -117,6 +125,7 @@ interface RunBase {
   expires_at: string | null; // when it will be deleted automatically; null if kept, pending, in the bin, or expiry is off
   deleted_at: string | null; // when it went to the bin (DESIGN.md §30); null if it is not there
   purge_at: string | null; // when it will be deleted for good; null if it is not in the bin
+  project_id: string | null; // the project it is filed in (DESIGN.md §32); null if it is in none. A filed run is always kept.
   queue_position: number | null;
   progress: Progress | null;
   canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
@@ -251,6 +260,7 @@ export interface Capabilities {
     upload_mb: number; // the largest single upload
     edit_warn_units: number; // an edit costing more units than this gets a warning; 0 = never (DESIGN.md §21.4)
     bin_days: number; // how long a deleted run stays in the bin; 0 = there is no bin and Delete is for good (DESIGN.md §30)
+    project_name_max: number; // the longest a project's name may be, in characters (DESIGN.md §32.4)
     music: MusicLimits;
   };
   music: MusicAvailability;

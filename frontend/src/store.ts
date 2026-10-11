@@ -2,7 +2,7 @@
 // Live events and fetched pages both funnel through this reducer, so ordering rules live in one place.
 
 import { NO_FILTER, filterKey, isDefault, type Counts, type HistoryFilter, type View } from "./history";
-import type { Capabilities, Progress, Run, RunStatus, RunsPage, Status, WorkerStatus } from "./types";
+import type { Capabilities, Progress, Project, Run, RunStatus, RunsPage, Status, WorkerStatus } from "./types";
 
 export type Connection = "connecting" | "open" | "lost";
 
@@ -12,8 +12,12 @@ export interface State {
   runs: Record<string, Run>;
   order: string[]; // newest first
   views: Record<string, View>; // one per history filter (DESIGN.md §29.5): has its first page arrived, and where does the next start
-  counts: Counts | null; // how many runs each tab holds and how many are kept, from the server (§29.6)
-  countsStale: number; // goes up whenever a run is made, deleted, kept or un-kept, so the page asks for the counts again
+  counts: Counts | null; // how many runs each tab holds and how many are kept, from the server (§29.6), within the project `countsProject`
+  countsProject: string | null; // the project `counts` is about: null for the whole history (DESIGN.md §32.5). A count is only used for the filter it describes.
+  totals: Counts | null; // the same counts for the whole history, whatever project is chosen: Empty bin empties the whole bin, so it needs these
+  countsStale: number; // goes up whenever a run is made, deleted, kept, un-kept or filed, so the page asks for the counts again
+  projects: Project[] | null; // the project folders, A to Z, with how many runs each holds (DESIGN.md §32); null until the first answer
+  projectsStale: number; // goes up whenever the projects, or what is filed in them, change, so the page asks for the list again
   gone: Record<string, true>; // deleted runs: a late response must not bring one back
   connection: Connection;
   serverStopping: boolean;
@@ -26,7 +30,11 @@ export const initialState: State = {
   order: [],
   views: {},
   counts: null,
+  countsProject: null,
+  totals: null,
   countsStale: 0,
+  projects: null,
+  projectsStale: 0,
   gone: {},
   connection: "connecting",
   serverStopping: false,
@@ -37,7 +45,10 @@ export type Action =
   | { type: "status"; status: Status }
   | { type: "worker"; worker: WorkerStatus }
   | { type: "runsLoaded"; page: RunsPage; append: boolean; filter?: HistoryFilter } // append: an older page; otherwise the newest (a snapshot)
-  | { type: "counts"; counts: Counts }
+  | { type: "counts"; counts: Counts; project: string | null } // the counts within a project (null: the whole history)
+  | { type: "totals"; counts: Counts } // the counts for the whole history
+  | { type: "projects"; projects: Project[] }
+  | { type: "projectsChanged" } // the server says a project, or what is filed in one, changed: read the list again
   | { type: "runUpsert"; run: Run }
   | { type: "runProgress"; id: string; progress: Progress }
   | { type: "runDeleted"; id: string }
@@ -107,15 +118,27 @@ export function reducer(state: State, action: Action): State {
       return { ...state, runs, order: newestFirst(runs), views: { ...state.views, [key]: view } };
     }
     case "counts":
-      return { ...state, counts: action.counts };
+      return { ...state, counts: action.counts, countsProject: action.project };
+    case "totals":
+      return { ...state, totals: action.counts };
+    case "projects":
+      return { ...state, projects: action.projects };
+    case "projectsChanged":
+      return { ...state, projectsStale: state.projectsStale + 1 };
     case "runUpsert": {
       const current = state.runs[action.run.id];
       if (state.gone[action.run.id]) return state;
       const run = latest(current, action.run);
       if (run === current) return state;
       const runs = { ...state.runs, [run.id]: run };
-      const countsChange = !current || current.pinned !== run.pinned || (current.deleted_at === null) !== (run.deleted_at === null); // a new run, or one kept, un-kept, deleted or restored: the counts have moved
-      return { ...state, runs, order: current ? state.order : newestFirst(runs), countsStale: state.countsStale + (countsChange ? 1 : 0) };
+      // a run filed, moved or taken out changes the counts (those of the project, and the numbers on the Project drop-down) and the projects' own list
+      const projectChange = !!current && current.project_id !== run.project_id;
+      const countsChange = !current || current.pinned !== run.pinned || (current.deleted_at === null) !== (run.deleted_at === null) || projectChange; // a new run, or one kept, un-kept, deleted, restored or filed: the counts have moved
+      return {
+        ...state, runs, order: current ? state.order : newestFirst(runs),
+        countsStale: state.countsStale + (countsChange ? 1 : 0),
+        projectsStale: state.projectsStale + (projectChange ? 1 : 0),
+      };
     }
     case "runProgress": {
       const run = state.runs[action.id];
@@ -124,12 +147,13 @@ export function reducer(state: State, action: Action): State {
     }
     case "runDeleted": {
       const gone = { ...state.gone, [action.id]: true as const };
-      // any delete may change a count, so the page is told to ask the server again
+      // any delete may change a count, and the run may have been filed in a project, so the page is told to ask the server again for both
       const countsStale = state.countsStale + 1;
-      if (!state.runs[action.id]) return { ...state, gone, countsStale };
+      const projectsStale = state.projectsStale + 1;
+      if (!state.runs[action.id]) return { ...state, gone, countsStale, projectsStale };
       const runs = { ...state.runs };
       delete runs[action.id];
-      return { ...state, runs, gone, countsStale, order: state.order.filter((id) => id !== action.id) };
+      return { ...state, runs, gone, countsStale, projectsStale, order: state.order.filter((id) => id !== action.id) };
     }
     case "queue": {
       let changed = false;
