@@ -22,9 +22,10 @@ from typing import Any, Iterator, Mapping, Optional, Sequence
 from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
 
-# 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (DESIGN.md §33.3); 5: the projects table and runs.project_id, for
-# project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30); 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 6
+# 7: mode 'vector' and the vectors table (DESIGN.md §31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
+# 5: the projects table and runs.project_id, for project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
+# 3: mode 'music', lyrics, tracks (§26.5)
+SCHEMA_VERSION = 7
 log = logging.getLogger("studio.db")
 
 # A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
@@ -44,7 +45,7 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at       TEXT,
     finished_at      TEXT,
     status           TEXT NOT NULL CHECK (status IN ('queued','running','done','failed','canceled')),
-    mode             TEXT NOT NULL CHECK (mode IN ('generate','edit','music')),
+    mode             TEXT NOT NULL CHECK (mode IN ('generate','edit','music','vector')),
     prompt           TEXT NOT NULL,
     effective_prompt TEXT NOT NULL,
     negative_prompt  TEXT,
@@ -109,6 +110,27 @@ CREATE TABLE IF NOT EXISTS tracks (
     deleted_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tracks_run ON tracks(run_id, idx);
+-- The versions of a vector run (DESIGN.md §31.12.6): one row for each drawing that the clean-up turned into an SVG. The three paths are relative to the
+-- data folder (<data>/vector/<run>/<idx>.svg, <idx>-layers.zip, <idx>.png). `check_json` is the clean-up's check as it made it (the page shows it), and
+-- `colours` and `layers` are copies of two of its numbers so that a list needs no parsing. There is no `deleted_at`: a vector run goes to the bin, comes
+-- back and is deleted as a whole (§31.12.9 item 3), so a version is never in the bin by itself.
+CREATE TABLE IF NOT EXISTS vectors (
+    id          TEXT PRIMARY KEY,
+    run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    idx         INTEGER NOT NULL,
+    seed        INTEGER NOT NULL,
+    width_mm    REAL NOT NULL,
+    height_mm   REAL NOT NULL,
+    colours     INTEGER NOT NULL,
+    layers      INTEGER NOT NULL,
+    bytes       INTEGER NOT NULL,
+    check_json  TEXT NOT NULL,
+    svg_path    TEXT NOT NULL,
+    zip_path    TEXT NOT NULL,
+    png_path    TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_vectors_run ON vectors(run_id, idx);
 CREATE INDEX IF NOT EXISTS idx_images_run ON images(run_id, idx);
 CREATE INDEX IF NOT EXISTS idx_images_staged ON images(kind, run_id, created_at);
 -- The images an edit was given, in the order the model sees them (position 1 is "image 1"). A run owns its
@@ -122,14 +144,6 @@ CREATE TABLE IF NOT EXISTS run_inputs (
     PRIMARY KEY (run_id, position)
 );
 """
-
-# Schema 3 changes the CHECK on runs.mode, which SQLite cannot alter in place, so an older database's table is rebuilt
-# (SQLite's documented way: a new table, copy, drop the old, rename). The old columns keep their values; lyrics is NULL.
-_RUNS_COLUMNS_BEFORE_3 = (
-    "seq, id, created_at, started_at, finished_at, status, mode, prompt, effective_prompt, negative_prompt, "
-    "transparent, width, height, steps, cfg_scale, seed, num_images, model_id, input_image_id, error_message, "
-    "error_hint, pinned, options_json"
-)
 
 INTERRUPTED_MESSAGE = "Interrupted by a server restart."
 
@@ -161,8 +175,10 @@ class Database:
             if previous is not None and previous < SCHEMA_VERSION:
                 self._copy_before_migration(path, previous)
             self._conn.executescript(_SCHEMA)  # creates what is missing: tables and indexes of a newer schema
-            if previous is not None and previous < 3:
-                self._rebuild_runs_for_music()
+            # Schemas 3 and 7 each widen the CHECK on runs.mode ('music', then 'vector'), which SQLite cannot alter in place, so an older database's table
+            # is rebuilt once, to the current definition, whichever older schema it was at (a rebuild at 7 also does what a rebuild at 3 would have)
+            if previous is not None and previous < 7:
+                self._rebuild_runs(previous)
             self._add_bin_columns()
             self._add_project_column()
             self._add_picture_bin_columns()
@@ -211,16 +227,25 @@ class Database:
             "upgrading the database from schema %d to %d; a copy of the old one is in %s "
             "(an older studio can only be run against that copy)", previous, SCHEMA_VERSION, target)
 
-    def _rebuild_runs_for_music(self) -> None:
-        """Schema 3: let `runs` hold mode 'music' (and a lyrics column). The new table is made from this module's own
-        definition, so a database migrated here and one made fresh are the same."""
+    def _rebuild_runs(self, previous: int) -> None:
+        """Schemas 3 and 7: let `runs` hold the newer modes ('music', then 'vector'). SQLite cannot change a CHECK in place, so this is its documented way:
+        a new table, copy, drop the old, rename. The new table is made from this module's own definition, so a database migrated here and one made fresh
+        are the same.
+
+        Which columns are copied is not a list written down here: it is every column the old table has that the new one has too. A list would be one more
+        place to forget the columns that schemas 4 to 6 added (`deleted_at`, `restored_at`, `project_id`), and the rebuild would drop them without a
+        word; a test compares a migrated database with a fresh one for this. A column the old table lacks (a schema 3 database has no bin columns) is
+        left to its default, NULL, and the `_add_*` steps that follow find nothing to add."""
         definition = _SCHEMA[_SCHEMA.index("CREATE TABLE IF NOT EXISTS runs ("):]
         definition = definition[:definition.index(");") + 2].replace("CREATE TABLE IF NOT EXISTS runs (", "CREATE TABLE runs_new (", 1)
         self._conn.execute("PRAGMA foreign_keys=OFF")  # not allowed inside a transaction, and dropping runs must not cascade
         try:
             with self.tx() as c:
                 c.execute(definition)
-                c.execute(f"INSERT INTO runs_new ({_RUNS_COLUMNS_BEFORE_3}) SELECT {_RUNS_COLUMNS_BEFORE_3} FROM runs")
+                old = [row["name"] for row in c.execute("PRAGMA table_info(runs)")]
+                new = {row["name"] for row in c.execute("PRAGMA table_info(runs_new)")}
+                carried = ", ".join(name for name in old if name in new)
+                c.execute(f"INSERT INTO runs_new ({carried}) SELECT {carried} FROM runs")
                 c.execute("DROP TABLE runs")
                 c.execute("ALTER TABLE runs_new RENAME TO runs")
                 c.execute("CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, seq)")
@@ -229,7 +254,7 @@ class Database:
                     raise DatabaseError(f"the migration would leave {len(broken)} row(s) pointing at runs that are gone")
         finally:
             self._conn.execute("PRAGMA foreign_keys=ON")
-        log.info("the runs table was rebuilt for music (schema 3)")
+        log.info("the runs table was rebuilt (schema %d to %d)", previous, SCHEMA_VERSION)
 
     def _add_bin_columns(self) -> None:
         """Schema 4: the columns of the bin (DESIGN.md §30.5), added to a table that lacks them; then the index on them, which cannot be
@@ -322,12 +347,20 @@ class Database:
     def get_run(self, run_id: str) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM runs WHERE id=?", (run_id,))
 
-    def list_runs(self, limit: int, before_id: Optional[str] = None, run_filter: Optional[RunFilter] = None) -> tuple[list[sqlite3.Row], bool]:
-        """Newest first, only the runs `run_filter` lets through (DESIGN.md §29.5). Returns (rows, has_more). Raises KeyError for an
-        unknown cursor. The cursor may be a run the filter does not show (one un-kept since the page was loaded): it only says where to start."""
+    def list_runs(self, limit: int, before_id: Optional[str] = None, run_filter: Optional[RunFilter] = None,
+                  kind: Optional[str] = None) -> tuple[list[sqlite3.Row], bool]:
+        """Newest first, only the runs `run_filter` lets through (DESIGN.md §29.5), and with `kind` ("image", "music" or "vector", the tabs of
+        `runfilter.KINDS`) only the runs of that tab. Returns (rows, has_more). Raises KeyError for an unknown cursor. The cursor may be a run the
+        filter does not show (one un-kept since the page was loaded): it only says where to start."""
         # The filter's conditions come first. Each is a fixed SQL fragment with a placeholder; its values are bound, never pasted into the
         # text, so nothing the page sent can become SQL.
         clauses, values = (run_filter or RunFilter()).conditions()
+        # The tab is one more condition, on the run's `mode`: one `?` for each mode the tab holds, all bound. An unknown kind is a KeyError, which the
+        # API never lets through (it only accepts the three) and which would otherwise silently show every run.
+        if kind is not None:
+            modes = KINDS[kind]
+            clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
+            values.extend(modes)
         # Paging: `before_id` is the last run of the page before; this page starts just past it, in `seq` order (the order runs were made)
         if before_id is not None:
             cursor = self._one("SELECT seq FROM runs WHERE id=?", (before_id,))
@@ -427,11 +460,13 @@ class Database:
                 "AND COALESCE(restored_at, created_at) < ?")
 
     @staticmethod
-    # the one place that removes a run and what hangs off it (its pictures and tracks); every delete goes through here, so none forgets a table
+    # the one place that removes a run and what hangs off it (its pictures, tracks and vector versions); every delete goes through here, so none
+    # forgets a table
     def _delete_rows(c: sqlite3.Connection, ids: Sequence[str]) -> None:
         for run_id in ids:
             c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
+            c.execute("DELETE FROM vectors WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM runs WHERE id=?", (run_id,))
 
     def delete_expired(self, cutoff: str, limit: int) -> list[str]:
@@ -598,7 +633,7 @@ class Database:
 
     # ---------------------------------------------------------------- projects (DESIGN.md §32)
     def list_projects(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
-        """The projects, A to Z (ignoring case), each with how many runs of each tab it holds: {id, name, created_at, counts: {image, music}}.
+        """The projects, A to Z (ignoring case), each with how many runs of each tab it holds: {id, name, created_at, counts: {image, music, vector}}.
         The counts are of runs in the history; a run in the bin is not counted (it is not on show). With `project_id`, only that project (a
         list of one, or empty)."""
         with self._lock:
@@ -724,6 +759,28 @@ class Database:
             return result
         placeholders = ", ".join("?" for _ in run_ids)
         for row in self._all(f"SELECT * FROM tracks WHERE deleted_at IS NOT NULL AND run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
+            result[row["run_id"]].append(row)
+        return result
+
+    # ---------------------------------------------------------------- vectors (DESIGN.md §31.12.6)
+    def add_vector(self, vector: dict[str, Any]) -> None:
+        """Record one finished version of a vector run (its files are already in place)."""
+        columns = ", ".join(vector)
+        placeholders = ", ".join("?" for _ in vector)
+        with self._lock:
+            self._conn.execute(f"INSERT INTO vectors ({columns}) VALUES ({placeholders})", tuple(vector.values()))
+
+    def get_vector(self, vector_id: str) -> Optional[sqlite3.Row]:
+        return self._one("SELECT * FROM vectors WHERE id=?", (vector_id,))
+
+    def vectors_for_runs(self, run_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+        """The versions of each run, in the order they were drawn. A vector run is binned whole, so there is no bin to leave any out (unlike
+        `images_for_runs` and `tracks_for_runs`)."""
+        result: dict[str, list[sqlite3.Row]] = {rid: [] for rid in run_ids}
+        if not run_ids:
+            return result
+        placeholders = ", ".join("?" for _ in run_ids)
+        for row in self._all(f"SELECT * FROM vectors WHERE run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
             result[row["run_id"]].append(row)
         return result
 

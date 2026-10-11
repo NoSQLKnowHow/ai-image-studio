@@ -22,17 +22,20 @@ from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
 from . import fourk as fourk_mod
+from . import vector as vector_mod
 from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import (
     ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, QueueFull, RunConflict, RunNotFound,
 )
-from .naming import content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename
+from .naming import (
+    content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename, vector_filename,
+)
 from .projects import BadProjectName
 from .runfilter import RunFilter, counted_within
-from .runspec import RunCreate, RunRequestError, resolve_run
+from .runspec import RecipeRequest, RunCreate, RunRequestError, resolve_recipe, resolve_run
 from .security import SecurityMiddleware
-from .serialize import parse_ts, utcnow
+from .serialize import PREVIEW_SIZE, parse_ts, utcnow, vector_limits
 from .storage import Storage, StorageError, check_id
 from .upscaler import UpscalerError
 
@@ -104,6 +107,11 @@ class RunProject(BaseModel):
 
 
 UPSCALE_AT_ONCE = 2  # pictures being made through POST /api/upscale at the same moment
+VECTOR_PNG_AT_ONCE = 2  # PNGs being drawn from an SVG at the same moment (DESIGN.md §31.12.7): at 8192 pixels each is a lot of memory
+# What a vector's SVG is served with (DESIGN.md §31.12.7, §31.6): a policy that allows nothing at all (no script, no fetching, no framing, a sandbox) so
+# that a file opened by itself can run nothing, and a ban on guessing another type. The studio's own clean-up wrote the file, but nothing here relies on that.
+SVG_CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+VECTOR_PNG_SIZE = {"min": 16, "max": 8192}  # `?size=` of the PNG route: the long side in pixels
 
 # What `?project=` may be (DESIGN.md §32.4): the word `none` (runs in no project) or a project's id, which is 32 hex digits like every id. Anything
 # else is a 422 from the framework; an id that is well formed but unknown is not an error, it matches no run.
@@ -156,6 +164,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         app.state.settings, app.state.db, app.state.storage, app.state.bus, app.state.jobs = (
             settings, db, storage, bus, jobs)
         app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
+        app.state.vector_png_slots = asyncio.Semaphore(VECTOR_PNG_AT_ONCE)
         log.info("AI Image Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
         try:
             yield
@@ -176,9 +185,11 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     def jobs_of(request: Request) -> JobManager:
         return request.app.state.jobs
 
-    def runs_page(request: Request, limit: int, before: Optional[str] = None, run_filter: Optional[RunFilter] = None) -> dict[str, Any]:
-        """One page of runs, newest first, those `run_filter` lets through. Raises KeyError for an unknown `before` cursor."""
-        rows, has_more = request.app.state.db.list_runs(limit, before, run_filter)
+    def runs_page(request: Request, limit: int, before: Optional[str] = None, run_filter: Optional[RunFilter] = None,
+                  kind: Optional[str] = None) -> dict[str, Any]:
+        """One page of runs, newest first, those `run_filter` lets through (and, with `kind`, only those of one tab). Raises KeyError for an unknown
+        `before` cursor."""
+        rows, has_more = request.app.state.db.list_runs(limit, before, run_filter, kind)
         runs = jobs_of(request).payloads(rows)
         return {"runs": runs, "next_before": runs[-1]["id"] if has_more and runs else None}
 
@@ -198,7 +209,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         return {
             "pipeline": settings.pipeline,
             "model": jobs.model_id,
-            "modes": jobs.modes(),  # Edit only where the pipeline can edit, Music only where the music model can run
+            "modes": jobs.modes(),  # Edit only where the pipeline can edit, Music only where the music model can run, Vector where both halves can
             "supports": supports,
             "aspect_ratios": {name: list(size) for name, size in P.ASPECT_RATIOS.items()},
             "defaults": {
@@ -219,6 +230,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "seed": {"min": 0, "max": P.SEED_MAX},
                 "cfg_scale": {"min": P.CFG_MIN, "max": P.CFG_MAX},
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
+                "vector": vector_limits(),
                 "music": {
                     "duration": {"min": P.MUSIC_DURATION_MIN, "max": settings.music_max_seconds, "default": P.MUSIC_DEFAULT_SECONDS},
                     "tracks": {"min": 1, "max": settings.music_max_tracks},
@@ -229,6 +241,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 },
             },
             "music": {**jobs.music_status(), "model": jobs.model_id_for("music")},
+            "vector": jobs.vector_status(),  # the Vector tab (DESIGN.md §31.12.7): {available, reason, hint}, like `music`
             "upscaler": jobs.upscaler_status(),  # Enlarge (DESIGN.md §28.3): whether it can run here, and if not why
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
@@ -315,9 +328,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         kept: Optional[bool] = Query(None, description="true: only kept runs; false: only runs that are not kept; absent: either"),
         deleted: Optional[bool] = Query(None, description="true: only the bin; false or absent: the history, without the bin"),
         project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a project's id: only its runs; 'none': only runs in no project; absent: any"),
+        kind: Optional[Literal["image", "music", "vector"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
     ) -> Any:
         try:
-            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project))
+            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project), kind)
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
 
@@ -689,6 +703,83 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 name = music_filename(label=label, seconds=track["seconds"], seed=track["seed"], created_at=parse_ts(run["created_at"]))
                 headers["Content-Disposition"] = content_disposition(name, default="music.wav")
         return FileResponse(path, media_type="audio/wav", headers=headers)
+
+    # ------------------------------------------------------------------ Vector (DESIGN.md §31.12.7)
+    @app.post("/api/vector/recipe")
+    async def vector_recipe(body: RecipeRequest) -> Any:
+        """The words the studio will send for an idea, for the form to show and let the user edit. Pure text: no model, no database, no run."""
+        try:
+            recipe = resolve_recipe(body, settings)
+        except RunRequestError as exc:
+            return JSONResponse(status_code=422, content={"detail": exc.detail()})
+        return {"positive": recipe.positive, "negative": recipe.negative}
+
+    async def _vector_file(request: Request, vector_id: str, column: str) -> tuple[Any, Any, Optional[bytes]]:
+        """(vector row, its run, the file's contents) for one of a vector's three files (`column` is `svg_path`, `zip_path` or `png_path`), or
+        (None, None, None) when there is no such vector or its file is gone. Read whole and up front, as `_image_file` does, so that a run deleted
+        while it is being fetched gives a clean 404 and not a response cut short after its headers."""
+        db: Database = request.app.state.db
+        storage: Storage = request.app.state.storage
+        vector = db.get_vector(vector_id)  # an id that is not even shaped like one matches no row, and is a 404 like any other
+        if vector is None:
+            return None, None, None
+        run = db.get_run(vector["run_id"])
+        try:
+            data = await asyncio.to_thread(storage.abs(vector[column]).read_bytes)
+        except (StorageError, FileNotFoundError, IsADirectoryError):
+            return None, None, None
+        return vector, run, data
+
+    def vector_download_name(vector: Any, run: Any, suffix: str) -> str:
+        """The name a vector is saved under (DESIGN.md §31.12.7), from the run's idea and the vector's own size, colours and seed."""
+        return vector_filename(prompt=run["prompt"], width_mm=vector["width_mm"], height_mm=vector["height_mm"], colours=vector["colours"],
+                               seed=vector["seed"], created_at=parse_ts(run["created_at"]), suffix=suffix)
+
+    @app.get("/api/vectors/{vector_id}/svg")
+    async def get_vector_svg(vector_id: str, request: Request, download: bool = False) -> Any:
+        """The combined SVG. Served so that it can run nothing (`SVG_CSP`, `nosniff`); the page shows it only in an `<img>`, where scripts never run."""
+        vector, run, data = await _vector_file(request, vector_id, "svg_path")
+        if vector is None:
+            return _error(404, "Vector not found.", "not_found")
+        headers = {"Cache-Control": IMMUTABLE, "Content-Security-Policy": SVG_CSP, "X-Content-Type-Options": "nosniff"}
+        if download and run is not None:
+            headers["Content-Disposition"] = content_disposition(vector_download_name(vector, run, ".svg"), default="vector.svg")
+        return Response(data, media_type="image/svg+xml", headers=headers)
+
+    @app.get("/api/vectors/{vector_id}/layers.zip")
+    async def get_vector_layers(vector_id: str, request: Request) -> Any:
+        """The ZIP of one SVG for each layer: always an attachment, which is what it is for."""
+        vector, run, data = await _vector_file(request, vector_id, "zip_path")
+        if vector is None:
+            return _error(404, "Vector not found.", "not_found")
+        headers = {"Cache-Control": IMMUTABLE}
+        if run is not None:
+            headers["Content-Disposition"] = content_disposition(vector_download_name(vector, run, "-layers.zip"), default="vector-layers.zip")
+        return Response(data, media_type="application/zip", headers=headers)
+
+    @app.get("/api/vectors/{vector_id}/png")
+    async def get_vector_png(vector_id: str, request: Request, download: bool = False,
+                             size: int = Query(PREVIEW_SIZE, ge=VECTOR_PNG_SIZE["min"], le=VECTOR_PNG_SIZE["max"], description="the long side in pixels")) -> Any:
+        """A PNG drawn from the SVG at `size` pixels on its long side. The stored preview is `PREVIEW_SIZE` (1024) wide and is sent as it is; any other
+        size is drawn when asked for, from the SVG's own shapes and never from the model's picture, so it is as sharp as the size allows. The drawing
+        is CPU work, so it is done off the event loop, and a few at a time."""
+        # the SVG is only read for a size that is drawn; the stored preview is read as it is
+        vector, run, data = await _vector_file(request, vector_id, "png_path" if size == PREVIEW_SIZE else "svg_path")
+        if vector is None:
+            return _error(404, "Vector not found.", "not_found")
+        if size != PREVIEW_SIZE:
+            async with request.app.state.vector_png_slots:
+                try:
+                    data = await asyncio.to_thread(vector_mod.render_png, data.decode("utf-8"), size)
+                except vector_mod.VectorError as exc:
+                    content: dict[str, Any] = {"detail": exc.message, "code": "png_failed"}
+                    if exc.hint:
+                        content["hint"] = exc.hint
+                    return JSONResponse(status_code=500, content=content)
+        headers = {"Cache-Control": IMMUTABLE}
+        if download and run is not None:
+            headers["Content-Disposition"] = content_disposition(vector_download_name(vector, run, ".png"), default="vector.png")
+        return Response(data, media_type="image/png", headers=headers)
 
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:

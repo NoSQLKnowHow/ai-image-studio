@@ -7,6 +7,7 @@ import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from . import vector as V
 from .fourk import enlarge_plan_or_none, plan_or_none
 
 
@@ -93,6 +94,53 @@ def track_payload(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def vector_limits() -> dict[str, Any]:
+    """`capabilities.limits.vector` (DESIGN.md §31.12.7): the Vector form's limits, from the constants the engine, the server and the page share
+    (`studio/vector/__init__.py`), in the shape of `capabilities.limits_vector` in tests/vector_contract.json."""
+    return {
+        "colours": {"min": V.COLOURS_MIN, "max": V.COLOURS_MAX, "default": V.COLOURS_DEFAULT},
+        "size_mm": {"min": V.SIZE_MM_MIN, "max": V.SIZE_MM_MAX, "default": [V.SIZE_MM_DEFAULT, V.SIZE_MM_DEFAULT]},
+        "versions": {"min": V.VERSIONS_MIN, "max": V.VERSIONS_MAX},
+        "min_feature_mm": {"min": V.MIN_FEATURE_MM_MIN, "max": V.MIN_FEATURE_MM_MAX, "default": V.MIN_FEATURE_MM_DEFAULT},
+        "kerf_mm": {"min": V.KERF_MM_MIN, "max": V.KERF_MM_MAX, "default": V.KERF_MM_DEFAULT},
+        "bleed_mm": {"min": V.BLEED_MM_MIN, "max": V.BLEED_MM_MAX, "default": V.BLEED_MM_DEFAULT},
+        "shape_layer_cap": V.SHAPE_LAYER_CAP,
+        "kinds": list(V.KINDS),
+        "layers_by": list(V.LAYERS_BY),
+        "arrangements": list(V.ARRANGEMENTS),
+        "presets": [dict(preset) for preset in V.PRESETS],
+        "defaults": {"kind": V.KIND_DEFAULT, "layers_by": V.LAYERS_BY_DEFAULT, "arrangement": V.ARRANGEMENT_DEFAULT},
+        "recipe_max_chars": V.RECIPE_MAX_CHARS,
+    }
+
+
+# The size a card's preview is shown at: the PNG that the clean-up stores (its long side in pixels, DESIGN.md §31.12.4), so showing a card draws nothing.
+PREVIEW_SIZE = 1024
+
+
+def vector_payload(row: sqlite3.Row) -> dict[str, Any]:
+    """One version of a vector run, with the keys of `run.vectors[0]` in tests/vector_contract.json (DESIGN.md §31.12.7). `check` is what the clean-up
+    reported, as it made it. The addresses are all the vector's own: the SVG, the ZIP of one SVG per layer, and a PNG (any size, `?size=`)."""
+    base = f"/api/vectors/{row['id']}"
+    return {
+        "id": row["id"],
+        "idx": row["idx"],
+        "seed": row["seed"],
+        "width_mm": row["width_mm"],
+        "height_mm": row["height_mm"],
+        "colours": row["colours"],
+        "layers": row["layers"],
+        "bytes": row["bytes"],
+        "check": json.loads(row["check_json"]),
+        "url": f"{base}/svg",
+        "download_url": f"{base}/svg?download=1",
+        "zip_url": f"{base}/layers.zip",
+        "png_url": f"{base}/png",
+        "png_download_url": f"{base}/png?download=1",
+        "preview_url": f"{base}/png?size={PREVIEW_SIZE}",
+    }
+
+
 def binned_image_payload(row: sqlite3.Row, four_k: Optional[dict[str, Any]], bin_days: int) -> dict[str, Any]:
     """A result picture that is in the bin (DESIGN.md §33.3): as any picture, with when it went and when it will be deleted for good."""
     return {**image_payload(row, four_k), "deleted_at": row["deleted_at"], "purge_at": purge_time(row["deleted_at"], bin_days)}
@@ -133,6 +181,7 @@ def run_payload(
     binned_images: Optional[list[sqlite3.Row]] = None,
     binned_tracks: Optional[list[sqlite3.Row]] = None,
     bin_days: int = 0,
+    vectors: Optional[list[sqlite3.Row]] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -165,4 +214,7 @@ def run_payload(
         "tracks": [track_payload(track) for track in tracks or []],
         "binned_images": [] if row["deleted_at"] else [binned_image_payload(img, (four_k or {}).get(img["id"]), bin_days) for img in binned_images or []],
         "binned_tracks": [] if row["deleted_at"] else [binned_track_payload(track, bin_days) for track in binned_tracks or []],
+        # the versions of a vector run (DESIGN.md §31.12.7); always there, an empty list for a picture or a music run, as `tracks` is. A vector run has no
+        # per-version bin (§31.12.9 item 3), so there is nothing to leave out of it and no `binned_vectors`.
+        "vectors": [vector_payload(vec) for vec in vectors or []],
     }

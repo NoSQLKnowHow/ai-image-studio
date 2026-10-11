@@ -9,6 +9,9 @@
     <data>/inputs/<run>/<position>.png the images an edit run was given: copies the run owns (position 1 = "image 1")
     <data>/thumbs/<run>/in-<position>.webp   their thumbnails (in the run's own thumbs folder, so they go with it)
     <data>/audio/<run>/<idx>.wav       the tracks of a music run, written by the worker (DESIGN.md §26.5)
+    <data>/vector/<run>/<idx>-source.png    the drawing the image model made for one version of a vector run (moved here from images/<run>/,
+                                            DESIGN.md §31.12.5), and beside it what the clean-up made of it:
+    <data>/vector/<run>/<idx>.svg, <idx>-layers.zip, <idx>.png    the combined SVG, one SVG for each layer in a ZIP, and the 1024 px preview
 
 All file access is by database id; paths reported by the worker are checked to be
 inside the run's own folder before they are trusted.
@@ -56,6 +59,7 @@ class Storage:
         self.root = Path(data_dir).resolve()
         self.images = self.root / "images"
         self.audio = self.root / "audio"
+        self.vector = self.root / "vector"
         self.thumbs = self.root / "thumbs"
         self.inputs = self.root / "inputs"
         self.staged = self.inputs / "staged"
@@ -63,7 +67,7 @@ class Storage:
 
     def ensure_layout(self) -> None:
         try:
-            for directory in (self.root, self.images, self.audio, self.thumbs, self.inputs, self.staged, self.staged_thumbs):
+            for directory in (self.root, self.images, self.audio, self.vector, self.thumbs, self.inputs, self.staged, self.staged_thumbs):
                 directory.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryFile(dir=self.root):
                 pass
@@ -80,6 +84,10 @@ class Storage:
 
     def audio_dir(self, run_id: str) -> Path:
         return self.audio / check_id(run_id)
+
+    def vector_dir(self, run_id: str) -> Path:
+        """Where a vector run keeps its drawings and what was made of them (DESIGN.md §31.12.6)."""
+        return self.vector / check_id(run_id)
 
     def rel(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root).as_posix()
@@ -147,10 +155,12 @@ class Storage:
         return self.inputs / check_id(run_id)
 
     def delete_run_files(self, run_id: str) -> None:
-        """Everything on disk that belongs to a run: its images or tracks, its inputs and all their thumbnails."""
+        """Everything on disk that belongs to a run: its images, tracks or vector files, its inputs and all their thumbnails. This is the one place
+        the files of a deleted run go, so Delete, Delete forever, Empty bin and the daily clean-up all remove a vector run's folder through it."""
         check_id(run_id)
         shutil.rmtree(self.images / run_id, ignore_errors=True)
         shutil.rmtree(self.audio / run_id, ignore_errors=True)
+        shutil.rmtree(self.vector / run_id, ignore_errors=True)
         shutil.rmtree(self.thumbs / run_id, ignore_errors=True)
         shutil.rmtree(self.inputs / run_id, ignore_errors=True)
 

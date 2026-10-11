@@ -13,6 +13,10 @@ A model load failure is simulated by setting STUDIO_FAKE_LOAD_FAIL=1 for the wor
 load, so a retry on the same worker can succeed, DESIGN.md §25.3), and a slower load (so a test can
 see the loading state, DESIGN.md §25.3) by setting STUDIO_FAKE_LOAD_DELAY_MS.
 
+Vector (DESIGN.md §31.12.5): a job whose mode is "vector" draws a FLAT picture instead (`render_flat_image`): a white background and a few solid shapes
+in plain colours, chosen by the seed, with no gradient, no text and no soft edges, so that the real clean-up gets something it can turn into layers
+when a test (or the end-to-end run) follows the fake drawing with the real engine.
+
 Edits (DESIGN.md §21.8): the result follows the *last* input's shape when no size is given (at about
 RESOLUTION x RESOLUTION pixels, with the pipeline's own arithmetic), and a strip of numbered thumbnails of the
 inputs, in the order they were given, is drawn along the bottom edge. Tests read the strip back to check the
@@ -89,6 +93,31 @@ def render_fake_image(
     return img
 
 
+# The inks the fake flat drawing uses: black and four plain colours, far enough apart that a clean-up reducing the picture to a few colours keeps them apart.
+FLAT_INKS = [(0, 0, 0), (220, 30, 30), (20, 150, 60), (30, 70, 200), (240, 160, 0)]
+
+
+def render_flat_image(*, width: int, height: int, seed: int) -> Image.Image:
+    """A flat drawing for a vector run: white, with one to three of `FLAT_INKS`, each as one or two solid ellipses or rectangles of between a sixth and
+    a third of the picture's short side, placed (inside the picture, away from its edge) by the seed. Same seed and size, same pixels. PIL draws
+    shapes without smoothing, so every pixel is exactly white or exactly one of the inks: the picture has at most four colours."""
+    rng = random.Random(seed)
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    short = min(width, height)
+    margin = short // 10
+    for ink in rng.sample(FLAT_INKS, rng.randint(1, 3)):
+        for _ in range(rng.randint(1, 2)):
+            w, h = rng.randint(short // 6, short // 3), rng.randint(short // 6, short // 3)
+            left, top = rng.randint(margin, max(margin, width - w - margin)), rng.randint(margin, max(margin, height - h - margin))
+            box = (left, top, left + w, top + h)
+            if rng.random() < 0.5:
+                draw.ellipse(box, fill=ink)
+            else:
+                draw.rectangle(box, fill=ink)
+    return image
+
+
 def strip_cells(width: int, height: int, count: int) -> list[tuple[int, int, int, int]]:
     """Where the fake pipeline draws the numbered thumbnails of an edit's inputs: (left, top, right, bottom) of
     each, in input order, along the bottom edge. Always inside the image and never overlapping, however small or
@@ -157,6 +186,8 @@ class FakePipeline:
             if step == 1 and active:
                 self._inject(active)
         width, height = job.width, job.height
+        if job.mode == "vector":  # flat artwork for the clean-up, not the test picture with a gradient and a text panel (see the top of this file)
+            return render_flat_image(width=width or 1024, height=height or 1024, seed=seed)
         if not (width and height) and inputs:  # Auto: the shape of the last image, as the real pipeline does it
             resolution = job.resolution or P.DEFAULT_RESOLUTION
             width, height = P.calculate_dimensions(resolution * resolution, inputs[-1].width / inputs[-1].height)

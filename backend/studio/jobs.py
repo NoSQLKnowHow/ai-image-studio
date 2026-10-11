@@ -10,16 +10,21 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import secrets
+import shutil
 import sqlite3
 import time
 from datetime import datetime, timedelta, timezone
 from contextlib import suppress
+from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__, fourk, sysinfo
 from . import inputs as inputs_mod
 from . import presets as P
+from . import vector as vector_mod
+from . import vectorrun
 from . import wavfile
 from .config import Settings
 from .db import Database
@@ -109,6 +114,9 @@ class JobManager:
         self._current: Optional[str] = None
         self._progress: dict[str, dict[str, Any]] = {}
         self._cancel_requested: set[str] = set()  # running runs the user has asked to stop
+        # The clean-up process of the vector run that is in its trace stage, so that Cancel can stop it at once (DESIGN.md §31.12.5); None otherwise
+        self._tracing: Optional[asyncio.subprocess.Process] = None
+        self.vector_job_timeout = vectorrun.JOB_TIMEOUT_SECONDS  # an attribute and not a constant so that a test can make it short
         self._making_4k: dict[str, asyncio.Future] = {}  # image id -> the build in progress (DESIGN.md §27.3)
         self._enlarging: dict[str, asyncio.Future] = {}  # image id -> the enlargement in progress (DESIGN.md §28.3)
         # One heavy thing at a time on the GPU: a run (from picking it up to its last event) or an enlargement (DESIGN.md §28.3). A
@@ -220,8 +228,24 @@ class JobManager:
             "hint": error.get("hint"),
         }
 
+    def vector_status(self) -> dict[str, Any]:
+        """Whether the Vector tab can work here (DESIGN.md §31.12.7): `capabilities.vector`, as `music_status` is for music. It needs both halves: the
+        libraries of the clean-up must import (`vector.available`), and the image pipeline must be able to draw (its start-up check passed). The
+        libraries are named first when they are what is missing, because that is the one a person can fix."""
+        usable, reason, hint = vector_mod.available()
+        if not usable:
+            return {"available": False, "reason": reason, "hint": hint}
+        state = self._probe.get("state")
+        if state == "done":
+            return {"available": True, "reason": None, "hint": None}
+        if state == "failed":  # the image model's own explanation: the tab cannot draw without it
+            error = self._probe.get("error") or {}
+            return {"available": False, "reason": error.get("message") or "The image model cannot run here.", "hint": error.get("hint")}
+        return {"available": False, "reason": "The image model's start-up check has not finished yet.", "hint": "Try again in a moment."}
+
     def modes(self) -> list[str]:
-        return ["generate", *(["edit"] if self.supports().get("edit") else []), *(["music"] if self.music_status()["available"] else [])]
+        return ["generate", *(["edit"] if self.supports().get("edit") else []), *(["music"] if self.music_status()["available"] else []),
+                *(["vector"] if self.vector_status()["available"] else [])]
 
     def supports(self) -> dict[str, bool]:
         found = self._supports_found()
@@ -246,13 +270,14 @@ class JobManager:
     def payloads(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         ids = [r["id"] for r in rows]
         images, inputs, tracks = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids), self.db.tracks_for_runs(ids)
+        vectors = self.db.vectors_for_runs(ids)
         binned_images, binned_tracks = self.db.binned_images_for_runs(ids), self.db.binned_tracks_for_runs(ids)  # the pictures in the bin (§33.3)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *binned_images[run_id], *inputs[run_id])])
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
                         r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r),
-                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days)
+                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]])
             for r in rows
         ]
 
@@ -395,6 +420,12 @@ class JobManager:
         if newly:
             log.info("cancel requested for %s", run_id)
             self._publish_run(run_id)
+        # In the trace stage of a vector run the model is idle and the clean-up is a process of its own: stop it at once. (In the draw stage the
+        # worker is told below, as for any run.) The trace loop sees the request and ends the run as canceled.
+        proc = self._tracing
+        if proc is not None and proc.returncode is None:
+            with suppress(ProcessLookupError):
+                proc.kill()
         # A worker that has gone away is handled by its exit event, which fails the run.
         with suppress(WorkerGone, OSError):
             await self._worker.send({"cmd": "cancel", "run_id": run_id})
@@ -865,7 +896,9 @@ class JobManager:
 
     async def _consume(self, row: sqlite3.Row) -> None:
         run_id = row["id"]
+        vector_run = row["mode"] == "vector"
         storage_error: Optional[str] = None
+        drawings: dict[int, tuple[int, Path]] = {}  # a vector run's finished drawings, by version number: (seed, the file in the run's folder)
         while True:
             event = await self._run_events.get()
             kind = event.get("event")
@@ -873,10 +906,18 @@ class JobManager:
                 self._set_worker_state("busy")
             elif kind == "progress":
                 progress = {k: event.get(k) for k in ("image", "of", "step", "steps")}
-                if event.get("stage"):  # a music run says which stage it is in (compose, render, finish)
-                    progress["stage"] = event["stage"]
-                self._progress[run_id] = progress
-                self.bus.publish("run.progress", {"id": run_id, "progress": progress})
+                # a music run says which stage it is in (compose, render, finish); a vector run is in its `draw` stage for as long as the model is
+                # working, which the worker does not say (it is the image worker, and an image run has no stages), then in its `trace` stage (below)
+                stage = event.get("stage") or ("draw" if vector_run else None)
+                if stage:
+                    progress["stage"] = stage
+                self._report_progress(run_id, progress)
+            elif kind == "image_done" and vector_run:
+                try:
+                    drawings[int(event["idx"])] = (int(event["seed"]), await self._accept_drawing(row, event))
+                except Exception as exc:
+                    log.exception("could not store drawing %s of run %s", event.get("idx"), run_id)
+                    storage_error = storage_error or f"A drawing could not be stored: {exc}"
             elif kind == "image_done":
                 try:
                     await self._accept_image(row, event)
@@ -892,6 +933,12 @@ class JobManager:
             elif kind == "run_finished":
                 if storage_error:
                     self._finish(run_id, "failed", storage_error, "Check free disk space and the server log.")
+                elif vector_run:
+                    # The model has drawn everything and is idle: say so before the clean-up starts, which takes the CPU and not the model. The run is
+                    # finished when its last version is (DESIGN.md §31.12.5).
+                    self._set_worker_state("ready")
+                    await self._trace_drawings(row, drawings)
+                    return
                 else:
                     self._finish(run_id, "done")
                 self._set_worker_state("ready")
@@ -913,6 +960,145 @@ class JobManager:
                 message = f"The {event.get('kind', 'image')} worker stopped unexpectedly (exit code {event.get('returncode')})."
                 self._finish(run_id, "failed", self._with_partial(run_id, row, message), WORKER_RESTART_HINT)
                 return
+
+    def _report_progress(self, run_id: str, progress: dict[str, Any]) -> None:
+        """Remember a run's progress for its payload and tell every open page."""
+        self._progress[run_id] = progress
+        self.bus.publish("run.progress", {"id": run_id, "progress": progress})
+
+    # ------------------------------------------------------------ a vector run (DESIGN.md §31.12.5)
+    async def _accept_drawing(self, row: sqlite3.Row, event: dict[str, Any]) -> Path:
+        """Take one finished drawing from the image worker: check that it is a file in the run's own image folder, as for a picture, then move it to
+        the run's vector folder as `<idx>-source.png`. It is not stored as a picture: no `images` row and no thumbnail, because a vector run has no
+        pictures, only the drawings the clean-up starts from (kept so that it can be run again with other settings, §31.12.9 item 6)."""
+        run_id = row["id"]
+        source = self.storage.accept_worker_image(str(event["path"]), run_id)
+        target = self.storage.vector_dir(run_id) / f"{int(event['idx'])}-source.png"
+        await asyncio.to_thread(self._move_drawing, source, target)
+        return target
+
+    @staticmethod
+    def _move_drawing(source: Path, target: Path) -> None:
+        """In a thread: move a drawing into the run's vector folder (one rename: both are on the data volume). The image folder it came from is not
+        removed here: the worker is still drawing the next picture and makes that folder again just before it writes it, so removing an empty one now
+        could take it away between the worker making it and writing into it. `_trace_drawings` removes it once the worker is done."""
+        target.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(source, target)
+
+    async def _trace_drawings(self, row: sqlite3.Row, drawings: dict[int, tuple[int, Path]]) -> None:
+        """The trace stage, and the end of a vector run: clean up each drawing, in order, into an SVG with its layers and its check, and store each
+        as a `vectors` row as soon as it is done (the card shows them as they arrive). Cancel stops it at once, in the middle of a drawing too.
+        A drawing that cannot be cleaned up is a version that is missing and is named in the run's error text; the run is `done` if at least one
+        version was made and `failed` if none was, because a run with no result is not a success (DESIGN.md §31.12.5)."""
+        run_id = row["id"]
+        # The worker has drawn everything, so the folder its pictures were written to is empty (each was moved out): a vector run keeps none under `images`
+        await asyncio.to_thread(self._remove_empty_folder, self.storage.run_dir(run_id))
+        options = json.loads(row["options_json"])
+        clean_up = vector_mod.VectorOptions(
+            colours=options["colours"], palette=tuple(options["palette"]), kind=options["kind"], width_mm=options["width_mm"],
+            height_mm=options["height_mm"], layers_by=options["layers_by"], arrangement=options["arrangement"], bleed_mm=options["bleed_mm"],
+            min_feature_mm=options["min_feature_mm"], kerf_mm=options["kerf_mm"])
+        problems: list[tuple[str, Optional[str]]] = []  # (message, hint) for each version that is missing, with its number in the message
+        made = 0
+        for idx in sorted(drawings):
+            if run_id in self._cancel_requested:  # asked for between two versions
+                self._finish(run_id, "canceled")
+                return
+            self._report_progress(run_id, {"image": idx + 1, "of": row["num_images"], "step": 0, "steps": 1, "stage": "trace"})
+            seed, source = drawings[idx]
+            result = await self._clean_up(row, idx, seed, source, clean_up)
+            # Asked for while it worked: the job was killed, so nothing of it was stored (a version that was finished before the kill reached it is
+            # kept, as a finished picture is when a picture run is canceled)
+            if run_id in self._cancel_requested:
+                self._finish(run_id, "canceled")
+                return
+            if result.ok:
+                made += 1
+                self._publish_run(run_id)
+            else:
+                problems.append((f"Version {idx + 1} could not be made: {result.message}", result.hint))
+        # what the card says about the versions that are missing: all of them in one text, and the first hint there is
+        message = " ".join(text for text, _ in problems) or None
+        hint = next((hint for _, hint in problems if hint), None)
+        self._finish(run_id, "done" if made else "failed", message, hint)
+
+    async def _clean_up(self, row: sqlite3.Row, idx: int, seed: int, source: Path, options: vector_mod.VectorOptions) -> vectorrun.JobResult:
+        """Clean up one drawing (§31.12.4) and store what it made. The job works in a folder of its own inside the run's, which is removed whatever
+        happens; the three files it makes are moved to their final names only when all of them are there and the check can be read, so a version is
+        stored whole or not at all. Returns the job's result, with the message of what went wrong in it when the version is missing."""
+        run_id = row["id"]
+        work = self.storage.vector_dir(run_id) / f"work-{idx}"
+        try:
+            options_file = await asyncio.to_thread(self._prepare_work, work, options)
+            try:
+                result = await vectorrun.run_job(self.settings, source, options_file, work, timeout=self.vector_job_timeout,
+                                                 on_start=self._set_tracing)
+            except OSError as exc:  # the process could not be started at all (the command is not there)
+                log.warning("could not start the vector clean-up: %s", exc)
+                return vectorrun.JobResult(message=f"The clean-up could not be started: {exc.strerror or exc}", hint=vectorrun.SEE_THE_LOG)
+            finally:
+                self._tracing = None
+            if not result.ok:
+                return result
+            check = result.check or {}  # `ok` means there is one
+            try:
+                summary = vectorrun.summarize(check)
+            except ValueError as exc:  # a check that does not have what the contract says: the version is missing, and nothing half-formed is stored
+                log.warning("the clean-up of version %d of run %s gave a check that cannot be read: %s", idx + 1, run_id, exc)
+                return vectorrun.JobResult(message=f"The clean-up gave a check the studio could not read ({exc}).", hint=vectorrun.SEE_THE_LOG)
+            try:
+                vector_row = await asyncio.to_thread(self._store_version, row, idx, seed, work, check, summary)
+            except OSError as exc:  # a file the job did not write, or a disk that is full
+                log.warning("could not store version %d of run %s: %s", idx + 1, run_id, exc)
+                return vectorrun.JobResult(message=f"The clean-up's files could not be stored: {exc.strerror or exc}", hint=vectorrun.SEE_THE_LOG)
+            self.db.add_vector(vector_row)
+            return result
+        finally:
+            await asyncio.to_thread(shutil.rmtree, work, True)
+
+    @staticmethod
+    def _remove_empty_folder(folder: Path) -> None:
+        """In a thread: remove a folder if it is empty. One that is not (or is not there) is left alone."""
+        with suppress(OSError):
+            folder.rmdir()
+
+    def _set_tracing(self, proc: asyncio.subprocess.Process) -> None:
+        """Remember the clean-up process of the run that is going, so that Cancel can kill it (`cancel`). A Cancel that came in before the process
+        existed (while its folder was being made, or while it was starting) could not kill it then, so it is killed now, before it has done anything."""
+        self._tracing = proc
+        if self._current in self._cancel_requested:
+            with suppress(ProcessLookupError):
+                proc.kill()
+
+    @staticmethod
+    def _prepare_work(work: Path, options: vector_mod.VectorOptions) -> Path:
+        """In a thread: make the job's folder and write its options file (`VectorOptions.to_json`) into it. Returns the file."""
+        work.mkdir(parents=True, exist_ok=True)
+        options_file = work / "options.json"
+        options_file.write_text(json.dumps(options.to_json()), encoding="utf-8")
+        return options_file
+
+    def _store_version(self, row: sqlite3.Row, idx: int, seed: int, work: Path, check: dict[str, Any], summary: vectorrun.Summary) -> dict[str, Any]:
+        """In a thread: move the job's three files to `<idx>.svg`, `<idx>-layers.zip` and `<idx>.png` in the run's vector folder, and return the
+        `vectors` row for them. Raises OSError if a file is missing (or cannot be moved) and, in that case, leaves no final file behind."""
+        folder = self.storage.vector_dir(row["id"])
+        finals = [folder / f"{idx}.svg", folder / f"{idx}-layers.zip", folder / f"{idx}.png"]
+        for name in vectorrun.OUTPUT_FILES:  # all there before any is moved
+            if not (work / name).is_file():
+                raise FileNotFoundError(f"the clean-up did not write {name}")
+        try:
+            for name, final in zip(vectorrun.OUTPUT_FILES, finals):
+                os.replace(work / name, final)
+        except OSError:
+            for final in finals:
+                final.unlink(missing_ok=True)
+            raise
+        return {
+            "id": secrets.token_hex(16), "run_id": row["id"], "idx": idx, "seed": seed, "width_mm": summary.width_mm, "height_mm": summary.height_mm,
+            "colours": summary.colours, "layers": summary.layers, "bytes": finals[0].stat().st_size, "check_json": json.dumps(check),
+            "svg_path": self.storage.rel(finals[0]), "zip_path": self.storage.rel(finals[1]), "png_path": self.storage.rel(finals[2]),
+            "created_at": utcnow(),
+        }
 
     async def _wait_while_idle(self) -> None:
         """Wait for work. A loaded model is unloaded (worker exits, memory freed) after the idle timeout. The clock is
@@ -1085,7 +1271,8 @@ class JobManager:
             error = music.get("error") or {}
             self._music_probe = {"state": "failed", "error": error}
             log.warning("music capability check failed: %s", error.get("message"))
-        self.bus.publish("capabilities.updated", {"supports": self.supports(), "modes": self.modes(), "music": self.music_status()})
+        self.bus.publish("capabilities.updated", {"supports": self.supports(), "modes": self.modes(), "music": self.music_status(),
+                                                  "vector": self.vector_status()})
         self.bus.publish("worker.state", self.worker_status())
 
     def _with_partial(self, run_id: str, row: sqlite3.Row, message: str) -> str:
