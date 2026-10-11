@@ -2,6 +2,13 @@ import { filenameFromDisposition } from "./fourk";
 import { NO_FILTER, filterParams, type Counts, type HistoryFilter } from "./history";
 import type { Capabilities, CreateMusicBody, CreateRunBody, ImageRun, ModelName, MusicRun, Project, Run, RunsPage, Status, UploadResult } from "./types";
 
+/** What sending a picture or track to the bin answers (DESIGN.md §33.3): what moved, and the run as it is now. A run's last picture is not deleted
+ *  by itself, so `moved` is "run" and the whole run is in the bin. */
+export interface BinAnswer {
+  moved: "picture" | "run";
+  run: Run;
+}
+
 export interface FieldError {
   field: string; // e.g. "options.width" or "prompt"
   message: string;
@@ -151,7 +158,18 @@ export const api = {
   deleteRun: (id: string) => request<void>(`/api/runs/${encodeURIComponent(id)}`, { method: "DELETE" }),
   binRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/bin`, { method: "POST" }),
   restoreRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/restore`, { method: "POST" }),
-  emptyBin: () => request<{ deleted: number }>("/api/bin", { method: "DELETE" }),
+  // `deleted` is how many runs were deleted, `pictures` how many pictures and tracks of runs that stay (DESIGN.md §33.3)
+  emptyBin: () => request<{ deleted: number; pictures: number }>("/api/bin", { method: "DELETE" }),
+  // One run, by id: what the page asks after deleting a picture for good, to learn whether the run went with it (`404`) or is still there.
+  getRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}`),
+  // A single picture or track in the bin (DESIGN.md §33.3). Binning answers what moved: "picture", or "run" when it was the run's last, which then
+  // went instead; restoring answers the run; deleting for good answers nothing (the page reads the run again).
+  binPicture: (id: string) => request<BinAnswer>(`/api/images/${encodeURIComponent(id)}/bin`, { method: "POST" }),
+  restorePicture: (id: string) => request<Run>(`/api/images/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  deletePicture: (id: string) => request<void>(`/api/images/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  binTrack: (id: string) => request<BinAnswer>(`/api/tracks/${encodeURIComponent(id)}/bin`, { method: "POST" }),
+  restoreTrack: (id: string) => request<Run>(`/api/tracks/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  deleteTrack: (id: string) => request<void>(`/api/tracks/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // Project folders (DESIGN.md §32.4). Filing a run also keeps it; the answer to a filing is the run, as for Keep.
   listProjects: () => request<{ projects: Project[] }>("/api/projects").then((answer) => answer.projects),
   createProject: (name: string) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),

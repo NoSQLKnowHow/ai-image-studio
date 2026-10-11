@@ -31,13 +31,27 @@ def letter(run_id: str) -> str:
     return chr(int(run_id, 16))
 
 
+# the pictures (or tracks, for a music run) of a run that are in the bin: how many the table says, each a row with its own `deleted_at`
+def put_items_in_the_bin(database: Database, run: dict, count: int) -> None:
+    for n in range(count):
+        item_id = f"{(int(run['id'], 16) << 8) + n + 1:032x}"  # a 32-digit id of its own: the run's number, shifted, plus its place
+        if run["mode"] == "music":
+            database.add_track({"id": item_id, "run_id": run["id"], "idx": n, "seed": n, "seconds": 5.0, "sample_rate": 24000, "channels": 1, "bytes": 10,
+                                "path": f"audio/{run['id']}/{n}.wav", "created_at": run["created_at"], "deleted_at": "2026-10-03T00:00:00.000Z"})
+        else:
+            database.add_image({"id": item_id, "run_id": run["id"], "kind": "output", "idx": n, "seed": n, "width": 8, "height": 8, "has_alpha": 0,
+                                "bytes": 10, "path": f"images/{run['id']}/{n}.png", "thumb_path": None, "created_at": run["created_at"],
+                                "deleted_at": "2026-10-03T00:00:00.000Z"})
+
+
 @pytest.fixture
 def db(tmp_path):
     database = Database(tmp_path / "studio.sqlite")
     # the table lists the runs newest first; they are made oldest first
     for seq, entry in enumerate(reversed(TABLE["runs"]), start=1):
-        assert database.insert_run_if_capacity(
-            row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"], entry["project"]), cap=100)
+        made = row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"], entry["project"])
+        assert database.insert_run_if_capacity(made, cap=100)
+        put_items_in_the_bin(database, made, entry["items_in_bin"])
     yield database
     database.close()
 
@@ -89,7 +103,10 @@ def test_a_filter_with_nothing_set_adds_no_condition():
     assert RunFilter(deleted=None, kept=True).conditions() == (["pinned = ?"], [1])
     assert RunFilter(deleted=None, kept=False).conditions() == (["pinned = ?"], [0])
     assert RunFilter().conditions() == (["deleted_at IS NULL"], [])  # the history is what a filter means unless it says otherwise
-    assert RunFilter(deleted=True).conditions() == (["deleted_at IS NOT NULL"], [])
+    # the bin is the runs in it, and the runs that have a picture or a track of their own in it (§33.3); it binds nothing
+    clauses, values = RunFilter(deleted=True).conditions()
+    assert values == [] and len(clauses) == 1
+    assert "deleted_at IS NOT NULL" in clauses[0] and "FROM images" in clauses[0] and "FROM tracks" in clauses[0]
 
 
 # the project is the one filter that holds a value: "none" is a fixed condition, an id is bound as a value and never pasted into the text
@@ -105,15 +122,17 @@ def test_a_project_is_one_fixed_condition_with_a_bound_value():
 # paging inside a filter: the cursor continues among the matching runs only
 def test_pages_continue_within_the_filter(db):
     first, more = db.list_runs(2, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in first] == ["f", "c"] and more
+    assert [letter(r["id"]) for r in first] == ["j", "f"] and more
     second, more = db.list_runs(2, first[-1]["id"], RunFilter(kept=True))
-    assert [letter(r["id"]) for r in second] == ["a"] and not more
+    assert [letter(r["id"]) for r in second] == ["c", "a"] and not more
 
 
 def test_a_page_that_is_exactly_full_is_not_followed_by_an_empty_one(db):
-    """Three runs are kept: a page of three has no next page, a page of two has."""
+    """Four runs are kept: a page of four has no next page, a page of three has."""
+    rows, more = db.list_runs(4, None, RunFilter(kept=True))
+    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a"] and not more
     rows, more = db.list_runs(3, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in rows] == ["f", "c", "a"] and not more
+    assert [letter(r["id"]) for r in rows] == ["j", "f", "c"] and more
     rows, more = db.list_runs(2, f"{ord('f'):032x}", RunFilter(kept=True))  # after f: c and a, exactly a page
     assert [letter(r["id"]) for r in rows] == ["c", "a"] and not more
 
@@ -130,10 +149,11 @@ def test_an_unknown_cursor_is_still_an_error(db):
 
 
 def test_no_filter_is_what_it_was(db):
+    # the history: the run in the bin (k) is not in it; the runs with a picture in the bin (g, j) are
     rows, _ = db.list_runs(100)
-    assert [letter(r["id"]) for r in rows] == ["f", "e", "d", "c", "b", "a"]
+    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a"]
     rows, _ = db.list_runs(100, None, None)
-    assert [letter(r["id"]) for r in rows] == ["f", "e", "d", "c", "b", "a"]
+    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a"]
 
 
 # ------------------------------------------------------------------ the API
@@ -172,12 +192,12 @@ def test_the_counts_say_how_many_runs_each_tab_holds_and_how_many_are_kept(clien
     music = client.post("/api/runs", json={"mode": "music", "prompt": "Genre: ambient. A slow piano.", "options": {"duration": 30}}).json()["id"]
     for run_id in (first, second, music):
         wait_for(client, run_id)
-    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 0, "deleted": 0}, "music": {"all": 1, "kept": 0, "deleted": 0}}
+    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0}, "music": {"all": 1, "kept": 0, "deleted": 0, "deleted_items": 0}}
     keep(client, first, True)
     keep(client, music, True)
-    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 1, "deleted": 0}, "music": {"all": 1, "kept": 1, "deleted": 0}}
+    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 1, "deleted": 0, "deleted_items": 0}, "music": {"all": 1, "kept": 1, "deleted": 0, "deleted_items": 0}}
     keep(client, first, False)
-    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0}
+    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0}
 
 
 # /api/runs/counts must reach the counts handler, not be read as a run called "counts"; a real but unknown id is still a 404

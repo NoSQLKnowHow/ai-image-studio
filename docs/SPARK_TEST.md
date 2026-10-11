@@ -791,6 +791,33 @@ are **not deleted**; afterwards they are still in the list, kept, and in no proj
 
 **Send back:** the `ls -l data/studio.sqlite*` line, and anything that did not match "Good".
 
+## 26. Deleting one picture (new in 1.15)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.15** (reload with Ctrl+Shift+R). **This release upgrades the database**
+(schema 6): the first start makes a copy beside it, so check, before anything else: `ls -l data/studio.sqlite*` shows `studio.sqlite.before-schema-6`, and your
+runs are all there with every picture still on its card. (If anything is missing, stop and send me the log; the copy is the way back, with an older studio.)
+This step needs no GPU work: use runs you already have.
+
+**a) Delete a picture.** Open a run with several pictures, press the second one, and press **Delete picture**. **Good:** the question names it (*image 2 of 4, seed …*), says it moves to **Deleted**
+for 30 days and that its 4K and Enlarge copies go with it; after **Delete** the viewer shows the next picture, the card has one picture fewer (the rest numbered again, with their own seeds),
+and a toast says so with **Undo**. Press **Undo**: the picture is back between its neighbours.
+
+**b) The Deleted view.** Delete a picture again and open **Deleted**. **Good:** the run is **one card** (*From a run made on …*) listing the picture with its place, seed and *In the bin since … It will be deleted
+for good around …*; the number beside **Deleted** went up by one; pressing the thumbnail opens it, and the viewer has **Download** but no **Delete picture** or **Make 4K**. **Restore** puts it back.
+
+**c) Its copies go with it.** On a picture press **Make 4K** (or **Enlarge**), wait, then delete the picture and **Delete forever** it from **Deleted**. **Good:** `ls data/images/<run id>` no longer has `<n>.png`, `<n>-4k.png` or
+`<n>-4k-enlarged.png` of that picture (and `ls data/thumbs/<run id>` has no thumbnail of it), and the run's other pictures are all there.
+
+**d) The last picture.** Delete a run's pictures one by one. **Good:** the last question says *the whole run moves to Deleted*, and after it the run is in **Deleted** as an ordinary card with its pictures, and **Undo** brings the run back.
+
+**e) A music run.** Make a track with 2 or 3 versions. **Good:** each row has **Delete track** (a single track has none); deleting one renumbers the others (*Version 1 of 2*); in **Deleted** the track is on a card with a player and the same **Restore** and **Delete forever**.
+
+**f) Empty bin.** With a run and some pictures in the bin, press **Empty bin**. **Good:** the question says how many runs and how many pictures (*Delete 1 run and 2 pictures for good …*), and afterwards `du -sh data` fell by what was in the bin.
+
+**g) A phone.** The viewer's **Delete picture**, its question and the card in **Deleted** fit the screen.
+
+**Send back:** the `ls -l data/studio.sqlite*` line, what (c) showed, and anything that did not match "Good".
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -813,3 +840,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 16. From step 23 (the Kept view): anything that did not match "Good", and whether the date in (e) was the date you expected.
 17. From step 24 (the bin): the `ls -l data/studio.sqlite*` line, what the first clean-up put in Deleted, and anything that did not match "Good".
 18. From step 25 (project folders): the `ls -l data/studio.sqlite*` line, and anything that did not match "Good".
+19. From step 26 (deleting one picture): the `ls -l data/studio.sqlite*` line, what (c) showed, and anything that did not match "Good".

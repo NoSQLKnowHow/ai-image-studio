@@ -6,7 +6,7 @@ import {
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
-import { makeMusicRun, makeRun } from "./testdata";
+import { makeBinnedImage, makeBinnedTrack, makeMusicRun, makeRun } from "./testdata";
 import type { Run, RunStatus } from "./types";
 
 // ------------------------------------------------------------------ the table both sides are tested against (DESIGN.md §29.5, criterion 120)
@@ -14,10 +14,15 @@ import type { Run, RunStatus } from "./types";
 // the table's status words, as the page's RunStatus type
 const STATUSES: Record<string, RunStatus> = { queued: "queued", running: "running", done: "done", failed: "failed", canceled: "canceled" };
 
-// build a page `Run` from one row of the shared table (music rows become music runs; a deleted row is in the bin)
-function tableRun(entry: { id: string; mode: string; status: string; pinned: boolean; deleted: boolean; project: string | null }): Run {
+// build a page `Run` from one row of the shared table (music rows become music runs; a deleted row is in the bin; `items_in_bin` is how many of its
+// own pictures, or tracks for a music run, are in the bin, as `binned_images` or `binned_tracks`)
+type TableRun = { id: string; mode: string; status: string; pinned: boolean; deleted: boolean; project: string | null; items_in_bin: number };
+function tableRun(entry: TableRun): Run {
   const extra = { id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned, deleted_at: entry.deleted ? "2026-10-02T00:00:00.000Z" : null, project_id: entry.project };
-  return entry.mode === "music" ? makeMusicRun(extra) : makeRun({ ...extra, mode: entry.mode as "generate" | "edit" });
+  const items = Array.from({ length: entry.items_in_bin }, (_, i) => i);
+  return entry.mode === "music"
+    ? makeMusicRun({ ...extra, binned_tracks: items.map((i) => makeBinnedTrack(i)) })
+    : makeRun({ ...extra, mode: entry.mode as "generate" | "edit", binned_images: items.map((i) => makeBinnedImage(i)) });
 }
 
 describe("the shared table of cases", () => {
@@ -30,12 +35,19 @@ describe("the shared table of cases", () => {
     });
   }
 
-  // the page counts the table the way the server counts it in SQL: both must give the numbers the table lists
+  // the page counts the table the way the server counts it in SQL: both must give the numbers the table lists. The bin counts THINGS (DESIGN.md §33.1): each
+  // run in it once, and each picture or track in it of a run that is in the history once (one of a run that is itself in the bin is not counted).
   it("the page's counts of the table agree with the server's", () => {
+    const inTab = (kind: "image" | "music", project: string | null) => runs.filter((run) => (run.mode === "music") === (kind === "music") && matches(run, withProject(NO_FILTER, project)));
     const count = (kind: "image" | "music", filter: HistoryFilter) =>
       runs.filter((run) => (run.mode === "music") === (kind === "music") && matches(run, filter)).length;
+    const items = (kind: "image" | "music", project: string | null) =>
+      inTab(kind, project).reduce((sum, run) => sum + run.binned_images.length + run.binned_tracks.length, 0); // `inTab` is the history: not the runs in the bin
     const of = (kind: "image" | "music", project: string | null = null) => ({
-      all: count(kind, withProject(NO_FILTER, project)), kept: count(kind, withProject(ONLY_KEPT, project)), deleted: count(kind, withProject(ONLY_DELETED, project)),
+      all: count(kind, withProject(NO_FILTER, project)), kept: count(kind, withProject(ONLY_KEPT, project)),
+      deleted: runs.filter((run) => (run.mode === "music") === (kind === "music") && matches(run, withProject({ ...NO_FILTER, deleted: null }, project)) && run.deleted_at !== null).length
+        + items(kind, project),
+      deleted_items: items(kind, project),
     });
     expect({ image: of("image"), music: of("music") }).toEqual(cases.counts);
     // ... and within each project, and within "no project": the numbers on the filter bar follow the project chosen (DESIGN.md §32.5)

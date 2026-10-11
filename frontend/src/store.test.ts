@@ -3,7 +3,7 @@ import { toApiError } from "./api";
 import { EXPIRY_WARNING_DAYS, WORKING_IN_KEPT_NOTE, binNote, binnedText, canceledText, duration, emptiedText, expiryText, leftTheViewText, restoredText, seedText, timeAgo, unkeptText } from "./format";
 import { NO_FILTER, ONLY_KEPT } from "./history";
 import { initialState, reducer, type State } from "./store";
-import { STATUS, makeRun } from "./testdata";
+import { STATUS, makeBinnedImage, makeBinnedTrack, makeImage, makeMusicRun, makeRun, makeTrack } from "./testdata";
 
 const withRuns = (...runs: ReturnType<typeof makeRun>[]): State =>
   reducer({ ...initialState, status: STATUS }, { type: "runsLoaded", page: { runs, next_before: null }, append: false });
@@ -298,15 +298,15 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
   });
 
   it("the counts are kept as the server gave them, with the project they describe", () => {
-    const counts = { image: { all: 3, kept: 1, deleted: 1 }, music: { all: 2, kept: 0, deleted: 0 } };
+    const counts = { image: { all: 3, kept: 1, deleted: 1, deleted_items: 0 }, music: { all: 2, kept: 0, deleted: 0, deleted_items: 0 } };
     expect(reducer(initialState, { type: "counts", counts, project: null })).toMatchObject({ counts, countsProject: null });
     // within a project the counts say which: a number for one project must never be shown as another's
     expect(reducer(initialState, { type: "counts", counts, project: "p1" })).toMatchObject({ counts, countsProject: "p1" });
   });
 
   it("the whole history's counts are kept apart from a project's, for Empty bin", () => {
-    const whole = { image: { all: 9, kept: 4, deleted: 3 }, music: { all: 2, kept: 1, deleted: 1 } };
-    const inProject = { image: { all: 2, kept: 2, deleted: 0 }, music: { all: 0, kept: 0, deleted: 0 } };
+    const whole = { image: { all: 9, kept: 4, deleted: 3, deleted_items: 0 }, music: { all: 2, kept: 1, deleted: 1, deleted_items: 0 } };
+    const inProject = { image: { all: 2, kept: 2, deleted: 0, deleted_items: 0 }, music: { all: 0, kept: 0, deleted: 0, deleted_items: 0 } };
     let state = reducer(initialState, { type: "totals", counts: whole });
     state = reducer(state, { type: "counts", counts: inProject, project: "p1" });
     expect(state.totals).toEqual(whole);
@@ -336,6 +336,24 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     expect({ counts: state.countsStale, projects: state.projectsStale }).toEqual({ counts: base.counts + 3, projects: base.projects + 3 }); // taken out
     state = reducer(state, { type: "runDeleted", id: "r" });
     expect({ counts: state.countsStale, projects: state.projectsStale }).toEqual({ counts: base.counts + 4, projects: base.projects + 4 }); // gone (it may have been filed)
+  });
+
+  // A picture or track sent to the bin on its own, or restored, changes the Deleted count (it counts things, DESIGN.md §33.1), so the page must ask again;
+  // a run that merely gets a new prompt must not make it ask, and the projects' numbers (runs in the history) do not move.
+  it("the counts are stale when a picture or track goes to the bin or comes back, but not for a run that only moves along", () => {
+    let state = withRuns(makeRun({ id: "r", images: [makeImage(0), makeImage(1)] }));
+    const base = { counts: state.countsStale, projects: state.projectsStale };
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, images: [makeImage(0)], binned_images: [makeBinnedImage(1)] } as never });
+    expect(state.countsStale).toBe(base.counts + 1); // a picture went to the bin
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, prompt: "edited" } });
+    expect(state.countsStale).toBe(base.counts + 1); // nothing moved
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.r, images: [makeImage(0), makeImage(1)], binned_images: [] } as never });
+    expect(state.countsStale).toBe(base.counts + 2); // it came back
+    expect(state.projectsStale).toBe(base.projects);
+    let music = withRuns(makeMusicRun({ id: "m", tracks: [makeTrack(0), makeTrack(1)] }) as never);
+    const before = music.countsStale;
+    music = reducer(music, { type: "runUpsert", run: { ...music.runs.m, tracks: [makeTrack(0)], binned_tracks: [makeBinnedTrack(1)] } as never });
+    expect(music.countsStale).toBe(before + 1); // the same for a track
   });
 
   it("a new run does not make the projects stale (it is in none), but a run kept or deleted does not either", () => {

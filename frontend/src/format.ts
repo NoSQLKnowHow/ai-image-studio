@@ -161,9 +161,135 @@ export function binNote(
   return `${since} It will be deleted for good around ${day(run.purge_at as string)}, in ${days} ${days === 1 ? "day" : "days"}.`;
 }
 
-/** The toast after the bin was emptied (§30.1). */
-export function emptiedText(n: number): string {
-  return n === 0 ? "The bin was already empty." : `Emptied the bin: ${n} ${n === 1 ? "run" : "runs"} deleted for good.`;
+/** What a bin holds, as it is said: runs, and the pictures and tracks of runs that stay (DESIGN.md §33.1). */
+interface Things {
+  runs: number;
+  pictures: number;
+  tracks: number;
+}
+
+/** "1 run, 2 pictures and 1 track": what there is, leaving out what there is none of, singular where there is one. */
+function thingsText({ runs, pictures, tracks }: Things): string {
+  const parts = [
+    runs ? `${runs} ${runs === 1 ? "run" : "runs"}` : "",
+    pictures ? `${pictures} ${pictures === 1 ? "picture" : "pictures"}` : "",
+    tracks ? `${tracks} ${tracks === 1 ? "track" : "tracks"}` : "",
+  ].filter(Boolean);
+  return parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
+}
+
+/** The toast after the bin was emptied (§30.1, §33.1): how many runs, and how many pictures and tracks of runs that stay (`items` is the server's total of
+ *  the two; `kinds` is how many of each there were before, from the counts, so the toast can say which). With none of the second kind it is the sentence
+ *  it always was. */
+export function emptiedText(runs: number, items = 0, kinds?: { pictures: number; tracks: number }): string {
+  if (runs === 0 && items === 0) return "The bin was already empty.";
+  // the counts and the answer can differ if something changed in between: then all that is certain is the answer's total, and it is called pictures
+  const known = kinds && kinds.pictures + kinds.tracks === items ? kinds : { pictures: items, tracks: 0 };
+  return `Emptied the bin: ${thingsText({ runs, ...known })} deleted for good.`;
+}
+
+/** What is in the bin, per tab: how many runs, and how many pictures (Images) or tracks (Music) of runs that are still in the history. Made from the
+ *  server's counts, whose `deleted` is the two added together (§33.1). */
+export interface BinTab { runs: number; items: number }
+export interface BinContents { image: BinTab; music: BinTab }
+export function binContents(counts: { image: { deleted: number; deleted_items: number }; music: { deleted: number; deleted_items: number } }): BinContents {
+  const tab = (c: { deleted: number; deleted_items: number }): BinTab => ({ runs: c.deleted - c.deleted_items, items: c.deleted_items });
+  return { image: tab(counts.image), music: tab(counts.music) };
+}
+
+/** The question Empty bin asks (§30.1, §33.1): how many runs, pictures and tracks go, and how many on each tab, so that it is concrete. With only runs in
+ *  the bin it is the question it was before a picture could be deleted alone. */
+export function emptyBinQuestion(bin: BinContents, wholeBin: boolean): string {
+  const items = bin.image.items + bin.music.items;
+  const what = thingsText({ runs: bin.image.runs + bin.music.runs, pictures: bin.image.items, tracks: bin.music.items });
+  // how many are on each tab: just the numbers when it is only runs (as ever), else each tab's runs and pictures or tracks, since "3 on Images" would not say of what
+  const onTab = (tab: BinTab, name: string, things: (tab: BinTab) => Things): string =>
+    !tab.runs && !tab.items ? "" : items === 0 ? `${tab.runs} on ${name}` : `${thingsText(things(tab))} on ${name}`;
+  const parts = [
+    onTab(bin.image, "Images", (tab) => ({ runs: tab.runs, pictures: tab.items, tracks: 0 })),
+    onTab(bin.music, "Music", (tab) => ({ runs: tab.runs, pictures: 0, tracks: tab.items })),
+  ].filter(Boolean).join(", ");
+  const text = `Delete ${what} for good${parts ? ` (${parts})` : ""}, with their files. This can't be undone.`;
+  // with a project chosen, the bar on screen shows only that project's part of the bin: say that the whole bin goes
+  return wholeBin ? `${text} This is the whole bin, not only the project you are looking at.` : text;
+}
+
+// ------------------------------------------------------------------ one picture or track in the bin (DESIGN.md §33)
+/** A picture or track of a run as the words about deleting it name it: which one among the run's pictures that are not in the bin, and its seed.
+ *  `position` is null for one that is in the bin already (it has no place until it is restored). */
+export interface ItemRef {
+  kind: "image" | "track";
+  position: number | null; // 1-based, among the run's pictures (or tracks) that are not in the bin
+  of: number; // how many the run has that are not in the bin
+  seed: number;
+}
+
+const itemNoun = (kind: ItemRef["kind"]): string => (kind === "image" ? "picture" : "track");
+const itemWhich = (kind: ItemRef["kind"]): string => (kind === "image" ? "image" : "version");
+
+/** "image 2 of 4, seed 1234" (a track: "version 2 of 3, seed 5"); a lone one, or one in the bin, is only its seed: "seed 1234". */
+export function itemName(item: ItemRef): string {
+  return item.position !== null && item.of > 1 ? `${itemWhich(item.kind)} ${item.position} of ${item.of}, seed ${item.seed}` : `seed ${item.seed}`;
+}
+
+/** The title of the question: it is for good when the picture is in the bin already. */
+export function deleteItemTitle(item: ItemRef, forever: boolean): string {
+  return `Delete this ${itemNoun(item.kind)}${forever ? " for good" : ""}?`;
+}
+
+/** What the question about deleting one picture or track says (§33.1). Four cases: it moves to the bin; it is the run's last, so the run moves; there is
+ *  no bin, so it goes for good; it is in the bin already (Delete forever). A run that is filed in a project is said to be: the run stays in it with
+ *  its other pictures, or, when the whole run goes, what that means for the project (§32.3 item 5). `projectName` is null if the page does not know it. */
+export interface DeleteItemAsk {
+  item: ItemRef;
+  binDays: number; // 0: there is no bin
+  last: boolean; // the run's last picture or track
+  forever: boolean; // it is in the bin already
+  filed: boolean; // the run is in a project
+  projectName: string | null;
+}
+export function deleteItemQuestion(ask: DeleteItemAsk): string {
+  const { item, binDays, last, forever, filed, projectName } = ask;
+  const noun = itemNoun(item.kind);
+  const lead = `(${itemName(item)}.)`;
+  const picture = item.kind === "image";
+  const project = projectName === null ? "a project" : `the project “${projectName}”`;
+  const days = `${binDays} ${binDays === 1 ? "day" : "days"}`;
+  // what is removed from the disk: a picture has its thumbnail and its two kinds of 4K copy beside it (§33.2 item 2)
+  const files = picture ? "its file, its thumbnail and its 4K and Enlarge copies are" : "its file is";
+  if (forever) return `${lead} ${files.charAt(0).toUpperCase()}${files.slice(1)} removed from the Spark. This can't be undone.`;
+  if (binDays > 0) {
+    if (last) return `${lead} This is the last ${noun} of this run, so the whole run moves to Deleted and stays there for ${days}; you can restore it from there.${filed ? ` Restoring it puts it back in ${project}.` : ""}`;
+    return `${lead} It moves to Deleted and stays there for ${days}; you can restore it from there.${picture ? " Its 4K and Enlarge copies go with it." : ""}${filed ? ` The run stays in ${project} with its other ${noun}s.` : ""}`;
+  }
+  if (last) return `${lead} This is the last ${noun} of this run, so the whole run is deleted for good, with its files. This can't be undone.${filed ? ` It is in ${project}, which loses it.` : ""}`;
+  return `${lead} It is deleted for good: ${files} removed from the Spark. This can't be undone.${filed ? ` The run stays in ${project} with its other ${noun}s.` : ""}`;
+}
+
+/** The line over a card of deleted pictures (§33.1): the run they came from is still in the history, so the card says which run, by its date. The
+ *  date is short ("12 Oct") in the given locale and time zone (the defaults are the browser's). */
+export function runMadeText(run: { created_at: string }, format: { locale?: string; timeZone?: string } = {}): string {
+  return `From a run made on ${new Date(run.created_at).toLocaleDateString(format.locale, { day: "numeric", month: "short", timeZone: format.timeZone })}`;
+}
+
+/** "image 2" or "version 2": which one, without its seed, for a toast. */
+function itemPlace(item: ItemRef): string {
+  return item.position !== null ? `${itemWhich(item.kind)} ${item.position}` : `a ${itemNoun(item.kind)}`;
+}
+
+/** The toast after a picture or track was sent to the bin (§33.1): which one, of which run, and for how long it stays. */
+export function itemBinnedText(run: { prompt: string }, item: ItemRef, binDays: number): string {
+  return `Deleted ${itemPlace(item)} of “${shorten(run.prompt)}”. It stays in Deleted for ${binDays} ${binDays === 1 ? "day" : "days"}.`;
+}
+
+/** The toast after a picture or track was deleted for good (no bin, or Delete forever). */
+export function itemDeletedText(run: { prompt: string }, item: ItemRef): string {
+  return `Deleted ${itemPlace(item)} of “${shorten(run.prompt)}” for good.`;
+}
+
+/** The toast after a picture or track was restored: it is back at its own place, so which place it is is said. */
+export function itemRestoredText(run: { prompt: string }, item: ItemRef): string {
+  return `Restored ${itemPlace(item)} of “${shorten(run.prompt)}”.`;
 }
 
 // ------------------------------------------------------------------ project folders (DESIGN.md §32)

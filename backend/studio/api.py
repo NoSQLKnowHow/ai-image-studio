@@ -25,7 +25,7 @@ from . import fourk as fourk_mod
 from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import (
-    ImageNotFound, InputStorageError, JobManager, ModelRefused, ProjectNameTaken, ProjectNotFound, QueueFull, RunConflict, RunNotFound,
+    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, QueueFull, RunConflict, RunNotFound,
 )
 from .naming import content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename
 from .projects import BadProjectName
@@ -467,8 +467,51 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     @app.delete("/api/bin")
     async def empty_bin(request: Request) -> Any:
-        """Delete for good every run in the bin, with its files."""
-        return {"deleted": await jobs_of(request).empty_bin()}
+        """Delete for good everything in the bin, with its files (DESIGN.md §30.5, §33.3): `deleted` is how many runs, `pictures` how many pictures
+        and tracks of runs that stay (the ones in a run that was deleted went with it and are not counted)."""
+        runs, pictures = await jobs_of(request).empty_bin()
+        return {"deleted": runs, "pictures": pictures}
+
+    # A single picture or track in the bin (DESIGN.md §33.3). The three routes are the same for both, so they are made once and registered for each:
+    # send it to the bin (`bin_off` when there is no bin, as for a run), take it out, and delete it for good. All three answer 404 for an id that
+    # is not there and 409, with a code, for a refusal (`PictureConflict`); the words of each are the job manager's.
+    def picture_routes(kind: str, prefix: str, label: str) -> None:
+        @app.post(f"/api/{prefix}/{{item_id}}/bin", name=f"bin_{kind}")
+        async def bin_item(item_id: str, request: Request) -> Any:
+            if settings.bin_days <= 0:
+                return _error(409, f"The bin is turned off (STUDIO_BIN_DAYS=0): a deleted {label.lower()} is deleted for good.", "bin_off")
+            try:
+                check_id(item_id)
+                moved, run = await jobs_of(request).bin_picture(kind, item_id)
+            except (StorageError, ImageNotFound):
+                return _error(404, f"{label} not found.", "not_found")
+            except PictureConflict as exc:
+                return _error(409, exc.detail, exc.code)
+            return {"moved": moved, "run": run}
+
+        @app.post(f"/api/{prefix}/{{item_id}}/restore", name=f"restore_{kind}")
+        async def restore_item(item_id: str, request: Request) -> Any:
+            try:
+                check_id(item_id)
+                return await jobs_of(request).restore_picture(kind, item_id)
+            except (StorageError, ImageNotFound):
+                return _error(404, f"{label} not found.", "not_found")
+            except PictureConflict as exc:
+                return _error(409, exc.detail, exc.code)
+
+        @app.delete(f"/api/{prefix}/{{item_id}}", status_code=204, name=f"delete_{kind}")
+        async def delete_item(item_id: str, request: Request) -> Response:
+            try:
+                check_id(item_id)
+                await jobs_of(request).delete_picture(kind, item_id)
+            except (StorageError, ImageNotFound):
+                return _error(404, f"{label} not found.", "not_found")
+            except PictureConflict as exc:
+                return _error(409, exc.detail, exc.code)
+            return Response(status_code=204)
+
+    picture_routes("image", "images", "Picture")
+    picture_routes("track", "tracks", "Track")
 
     async def _image_file(request: Request, image_id: str, thumb: bool) -> tuple[Any, Optional[bytes]]:
         """(image row, file contents), or (None, None) when there's no such image.

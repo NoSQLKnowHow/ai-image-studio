@@ -154,6 +154,18 @@ class Storage:
         shutil.rmtree(self.thumbs / run_id, ignore_errors=True)
         shutil.rmtree(self.inputs / run_id, ignore_errors=True)
 
+    def delete_picture_files(self, path_rel: str, thumb_rel: str | None) -> None:
+        """The files of one result picture, and nothing else of its run (DESIGN.md §33.3): the picture, its thumbnail and its 4K copies, the Make 4K
+        one and the Enlarge one (§27.3, §28.2), which go with it (§33.2 item 8). The run's folders stay. A file that is not there is not an error."""
+        for path in (self.abs(path_rel), self.four_k_path(path_rel), self.enlarged_path(path_rel)):
+            path.unlink(missing_ok=True)
+        if thumb_rel:
+            self.abs(thumb_rel).unlink(missing_ok=True)
+
+    def delete_track_file(self, path_rel: str) -> None:
+        """The file of one track (DESIGN.md §33.3); the run's folder stays."""
+        self.abs(path_rel).unlink(missing_ok=True)
+
     def delete_staged_files(self, upload_id: str) -> None:
         check_id(upload_id)
         (self.staged / f"{upload_id}.png").unlink(missing_ok=True)

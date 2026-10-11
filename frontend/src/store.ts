@@ -133,7 +133,10 @@ export function reducer(state: State, action: Action): State {
       const runs = { ...state.runs, [run.id]: run };
       // a run filed, moved or taken out changes the counts (those of the project, and the numbers on the Project drop-down) and the projects' own list
       const projectChange = !!current && current.project_id !== run.project_id;
-      const countsChange = !current || current.pinned !== run.pinned || (current.deleted_at === null) !== (run.deleted_at === null) || projectChange; // a new run, or one kept, un-kept, deleted, restored or filed: the counts have moved
+      // a picture or track sent to the bin or restored moves the Deleted count too (it counts things, DESIGN.md §33.1)
+      const itemsInTheBin = (r: Run) => r.binned_images.length + r.binned_tracks.length;
+      const countsChange = !current || current.pinned !== run.pinned || (current.deleted_at === null) !== (run.deleted_at === null) || projectChange
+        || itemsInTheBin(current) !== itemsInTheBin(run); // a new run, or one kept, un-kept, deleted, restored, filed, or with a picture deleted or restored: the counts have moved
       return {
         ...state, runs, order: current ? state.order : newestFirst(runs),
         countsStale: state.countsStale + (countsChange ? 1 : 0),

@@ -158,7 +158,7 @@ def test_the_counts_know_the_bin(seeded):
     db.bin_run(gone, "2026-10-05T10:00:00.000Z")
     db.bin_run(kept_gone, "2026-10-05T10:00:00.000Z")
     from studio.runfilter import COUNTED
-    assert db.run_counts(COUNTED)["image"] == {"all": 1, "kept": 0, "deleted": 2}
+    assert db.run_counts(COUNTED)["image"] == {"all": 1, "kept": 0, "deleted": 2, "deleted_items": 0}
     assert here
 
 
@@ -393,22 +393,22 @@ def test_emptying_the_bin_deletes_what_is_in_it_and_only_that(client):
     storage = client.app.state.storage
     with captured(client) as events:
         response = client.delete("/api/bin")
-    assert response.status_code == 200 and response.json() == {"deleted": 2}
+    assert response.status_code == 200 and response.json() == {"deleted": 2, "pictures": 0}
     for run in (one, two):
         assert client.get(f"/api/runs/{run['id']}").status_code == 404 and not on_disk(storage, run["id"])
     assert client.get(f"/api/runs/{kept['id']}").status_code == 200 and on_disk(storage, kept["id"])
     assert sorted(data["id"] for name, data in events if name == "run.deleted") == sorted([one["id"], two["id"]])
-    assert client.delete("/api/bin").json() == {"deleted": 0}
+    assert client.delete("/api/bin").json() == {"deleted": 0, "pictures": 0}
 
 
 # /api/runs/counts moves a run from "all" to "deleted" when it is binned, and back when it is restored
 def test_the_counts_follow_the_bin(client):
     run, other = finished(client, "a picture"), finished(client, "another")
-    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0}
+    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0}
     bin_it(client, run["id"])
-    assert client.get("/api/runs/counts").json()["image"] == {"all": 1, "kept": 0, "deleted": 1}
+    assert client.get("/api/runs/counts").json()["image"] == {"all": 1, "kept": 0, "deleted": 1, "deleted_items": 0}
     client.post(f"/api/runs/{run['id']}/restore")
-    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0}
+    assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0}
     assert other
 
 

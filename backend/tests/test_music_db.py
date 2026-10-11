@@ -98,6 +98,14 @@ def make_v2(path: Path) -> None:
     conn.close()
 
 
+def columns_of(path: Path, table: str) -> list[tuple]:
+    conn = sqlite3.connect(path)
+    try:
+        return [tuple(row[1:]) for row in conn.execute(f"PRAGMA table_info({table})")]  # (name, type, notnull, default, pk); the id (row[0]) is its place
+    finally:
+        conn.close()
+
+
 def sql_of(path: Path, table: str) -> str:
     conn = sqlite3.connect(path)
     try:
@@ -174,8 +182,12 @@ def test_a_migrated_database_is_the_same_as_a_fresh_one(tmp_path):
     make_v2(migrated)
     Database(migrated).close()
     Database(fresh).close()
-    for table in ("runs", "tracks", "images", "run_inputs"):
+    # `runs` is rebuilt by the migration, so its text is the same. `images` and `tracks` got their newest column by ALTER, which SQLite writes with
+    # its own spacing, so those are compared by what each column is (name, type, not null, default, key) and in what order, not by the text.
+    for table in ("runs", "run_inputs"):
         assert sql_of(migrated, table) == sql_of(fresh, table), table
+    for table in ("tracks", "images"):
+        assert columns_of(migrated, table) == columns_of(fresh, table), table
     conn = sqlite3.connect(migrated)
     try:
         indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")}

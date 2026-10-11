@@ -1,5 +1,5 @@
 // Fixtures for unit tests, shaped like the real API responses.
-import type { Capabilities, ImageRun, MusicRun, Status } from "./types";
+import type { BinnedImage, BinnedTrack, Capabilities, ImageInfo, ImageRun, MusicRun, Status, TrackInfo } from "./types";
 
 export const CAPS: Capabilities = {
   pipeline: "fake",
@@ -40,6 +40,33 @@ export const CAPS: Capabilities = {
   device: { name: "fake (no GPU used)" },
 };
 
+/** One result picture as the server sends it (DESIGN.md §33.3): `idx` is its place in the run, `seed` what names it. Its id says both. */
+export function makeImage(idx: number, overrides: Partial<ImageInfo> = {}): ImageInfo {
+  const id = overrides.id ?? `image${idx}`;
+  return {
+    id, idx, seed: 100 + idx, width: 2048, height: 2048, has_alpha: false,
+    url: `/api/images/${id}`, thumb_url: `/api/images/${id}/thumb`, download_url: `/api/images/${id}?download=1`,
+    can_4k: false, four_k_size: null, can_enlarge: false, enlarge_size: null, four_k: null,
+    ...overrides,
+  };
+}
+
+/** A result picture that is in the bin on its own. */
+export function makeBinnedImage(idx: number, overrides: Partial<BinnedImage> = {}): BinnedImage {
+  return { ...makeImage(idx), deleted_at: "2026-10-14T10:00:00.000Z", purge_at: "2026-11-13T10:00:00.000Z", ...overrides };
+}
+
+/** One track of a music run, 30 seconds long. */
+export function makeTrack(idx: number, overrides: Partial<TrackInfo> = {}): TrackInfo {
+  const id = overrides.id ?? `track${idx}`;
+  return { id, idx, seed: 200 + idx, seconds: 30, sample_rate: 24000, channels: 1, bytes: 1440044, url: `/api/audio/${id}`, download_url: `/api/audio/${id}?download=1`, ...overrides };
+}
+
+/** A track that is in the bin on its own. */
+export function makeBinnedTrack(idx: number, overrides: Partial<BinnedTrack> = {}): BinnedTrack {
+  return { ...makeTrack(idx), deleted_at: "2026-10-14T10:00:00.000Z", purge_at: "2026-11-13T10:00:00.000Z", ...overrides };
+}
+
 let counter = 0;
 export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
   counter += 1;
@@ -66,7 +93,9 @@ export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
     lyrics: null,
     inputs: [],
     images: [],
+    binned_images: [],
     tracks: [],
+    binned_tracks: [],
     ...overrides,
   };
 }
@@ -98,13 +127,15 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
     lyrics: null,
     inputs: [],
     images: [],
+    binned_images: [],
     tracks: [],
+    binned_tracks: [],
     ...overrides,
   };
 }
 
 export const STATUS: Status = {
-  version: "1.14",
+  version: "1.15",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", model: "image", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10, enlarge_waiting: [] },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },

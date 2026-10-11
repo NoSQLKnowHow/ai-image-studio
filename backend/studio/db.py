@@ -15,16 +15,22 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
 from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
 
-# 5: the projects table and runs.project_id, for project folders (DESIGN.md §32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
-# 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 5
+# 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (DESIGN.md §33.3); 5: the projects table and runs.project_id, for
+# project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30); 3: mode 'music', lyrics, tracks (§26.5)
+SCHEMA_VERSION = 6
 log = logging.getLogger("studio.db")
+
+# A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
+_FINISHED = ("done", "failed", "canceled")
+# The two kinds of thing a run holds that can be sent to the bin one at a time, and the table each is in
+_ITEM_TABLES = {"image": "images", "track": "tracks"}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -82,9 +88,12 @@ CREATE TABLE IF NOT EXISTS images (
     bytes       INTEGER NOT NULL,
     path        TEXT NOT NULL,
     thumb_path  TEXT,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    deleted_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, seq);
+-- `images.deleted_at` and `tracks.deleted_at` (DESIGN.md §33.3) are null, or the moment a single picture or track was sent to the bin. It stays in
+-- the table, and its files stay on the disk, until its days are over; the run's own `deleted_at` is a different thing (the whole run in the bin).
 -- The tracks of a music run (DESIGN.md §26.5): one WAV file each, under <data>/audio/<run>/.
 CREATE TABLE IF NOT EXISTS tracks (
     id          TEXT PRIMARY KEY,
@@ -96,7 +105,8 @@ CREATE TABLE IF NOT EXISTS tracks (
     channels    INTEGER NOT NULL,
     bytes       INTEGER NOT NULL,
     path        TEXT NOT NULL,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    deleted_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_tracks_run ON tracks(run_id, idx);
 CREATE INDEX IF NOT EXISTS idx_images_run ON images(run_id, idx);
@@ -155,6 +165,7 @@ class Database:
                 self._rebuild_runs_for_music()
             self._add_bin_columns()
             self._add_project_column()
+            self._add_picture_bin_columns()
             self._record_version(previous)
             self._queue_order = self._choose_queue_order()
 
@@ -238,6 +249,16 @@ class Database:
             self._conn.execute("ALTER TABLE runs ADD COLUMN project_id TEXT")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)")
 
+    def _add_picture_bin_columns(self) -> None:
+        """Schema 6: the column that sends a single picture or track to the bin (DESIGN.md §33.3), added to the two tables that lack it; then the
+        indexes on it (which cannot be made before the column exists, so they are not in `_SCHEMA`). The index is what lets the daily clean-up find
+        what is due without reading every picture."""
+        for table in ("images", "tracks"):
+            have = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
+            if "deleted_at" not in have:
+                self._conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
+            self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_deleted ON {table}(deleted_at)")
+
     def _record_version(self, previous: Optional[int]) -> None:
         with self.tx() as c:
             if previous is None:
@@ -320,13 +341,32 @@ class Database:
         rows = self._all(f"SELECT * FROM runs{where} ORDER BY seq DESC LIMIT ?", (*values, limit + 1))
         return rows[:limit], len(rows) > limit
 
+    def _count_bin(self, run_filter: RunFilter, modes: Sequence[str]) -> tuple[int, int]:
+        """(things in the bin, of which pictures or tracks) for one tab, within whatever else the filter says (kept, project). The runs in the
+        bin count one each; a picture or track in the bin counts one when its run is still in the history (one in a run that is itself in the
+        bin is not listed, §33.2 item 5, so it is not counted)."""
+        clauses, values = replace(run_filter, deleted=None).conditions()  # the filter without its bin rule: it is applied by hand below
+        clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
+        args = (*values, *modes)
+        where = " AND ".join(clauses)
+        runs = self._one(f"SELECT COUNT(*) AS n FROM runs WHERE {where} AND deleted_at IS NOT NULL", args)["n"]
+        history = f"SELECT id FROM runs WHERE {where} AND deleted_at IS NULL"
+        items = sum(self._one(f"SELECT COUNT(*) AS n FROM {table} WHERE deleted_at IS NOT NULL AND run_id IN ({history})", args)["n"]
+                    for table in _ITEM_TABLES.values())
+        return runs + items, items
+
     def run_counts(self, counted: Mapping[str, RunFilter]) -> dict[str, dict[str, int]]:
-        """How many runs each tab holds, for each named filter: {kind: {name: n}} (DESIGN.md §29.6)."""
+        """How many runs each tab holds, for each named filter: {kind: {name: n}} (DESIGN.md §29.6). A filter on the bin counts things (§33.1)."""
         counts: dict[str, dict[str, int]] = {}
         # one count per tab (the run modes the tab shows) and per named filter
         for kind, modes in KINDS.items():
             counts[kind] = {}
             for name, run_filter in counted.items():
+                # the bin counts THINGS, not runs (DESIGN.md §33.1): each run in it, and each picture or track in it of a run that is not. The
+                # pictures alone are answered beside it, as `<name>_items`, so a page can say "3 runs and 2 pictures"
+                if run_filter.deleted is True:
+                    counts[kind][name], counts[kind][f"{name}_items"] = self._count_bin(run_filter, modes)
+                    continue
                 clauses, values = run_filter.conditions()
                 # restrict the count to the tab's modes: one `?` placeholder for each
                 clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
@@ -461,6 +501,101 @@ class Database:
             self._delete_rows(c, [run_id])
             return "deleted"
 
+    # ------------------------------------------- single pictures and tracks in the bin (DESIGN.md §33)
+    # Each of these takes `kind` ("image" or "track") and the item's id, does everything in one transaction, and answers (result, run id); the
+    # run id is None when the item was not found. They never touch a file: the job manager removes files after the rows are gone.
+    def _item_and_run(self, c: sqlite3.Connection, kind: str, item_id: str) -> tuple[Optional[sqlite3.Row], Optional[sqlite3.Row]]:
+        item = c.execute(f"SELECT * FROM {_ITEM_TABLES[kind]} WHERE id=?", (item_id,)).fetchone()
+        # a staged upload is an image no run owns: it is not part of the history, so it is not found here
+        if item is None or item["run_id"] is None:
+            return None, None
+        return item, c.execute("SELECT status, deleted_at FROM runs WHERE id=?", (item["run_id"],)).fetchone()
+
+    def _others_present(self, c: sqlite3.Connection, kind: str, run_id: str, item_id: str) -> int:
+        """How many of a run's pictures (or tracks) other than this one are not in the bin: 0 means this is the run's last."""
+        only_results = " AND kind='output'" if kind == "image" else ""  # an edit's source images are in the images table too
+        row = c.execute(
+            f"SELECT COUNT(*) AS n FROM {_ITEM_TABLES[kind]} WHERE run_id=? AND deleted_at IS NULL AND id != ?{only_results}", (run_id, item_id)).fetchone()
+        return row["n"]
+
+    def bin_picture(self, kind: str, item_id: str, now: str) -> tuple[str, Optional[str]]:
+        """Send a picture or track to the bin. Results: 'picture' (it is in the bin, also when it already was: its date does not move), 'run'
+        (it was the run's last, so the run went to the bin instead, §33.2 item 3), 'not_found', 'not_a_result' (an edit's source image),
+        'not_finished' (the run is queued or running) and 'run_in_bin'."""
+        with self.tx() as c:
+            item, run = self._item_and_run(c, kind, item_id)
+            if item is None:
+                return "not_found", None
+            run_id = item["run_id"]
+            if kind == "image" and item["kind"] != "output":
+                return "not_a_result", run_id
+            if run["status"] not in _FINISHED:
+                return "not_finished", run_id
+            if run["deleted_at"] is not None:
+                return "run_in_bin", run_id
+            if item["deleted_at"] is not None:
+                return "picture", run_id
+            # the last picture is not deleted by itself: the run goes, with all its pictures, as if Delete had been pressed on the run
+            if self._others_present(c, kind, run_id, item_id) == 0:
+                c.execute("UPDATE runs SET deleted_at=? WHERE id=?", (now, run_id))
+                return "run", run_id
+            c.execute(f"UPDATE {_ITEM_TABLES[kind]} SET deleted_at=? WHERE id=?", (now, item_id))
+            return "picture", run_id
+
+    def restore_picture(self, kind: str, item_id: str) -> tuple[str, Optional[str]]:
+        """Take a picture or track out of the bin, back into its run at its own place (its `idx` never changed). Results: 'restored',
+        'not_found', 'not_a_result', 'not_in_bin' and 'run_in_bin' (the run has to be restored first, §33.2 item 6)."""
+        with self.tx() as c:
+            item, run = self._item_and_run(c, kind, item_id)
+            if item is None:
+                return "not_found", None
+            run_id = item["run_id"]
+            if kind == "image" and item["kind"] != "output":
+                return "not_a_result", run_id
+            if item["deleted_at"] is None:
+                return "not_in_bin", run_id
+            if run["deleted_at"] is not None:
+                return "run_in_bin", run_id
+            c.execute(f"UPDATE {_ITEM_TABLES[kind]} SET deleted_at=NULL WHERE id=?", (item_id,))
+            return "restored", run_id
+
+    def delete_picture(self, kind: str, item_id: str) -> tuple[str, Optional[str], Optional[sqlite3.Row]]:
+        """Delete a picture or track for good (its files are the caller's to remove): (result, run id, the item's row). 'picture' (just it),
+        'run' (it was the run's last, so the whole run is deleted, §33.3), 'not_found', 'not_a_result', 'not_finished' and 'run_in_bin'. One in the
+        bin goes whatever the run is doing; one that is not needs a finished run in the history, as sending it to the bin does."""
+        with self.tx() as c:
+            item, run = self._item_and_run(c, kind, item_id)
+            if item is None:
+                return "not_found", None, None
+            run_id = item["run_id"]
+            if kind == "image" and item["kind"] != "output":
+                return "not_a_result", run_id, None
+            if item["deleted_at"] is None:
+                if run["status"] not in _FINISHED:
+                    return "not_finished", run_id, None
+                if run["deleted_at"] is not None:
+                    return "run_in_bin", run_id, None
+                if self._others_present(c, kind, run_id, item_id) == 0:
+                    self._delete_rows(c, [run_id])
+                    return "run", run_id, item
+            c.execute(f"DELETE FROM {_ITEM_TABLES[kind]} WHERE id=?", (item_id,))
+            return "picture", run_id, item
+
+    def purge_binned_items(self, cutoff: Optional[str], limit: int) -> list[tuple[str, sqlite3.Row]]:
+        """Delete for good up to `limit` pictures and `limit` tracks that went into the bin before `cutoff` (all of them when `cutoff` is None),
+        wherever their run is (§33.2 item 7). Returns [(kind, row)] so that the files can follow."""
+        purged: list[tuple[str, sqlite3.Row]] = []
+        with self.tx() as c:
+            for kind, table in _ITEM_TABLES.items():
+                if cutoff is None:
+                    rows = c.execute(f"SELECT * FROM {table} WHERE deleted_at IS NOT NULL ORDER BY deleted_at LIMIT ?", (limit,)).fetchall()
+                else:
+                    rows = c.execute(f"SELECT * FROM {table} WHERE deleted_at IS NOT NULL AND deleted_at < ? ORDER BY deleted_at LIMIT ?", (cutoff, limit)).fetchall()
+                for row in rows:
+                    c.execute(f"DELETE FROM {table} WHERE id=?", (row["id"],))
+                    purged.append((kind, row))
+        return purged
+
     # ---------------------------------------------------------------- projects (DESIGN.md §32)
     def list_projects(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
         """The projects, A to Z (ignoring case), each with how many runs of each tab it holds: {id, name, created_at, counts: {image, music}}.
@@ -577,7 +712,18 @@ class Database:
         if not run_ids:
             return result
         placeholders = ", ".join("?" for _ in run_ids)
-        for row in self._all(f"SELECT * FROM tracks WHERE run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
+        # the tracks that are not in the bin: what the card and the player show, numbered by position (DESIGN.md §33.1)
+        for row in self._all(f"SELECT * FROM tracks WHERE deleted_at IS NULL AND run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
+            result[row["run_id"]].append(row)
+        return result
+
+    def binned_tracks_for_runs(self, run_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+        """The tracks of each run that are in the bin, in the order they were made (DESIGN.md §33.3)."""
+        result: dict[str, list[sqlite3.Row]] = {rid: [] for rid in run_ids}
+        if not run_ids:
+            return result
+        placeholders = ", ".join("?" for _ in run_ids)
+        for row in self._all(f"SELECT * FROM tracks WHERE deleted_at IS NOT NULL AND run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
             result[row["run_id"]].append(row)
         return result
 
@@ -638,8 +784,23 @@ class Database:
         if not run_ids:
             return result
         placeholders = ", ".join("?" for _ in run_ids)
+        # the results that are not in the bin: what the card and the viewer show, numbered by position (DESIGN.md §33.1)
         rows = self._all(
-            f"SELECT * FROM images WHERE kind='output' AND run_id IN ({placeholders}) ORDER BY run_id, idx",
+            f"SELECT * FROM images WHERE kind='output' AND deleted_at IS NULL AND run_id IN ({placeholders}) ORDER BY run_id, idx",
+            tuple(run_ids),
+        )
+        for row in rows:
+            result[row["run_id"]].append(row)
+        return result
+
+    def binned_images_for_runs(self, run_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+        """The result pictures of each run that are in the bin, in the order they were made (DESIGN.md §33.3)."""
+        result: dict[str, list[sqlite3.Row]] = {rid: [] for rid in run_ids}
+        if not run_ids:
+            return result
+        placeholders = ", ".join("?" for _ in run_ids)
+        rows = self._all(
+            f"SELECT * FROM images WHERE kind='output' AND deleted_at IS NOT NULL AND run_id IN ({placeholders}) ORDER BY run_id, idx",
             tuple(run_ids),
         )
         for row in rows:

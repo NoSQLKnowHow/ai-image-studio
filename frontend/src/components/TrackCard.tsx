@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { binNote, duration, expiryText, keepLockedTitle, timeAgo, canceledText, workingNote, type ViewScope } from "../format";
 import { musicMeta, musicPhases, musicProgressText, musicTitle, trackLabel } from "../music";
-import type { MusicRun, WorkerState } from "../types";
+import type { MusicRun, TrackInfo, WorkerState } from "../types";
 import { CopyIcon, DownloadIcon, FolderIcon, NoteIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 
@@ -18,6 +18,7 @@ interface Props {
   onToggleKeep: () => void;
   onRestore: () => void; // take the run out of the bin (DESIGN.md §30)
   onDelete: () => void;
+  onDeleteTrack: (track: TrackInfo, position: number, of: number) => void; // Delete track (DESIGN.md §33.1): which one, of how many
   onCopy: () => void;
 }
 
@@ -68,7 +69,7 @@ function MusicProgress({ run, workerState }: { run: MusicRun; workerState: Worke
   );
 }
 
-export function TrackCard({ run, now, workerState, transient, viewScope, projects, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopy }: Props) {
+export function TrackCard({ run, now, workerState, transient, viewScope, projects, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onDeleteTrack, onCopy }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const label = statusLabel(run);
@@ -80,6 +81,11 @@ export function TrackCard({ run, now, workerState, transient, viewScope, project
   const filed = run.project_id !== null;
   const project = projectOf(run, projects.projects);
   const tracks = [...run.tracks].sort((a, b) => a.idx - b.idx);
+  // "Version 2 of 3": while the run is being made, of how many it was asked for; once it has finished, of how many there ARE, so that after one is deleted
+  // the others are numbered again by position (DESIGN.md §33.1)
+  const total = active ? run.options.tracks : tracks.length;
+  // a track can be deleted on its own from a finished run that is not in the bin, while it has another: its last would send the run, which Delete does (§33.1)
+  const canDeleteTrack = !active && !inBin && tracks.length > 1;
 
   return (
     <article className={`run-card music-card status-${run.status}`} data-run-id={run.id} aria-label={`${label}: music, ${musicTitle(run)}`}>
@@ -115,7 +121,7 @@ export function TrackCard({ run, now, workerState, transient, viewScope, project
         {tracks.length > 0 && (
           <ul className="tracks" aria-label="Tracks">
             {tracks.map((track, i) => {
-              const name = trackLabel(i, run.options.tracks, track.seconds, run.options.duration);
+              const name = trackLabel(i, total, track.seconds, run.options.duration);
               return (
                 <li key={track.id} className="track" data-track-id={track.id}>
                   <div className="track-head">
@@ -124,6 +130,12 @@ export function TrackCard({ run, now, workerState, transient, viewScope, project
                     <a className="button small ghost" href={track.download_url} download data-action="download" aria-label={`Download WAV, ${name}`}>
                       <DownloadIcon /> Download WAV
                     </a>
+                    {canDeleteTrack && (
+                      <button type="button" className="button small ghost danger" data-action="delete-track" aria-label={`Delete track: ${name}`}
+                        onClick={() => onDeleteTrack(track, i + 1, tracks.length)} title="Delete this track. It goes to Deleted for a while, and can be restored from there.">
+                        <TrashIcon /> Delete track
+                      </button>
+                    )}
                   </div>
                   <audio controls preload="metadata" src={track.url} aria-label={`Play: ${name}`} />
                 </li>

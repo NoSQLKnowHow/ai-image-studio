@@ -21,10 +21,19 @@ KINDS: dict[str, tuple[str, ...]] = {"image": ("generate", "edit"), "music": ("m
 NO_PROJECT = "none"
 
 
+# What makes a run belong in the Deleted view (DESIGN.md §33.3): it is in the bin itself, or one of its pictures or tracks is. A fixed fragment with
+# no placeholder: nothing in it comes from outside.
+_IN_THE_BIN = (
+    "(deleted_at IS NOT NULL"
+    " OR EXISTS (SELECT 1 FROM images WHERE images.run_id = runs.id AND images.kind = 'output' AND images.deleted_at IS NOT NULL)"
+    " OR EXISTS (SELECT 1 FROM tracks WHERE tracks.run_id = runs.id AND tracks.deleted_at IS NOT NULL))"
+)
+
+
 @dataclass(frozen=True)
 class RunFilter:
     kept: Optional[bool] = None  # True: only runs that are kept; False: only runs that are not; None: either
-    deleted: Optional[bool] = False  # False: the history (runs not in the bin); True: only the bin (DESIGN.md §30); None: either
+    deleted: Optional[bool] = False  # False: the history (runs not in the bin); True: only the bin (§30, §33); None: either
     project: Optional[str] = None  # None: any project or none; NO_PROJECT: only runs in no project; a project's id: only that project (§32.4)
 
     def conditions(self) -> tuple[list[str], list[Any]]:
@@ -35,9 +44,14 @@ class RunFilter:
             clauses.append("pinned = ?")
             values.append(1 if self.kept else 0)
         # The bin is a filter like the others. The default (False) makes every list the history WITHOUT the bin, so nothing that was
-        # written before the bin existed shows a deleted run by accident; True is only the bin; None is both.
-        if self.deleted is not None:
-            clauses.append("deleted_at IS NOT NULL" if self.deleted else "deleted_at IS NULL")
+        # written before the bin existed shows a deleted run by accident; True is only the bin; None is both. The bin holds two kinds of thing
+        # (DESIGN.md §33.1): a run that was sent to it, and a run that is still in the history but has a picture or track of its own in it. The
+        # second kind is a run too, so the Deleted view lists it (as one card with its deleted pictures); the history, False, still lists it
+        # as well, since the run itself was not deleted.
+        if self.deleted is False:
+            clauses.append("deleted_at IS NULL")
+        elif self.deleted is True:
+            clauses.append(_IN_THE_BIN)
         # A project is the first filter that holds a value and not a yes-or-no: "none" is one fixed condition and a project's id is another,
         # bound as a value like the rest. An id that does not exist is not an error: it simply matches no run.
         if self.project is not None:
@@ -49,7 +63,8 @@ class RunFilter:
         return clauses, values
 
 
-# The counts the page shows, by name: `GET /api/runs/counts` answers {kind: {name: n}}.
+# The counts the page shows, by name: `GET /api/runs/counts` answers {kind: {name: n}}. The count named `deleted` is of THINGS in the bin (§33.1):
+# each run in it and each picture or track in it of a run that is not; `database.run_counts` also answers `deleted_items`, the second part alone.
 COUNTED: dict[str, RunFilter] = {"all": RunFilter(), "kept": RunFilter(kept=True), "deleted": RunFilter(deleted=True)}
 
 
