@@ -710,12 +710,18 @@ test("white never becomes an ink, and the arrangement and bleed are greyed as th
 // VectorCard.tsx or one of the small files that none of the scenarios above failed on. The comment on each test says which bug it would catch, so that a
 // reader can see why it is there. They check what the person sees and what the page sends, never how the page is written.
 
-/** Start a Vector run over the API and do NOT wait for it, for the tests that look at a run while it works. Four versions keep the worker busy for a few
- *  seconds (a version is drawn and then traced, a second or so each). */
+/** Start a Vector run over the API and do NOT wait for it, for the tests that look at a run while it works. Four versions of 100 steps (the most the server allows)
+ *  keep the worker busy for about seven seconds (a version is drawn at 10 ms a step and then traced), which is long enough to do a dozen things; a test that
+ *  does not want to leave the worker busy for the next one stops the run with `stopRun`. */
 async function startRun(page: Page, prompt: string, options: Record<string, unknown> = {}): Promise<string> {
-  const posted = await page.request.post("/api/runs", { headers: ASK, data: { mode: "vector", prompt, options: { colours: 2, width_mm: 40, height_mm: 40, seed: 11, num_images: 4, ...options } } });
+  const posted = await page.request.post("/api/runs", { headers: ASK, data: { mode: "vector", prompt, options: { colours: 2, width_mm: 40, height_mm: 40, seed: 11, num_images: 4, steps: 100, ...options } } });
   expect(posted.status(), await posted.text()).toBe(201);
   return ((await posted.json()) as { id: string }).id;
+}
+
+/** Cancel a run over the API (behind the page's back), so that a test that has seen what it came for does not make the next one wait for the worker. */
+async function stopRun(page: Page, id: string) {
+  expect((await page.request.post(`/api/runs/${id}/cancel`, { headers: ASK })).ok()).toBe(true);
 }
 
 /** Make a run look `days` old, behind the server's back (it computes the time left before deletion from the stored time): the same helper as kept.spec.ts. */
@@ -733,7 +739,7 @@ function ageRun(runId: string, days: number) {
 // Catches: Tabs told that Vector never works (`vector: false`), a dot put on the Music tab for Vector's work, and a dot on the tab that is open.
 test("a Vector run that works puts the dot on the Vector tab, and on no other, while another tab is open", async ({ page }) => {
   await page.goto("/");
-  await startRun(page, unique("dot while working"));
+  const id = await startRun(page, unique("dot while working"));
   const dot = (tab: Locator) => tab.locator(".tab-dot");
   await expect(dot(vectorTab(page))).toHaveCount(1);
   await expect(vectorTab(page)).toContainText("(working)"); // a screen reader is told as well
@@ -745,7 +751,9 @@ test("a Vector run that works puts the dot on the Vector tab, and on no other, w
   await vectorTab(page).click();
   await expect(dot(vectorTab(page))).toHaveCount(0); // the tab being looked at shows the work itself, on its cards
   await imagesTab(page).click();
-  await expect(dot(vectorTab(page))).toHaveCount(0, { timeout: 90_000 }); // and the dot goes when the run is done
+  await expect(dot(vectorTab(page))).toHaveCount(1);
+  await stopRun(page, id);
+  await expect(dot(vectorTab(page))).toHaveCount(0, { timeout: 30_000 }); // and the dot goes when the run is no longer working
 });
 
 // ------------------------------------------------------------------ a run that fails, and Retry
@@ -805,6 +813,7 @@ test("Cancel on a Vector run that is working asks first, counts the versions kep
   await expect(c.locator(".badge").first()).toHaveText("Making vector"); // Keep going changed nothing
   await c.getByRole("button", { name: "Cancel" }).click();
   await dialog(page, "Stop this run?").getByRole("button", { name: "Stop making the vector" }).click();
+  await expect(c.getByRole("button", { name: "Reuse" })).toBeFocused(); // the Cancel button that had focus is going: it moves to the card's Reuse
   await expect(c.locator(".badge").first()).toHaveText("Canceled", { timeout: 60_000 });
   await expect(c.locator(".run-note")).toHaveText(/^Canceled\. \d of 4 versions finished and kept\.$/);
 });
@@ -815,14 +824,14 @@ test("while a Vector run works the tab shows the queue, a waiting run is deleted
   const busy = unique("queue busy");
   const waiting = unique("queue waiting");
   const projectId = ((await (await page.request.post("/api/projects", { headers: ASK, data: { name: "Queue test" } })).json()) as { id: string }).id;
-  await startRun(page, busy);
+  const busyId = await startRun(page, busy);
   const waitingId = await startRun(page, waiting, { num_images: 1 });
   await openVector(page);
   await expect(page.locator(".queue-bar:visible")).toContainText("Generating 1 run · 1 waiting");
 
   // a run that only waits made nothing worth keeping: Delete removes it for good, with no days in the bin
   const w = vectorCard(page, waiting).first();
-  await expect(w.locator(".badge").first()).toHaveText(/^Queued/);
+  await expect(w.locator(".badge").first()).toHaveText("Queued · #1"); // its place in the queue is on the card
   await w.getByRole("button", { name: "Delete", exact: true }).click();
   const question = dialog(page, "Delete this run?");
   await expect(question).toContainText("It is removed from the history. This can't be undone.");
@@ -843,6 +852,7 @@ test("while a Vector run works the tab shows the queue, a waiting run is deleted
   await bar(page).locator("[data-filter-project]").selectOption(projectId);
   await expect(b.locator("[data-note=working-in-project]")).toBeVisible(); // a project's view says "project", not "Kept"
   await expect(b.locator("[data-note=working-in-kept]")).toHaveCount(0);
+  await stopRun(page, busyId);
 });
 
 // ------------------------------------------------------------------ the form: every control is wired to its own setting
@@ -1063,6 +1073,39 @@ test("Reuse waits for the studio's words, but never puts the run's words over so
   await page.waitForTimeout(500); // the page has had time to compare the words with the run's
   await expect(recipeBox(page)).toHaveValue("typed after Reuse");
   await expect(form(page)).toContainText("You changed this by hand");
+});
+
+// ------------------------------------------------------------------ keyboard focus, and the model that is still loading
+// Catches: Delete that leaves keyboard focus nowhere instead of on the next card's Delete button, and Cancel of a waiting run that does not keep focus on the card
+// (both find the card's buttons by their `data-action`).
+test("keyboard focus stays on the list: Delete moves it to the next card's Delete, and canceling a waiting run keeps it on that card's Reuse", async ({ page }) => {
+  const [older, newer] = [unique("focus older"), unique("focus newer")];
+  await makeRun(page, older);
+  await makeRun(page, newer);
+  await openVector(page);
+  const top = vectorCard(page, newer).first();
+  await top.getByRole("button", { name: "Delete", exact: true }).click();
+  await dialog(page, "Delete this run?").getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(top).toHaveCount(0);
+  await expect(vectorCard(page, older).first().getByRole("button", { name: "Delete", exact: true })).toBeFocused();
+
+  const busyId = await startRun(page, unique("focus busy"));
+  const waiting = unique("focus waiting");
+  await startRun(page, waiting, { num_images: 1 });
+  const w = vectorCard(page, waiting).first();
+  await expect(w.locator(".badge").first()).toHaveText(/^Queued/);
+  await w.getByRole("button", { name: "Cancel" }).click();
+  await expect(w.locator(".badge").first()).toHaveText("Canceled");
+  await expect(w.getByRole("button", { name: "Reuse" })).toBeFocused();
+  await stopRun(page, busyId);
+});
+
+// Catches: a card that says only "Starting…" while the model is still loading (the card not told the worker's state).
+test("a Vector run that waits for the model to load says so on its card", async ({ page }) => {
+  await expect.poll(async () => (await page.request.post("/api/model/unload", { headers: ASK })).status(), { timeout: 30_000 }).toBe(200);
+  await openVector(page);
+  const c = await makeVector(page, unique("model loading"));
+  await expect(c.locator(".progress")).toContainText("Loading the model… (the first load takes a while)"); // the fake model takes about a second to load
 });
 
 // ------------------------------------------------------------------ Copy SVG code when something goes wrong
