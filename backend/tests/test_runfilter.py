@@ -94,7 +94,7 @@ def test_counted_within_narrows_every_counted_filter_to_the_project():
 
 
 def test_the_kinds_are_the_tabs():
-    assert KINDS == {"image": ("generate", "edit"), "music": ("music",)}
+    assert KINDS == {"image": ("generate", "edit"), "music": ("music",), "vector": ("vector",)}  # the Vector tab is the third (DESIGN.md §31.12.7)
 
 
 # conditions() is the whole SQL contract: nothing set adds nothing, and kept=True or False binds 1 or 0
@@ -124,23 +124,25 @@ def test_pages_continue_within_the_filter(db):
     first, more = db.list_runs(2, None, RunFilter(kept=True))
     assert [letter(r["id"]) for r in first] == ["j", "f"] and more
     second, more = db.list_runs(2, first[-1]["id"], RunFilter(kept=True))
-    assert [letter(r["id"]) for r in second] == ["c", "a"] and not more
+    assert [letter(r["id"]) for r in second] == ["c", "a"] and more  # l, the oldest kept run, is on a page of its own
+    third, more = db.list_runs(2, second[-1]["id"], RunFilter(kept=True))
+    assert [letter(r["id"]) for r in third] == ["l"] and not more
 
 
 def test_a_page_that_is_exactly_full_is_not_followed_by_an_empty_one(db):
-    """Four runs are kept: a page of four has no next page, a page of three has."""
+    """Five runs are kept: a page of five has no next page, a page of four has."""
+    rows, more = db.list_runs(5, None, RunFilter(kept=True))
+    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a", "l"] and not more
     rows, more = db.list_runs(4, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a"] and not more
-    rows, more = db.list_runs(3, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in rows] == ["j", "f", "c"] and more
-    rows, more = db.list_runs(2, f"{ord('f'):032x}", RunFilter(kept=True))  # after f: c and a, exactly a page
-    assert [letter(r["id"]) for r in rows] == ["c", "a"] and not more
+    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a"] and more
+    rows, more = db.list_runs(3, f"{ord('f'):032x}", RunFilter(kept=True))  # after f: c, a and l, exactly a page
+    assert [letter(r["id"]) for r in rows] == ["c", "a", "l"] and not more
 
 
 def test_the_cursor_may_be_a_run_the_filter_does_not_show(db):
     """A run un-kept since the page was loaded can still be the place the next page starts from."""
     rows, more = db.list_runs(100, f"{ord('d'):032x}", RunFilter(kept=True))  # d is not kept
-    assert [letter(r["id"]) for r in rows] == ["c", "a"] and not more
+    assert [letter(r["id"]) for r in rows] == ["c", "a", "l"] and not more
 
 
 def test_an_unknown_cursor_is_still_an_error(db):
@@ -149,11 +151,11 @@ def test_an_unknown_cursor_is_still_an_error(db):
 
 
 def test_no_filter_is_what_it_was(db):
-    # the history: the run in the bin (k) is not in it; the runs with a picture in the bin (g, j) are
+    # the history: the runs in the bin (k, m) are not in it; the runs with a picture in the bin (g, j) are
     rows, _ = db.list_runs(100)
-    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a"]
+    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
     rows, _ = db.list_runs(100, None, None)
-    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a"]
+    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
 
 
 # ------------------------------------------------------------------ the API
@@ -192,10 +194,13 @@ def test_the_counts_say_how_many_runs_each_tab_holds_and_how_many_are_kept(clien
     music = client.post("/api/runs", json={"mode": "music", "prompt": "Genre: ambient. A slow piano.", "options": {"duration": 30}}).json()["id"]
     for run_id in (first, second, music):
         wait_for(client, run_id)
-    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0}, "music": {"all": 1, "kept": 0, "deleted": 0, "deleted_items": 0}}
+    none = {"all": 0, "kept": 0, "deleted": 0, "deleted_items": 0}  # nothing has been made on the Vector tab: it is counted, and counts zero
+    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0},
+                                                     "music": {"all": 1, "kept": 0, "deleted": 0, "deleted_items": 0}, "vector": none}
     keep(client, first, True)
     keep(client, music, True)
-    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 1, "deleted": 0, "deleted_items": 0}, "music": {"all": 1, "kept": 1, "deleted": 0, "deleted_items": 0}}
+    assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 1, "deleted": 0, "deleted_items": 0},
+                                                     "music": {"all": 1, "kept": 1, "deleted": 0, "deleted_items": 0}, "vector": none}
     keep(client, first, False)
     assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0}
 

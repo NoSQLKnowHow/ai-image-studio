@@ -1,6 +1,9 @@
 import { filenameFromDisposition } from "./fourk";
 import { NO_FILTER, filterParams, type Counts, type HistoryFilter } from "./history";
-import type { Capabilities, CreateMusicBody, CreateRunBody, ImageRun, ModelName, MusicRun, Project, Run, RunsPage, Status, UploadResult } from "./types";
+import type {
+  Capabilities, CreateMusicBody, CreateRunBody, CreateVectorBody, ImageRun, ModelName, MusicRun, Project, Run, RunsPage, Status, UploadResult, VectorRecipe,
+  VectorRecipeRequest, VectorRun,
+} from "./types";
 
 /** What sending a picture or track to the bin answers (DESIGN.md §33.3): what moved, and the run as it is now. A run's last picture is not deleted
  *  by itself, so `moved` is "run" and the whole run is in the bin. */
@@ -135,6 +138,27 @@ async function upscalePicture(file: File): Promise<UpscaledPicture> {
   };
 }
 
+/** The text of a file the server holds, for the one thing the page does with an SVG besides showing it in an <img>: Copy SVG code (DESIGN.md §31.12.8).
+ *  The answer is read as text and never put in the page as markup. An error is the same ApiError the other calls throw. */
+async function fetchText(path: string): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(path);
+  } catch {
+    throw toApiError(0, null);
+  }
+  if (!response.ok) {
+    let body: unknown = null;
+    try {
+      body = await response.json();
+    } catch {
+      /* empty or non-JSON body */
+    }
+    throw toApiError(response.status, body);
+  }
+  return response.text();
+}
+
 export const api = {
   capabilities: () => request<Capabilities>("/api/capabilities"),
   status: () => request<Status>("/api/status"),
@@ -151,6 +175,10 @@ export const api = {
   runCounts: (project: string | null = null) => request<Counts>(`/api/runs/counts${project === null ? "" : `?${new URLSearchParams({ project })}`}`),
   createRun: (body: CreateRunBody) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createMusicRun: (body: CreateMusicBody) => request<MusicRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
+  createVectorRun: (body: CreateVectorBody) => request<VectorRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
+  // The words the studio will send for a Vector idea, for the form to show (DESIGN.md §31.12.7). Pure text: no model, no database.
+  vectorRecipe: (body: VectorRecipeRequest) => request<VectorRecipe>("/api/vector/recipe", { method: "POST", body: JSON.stringify(body) }),
+  fetchText,
   cancelRun: (id: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" }),
   keepRun: (id: string, pinned: boolean) =>
     request<Run>(`/api/runs/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ pinned }) }),

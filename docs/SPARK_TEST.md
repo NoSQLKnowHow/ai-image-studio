@@ -861,6 +861,44 @@ Options go to that run's own size (**1:1**), not to 16:9; the same with **Retry*
 
 **Send back:** from (c) the two times and the two sets of memory numbers (and `worker_rss_gb` for each); from (b) whether the note appeared and what it said; and anything that did not match "Good".
 
+## 28. Vector (new in 1.17)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.17** (reload with Ctrl+Shift+R). **Back up first: the first start of 1.17 upgrades the database to schema 7.**
+A copy is made before it (`data/studio.sqlite.before-schema-7`; if you start straight from 1.13 you also get the copies for schemas 5 and 6). Nothing here needs a second GPU job at the same time:
+a Vector run is an image run (the model draws) followed by a short clean-up on the CPU.
+
+**a) The start-up.** In the build output, a line beginning **`Vector:`** (from `check_image.py`; it is a note and never fails the build): copy it if it says the libraries could not be installed.
+`ls -l data/studio.sqlite*` shows the `.before-schema-7` copy. **Good:** a third tab **Vector** is there. If it says the libraries are missing instead, send me the line from the build and `docker compose logs studio | grep -i vector`.
+
+**b) A first real run, black and white.** On the Vector tab: prompt *a simple fox head, bold*, Kind **Silhouette**, Colours **2**, size 100 × 100 mm, then **Make vector**.
+**Good:** the card says *drawing* and then *tracing*; the preview is the shape in one colour on white; the card says **2 colours, 1 layer**. **Write down** the seconds of the drawing and of the tracing
+(the clean-up is on the CPU: the card or `docker compose logs studio` says), `MemAvailable` before and the lowest while it ran, and the `worker_rss_gb` of step 27 (c).
+
+**c) Does the clean-up like real Qwen pictures?** This is the first time the clean-up sees one (it has only been tried on constructed pictures). On the card look at the **notes** and the **paths** count; download the SVG and open it in a browser.
+**Good:** the shape matches the preview, with no grey fringe and no texture. **Send me** the notes (`specks_removed`, `small_feature`, `hanging_island`, `coarse_drawing`) and a screenshot if the drawing came out with shading,
+gradients or text in it (that would mean the model is ignoring the negative words; guidance `4.0` is a guess for this model).
+
+**d) Four colours.** Colours **4**, name **red** and **green** as inks, leave the third to the picture, Kind **Flat**, prompt *a simple flag with three wide bands*. **Good:** the line under Colours says **3 layers**;
+the layers are exactly your red and green and one more colour; white has no layer; the table on the card lists each layer's colour, paths and cut length.
+
+**e) The laser software (the reason for all this).** Download the **SVG** and the **layers ZIP** from (d). Open the SVG in **xTool Creative Space** (P2) and in **LightBurn** (G3 Ultra).
+**Good:** it measures **100 × 100 mm**; the layers (or colours) appear, one per colour, named like *Layer 2 (red)*; each can be given its own cut or engrave setting; nothing is missing or the wrong colour.
+Then the same with a layer's own SVG from the ZIP: it sits at the same place and size, so stacked layers register. **Also do §31.9 item 1 if you have not:** open `docs/laser_test_sheet.svg` in both and answer its six questions
+(measures 100 mm? what layers? separate settings? holes and circles right? are outlines taken as lines and fills as areas, and which looks right for cutting? anything missing or joined?). It decides whether shapes are written filled or as outlines.
+
+**f) Side by side and stacked.** Lock the seed, Colours **3**, make one run **Side by side** and one **Stacked** (bleed 0.5). **Good:** side by side, the layers do not overlap; stacked, each lower layer also contains what is above it,
+grown by the bleed, so pieces cut from separate sheets would glue up with no gap. Look at both in the laser software.
+
+**g) By shape.** Layers by **Shape** with a picture of several separate pieces: each piece is a numbered layer (*Layer 1 (piece-1)* …) in a distinct colour, up to 30 (more than that: the card says the cap was reached), and *Arrangement* is greyed.
+
+**h) A big sheet.** Press the **xTool P2 bed** preset (600 × 307 mm) and make one run. **Good:** the SVG says `width="600mm" height="307mm"`; the preview has the sheet's shape; a feature smaller than the smallest feature is flagged,
+and if the drawing is too coarse for it the card says so (`coarse_drawing`: 1536 pixels over 600 mm is 0.4 mm a pixel).
+
+**i) Housekeeping.** Keep, then Delete: the run goes to **Deleted** with its files (`ls data/vector/` shows its folder); Restore brings it back; Delete forever removes the folder. File it in a Project (step 25): it is kept and locked as any run.
+
+**Send back:** the `Vector:` line from (a); from (b) the two times and the memory numbers; from (c) the notes and any screenshot; from (e) what the P2's software and LightBurn showed (**and the test sheet's six answers**);
+the verdict of (f), and anything that did not match "Good".
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -885,3 +923,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 18. From step 25 (project folders): the `ls -l data/studio.sqlite*` line, and anything that did not match "Good".
 19. From step 26 (deleting one picture): the `ls -l data/studio.sqlite*` line, what (c) showed, and anything that did not match "Good".
 20. From step 27 (the default size): the time and the memory numbers (A, B, `worker_rss_gb`) for one run at 2752 × 1536 and one at 2048 × 2048 from (c), whether the note in (b) appeared, and anything that did not match "Good".
+21. From step 28 (Vector): the `Vector:` line from (a), the seconds of the drawing and of the tracing and the memory numbers from (b), the notes from (c) with a screenshot if the drawing had shading or gradients, what XCS and LightBurn showed in (e) (and the laser test sheet's six answers, `DESIGN.md` §31.9 item 1), your verdict on side by side against stacked in (f), and anything that did not match "Good".

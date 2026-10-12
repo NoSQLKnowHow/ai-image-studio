@@ -15,6 +15,7 @@ from typing import Any, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import presets as P
+from . import vector as V
 from .config import Settings
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
@@ -49,6 +50,20 @@ class RunOptions(BaseModel):
     duration: Optional[int] = None  # Music only: the most seconds of music to make; the model may stop sooner (DESIGN.md §26.3)
     tracks: Optional[int] = None  # Music only: how many versions of the same description
     fields: Optional[dict[str, str]] = None  # Music only: what the page's fields said, kept for Reuse and never interpreted
+    # Vector only (DESIGN.md §31.12.5). Each is None when not sent, and the server then uses the default of §31.12.2 (`steps`, `seed` and `num_images`
+    # are the ones every mode has: the steps and the seed of the drawing, and the number of versions). The text ones are plain strings and not Literals
+    # so that `vector.check_options` can refuse a wrong one in its own words, the same ones the page shows.
+    colours: Optional[int] = None
+    palette: Optional[list[str]] = None
+    kind: Optional[str] = None
+    width_mm: Optional[float] = None
+    height_mm: Optional[float] = None
+    layers_by: Optional[str] = None
+    arrangement: Optional[str] = None
+    bleed_mm: Optional[float] = None
+    min_feature_mm: Optional[float] = None
+    kerf_mm: Optional[float] = None
+    recipe: Optional[str] = None  # the page's edited text for what the studio sends; None means the server builds it (`vector.build_recipe`)
 
 
 class InputRef(BaseModel):
@@ -65,7 +80,7 @@ class InputRef(BaseModel):
 class RunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    mode: Literal["generate", "edit", "music"] = "generate"
+    mode: Literal["generate", "edit", "music", "vector"] = "generate"
     prompt: str
     options: RunOptions = Field(default_factory=RunOptions)
     input_images: Optional[list[InputRef]] = None  # Edit only, in the order the model sees them
@@ -105,6 +120,9 @@ class ResolvedRun:
     lyrics: Optional[str] = None  # Music: what the user wrote, None for an instrumental track
     duration: Optional[int] = None  # Music: seconds, an upper bound
     fields: Optional[dict[str, str]] = None  # Music: the page's fields, for Reuse
+    # Vector: what the clean-up is asked for. For a vector run `prompt` is the user's idea, `effective_prompt` the recipe sent to the model,
+    # `negative_prompt` the fixed negative, `width` and `height` the drawing's pixel size and `cfg_scale` the guidance (§31.12.6).
+    vector: Optional[V.VectorOptions] = None
 
     @property
     def instrumental(self) -> bool:
@@ -116,6 +134,30 @@ class ResolvedRun:
 
     def options_snapshot(self) -> dict[str, Any]:
         """Exactly what the run used; Reuse and Retry restore from this."""
+        if self.mode == "vector":
+            # the fixture's `run.options` (tests/vector_contract.json): the clean-up's options, the drawing's, and the words that were sent
+            options = self.vector
+            assert options is not None  # a vector run always has them
+            return {
+                "colours": options.colours,
+                "palette": list(options.palette),
+                "kind": options.kind,
+                "width_mm": options.width_mm,
+                "height_mm": options.height_mm,
+                "layers_by": options.layers_by,
+                "arrangement": options.arrangement,
+                "bleed_mm": options.bleed_mm,
+                "min_feature_mm": options.min_feature_mm,
+                "kerf_mm": options.kerf_mm,
+                "steps": self.steps,
+                "seed": self.seed,
+                "num_images": self.num_images,
+                "recipe": self.effective_prompt,  # what was sent, whether the page edited it or the server built it
+                "seed_was_random": self.seed_was_random,
+                "negative": self.negative_prompt,
+                "draw_width": self.width,
+                "draw_height": self.height,
+            }
         if self.mode == "music":
             return {
                 "duration": self.duration,
@@ -142,6 +184,16 @@ class ResolvedRun:
             "draft": self.draft,
             "full": self.full.model_dump() if self.full else None,
         }
+
+
+# The options that mean something only for a Vector run: sending one with another kind of run is a mistake the page should hear about, as it is for
+# the music options in `resolve_run`.
+_ONLY_FOR_VECTOR = ("colours", "palette", "kind", "width_mm", "height_mm", "layers_by", "arrangement", "bleed_mm", "min_feature_mm", "kerf_mm", "recipe")
+
+
+def _vector_only_errors(sent: set[str]) -> list[tuple[tuple[Any, ...], str]]:
+    """The 422 field errors for any Vector-only option that was sent with a run that is not a Vector run."""
+    return [(("options", name), "Only used for Vector.") for name in _ONLY_FOR_VECTOR if name in sent]
 
 
 _MUSIC_FIELD_KEY = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
@@ -195,6 +247,7 @@ def _resolve_music(req: RunCreate, settings: Settings) -> ResolvedRun:
     for name in _NOT_FOR_MUSIC:
         if name in sent:
             errors.append((("options", name), "Not used for music."))
+    errors.extend(_vector_only_errors(sent))
     if req.input_images:
         errors.append((("input_images",), "Images are only used in Edit mode."))
     if errors:
@@ -209,12 +262,130 @@ def _resolve_music(req: RunCreate, settings: Settings) -> ResolvedRun:
     )
 
 
-def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
-    if req.mode == "music":
-        return _resolve_music(req, settings)
+# Options that mean something for a picture or a track and nothing for a Vector run (DESIGN.md §31.12.5): its size is in millimetres, its guidance and
+# negative text are the studio's own, and the rest belong to Generate, Edit and Music.
+_NOT_FOR_VECTOR = ("width", "height", "negative_prompt", "cfg_scale", "transparent", "resolution", "shape_from", "draft", "full", "duration", "tracks",
+                   "fields")
+
+
+def _built_recipe(idea: str, options: V.VectorOptions, *, check_length: bool) -> V.Recipe:
+    """The recipe the studio builds for an idea (`vector.build_recipe`). One that is longer than an edit of it may be (`RECIPE_MAX_CHARS`) is refused,
+    when `check_length` is true: it would be stored as the run's recipe, and Reuse would then send it back as an edit that is too long. (When the page
+    sent its own edit, the built text is not used and its length is no concern.)"""
+    built = V.build_recipe(idea, options.kind, options.colours, options.palette)
+    if check_length and len(built.positive) > V.RECIPE_MAX_CHARS:
+        raise RunRequestError([(("prompt",), f"The prompt is too long: with the words the studio adds it makes {len(built.positive)} characters, "
+                                             f"and the limit is {V.RECIPE_MAX_CHARS}.")])
+    return built
+
+
+class RecipeRequest(BaseModel):
+    """The body of `POST /api/vector/recipe` (DESIGN.md §31.12.7): the few things the words the studio adds depend on. Each but the idea is optional,
+    with the same defaults as a run."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    prompt: str
+    kind: Optional[str] = None
+    colours: Optional[int] = None
+    palette: Optional[list[str]] = None
+
+
+def resolve_recipe(req: RecipeRequest, settings: Settings) -> V.Recipe:
+    """The recipe for the form to show: what a run with these choices would send. Pure text, no model and no database. The fields are checked as a
+    run checks them (so the page hears the same words), and so is the length. Raises `RunRequestError` (a `422`)."""
+    errors: list[tuple[tuple[Any, ...], str]] = []
+    idea = req.prompt.strip()
+    if not idea:
+        errors.append((("prompt",), "Describe what to draw."))
+    elif len(idea) > settings.max_prompt_chars:
+        errors.append((("prompt",), f"The prompt is {len(idea)} characters; the limit is {settings.max_prompt_chars}."))
+    chosen = V.VectorOptions(
+        colours=req.colours if req.colours is not None else V.COLOURS_DEFAULT, palette=tuple(req.palette or ()),
+        kind=req.kind if req.kind is not None else V.KIND_DEFAULT)  # type: ignore[arg-type]
+    # the options this body does not carry are the defaults, which are always fine, so any problem found here is with one of the three it does
+    errors.extend(((name,), message) for name, message in V.check_options(chosen))
+    if errors:
+        raise RunRequestError(errors)
+    return _built_recipe(idea, chosen, check_length=True)
+
+
+def _resolve_vector(req: RunCreate, settings: Settings) -> ResolvedRun:
+    """A Vector run (DESIGN.md §31.12.5): an idea, the clean-up's options (checked by the engine's own `vector.check_options`, so the wording is the
+    same wherever it is shown), and the words the studio adds to the idea (`vector.build_recipe`, unless the page sent its edited text)."""
     errors: list[tuple[tuple[Any, ...], str]] = []
     opts = req.options
     sent = opts.model_fields_set
+
+    idea = req.prompt.strip()
+    if not idea:
+        errors.append((("prompt",), "Describe what to draw."))
+    elif len(idea) > settings.max_prompt_chars:
+        errors.append((("prompt",), f"The prompt is {len(idea)} characters; the limit is {settings.max_prompt_chars}."))
+
+    # the clean-up's options: what was sent, else the default. `shape_layer_cap` and `fill_mode` are not on the form (§31.12.9 item 7), so they stay
+    # at the engine's defaults.
+    chosen = V.VectorOptions(
+        colours=opts.colours if opts.colours is not None else V.COLOURS_DEFAULT,
+        palette=tuple(opts.palette or ()),
+        kind=opts.kind if opts.kind is not None else V.KIND_DEFAULT,  # type: ignore[arg-type]
+        width_mm=opts.width_mm if opts.width_mm is not None else V.SIZE_MM_DEFAULT,
+        height_mm=opts.height_mm if opts.height_mm is not None else V.SIZE_MM_DEFAULT,
+        layers_by=opts.layers_by if opts.layers_by is not None else V.LAYERS_BY_DEFAULT,  # type: ignore[arg-type]
+        arrangement=opts.arrangement if opts.arrangement is not None else V.ARRANGEMENT_DEFAULT,  # type: ignore[arg-type]
+        bleed_mm=opts.bleed_mm if opts.bleed_mm is not None else V.BLEED_MM_DEFAULT,
+        min_feature_mm=opts.min_feature_mm if opts.min_feature_mm is not None else V.MIN_FEATURE_MM_DEFAULT,
+        kerf_mm=opts.kerf_mm if opts.kerf_mm is not None else V.KERF_MM_DEFAULT,
+    )
+    errors.extend((("options", name), message) for name, message in V.check_options(chosen))
+
+    if not P.STEPS_MIN <= opts.steps <= P.STEPS_MAX:
+        errors.append((("options", "steps"), f"Must be between {P.STEPS_MIN} and {P.STEPS_MAX}."))
+    # the number of versions has its own limit (1 to 4), not the picture limit of STUDIO_MAX_IMAGES_PER_RUN
+    if not V.VERSIONS_MIN <= opts.num_images <= V.VERSIONS_MAX:
+        errors.append((("options", "num_images"), f"Must be between {V.VERSIONS_MIN} and {V.VERSIONS_MAX}."))
+    if opts.seed is not None and not 0 <= opts.seed <= P.SEED_MAX:
+        errors.append((("options", "seed"), f"Must be between 0 and {P.SEED_MAX}."))
+
+    # a blank edited recipe is the same as none, as a blank negative prompt or blank lyrics are for the other modes: the server builds it
+    edited = (opts.recipe or "").strip() or None
+    if edited is not None and len(edited) > V.RECIPE_MAX_CHARS:
+        errors.append((("options", "recipe"), f"The recipe is {len(edited)} characters; the limit is {V.RECIPE_MAX_CHARS}."))
+
+    for name in _NOT_FOR_VECTOR:
+        if name in sent:
+            errors.append((("options", name), "Not used for Vector."))
+    if req.lyrics is not None:
+        errors.append((("lyrics",), "Lyrics are only used for music."))
+    if req.input_images:
+        errors.append((("input_images",), "Images are only used in Edit mode."))
+    if errors:
+        raise RunRequestError(errors)
+
+    # The words sent to the model. The negative text is always the studio's; the positive one is the page's edit, or built from the idea (and then
+    # checked, as `_built_recipe` says)
+    built = _built_recipe(idea, chosen, check_length=edited is None)
+    positive = edited if edited is not None else built.positive
+
+    draw_width, draw_height = V.draw_size(chosen.width_mm, chosen.height_mm)
+    seed_was_random = opts.seed is None
+    seed = secrets.randbelow(P.SEED_MAX - opts.num_images + 2) if seed_was_random else opts.seed  # room for seed + n - 1 under the limit
+    return ResolvedRun(
+        mode="vector", prompt=idea, effective_prompt=positive, negative_prompt=built.negative, width=draw_width, height=draw_height,
+        steps=opts.steps, seed=seed, seed_was_random=seed_was_random, num_images=opts.num_images, cfg_scale=V.RECIPE_CFG_SCALE, transparent=False,
+        vector=chosen,
+    )
+
+
+def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
+    if req.mode == "music":
+        return _resolve_music(req, settings)
+    if req.mode == "vector":
+        return _resolve_vector(req, settings)
+    errors: list[tuple[tuple[Any, ...], str]] = []
+    opts = req.options
+    sent = opts.model_fields_set
+    errors.extend(_vector_only_errors(sent))
     for name in ("duration", "tracks", "fields"):
         if name in sent:
             errors.append((("options", name), "Only used for music."))

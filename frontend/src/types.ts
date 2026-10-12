@@ -1,9 +1,10 @@
 // JSON shapes returned by the backend (backend/studio/serialize.py, api.py, jobs.py).
 
-/** Pictures are made in one of two modes; music (DESIGN.md §26) is a third kind of run, on its own tab. */
+/** Pictures are made in one of two modes; music (DESIGN.md §26) and vector (§31) are two more kinds of run, each on its own tab. */
 export type ImageMode = "generate" | "edit";
-export type Mode = ImageMode | "music";
-/** The two models the studio can hold, one at a time (DESIGN.md §26.4). */
+export type Mode = ImageMode | "music" | "vector";
+/** The two models the studio can hold, one at a time (DESIGN.md §26.4). A Vector run is drawn by the image model, so it has no model of its
+ *  own: on the Vector tab the model pill and the Load / Unload button act on "image" (§31.12.8). */
 export type ModelName = "image" | "music";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "canceled";
 export type WorkerState = "unloaded" | "loading" | "ready" | "busy" | "error" | "unavailable";
@@ -93,13 +94,15 @@ export interface RunInput extends FourKTarget {
 }
 
 export type MusicStage = "compose" | "render" | "finish";
+/** A Vector run's two stages (DESIGN.md §31.12.5): the model draws the picture, then the clean-up traces it into layers. */
+export type VectorStage = "draw" | "trace";
 
 export interface Progress {
-  image: number; // the picture (or the track) being made, 1-based
+  image: number; // the picture (or the track, or the vector version) being made, 1-based
   of: number;
   step: number;
   steps: number;
-  stage?: MusicStage; // music only: composing (frame by frame), rendering (steps), finishing
+  stage?: MusicStage | VectorStage; // music: composing (frame by frame), rendering (steps), finishing. Vector: drawing, tracing. Pictures send none.
 }
 
 /** A project folder (DESIGN.md §32): a name that runs are filed under, with how many runs of each tab it holds (runs in the bin are not counted). */
@@ -107,7 +110,9 @@ export interface Project {
   id: string;
   name: string;
   created_at: string;
-  counts: { image: number; music: number };
+  // `vector` is optional because the list of projects was written before Vector (§32.4) and §31.12 does not say whether it counts them: the page
+  // treats a missing number as "not known" and never shows it as 0 (see FilterBar and `projectContents`).
+  counts: { image: number; music: number; vector?: number };
 }
 
 /** What every run has, pictures or music. */
@@ -146,6 +151,7 @@ export interface ImageRun extends RunBase {
   binned_images: BinnedImage[]; // the ones that are; empty for a run that is itself in the bin, whose card shows what it has (§33.2 item 5)
   tracks: [];
   binned_tracks: [];
+  vectors: []; // always present, and empty, on a run that is not a Vector run (§31.12.7)
 }
 
 /** One finished track of a music run (DESIGN.md §26.3). `seconds` is what the model really made. */
@@ -187,12 +193,109 @@ export interface MusicRun extends RunBase {
   binned_images: [];
   tracks: TrackInfo[]; // the tracks that are not in the bin, numbered by position (DESIGN.md §33.1)
   binned_tracks: BinnedTrack[]; // the ones that are; empty for a run that is itself in the bin
+  vectors: [];
 }
 
-export type Run = ImageRun | MusicRun;
+// ------------------------------------------------------------------ Vector (DESIGN.md §31, version 1.17)
+// These shapes are the keys of `backend/tests/vector_contract.json`; `vector.test.tsx` checks that every key of the fixture is in them and the other
+// way round, so the page and the server cannot drift apart without a test failing.
+
+export type VectorKind = "silhouette" | "flat" | "line"; // Silhouette or stencil, Flat colour art, Line art (§31.3)
+export type VectorLayersBy = "colour" | "shape";
+export type VectorArrangement = "side_by_side" | "stacked";
+
+/** What a Vector run asked for, and what the server added when it made it. This is what Reuse and Retry restore (§31.12.6). */
+export interface VectorOptionsSnapshot {
+  colours: number; // 2 to 8, white included (§31.7 answer 2b)
+  palette: string[]; // the INK colours only: uppercase #RRGGBB, never white, at most colours - 1; fewer means the picture chose the rest
+  kind: VectorKind;
+  width_mm: number;
+  height_mm: number;
+  layers_by: VectorLayersBy;
+  arrangement: VectorArrangement;
+  bleed_mm: number;
+  min_feature_mm: number;
+  kerf_mm: number;
+  steps: number;
+  seed: number;
+  num_images: number; // the versions
+  recipe: string; // the words that were sent to the model: the page's edited text, or what the server built
+  seed_was_random: boolean;
+  negative: string; // the fixed negative text
+  draw_width: number; // the size of the picture the model drew, in pixels
+  draw_height: number;
+}
+
+/** A line the clean-up reports on a version: something removed, or something that needs a look (`code` is for programs, `message` for people). */
+export interface VectorNote {
+  code: string;
+  message: string;
+}
+
+/** One layer of a vector, as the check reports it (§31.12.3 item 3). In shape mode `colour` is a label from a fixed list and `picture_colour` is what
+ *  the picture had; by colour they are close but not the same. */
+export interface VectorLayer {
+  index: number; // 1-based; layer 1 has the most ink, so it is the bottom of a stack
+  id: string; // layer-2-red
+  name: string; // Layer 2 (red)
+  colour: string; // #RRGGBB, exact, and the file's own
+  picture_colour: string;
+  paths: number;
+  length_mm: number; // the total cut length of the layer, a rough idea of the time
+}
+
+/** The check of one version (§31.4): what the clean-up found and did. */
+export interface VectorCheck {
+  colours_asked: number;
+  colours_found: number; // white included
+  white: boolean; // white is among the colours found (it is the bare material and has no layer)
+  size_mm: [number, number];
+  layers_by: VectorLayersBy;
+  arrangement: VectorArrangement;
+  svg_bytes: number;
+  layers: VectorLayer[];
+  smallest_feature_mm: number | null; // the smallest feature that remains; null if the clean-up found none
+  removed: { specks: number; thin_parts: number };
+  mm_per_pixel: number;
+  notes: VectorNote[];
+}
+
+/** One finished version of a Vector run. The URLs come from the server and are used as given (the page builds none, except the PNG size). */
+export interface VectorItem {
+  id: string;
+  idx: number; // 0-based place in the run
+  seed: number;
+  width_mm: number;
+  height_mm: number;
+  colours: number; // found, white included
+  layers: number;
+  bytes: number;
+  check: VectorCheck;
+  url: string; // the combined SVG: never put in the page as markup, only in an <img> or fetched as text to copy
+  download_url: string;
+  zip_url: string;
+  png_url: string;
+  png_download_url: string;
+  preview_url: string; // a PNG made from the SVG, for the card's <img>
+}
+
+export interface VectorRun extends RunBase {
+  mode: "vector";
+  options: VectorOptionsSnapshot;
+  lyrics: null;
+  inputs: [];
+  images: [];
+  binned_images: []; // a Vector run is binned and restored whole: it has no pictures of its own in the bin (§31.12.6)
+  tracks: [];
+  binned_tracks: [];
+  vectors: VectorItem[];
+}
+
+export type Run = ImageRun | MusicRun | VectorRun;
 
 export const isMusicRun = (run: Run): run is MusicRun => run.mode === "music";
-export const isImageRun = (run: Run): run is ImageRun => run.mode !== "music";
+export const isVectorRun = (run: Run): run is VectorRun => run.mode === "vector";
+export const isImageRun = (run: Run): run is ImageRun => run.mode === "generate" || run.mode === "edit";
 
 export interface WorkerStatus {
   state: WorkerState;
@@ -238,6 +341,41 @@ export interface MusicAvailability {
   model: string;
 }
 
+/** The preset buttons of the Size control: a machine's bed (§31.12.8). */
+export interface VectorPreset {
+  id: string;
+  name: string;
+  width_mm: number;
+  height_mm: number;
+}
+
+/** What the Vector form needs from the page (§31.12.2): the limits the server enforces, so that the page never hard-codes them. */
+export interface VectorLimits {
+  colours: Range & { default: number };
+  size_mm: Range & { default: [number, number] }; // a side of the sheet, in millimetres
+  versions: Range;
+  min_feature_mm: Range & { default: number };
+  kerf_mm: Range & { default: number };
+  bleed_mm: Range & { default: number };
+  shape_layer_cap: number; // layers by shape stop here
+  kinds: VectorKind[];
+  layers_by: VectorLayersBy[];
+  arrangements: VectorArrangement[];
+  presets: VectorPreset[];
+  defaults: { kind: VectorKind; layers_by: VectorLayersBy; arrangement: VectorArrangement };
+  recipe_max_chars: number; // the longest edited recipe the server accepts
+  // The PNG size range (the long side, in pixels). The contract's `limits_vector` does not carry it (it is in the route's description, §31.12.7: 16 to
+  // 8192), so it is optional here: the page uses it if the server ever sends it and VECTOR_PNG_RANGE (vector.ts) otherwise.
+  png_px?: Range & { default?: number };
+}
+
+/** Whether Vector can run here and, if not, why and what to do (as `MusicAvailability` does for Music). */
+export interface VectorAvailability {
+  available: boolean;
+  reason: string | null;
+  hint: string | null;
+}
+
 /** Whether Enlarge can run here and, if not, why and what to do (DESIGN.md §28.3). */
 export interface UpscalerStatus {
   available: boolean;
@@ -278,8 +416,10 @@ export interface Capabilities {
     bin_days: number; // how long a deleted run stays in the bin; 0 = there is no bin and Delete is for good (DESIGN.md §30)
     project_name_max: number; // the longest a project's name may be, in characters (DESIGN.md §32.4)
     music: MusicLimits;
+    vector: VectorLimits;
   };
   music: MusicAvailability;
+  vector: VectorAvailability;
   upscaler: UpscalerStatus;
   queue_cap: number;
   device: WorkerStatus["device"];
@@ -331,6 +471,41 @@ export interface CreateMusicBody {
     seed: number | null;
     fields: Record<string, string>;
   };
+}
+
+/** A Vector run (DESIGN.md §31.12.5): `options` has exactly the keys of the contract's `create_request.options`. `recipe` null means "the server builds it";
+ *  a string is the page's edited text. */
+export interface CreateVectorBody {
+  mode: "vector";
+  prompt: string; // the user's idea (the card and the file names use it)
+  options: {
+    colours: number;
+    palette: string[];
+    kind: VectorKind;
+    width_mm: number;
+    height_mm: number;
+    layers_by: VectorLayersBy;
+    arrangement: VectorArrangement;
+    bleed_mm: number;
+    min_feature_mm: number;
+    kerf_mm: number;
+    steps: number;
+    seed: number | null;
+    num_images: number;
+    recipe: string | null;
+  };
+}
+
+/** The body of `POST /api/vector/recipe` and its answer (§31.12.7): the words the studio will send, for the form to show. Pure text. */
+export interface VectorRecipeRequest {
+  prompt: string;
+  kind: VectorKind;
+  colours: number;
+  palette: string[];
+}
+export interface VectorRecipe {
+  positive: string;
+  negative: string;
 }
 
 export interface RunsPage {

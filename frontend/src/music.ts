@@ -329,15 +329,17 @@ export function musicModelNote(worker: WorkerStatus): string | null {
 }
 
 // ------------------------------------------------------------------ the tab
-export type TabId = "images" | "music";
+// Vector (DESIGN.md §31.7 answer 9, §31.12.8) is the third tab, after Images and Music, so the first two keep their places.
+export type TabId = "images" | "music" | "vector";
 export const TABS: { id: TabId; label: string }[] = [
   { id: "images", label: "Images" },
   { id: "music", label: "Music" },
+  { id: "vector", label: "Vector" },
 ];
 
 export function readTab(store: KeyValueStore): TabId {
   const saved = store.get(TAB_KEY);
-  return saved === "music" ? "music" : "images";
+  return saved === "music" || saved === "vector" ? saved : "images";
 }
 
 export function saveTab(tab: TabId, store: KeyValueStore): void {

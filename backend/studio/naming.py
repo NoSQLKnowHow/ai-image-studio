@@ -61,6 +61,19 @@ def music_filename(*, label: str, seconds: float, seed: int, created_at: datetim
     return "_".join(parts) + ".wav"
 
 
+def vector_filename(*, prompt: str, width_mm: float, height_mm: float, colours: int, seed: int, created_at: datetime, suffix: str = ".svg") -> str:
+    """`vector_<prompt-words>_<W>x<H>mm_<N>c_s<seed>_<YYYYmmdd-HHMMSS>.svg` (DESIGN.md §31.12.7). The size is the sheet's, in millimetres, and `N`
+    the number of colours the picture really has (white included). `suffix` is `.svg`, `-layers.zip` or `.png`: the three downloads of one vector
+    share the rest of the name."""
+    parts = ["vector", slugify(prompt), f"{_mm(width_mm)}x{_mm(height_mm)}mm", f"{int(colours)}c", f"s{seed}", created_at.strftime("%Y%m%d-%H%M%S")]
+    return "_".join(parts) + suffix
+
+
+def _mm(value: float) -> str:
+    """A length in millimetres as it reads in a file name: `100` for 100.0 and `152.4` for 152.4 (never `100.0`, never `1e+02`)."""
+    return f"{value:.1f}".rstrip("0").rstrip(".")
+
+
 def source_filename(*, prompt: str, position: int, width: int, height: int, created_at: datetime) -> str:
     """`source-<position>_<prompt-words>_<W>x<H>_<YYYYmmdd-HHMMSS>.png`: the name a 4K copy of an edit's source image is
     downloaded as (DESIGN.md §27.9). The size is the copy's."""

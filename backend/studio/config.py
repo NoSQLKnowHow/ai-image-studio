@@ -7,6 +7,7 @@ fails at start-up with one readable message instead of failing later.
 from __future__ import annotations
 
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
@@ -52,6 +53,10 @@ class Settings:
     music_libs: Optional[Path] = None  # a folder put first on the music worker's Python path (the image's own diffusers 0.40.0)
     upscaler_model: Optional[Path] = None  # Enlarge's model file (DESIGN.md §28.3); None = $HF_HOME/upscalers/RealESRGAN_x2plus.pth
     upscaler_device: str = "auto"  # where Enlarge runs: auto (the GPU if there is one), cuda, or cpu
+    # The command that cleans up one drawing into an SVG (DESIGN.md §31.12.4): the program and its first arguments, to which the server adds `--source`,
+    # `--options` and `--out`. Empty means the engine's own, `python -m studio.vector.job`. It exists so that the server's tests run a fake job and need
+    # no engine; STUDIO_VECTOR_JOB_COMMAND is the same thing for a person (split like a shell command line).
+    vector_job_command: tuple[str, ...] = ()
     fake_step_delay_ms: int = 30
     static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
@@ -152,6 +157,12 @@ class Settings:
             errors.append(f"STUDIO_UPSCALER_DEVICE={upscaler_device!r} must be one of: {', '.join(UPSCALER_DEVICES)}.")
             upscaler_device = "auto"
 
+        try:
+            vector_job_command = tuple(shlex.split(env.get("STUDIO_VECTOR_JOB_COMMAND", "")))
+        except ValueError as exc:  # an unclosed quote
+            errors.append(f"STUDIO_VECTOR_JOB_COMMAND is not a command line ({exc}).")
+            vector_job_command = ()
+
         pipeline = env.get("STUDIO_PIPELINE", "real").strip().lower()
         if pipeline not in PIPELINES:
             errors.append(f"STUDIO_PIPELINE={pipeline!r} must be one of: {', '.join(PIPELINES)}.")
@@ -196,6 +207,7 @@ class Settings:
             music_libs=Path(env["STUDIO_MUSIC_LIBS"]).expanduser() if env.get("STUDIO_MUSIC_LIBS", "").strip() else None,
             upscaler_model=Path(env["STUDIO_UPSCALER_MODEL"]).expanduser() if env.get("STUDIO_UPSCALER_MODEL", "").strip() else None,
             upscaler_device=upscaler_device,
+            vector_job_command=vector_job_command,
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )

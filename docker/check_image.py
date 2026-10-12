@@ -8,6 +8,7 @@ Fails (exit 1) when:
   (studio.pipelines.real.import_runtime, which also catches diffusers' placeholder classes),
 - the music worker can't import the MiniMax-Music3 pipeline with its own copy of diffusers (STUDIO_MUSIC_LIBS),
 - the built web page is missing.
+Not fatal (a note): spandrel for Enlarge and vtracer + shapely for Vector cannot be imported or used.
 No GPU is needed: builds don't get one, so whether CUDA can see a GPU is reported, not required.
 """
 
@@ -104,6 +105,32 @@ def main() -> int:
         notes.append(f"Enlarge: spandrel {getattr(spandrel, '__version__', md.version('spandrel'))}")
     except Exception as exc:  # noqa: BLE001 - whatever went wrong, it is only a note
         notes.append(f"Enlarge: spandrel cannot be imported here ({type(exc).__name__}: {exc}); the page will say Enlarge is unavailable")
+
+    # Vector (DESIGN.md section 31.6) needs vtracer and shapely. As with spandrel, a copy that cannot be imported (or cannot make a file) is
+    # a note and not a failed build: capabilities.vector says that Vector is unavailable and why, and everything else works. A tiny
+    # picture is run through the real clean-up, so that "they import" also means "they run" on this machine's architecture.
+    try:
+        from studio.vector import VectorOptions, available, build_vector
+
+        usable, reason, _hint = available()
+        if not usable:
+            notes.append(f"Vector: unavailable ({reason}); the Vector tab will say so")
+        else:
+            import io
+
+            import shapely
+            import vtracer  # noqa: F401
+            from PIL import Image, ImageDraw
+
+            picture = Image.new("RGB", (64, 64), "white")
+            ImageDraw.Draw(picture).rectangle((8, 8, 55, 55), fill="black")
+            png = io.BytesIO()
+            picture.save(png, "PNG")
+            made = build_vector(png.getvalue(), VectorOptions(colours=2, width_mm=20, height_mm=20, min_feature_mm=0.5))
+            notes.append(f"Vector: vtracer {md.version('vtracer')}, shapely {shapely.__version__} (GEOS {shapely.geos_version_string}) made "
+                         f"a {len(made.layers)}-layer SVG from a test picture")
+    except Exception as exc:  # noqa: BLE001 - whatever went wrong, it is only a note
+        notes.append(f"Vector: cannot make a test file here ({type(exc).__name__}: {exc}); the Vector tab will say it is unavailable")
 
     static = Path(os.environ.get("STUDIO_STATIC_DIR", "/app/static")) / "index.html"
     if not static.is_file():

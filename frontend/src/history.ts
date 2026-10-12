@@ -54,7 +54,8 @@ export function filterParams(filter: HistoryFilter): Record<string, string> {
   };
 }
 
-/** Whether a run has a picture or a track of its own in the bin while it is itself in the history (DESIGN.md §33.1). */
+/** Whether a run has a picture or a track of its own in the bin while it is itself in the history (DESIGN.md §33.1). A Vector run never has: its
+ *  `binned_images` and `binned_tracks` are empty lists, so the rule below gives the right answer for it without a case of its own. */
 export const hasItemsInTheBin = (run: Pick<Run, "binned_images" | "binned_tracks">): boolean => run.binned_images.length > 0 || run.binned_tracks.length > 0;
 
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
@@ -193,4 +194,8 @@ export interface TabCounts { all: number; kept: number; deleted: number; deleted
 export interface Counts {
   image: TabCounts;
   music: TabCounts;
+  vector: TabCounts; // a Vector run is binned whole, so its `deleted_items` is always 0 (DESIGN.md §31.12.6)
 }
+
+/** The three tabs, in the order the page shows them: the keys of `Counts`, and what a tab is called when the page asks the server about it. */
+export type TabKind = keyof Counts;

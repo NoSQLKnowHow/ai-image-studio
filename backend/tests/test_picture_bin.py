@@ -14,6 +14,7 @@ from datetime import timedelta
 
 import pytest
 from conftest import create_edit, create_run, image_bytes, stage, wait_for
+from schema_helpers import as_before_vector
 from PIL import Image
 from test_bin import bin_it, captured, columns, sweep
 from test_edit_runs import ref
@@ -662,8 +663,8 @@ def test_a_track_of_a_run_that_has_not_finished_is_refused(client):
 
 
 # ------------------------------------------------------------------ schema 6
-def test_the_schema_is_6():
-    assert SCHEMA_VERSION == 6
+def test_the_schema_is_7():
+    assert SCHEMA_VERSION == 7  # 1.15 made it 6 (this file's columns); 1.17's Vector made it 7 and keeps them
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:
@@ -678,6 +679,7 @@ def tables_and_indexes(path) -> tuple[set[str], set[str]]:
 # A schema 5 database as 1.14 leaves it: projects, but no `deleted_at` on pictures and tracks, with a run, two pictures and two tracks in it.
 def v5_database(path) -> None:
     Database(path).close()
+    as_before_vector(path)  # with the mode CHECK of that time, not the current one that allows vector runs
     conn = sqlite3.connect(path)
     for table in ("images", "tracks"):
         conn.execute(f"DROP INDEX idx_{table}_deleted")
