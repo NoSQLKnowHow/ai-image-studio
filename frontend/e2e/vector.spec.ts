@@ -1,12 +1,10 @@
 // End-to-end: the Vector tab (DESIGN.md §31, §31.12.7 and §31.12.8; criteria 135-143), in a real browser against the real server with the fake pipeline
 // (the image worker draws a stand-in picture and the clean-up turns it into an SVG).
 //
-// WRITTEN BEFORE THE THREE BUILDS WERE MERGED, against the contract (backend/tests/vector_contract.json). It has NOT been run against the real server. Its
-// page-side steps were run (all 21 passing) against a stand-in server written from the contract (kept outside the repository), which proves the locators, the
-// page's behaviour and the spec's own logic, and nothing about the real server. The first run after the merge may find a place where a guess about the server
-// was wrong: an assertion that fails for that reason should be corrected to what the contract says, and one that fails because the server differs from the
-// contract is a finding. What the tests do not assume: how many layers the clean-up finds in the stand-in picture (they check the rules that hold for any
-// picture: at most colours - 1 layers, white never has one, every note shown), and how fast a run is.
+// Written against the contract (backend/tests/vector_contract.json) before the three builds were merged; since the merge it runs against the real server. What
+// the tests do not assume: how many layers the clean-up finds in the stand-in picture (they check the rules that hold for any picture: at most colours - 1
+// layers, white never has one, every note shown), and how fast a run is. The scenarios under "the browser-level mutation round of 1.17", at the end of the
+// file, were added when deliberate bugs in the page's wiring got through the first 21.
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -104,6 +102,10 @@ test("Vector is the third tab: the arrow keys reach it, only its panel is shown,
   await page.reload();
   await expect(vectorTab(page)).toHaveAttribute("aria-selected", "true"); // remembered
   await expect(form(page)).toBeVisible();
+  // the tab list is one stop for the Tab key, on the tab that is selected; the arrow keys reach the others (roving tabindex)
+  await expect(vectorTab(page)).toHaveAttribute("tabindex", "0");
+  await expect(imagesTab(page)).toHaveAttribute("tabindex", "-1");
+  await expect(musicTab(page)).toHaveAttribute("tabindex", "-1");
   await vectorTab(page).focus();
   await page.keyboard.press("ArrowRight");
   await expect(imagesTab(page)).toHaveAttribute("aria-selected", "true"); // wraps round
@@ -703,7 +705,7 @@ test("white never becomes an ink, and the arrangement and bleed are greyed as th
   await expect(form(page)).toContainText("Layers by shape are always side by side.");
 });
 
-// ================================================================== the browser-level mutation round of 1.17 (DESIGN.md §31.13)
+// ================================================================== the browser-level mutation round of 1.17
 // Everything below closes a gap that a deliberate bug in the page's wiring got through: a one-line change ("mutant") to App.tsx, VectorPanel.tsx,
 // VectorCard.tsx or one of the small files that none of the scenarios above failed on. The comment on each test says which bug it would catch, so that a
 // reader can see why it is there. They check what the person sees and what the page sends, never how the page is written.
@@ -1038,6 +1040,29 @@ test("the studio's words are asked for once after typing, with the idea, kind, c
   await page.waitForTimeout(500); // ... and the page has had time to take it in, or not
   await expect(recipeBox(page)).toHaveValue(/second idea/i);
   await expect(recipeBox(page)).not.toHaveValue(/first idea/i);
+});
+
+// Catches: a Reuse that is still waiting for the studio's words and puts the run's own words over what the person has typed in the box meanwhile (any change to
+// the form must cancel the comparison that Reuse leaves waiting).
+test("Reuse waits for the studio's words, but never puts the run's words over something typed meanwhile", async ({ page }) => {
+  const idea = unique("typed over");
+  const mine = "the run's own hand-written words";
+  await makeRun(page, idea, { recipe: mine }); // the words sent were not the studio's: Reuse will bring them back as an edit, if nothing else happens first
+  await openVector(page);
+  let held = false;
+  await page.route("**/api/vector/recipe", async (route) => {
+    const real = await route.fetch();
+    await new Promise((done) => setTimeout(done, 1500)); // the studio's words for the restored idea arrive late
+    await route.fulfill({ response: real });
+    held = true;
+  });
+  await vectorCard(page, idea).first().getByRole("button", { name: "Reuse" }).click();
+  await expect(ideaBox(page)).toHaveValue(idea);
+  await recipeBox(page).fill("typed after Reuse"); // before the studio's words are in
+  await expect.poll(() => held, { timeout: 10_000 }).toBe(true);
+  await page.waitForTimeout(500); // the page has had time to compare the words with the run's
+  await expect(recipeBox(page)).toHaveValue("typed after Reuse");
+  await expect(form(page)).toContainText("You changed this by hand");
 });
 
 // ------------------------------------------------------------------ Copy SVG code when something goes wrong
