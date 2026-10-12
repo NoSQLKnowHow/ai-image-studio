@@ -46,7 +46,7 @@ def test_an_edit_gets_its_images_in_the_order_given_and_follows_the_last_ones_sh
     run = wait_for(client, create_edit(client, "put them together", [ref(u) for u in ups])["id"])
     assert run["status"] == "done" and run["mode"] == "edit"
     result = open_result(client, run)
-    assert result.size == (1024, 1024)  # the last image is square: about 1 MP, not Generate's 2048
+    assert result.size == (1024, 1024)  # the last image is square: about 1 MP, not Generate's default 2752x1536
     assert strip_colours(result, 3) == [RED, GREEN, BLUE]  # image 1, 2, 3, exactly as submitted
     assert [(i["position"], i["role"], i["width"], i["height"]) for i in run["inputs"]] == [
         (1, "reference", 300, 200), (2, "reference", 200, 300), (3, "reference", 240, 240)]

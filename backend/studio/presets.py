@@ -14,7 +14,11 @@ ASPECT_RATIOS: dict[str, tuple[int, int]] = {
     "16:9": (2752, 1536),
     "9:16": (1536, 2752),
 }
-DEFAULT_ASPECT = "1:1"
+# The shape and size of a picture when nothing else is said (DESIGN.md §34, decision #53; it was 1:1 up to 1.15). This is the ONE place the
+# default lives: GET /api/capabilities hands it to the page (which has no number of its own), and runspec.py gives a Generate request that names
+# no size this size. 16:9 is the model card's 2752x1536, not 1920x1080, because the pipeline works on a grid of 32 pixels and 1080 is not on it.
+# At about 4.23 MP it costs the time and memory of the old 2048x2048 (4.19 MP) and stays inside MAX_PIXELS below.
+DEFAULT_ASPECT = "16:9"
 DEFAULT_SIZE = ASPECT_RATIOS[DEFAULT_ASPECT]
 
 SIZE_MIN = 256

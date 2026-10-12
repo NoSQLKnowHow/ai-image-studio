@@ -59,17 +59,19 @@ test("options drawer is accessible, persists across reloads, and validates", asy
   await expect(drawer).toBeVisible();
   expect(await drawer.evaluate((el) => el.contains(document.activeElement))).toBe(true); // focus moved inside
 
-  await drawer.getByRole("radio", { name: "16:9, 2752 by 1536" }).click();
+  // 16:9 is the default since 1.16 (§34), so choosing it would change nothing to remember: pick another preset
+  await expect(drawer.getByRole("radio", { name: "16:9, 2752 by 1536" })).toHaveAttribute("aria-checked", "true");
+  await drawer.getByRole("radio", { name: "4:3, 2400 by 1792" }).click();
   await setRange(drawer.getByLabel(/^Steps/), 12);
   await page.keyboard.press("Escape");
   await expect(drawer).toBeHidden();
   await expect(optionsButton).toBeFocused(); // focus returns to where it was
-  await expect(optionsButton).toContainText("2752×1536 · 12 steps · random seed");
+  await expect(optionsButton).toContainText("2400×1792 · 12 steps · random seed");
 
   await page.reload();
-  await expect(page.getByRole("button", { name: /^Options/ })).toContainText("2752×1536 · 12 steps");
+  await expect(page.getByRole("button", { name: /^Options/ })).toContainText("2400×1792 · 12 steps");
   await page.getByRole("button", { name: /^Options/ }).click();
-  await expect(drawer.getByRole("radio", { name: "16:9, 2752 by 1536" })).toHaveAttribute("aria-checked", "true");
+  await expect(drawer.getByRole("radio", { name: "4:3, 2400 by 1792" })).toHaveAttribute("aria-checked", "true");
 
   await drawer.getByRole("radio", { name: "Custom" }).click();
   await drawer.getByLabel("Width").fill("1040");
@@ -83,7 +85,7 @@ test("options drawer is accessible, persists across reloads, and validates", asy
   await expect(page.getByText("Check the options: Each side must be a multiple of 32.")).toBeVisible();
   await drawer.getByRole("button", { name: "Reset to defaults" }).click();
   await page.keyboard.press("Escape");
-  await expect(optionsButton).toContainText("2048×2048 · 40 steps · random seed");
+  await expect(optionsButton).toContainText("2752×1536 · 40 steps · random seed"); // Reset goes back to the default, 16:9 (criterion 177)
   await expect(page.getByText("Check the options")).toHaveCount(0); // fixed, so the message went away
 });
 
@@ -324,20 +326,20 @@ test("the scale picker changes the size that is sent, shows it, and is remembere
   await page.reload();
   await clearHistory(page);
   await expect(scaleRadio(page, 100)).toHaveAttribute("aria-checked", "true");
-  await expect(optionsSummary(page)).toContainText("2048×2048 · 40 steps"); // the page's own defaults: 1:1 preset, 40 steps
+  await expect(optionsSummary(page)).toContainText("2752×1536 · 40 steps"); // the page's own defaults: the 16:9 preset (§34), 40 steps
 
-  await scaleRadio(page, 25).click();
-  await expect(optionsSummary(page)).toContainText("512×512 (25%) · 40 steps");
+  await scaleRadio(page, 25).click(); // 25% of 2752 is 688, which is not a multiple of 32: it rounds (half up) to 704
+  await expect(optionsSummary(page)).toContainText("704×384 (25%) · 40 steps");
   const c = await generate(page, unique("a tiny lighthouse"));
   await expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
-  await expect(c.locator(".run-meta")).toContainText("512×512");
+  await expect(c.locator(".run-meta")).toContainText("704×384");
 
   await page.reload();
   await expect(scaleRadio(page, 25)).toHaveAttribute("aria-checked", "true"); // remembered with the other options
-  await expect(optionsSummary(page)).toContainText("512×512 (25%)");
+  await expect(optionsSummary(page)).toContainText("704×384 (25%)");
 
-  await scaleRadio(page, 50).click(); // and 50% of 2048 is 1024
-  await expect(optionsSummary(page)).toContainText("1024×1024 (50%)");
+  await scaleRadio(page, 50).click(); // and 50% of 2752×1536 is 1376×768
+  await expect(optionsSummary(page)).toContainText("1376×768 (50%)");
 });
 
 test("a scale that would make the image too small is not offered", async ({ page }) => {

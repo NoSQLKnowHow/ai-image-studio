@@ -24,6 +24,7 @@ import { copyText, useNow, useToasts } from "./hooks";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
 import {
+  MOVED_NOTE,
   PROMPT_KEY,
   browserStore,
   buildEditRequest,
@@ -33,6 +34,7 @@ import {
   isAutoSize,
   largerRequest,
   loadOptions,
+  moveSavedSquare,
   optionsFromRun,
   optionsProblem,
   retryRequest,
@@ -129,8 +131,11 @@ export default function App() {
       const nextCaps = await api.capabilities();
       dispatch({ type: "caps", caps: nextCaps });
       const loaded = loadOptions(nextCaps, store);
-      setOptions(loaded.options);
+      // 1.16 made 16:9 the default shape: the first time this browser opens the page, a saved 1:1 is moved to it, with a note (DESIGN.md §34.2)
+      const { options: current, moved } = moveSavedSquare(loaded.options, store);
+      setOptions(current);
       if (loaded.repaired) push("info", "Some saved options were out of date and have been reset.");
+      if (moved) push("info", MOVED_NOTE);
       if (!store.available) push("info", "This browser is blocking storage, so your options won't be remembered.");
     } catch (error) {
       setStartupError(error instanceof Error ? error.message : String(error));

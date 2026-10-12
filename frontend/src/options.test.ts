@@ -1,10 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AUTO,
   CUSTOM,
+  MOVED_KEY,
+  MOVED_NOTE,
   OPTIONS_KEY,
   SCALES,
   baseSize,
+  browserStore,
   buildEditRequest,
   buildRequest,
   defaultOptions,
@@ -16,6 +19,7 @@ import {
   largerRequest,
   largerTarget,
   loadOptions,
+  moveSavedSquare,
   optionsFromRun,
   optionsProblem,
   resolutionLabel,
@@ -36,6 +40,11 @@ import {
 import { CAPS, makeRun } from "./testdata";
 import type { Capabilities, ImageRun, Mode } from "./types";
 
+// Since 1.16 the page's default shape is 16:9 (DESIGN.md §34), so a test that needs a square says so: `square()` is the default options with
+// Size on the 1:1 preset (2048×2048). A test that means "whatever the default is" reads it from CAPS.defaults, and the few tests that pin the
+// default itself say 16:9 (the group "the default shape is 16:9"). That way a later change of default touches only those few.
+const square = (extra: Partial<ReturnType<typeof defaultOptions>> = {}) => ({ ...defaultOptions(CAPS), aspect: "1:1", ...extra });
+
 function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { data: Record<string, string> } {
   const data = { ...initial };
   return { available: true, data, get: (k) => data[k] ?? null, set: (k, v) => void (data[k] = v) };
@@ -44,7 +53,7 @@ function memoryStore(initial: Record<string, string> = {}): KeyValueStore & { da
 describe("defaults and persistence", () => {
   it("starts from the server's defaults with a random seed", () => {
     const o = defaultOptions(CAPS);
-    expect(o).toMatchObject({ mode: "generate", aspect: "1:1", steps: 40, numImages: 1, seedLocked: false, guidance: null });
+    expect(o).toMatchObject({ mode: "generate", aspect: CAPS.defaults.aspect_ratio, steps: 40, numImages: 1, seedLocked: false, guidance: null });
   });
 
   it("round-trips through storage", () => {
@@ -64,7 +73,7 @@ describe("defaults and persistence", () => {
       CAPS,
     );
     expect(repaired).toBe(true);
-    expect(options.aspect).toBe("1:1");
+    expect(options.aspect).toBe(CAPS.defaults.aspect_ratio); // an aspect the server does not offer falls back to the server's default
     expect(options.steps).toBe(40);
     expect(options.seed).toBe(42);
     expect(options.guidance).toBeNull();
@@ -85,13 +94,13 @@ describe("defaults and persistence", () => {
   it("resets an invalid custom size", () => {
     const { options, repaired } = sanitizeOptions({ aspect: CUSTOM, customWidth: 1000, customHeight: 1024 }, CAPS);
     expect(repaired).toBe(true);
-    expect([options.customWidth, options.customHeight]).toEqual([2048, 2048]);
+    expect([options.customWidth, options.customHeight]).toEqual([CAPS.defaults.width, CAPS.defaults.height]); // back to the default size
   });
 });
 
 describe("building requests", () => {
   it("sends a null seed when not locked, so the server picks and records one", () => {
-    const body = buildRequest("  a fox  ", defaultOptions(CAPS), CAPS);
+    const body = buildRequest("  a fox  ", square(), CAPS);
     expect(body).toEqual({
       mode: "generate",
       prompt: "a fox",
@@ -337,7 +346,7 @@ describe("regenerate larger (DESIGN.md §23)", () => {
 
     it("a draft records the chosen size at 100% whatever the scale picker says, with the chosen steps", () => {
       for (const scale of [100, 50, 25] as Scale[]) {
-        const options = { ...defaultOptions(CAPS), scale, steps: 25 };
+        const options = square({ scale, steps: 25 });
         expect(draftRequest("x", options, CAPS).options.full).toEqual({ width: 2048, height: 2048, steps: 25 });
       }
     });
@@ -471,7 +480,7 @@ describe("editing: the size choice and the resolution", () => {
   });
 
   it("Generate's size cannot be Auto", () => {
-    expect(sanitizeOptions({ aspect: AUTO }, CAPS)).toMatchObject({ options: { aspect: "1:1" }, repaired: true });
+    expect(sanitizeOptions({ aspect: AUTO }, CAPS)).toMatchObject({ options: { aspect: CAPS.defaults.aspect_ratio }, repaired: true });
   });
 
   it("accepts the resolutions the server offers and repairs anything else", () => {
@@ -504,7 +513,7 @@ describe("editing: the size choice and the resolution", () => {
     expect(sizeLabel(edit(), CAPS)).toBe("Auto");
     expect(sizeLabel(edit({ editAspect: "16:9" }), CAPS)).toBe("2752×1536");
     expect(sizeLabel(edit({ editAspect: "16:9", scale: 50 }), CAPS)).toBe("1376×768");
-    expect(sizeLabel({ ...defaultOptions(CAPS), mode: "generate" }, CAPS)).toBe("2048×2048");
+    expect(sizeLabel(square({ mode: "generate" }), CAPS)).toBe("2048×2048");
   });
 
   it("only a custom size that is in use is checked", () => {
@@ -637,6 +646,188 @@ describe("editing: Reuse, Retry and the summary", () => {
     const edit = { ...defaultOptions(CAPS), mode: "edit" as const };
     expect(summarize(edit, CAPS)).toBe("Auto · 1K · 40 steps · random seed");
     expect(summarize({ ...edit, editAspect: "1:1", scale: 50, resolution: 2048, transparent: true }, CAPS)).toBe("1024×1024 (50%) · 2K · 40 steps · random seed · transparent");
-    expect(summarize({ ...defaultOptions(CAPS), transparent: true }, CAPS)).toBe("2048×2048 · 40 steps · random seed · transparent");
+    expect(summarize(square({ transparent: true }), CAPS)).toBe("2048×2048 · 40 steps · random seed · transparent");
+  });
+});
+
+// ------------------------------------------------------------------ the default shape (DESIGN.md §34, version 1.16)
+describe("the default shape is 16:9 (criteria 177 and 180)", () => {
+  it("a browser with nothing saved starts Generate on the 16:9 preset, 2752×1536, with Custom starting at that size too", () => {
+    const { options, repaired } = loadOptions(CAPS, memoryStore());
+    expect(repaired).toBe(false);
+    expect(options.aspect).toBe("16:9");
+    expect(resolveSize(options, CAPS)).toEqual({ width: 2752, height: 1536 });
+    expect([options.customWidth, options.customHeight]).toEqual([2752, 1536]); // Custom starts at the default size (§34.5 choice 5)
+  });
+
+  it("Reset to defaults is those same defaults for Generate", () => {
+    // The page's Reset button is exactly defaultOptions(caps) (App.tsx), so it gives what an empty browser starts with.
+    expect(defaultOptions(CAPS)).toEqual(loadOptions(CAPS, memoryStore()).options);
+    expect(defaultOptions(CAPS)).toMatchObject({ aspect: "16:9", customWidth: 2752, customHeight: 1536, scale: 100 });
+  });
+
+  it("the first request of a fresh page is 2752×1536, and the scale picker works on that size", () => {
+    expect(buildRequest("x", defaultOptions(CAPS), CAPS).options).toMatchObject({ width: 2752, height: 1536 });
+    expect(buildRequest("x", { ...defaultOptions(CAPS), scale: 50 }, CAPS).options).toMatchObject({ width: 1376, height: 768 });
+    expect(summarize(defaultOptions(CAPS), CAPS)).toBe("2752×1536 · 40 steps · random seed");
+  });
+
+  it("a draft of the default keeps its shape (a long side of 512) and remembers 2752×1536 to go back to", () => {
+    expect(draftRequest("x", defaultOptions(CAPS), CAPS).options).toMatchObject({ width: 512, height: 288, draft: true, full: { width: 2752, height: 1536, steps: 40 } });
+  });
+
+  it("it comes from the server's capabilities, with no number of its own in the page", () => {
+    const other: Capabilities = { ...CAPS, defaults: { ...CAPS.defaults, aspect_ratio: "3:2", width: 2528, height: 1696 } };
+    const options = defaultOptions(other);
+    expect([options.aspect, options.customWidth, options.customHeight]).toEqual(["3:2", 2528, 1696]);
+    expect(resolveSize(options, other)).toEqual({ width: 2528, height: 1696 });
+  });
+
+  it("Edit's size is still Auto, whatever the shape of the default (§34.3)", () => {
+    const d = defaultOptions(CAPS);
+    expect([d.editAspect, d.resolution]).toEqual([AUTO, 1024]);
+    expect(defaultOptions({ ...CAPS, defaults: { ...CAPS.defaults, aspect_ratio: "1:1", width: 2048, height: 2048 } }).editAspect).toBe(AUTO);
+    expect(buildEditRequest("x", { ...d, mode: "edit" }, CAPS, [{ upload_id: "u" }], null).options).toMatchObject({ width: null, height: null });
+  });
+});
+
+describe("a run made before 1.16 keeps its own size (criterion 183)", () => {
+  // Fixture runs are 2048×2048 on purpose: they stand for what the studio made before 1.16, when that was the default.
+  const oldSquare = () => makeRun({ options: { ...makeRun().options, width: 2048, height: 2048 } });
+
+  it("Reuse brings back its own 1:1, not the new default", () => {
+    const next = optionsFromRun(oldSquare(), CAPS, defaultOptions(CAPS)); // the page is at 16:9, the run was a square
+    expect(next).toMatchObject({ aspect: "1:1", scale: 100 });
+    expect(resolveSize(next, CAPS)).toEqual({ width: 2048, height: 2048 });
+  });
+
+  it("Retry sends its own size again, not the default", () => {
+    expect(retryRequest(oldSquare()).options).toMatchObject({ width: 2048, height: 2048 });
+  });
+
+  it("Reuse of a run made at the new default comes back as 16:9", () => {
+    const wide = makeRun({ options: { ...makeRun().options, width: 2752, height: 1536 } });
+    expect(optionsFromRun(wide, CAPS, square())).toMatchObject({ aspect: "16:9", scale: 100 });
+  });
+});
+
+describe("the one-time move of a saved 1:1 (criteria 178 and 179, DESIGN.md §34.2)", () => {
+  /** What a browser saved by 1.15 holds: every option, with Size on `aspect`, and the Custom fields at the old default size. */
+  const saved1_15 = (over: Record<string, unknown> = {}) => JSON.stringify({ ...square({ customWidth: 2048, customHeight: 2048 }), ...over });
+  /** The page's start: load what is saved, then move it. */
+  const start = (store: KeyValueStore) => moveSavedSquare(loadOptions(CAPS, store).options, store);
+  const savedAspect = (store: ReturnType<typeof memoryStore>) => JSON.parse(store.data[OPTIONS_KEY]).aspect;
+
+  it("a saved 1:1 becomes 16:9, once, with the note due", () => {
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15() });
+    const first = start(store);
+    expect(first.moved).toBe(true);
+    expect(first.options.aspect).toBe("16:9");
+    expect(MOVED_NOTE).toBe("The default size is now 16:9, and your saved 1:1 was changed to it. Choose 1:1 in Options to go back.");
+  });
+
+  it("any value of the flag means the browser has been through it", () => {
+    // The page writes "1", but what counts is that the key is there: a flag saved by another build, or by hand, is respected.
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15(), [MOVED_KEY]: "yes" });
+    expect(start(store)).toMatchObject({ moved: false, options: { aspect: "1:1" } });
+  });
+
+  it("an upgraded browser keeps the Custom size it saved (2048×2048 if it never changed it): only an empty one starts Custom at 2752×1536", () => {
+    const { options } = start(memoryStore({ [OPTIONS_KEY]: saved1_15() }));
+    expect([options.customWidth, options.customHeight]).toEqual([2048, 2048]);
+    expect([defaultOptions(CAPS).customWidth, defaultOptions(CAPS).customHeight]).toEqual([2752, 1536]);
+  });
+
+  it("the move is saved at once, with the flag, so a second start in the same page finds it done", () => {
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15() });
+    start(store);
+    expect(savedAspect(store)).toBe("16:9");
+    expect(store.data[MOVED_KEY]).toBeDefined();
+    const again = start(store); // React's development double run, or a Retry after a failed start
+    expect(again).toMatchObject({ moved: false, options: { aspect: "16:9" } });
+  });
+
+  it("only the shape moves: the scale, steps, seed and Edit's size are left as they were (§34.5 choice 3)", () => {
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15({ scale: 50, steps: 12, seedLocked: true, seed: 7, editAspect: "3:4", numImages: 3, customWidth: 1024, customHeight: 768 }) });
+    const { options } = start(store);
+    expect(options).toMatchObject({ aspect: "16:9", scale: 50, steps: 12, seedLocked: true, seed: 7, editAspect: "3:4", numImages: 3 });
+    expect([options.customWidth, options.customHeight]).toEqual([1024, 768]); // a saved Custom size is never replaced (§34.5 choice 5)
+    expect(resolveSize(options, CAPS)).toEqual({ width: 1376, height: 768 }); // a 1:1 at 50% becomes 16:9 at 50%
+  });
+
+  it("Edit's saved size is not touched, even when it is 1:1 itself", () => {
+    const { options, moved } = start(memoryStore({ [OPTIONS_KEY]: saved1_15({ editAspect: "1:1" }) }));
+    expect([moved, options.aspect, options.editAspect]).toEqual([true, "16:9", "1:1"]);
+    const onlyEdit = start(memoryStore({ [OPTIONS_KEY]: saved1_15({ aspect: "16:9", editAspect: "1:1" }) }));
+    expect([onlyEdit.moved, onlyEdit.options.editAspect]).toEqual([false, "1:1"]); // nothing to move, so no note either
+  });
+
+  it.each(["4:3", "3:4", "3:2", "2:3", "16:9", "9:16"])("another preset (%s) is left as it is, and no note is due", (aspect) => {
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15({ aspect }) });
+    const first = start(store);
+    expect([first.moved, first.options.aspect]).toEqual([false, aspect]);
+    expect(savedAspect(store)).toBe(aspect);
+  });
+
+  it("a Custom size is left as it is, even a Custom of 2048×2048", () => {
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15({ aspect: CUSTOM, customWidth: 2048, customHeight: 2048 }) });
+    const { options, moved } = start(store);
+    expect(moved).toBe(false);
+    expect([options.aspect, options.customWidth, options.customHeight]).toEqual([CUSTOM, 2048, 2048]);
+  });
+
+  it("the move is written whether or not anything moved, so a 1:1 chosen afterwards stays 1:1 (criterion 179)", () => {
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15({ aspect: "4:3" }) }); // nothing to move on this first load
+    expect(start(store).moved).toBe(false);
+    expect(store.data[MOVED_KEY]).toBeDefined(); // ...and yet the flag is written
+    saveOptions(square(), store); // the person now chooses 1:1 in Options
+    const later = start(store); // and reloads
+    expect(later).toMatchObject({ moved: false, options: { aspect: "1:1" } });
+    expect(savedAspect(store)).toBe("1:1");
+  });
+
+  it("a person who chooses 1:1 after the move keeps it and is not told again", () => {
+    const store = memoryStore({ [OPTIONS_KEY]: saved1_15() });
+    expect(start(store).moved).toBe(true);
+    saveOptions(square(), store); // Options -> 1:1, saved as typed
+    const reload = start(store);
+    expect(reload.moved).toBe(false);
+    expect(reload.options.aspect).toBe("1:1");
+  });
+
+  it("a browser that starts empty gets 16:9 and no note, and is marked as moved", () => {
+    const store = memoryStore();
+    const first = start(store);
+    expect(first).toMatchObject({ moved: false, options: { aspect: "16:9" } });
+    expect(store.data[MOVED_KEY]).toBeDefined();
+    saveOptions(first.options, store);
+    saveOptions(square(), store); // later it chooses 1:1: that stays too
+    expect(start(store).options.aspect).toBe("1:1");
+  });
+
+  it("a saved value that cannot be read starts from the default, with no note", () => {
+    const store = memoryStore({ [OPTIONS_KEY]: "{not json" });
+    expect(start(store)).toMatchObject({ moved: false, options: { aspect: "16:9" } });
+    expect(store.data[MOVED_KEY]).toBeDefined();
+  });
+
+  it("with storage blocked there is nothing to move: it works in memory, starts at 16:9, and says nothing", () => {
+    const blocked: KeyValueStore = { available: false, get: () => null, set: () => undefined };
+    const { options, moved } = start(blocked);
+    expect([moved, options.aspect, resolveSize(options, CAPS)]).toEqual([false, "16:9", { width: 2752, height: 1536 }]);
+  });
+
+  it("with the browser's own storage throwing on every call, the start still works and starts at 16:9", () => {
+    const refuse = () => {
+      throw new DOMException("blocked", "SecurityError");
+    };
+    vi.stubGlobal("localStorage", { getItem: refuse, setItem: refuse, removeItem: refuse });
+    try {
+      const store = browserStore();
+      expect(store.available).toBe(false);
+      expect(start(store)).toMatchObject({ moved: false, options: { aspect: "16:9" } });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

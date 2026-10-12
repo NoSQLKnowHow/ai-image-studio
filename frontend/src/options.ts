@@ -42,6 +42,9 @@ export interface Options {
   transparent: boolean;
 }
 
+/** What a browser with nothing saved starts from, and what Reset to defaults goes back to. The shape of Generate and the
+ *  starting width and height of Custom both come from the server's defaults (16:9, 2752×1536 since 1.16: DESIGN.md §34), so this
+ *  page has no size of its own to keep in step. Edit's size is Auto whatever the server's default is (§34.3). */
 export function defaultOptions(caps: Capabilities): Options {
   return {
     mode: caps.modes.includes(caps.defaults.mode) ? caps.defaults.mode : "generate",
@@ -161,6 +164,39 @@ export function loadOptions(caps: Capabilities, store: KeyValueStore): { options
 
 export function saveOptions(options: Options, store: KeyValueStore): void {
   store.set(OPTIONS_KEY, JSON.stringify(options));
+}
+
+// ------------------------------------------------------------------ the one-time move of a saved 1:1 (DESIGN.md §34.2)
+/** The small saved value that says "this browser has been through the move". Any value means yes. It is its own key, not a field of the
+ *  options, because the options are validated and repaired field by field and may be reset (Reset, a corrupt value): a flag kept among
+ *  them could be lost, and the move would then run a second time on someone who had chosen 1:1 on purpose. */
+export const MOVED_KEY = "studio.default16x9.v1";
+/** The shape the default was up to 1.15, and the one it is now. Written out here, not read from the capabilities: this move is about
+ *  exactly these two, and it must not turn into something else if the server's default changes again. */
+const OLD_DEFAULT_ASPECT = "1:1";
+const NEW_DEFAULT_ASPECT = "16:9";
+/** The one-time note, shown as a toast (§34.2, choice 4 of §34.5). */
+export const MOVED_NOTE = "The default size is now 16:9, and your saved 1:1 was changed to it. Choose 1:1 in Options to go back.";
+
+/** The first time a browser opens the studio after 1.16, a saved Generate size of exactly the 1:1 preset becomes 16:9 (§34.2). Every browser
+ *  that has used the studio has a saved size, and unless it left the old default that size is 1:1, so changing the default alone would change
+ *  nothing on the owner's own page. The page cannot tell a 1:1 chosen on purpose from the old default, so it moves both, once, and says so.
+ *
+ *  - Only the preset 1:1 moves. Another preset, Custom (even 2048×2048), Edit's size, the scale, the steps and the seed are left alone.
+ *  - It happens once: the flag is written on that first load WHETHER OR NOT anything moved, so a 1:1 chosen afterwards stays, and a browser
+ *    that starts empty (which is already at 16:9) never sees the note.
+ *  - The flag is written before anything else, and the moved options are saved at once (not left to the page's own save a moment later), so
+ *    a second start in the same page (React's development double run, a retry) finds the work done and cannot move or announce it twice.
+ *  - With storage blocked there is nothing saved to move: nothing is written, the page works in memory and starts at the default.
+ *
+ *  Returns the options to use, and whether the note is due. */
+export function moveSavedSquare(options: Options, store: KeyValueStore): { options: Options; moved: boolean } {
+  if (store.get(MOVED_KEY) !== null) return { options, moved: false }; // this browser has been through it
+  store.set(MOVED_KEY, "1");
+  if (options.aspect !== OLD_DEFAULT_ASPECT) return { options, moved: false };
+  const next: Options = { ...options, aspect: NEW_DEFAULT_ASPECT };
+  saveOptions(next, store);
+  return { options: next, moved: true };
 }
 
 // ------------------------------------------------------------------ requests

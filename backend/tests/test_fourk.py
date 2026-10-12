@@ -118,7 +118,7 @@ def test_further_than_two_percent_from_16_9_is_scaled_to_cover_the_frame_and_not
 
 # ------------------------------------------------------------------ any other shape: cover the frame, trim nothing
 @pytest.mark.parametrize("width,height,out", [
-    (2048, 2048, (3840, 3840)),   # the default size: 1.875x
+    (2048, 2048, (3840, 3840)),   # a 1:1 picture (the default until 1.15): 1.875x
     (2400, 1792, (3840, 2867)),   # 4:3: 1.6x
     (2528, 1696, (3840, 2576)),   # 3:2
     (1792, 2400, (2867, 3840)),   # 3:4 upright
