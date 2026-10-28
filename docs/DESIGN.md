@@ -2545,7 +2545,7 @@ I read the studio first (§37.1), then asked in three rounds. Your answers:
 - **The server validates with the same rules as a run**: the shape must be a real preset, the guidance in range, the palette no longer than colours minus one, the sizes in range, lengths bounded (`reply` 2000, a chip 60 characters, a prompt `max_prompt_chars`). A suggestion that fails is **dropped, and the reply says so** (*The builder suggested guidance 40; the studio allows up to 10, so it was left out.*). Control characters are removed.
 - **Streaming**: the model is told to write `reply` first; the server reads the stream and sends the reply's text to the page as it grows. The questions, chips and draft appear when the answer is complete. With thinking on (the default) the reasoning streams first and the page shows *Thinking…* with the seconds, then the reply's words follow; with it off the first word comes as soon as the model is loaded.
 
-### 37.6 The small choices I made (1 to 13 agreed by you on 2026-10-28; 14 and 15 are your choices; 17 you decided; 16, 18 and 19 are new, for your veto)
+### 37.6 The small choices I made (1 to 13 agreed by you on 2026-10-28; 14 and 15 are your choices; 16, 17 and 18 you decided; 19 is new, for your veto)
 
 1. **The tab goes last**, after Vector, so the existing tabs keep their places. Its label wraps on a narrow phone rather than shrinking.
 2. **Prompts and chats go to the bin when deleted** (30 days), like pictures and tracks, so that the studio has one answer to *I deleted it by mistake*. Your words were *saved until I delete them*; this keeps that, with a safety net. Tell me if you want Delete to be for good at once.
@@ -2562,10 +2562,10 @@ I read the studio first (§37.1), then asked in three rounds. Your answers:
 13. **Using a picture from the history** sends a copy to Ollama; a copy is also kept with the chat (rule 13).
 14. **Thinking is on by default** (your choice, 2026-10-28; I had proposed off). A thinking model answers more slowly (§37.1), so each message has a **Think: On | Off** switch for a quick reply, the thinking is shown live and not kept, and a structured answer that fails to parse is asked again with thinking off. Ollama's reference does not say how thinking mixes with a structured answer; §37.8 measures it on your Spark.
 15. **The address is only in your own `.env`** (your choice). The code's default is empty; `.env.example` shows a placeholder and your model name; the address lives only in the `.env` on the Spark, which is not committed.
-16. **Show thinking, don't keep it.** With replies that can take a minute or more, watching the reasoning beats a spinner; it is not stored (size, and it is not an answer) and not sent back with later turns.
+16. **Show thinking, don't keep it** (your decision, 2026-10-28). With replies that can take a minute or more, watching the reasoning beats a spinner; it is not stored (size, and it is not an answer) and not sent back with later turns.
 17. **The studio does not unload Ollama's model by itself** (your decision, 2026-10-28). **Unload from memory** is a button, and the image model's memory message points to it; nothing is unloaded without your press.
-18. **Silence, not total time, is the main limit** (120 seconds of silence, 900 in all), so a long think is not cut off while it is still writing.
-19. **The context is 16384 by default**, because thinking uses room too. That costs memory for the conversation; §37.8 checks it fits next to the image model.
+18. **Silence, not total time, is the main limit** (your decision, 2026-10-28): 120 seconds of silence and 900 in all, so a long think is not cut off while it is still writing.
+19. **The context window is 16384 tokens by default** (`STUDIO_OLLAMA_NUM_CTX`). The context window is how much text the model can hold in mind at once, counted in tokens (a token is roughly three quarters of an English word, so 16384 is about 12,000 words). Everything counts: the instructions, your preferences, the example prompts, the chat so far, the current draft, any picture, and the reasoning and reply being written. Thinking uses a good part of it, which is why it is twice the 8192 I first proposed. The model itself allows 256K, but Ollama sets aside memory for the whole window you ask for, so a bigger one takes more of the Spark's memory and makes each reply slower to start. When a chat outgrows the window the studio drops the oldest turns itself, before sending (§37.5), so Ollama never has to cut anything; the draft and the preferences are never dropped. §37.8 checks that 16384 fits next to the image model.
 
 ### 37.7 Acceptance criteria (continue §36.6)
 
@@ -2627,9 +2627,10 @@ This needs your Ollama running and its model pulled. Once you have them I add a 
 4. **§37.6, choices 1 to 13, are agreed**; **thinking is on by default** (14); **the address stays in your own `.env`** (15).
 5. **Hermes' LLM server is not used.** Ollama is the only one.
 6. **The studio never unloads Ollama's model by itself**: a button and a hint only (17).
+7. **Thinking is shown live and not stored** (16), and **the timeout is 120 seconds of silence with a 900-second cap** (18).
 
 **Still waiting on you:**
-**Your veto or agreement on §37.6 choices 16, 18 and 19** (show thinking but do not keep it; silence as the main timeout; a 16384 context). Nothing else is open; the build can start when you say.
+**Your veto or agreement on §37.6 choice 19** (a 16384-token context window). Nothing else is open; the build can start when you say.
 
 ### 37.10 Not in 1.19
 
