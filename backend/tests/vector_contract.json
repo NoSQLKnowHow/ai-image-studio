@@ -14,6 +14,7 @@
       "height_mm": 100.0,
       "layers_by": "colour",
       "arrangement": "side_by_side",
+      "stack_order": "area_desc",
       "bleed_mm": 0.5,
       "min_feature_mm": 0.5,
       "kerf_mm": 0.0,
@@ -54,6 +55,7 @@
       "height_mm": 100.0,
       "layers_by": "colour",
       "arrangement": "side_by_side",
+      "stack_order": "area_desc",
       "bleed_mm": 0.5,
       "min_feature_mm": 0.5,
       "kerf_mm": 0.0,
@@ -105,6 +107,7 @@
           ],
           "layers_by": "colour",
           "arrangement": "side_by_side",
+          "stack_order": null,
           "svg_bytes": 18432,
           "layers": [
             {
@@ -114,7 +117,8 @@
               "colour": "#000000",
               "picture_colour": "#101214",
               "paths": 7,
-              "length_mm": 412.6
+              "length_mm": 412.6,
+              "height": 1
             },
             {
               "index": 2,
@@ -123,7 +127,8 @@
               "colour": "#FF0000",
               "picture_colour": "#FF0000",
               "paths": 3,
-              "length_mm": 188.2
+              "length_mm": 188.2,
+              "height": 1
             },
             {
               "index": 3,
@@ -132,7 +137,8 @@
               "colour": "#00AA00",
               "picture_colour": "#00AA00",
               "paths": 2,
-              "length_mm": 96.4
+              "length_mm": 96.4,
+              "height": 1
             }
           ],
           "smallest_feature_mm": 0.62,
@@ -216,6 +222,11 @@
         "side_by_side",
         "stacked"
       ],
+      "stack_orders": [
+        "area_desc",
+        "area_asc",
+        "palette"
+      ],
       "presets": [
         {
           "id": "xtool-p2",
@@ -227,7 +238,8 @@
       "defaults": {
         "kind": "silhouette",
         "layers_by": "colour",
-        "arrangement": "side_by_side"
+        "arrangement": "side_by_side",
+        "stack_order": "area_desc"
       },
       "recipe_max_chars": 2000
     },
