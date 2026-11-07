@@ -36,6 +36,9 @@ services:
       stack: 67108864
 
     user: "${STUDIO_UID:-1000}:${STUDIO_GID:-1000}"
+    extra_hosts:
+      # So that STUDIO_OLLAMA_URL=http://host.docker.internal:11434 reaches an Ollama running on the Spark itself (Linux Docker has no such name of its own).
+      - "host.docker.internal:host-gateway"
     ports:
       # STUDIO_BIND=127.0.0.1 keeps it off the LAN (for an SSH tunnel / NVIDIA Sync only).
       - "${STUDIO_BIND:-0.0.0.0}:${STUDIO_PORT:-8080}:8080"
@@ -66,6 +69,16 @@ services:
       STUDIO_EDIT_WARN_UNITS: ${STUDIO_EDIT_WARN_UNITS:-8}
       STUDIO_UPSCALER_MODEL: ${STUDIO_UPSCALER_MODEL:-}
       STUDIO_UPSCALER_DEVICE: ${STUDIO_UPSCALER_DEVICE:-auto}
+      # The Prompt builder (the fourth tab, DESIGN.md section 37) talks to an Ollama server on your network. Empty address = the tab says how to set it up.
+      STUDIO_OLLAMA_URL: ${STUDIO_OLLAMA_URL:-}
+      STUDIO_OLLAMA_MODEL: ${STUDIO_OLLAMA_MODEL:-}
+      STUDIO_OLLAMA_VISION_MODEL: ${STUDIO_OLLAMA_VISION_MODEL:-}
+      STUDIO_OLLAMA_KEEP_ALIVE: ${STUDIO_OLLAMA_KEEP_ALIVE:-5m}
+      STUDIO_OLLAMA_NUM_CTX: ${STUDIO_OLLAMA_NUM_CTX:-32768}
+      STUDIO_OLLAMA_THINK: ${STUDIO_OLLAMA_THINK:-on}
+      STUDIO_OLLAMA_TIMEOUT_S: ${STUDIO_OLLAMA_TIMEOUT_S:-120}
+      STUDIO_OLLAMA_MAX_REPLY_S: ${STUDIO_OLLAMA_MAX_REPLY_S:-900}
+      STUDIO_BUILDER_AT_ONCE: ${STUDIO_BUILDER_AT_ONCE:-1}
       HF_TOKEN: ${HF_TOKEN:-}
     # The server finishes or fails the current image and stops the worker cleanly on SIGTERM.
     stop_grace_period: 30s

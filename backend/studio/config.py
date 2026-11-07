@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import os
 import shlex
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Mapping, Optional
+from urllib.parse import urlsplit
 
 PIPELINES = ("real", "fake")
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off", ""}
 UPSCALER_DEVICES = ("auto", "cuda", "cpu")  # STUDIO_UPSCALER_DEVICE (DESIGN.md §28.3)
 HUB_MODES = ("auto", "offline", "online")  # STUDIO_LOCAL_FILES_ONLY: auto (cache first), true/offline, false/online (§26.11)
+OLLAMA_THINK_MODES = ("on", "off", "model")  # STUDIO_OLLAMA_THINK (DESIGN.md §37.4): send think:true, think:false, or nothing
+BUILDER_LLMS = ("real", "fake")  # STUDIO_BUILDER_LLM: the real Ollama, or the scripted model the page's tests use
+_KEEP_ALIVE = re.compile(r"^-?[0-9]+(s|m|h)?$")  # what Ollama's keep_alive takes that the studio allows: seconds, or a number with s, m or h
 
 
 class ConfigError(Exception):
@@ -57,12 +62,29 @@ class Settings:
     # `--options` and `--out`. Empty means the engine's own, `python -m studio.vector.job`. It exists so that the server's tests run a fake job and need
     # no engine; STUDIO_VECTOR_JOB_COMMAND is the same thing for a person (split like a shell command line).
     vector_job_command: tuple[str, ...] = ()
+    # The Prompt builder (DESIGN.md §37.4). The address of the person's Ollama is read from their own `.env` and from nowhere else; it is kept out of
+    # `repr` (so that a settings object that finds its way into a log line does not carry it) and is never put in a message the server sends (§37.3 rule 12).
+    ollama_url: str = field(default="", repr=False)  # "" = the Prompt builder is not set up
+    ollama_model: str = ""  # the model that writes the prompts; "" = not set up
+    ollama_vision_model: str = ""  # the model used when a picture is attached; "" = the main model, if it reports it can look at pictures
+    ollama_keep_alive: str = "5m"  # sent on every request: how long Ollama keeps its model in memory afterwards ("0" = unload at once)
+    ollama_num_ctx: int = 32768  # the context window asked for, in tokens (§37.6 choice 19)
+    ollama_think: str = "on"  # on: think:true, off: think:false, model: send nothing (§37.6 choice 14)
+    ollama_timeout_s: int = 120  # how long Ollama may stay silent before a reply fails (§37.6 choice 18)
+    ollama_max_reply_s: int = 900  # the longest one reply may take altogether
+    builder_at_once: int = 1  # replies written at the same time (§37.3 rule 9)
+    builder_llm: str = "real"  # "fake" = the scripted model of the tests (§37.4)
     fake_step_delay_ms: int = 30
     static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
     @property
     def db_path(self) -> Path:
         return self.data_dir / "studio.sqlite"
+
+    @property
+    def builder_configured(self) -> bool:
+        """Whether the Prompt builder has what it needs to talk to a model: an address and a model name, or the scripted model of the tests."""
+        return self.builder_llm == "fake" or bool(self.ollama_url and self.ollama_model)
 
     @property
     def upscaler_model_path(self) -> Path:
@@ -163,6 +185,32 @@ class Settings:
             errors.append(f"STUDIO_VECTOR_JOB_COMMAND is not a command line ({exc}).")
             vector_job_command = ()
 
+        # The Prompt builder's settings. A bad address is reported WITHOUT echoing it (the address is private: DESIGN.md §37.3 rule 12).
+        ollama_url = env.get("STUDIO_OLLAMA_URL", "").strip().rstrip("/")
+        if ollama_url:
+            try:
+                parts = urlsplit(ollama_url)
+                shape_ok = parts.scheme in ("http", "https") and bool(parts.hostname) and parts.path == "" and not parts.query and not parts.fragment
+                shape_ok = shape_ok and parts.username is None and parts.password is None
+                parts.port  # noqa: B018 - raises ValueError for a port that is not a number or out of range
+            except ValueError:
+                shape_ok = False
+            if not shape_ok:
+                errors.append("STUDIO_OLLAMA_URL must look like http://host:11434 (a web address with no path, user name or password).")
+                ollama_url = ""
+        keep_alive = env.get("STUDIO_OLLAMA_KEEP_ALIVE", "").strip().lower() or cls.ollama_keep_alive
+        if not _KEEP_ALIVE.match(keep_alive):
+            errors.append("STUDIO_OLLAMA_KEEP_ALIVE must be a number of seconds, or a number followed by s, m or h (for example 5m); 0 unloads at once.")
+            keep_alive = cls.ollama_keep_alive
+        ollama_think = env.get("STUDIO_OLLAMA_THINK", "").strip().lower() or cls.ollama_think
+        if ollama_think not in OLLAMA_THINK_MODES:
+            errors.append(f"STUDIO_OLLAMA_THINK={ollama_think!r} must be one of: {', '.join(OLLAMA_THINK_MODES)}.")
+            ollama_think = cls.ollama_think
+        builder_llm = env.get("STUDIO_BUILDER_LLM", "").strip().lower() or cls.builder_llm
+        if builder_llm not in BUILDER_LLMS:
+            errors.append(f"STUDIO_BUILDER_LLM={builder_llm!r} must be one of: {', '.join(BUILDER_LLMS)}.")
+            builder_llm = cls.builder_llm
+
         pipeline = env.get("STUDIO_PIPELINE", "real").strip().lower()
         if pipeline not in PIPELINES:
             errors.append(f"STUDIO_PIPELINE={pipeline!r} must be one of: {', '.join(PIPELINES)}.")
@@ -208,11 +256,23 @@ class Settings:
             upscaler_model=Path(env["STUDIO_UPSCALER_MODEL"]).expanduser() if env.get("STUDIO_UPSCALER_MODEL", "").strip() else None,
             upscaler_device=upscaler_device,
             vector_job_command=vector_job_command,
+            ollama_url=ollama_url,
+            ollama_model=env.get("STUDIO_OLLAMA_MODEL", "").strip(),
+            ollama_vision_model=env.get("STUDIO_OLLAMA_VISION_MODEL", "").strip(),
+            ollama_keep_alive=keep_alive,
+            ollama_num_ctx=integer("STUDIO_OLLAMA_NUM_CTX", cls.ollama_num_ctx, 512, 1_048_576),
+            ollama_think=ollama_think,
+            ollama_timeout_s=integer("STUDIO_OLLAMA_TIMEOUT_S", cls.ollama_timeout_s, 5, 3600),
+            ollama_max_reply_s=integer("STUDIO_OLLAMA_MAX_REPLY_S", cls.ollama_max_reply_s, 10, 7200),
+            builder_at_once=integer("STUDIO_BUILDER_AT_ONCE", cls.builder_at_once, 1, 4),
+            builder_llm=builder_llm,
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )
         if settings.draft_size % 32:
             errors.append(f"STUDIO_DRAFT_SIZE={settings.draft_size} must be a multiple of 32 (the model needs it).")
+        if settings.ollama_max_reply_s < settings.ollama_timeout_s:
+            errors.append("STUDIO_OLLAMA_MAX_REPLY_S must not be smaller than STUDIO_OLLAMA_TIMEOUT_S (the cap on a whole reply is the longer of the two limits).")
         if errors:
             raise ConfigError("Invalid configuration:\n  - " + "\n  - ".join(errors))
         return settings

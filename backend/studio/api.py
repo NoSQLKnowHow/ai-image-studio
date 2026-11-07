@@ -20,6 +20,9 @@ from starlette.types import Scope
 
 from . import __version__
 from . import presets as P
+from .builder import builder_limits
+from .builder.routes import add_routes as add_builder_routes
+from .builder.service import BuilderService
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
@@ -165,6 +168,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         await jobs.start()
         app.state.settings, app.state.db, app.state.storage, app.state.bus, app.state.jobs = (
             settings, db, storage, bus, jobs)
+        app.state.builder = BuilderService(settings)  # the Prompt builder's view of Ollama (DESIGN.md §37.4)
         app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
         app.state.vector_png_slots = asyncio.Semaphore(VECTOR_PNG_AT_ONCE)
         log.info("AI Image Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
@@ -233,6 +237,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "cfg_scale": {"min": P.CFG_MIN, "max": P.CFG_MAX},
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
                 "vector": vector_limits(),
+                "builder": builder_limits(),
                 "music": {
                     "duration": {"min": P.MUSIC_DURATION_MIN, "max": settings.music_max_seconds, "default": P.MUSIC_DEFAULT_SECONDS},
                     "tracks": {"min": 1, "max": settings.music_max_tracks},
@@ -245,6 +250,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "music": {**jobs.music_status(), "model": jobs.model_id_for("music")},
             "vector": jobs.vector_status(),  # the Vector tab (DESIGN.md §31.12.7): {available, reason, hint}, like `music`
             "upscaler": jobs.upscaler_status(),  # Enlarge (DESIGN.md §28.3): whether it can run here, and if not why
+            "builder": request.app.state.builder.cached(),  # the Prompt builder (§37.4): set up? what is known of Ollama (null until something has looked)
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
         }
@@ -860,6 +866,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    add_builder_routes(app)  # /api/builder/... (registered before the page below, which takes every other path)
 
     static_dir = settings.static_dir or DEFAULT_STATIC_DIR
     if (static_dir / "index.html").is_file():
