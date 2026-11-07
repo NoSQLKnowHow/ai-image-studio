@@ -9,8 +9,8 @@
 
 import type { KeyValueStore } from "./options";
 import type {
-  Capabilities, CreateVectorBody, Progress, Range, VectorArrangement, VectorCheck, VectorItem, VectorKind, VectorLayersBy, VectorLimits, VectorRecipeRequest,
-  VectorRun,
+  Capabilities, CreateVectorBody, Progress, Range, VectorArrangement, VectorCheck, VectorItem, VectorKind, VectorLayer, VectorLayersBy, VectorLimits,
+  VectorRecipeRequest, VectorRun, VectorStackOrder,
 } from "./types";
 
 export const VECTOR_FORM_KEY = "studio.vector.v1";
@@ -40,6 +40,7 @@ export interface VectorForm {
   heightMm: number;
   layersBy: VectorLayersBy;
   arrangement: VectorArrangement; // what the person chose; by shape the run uses side by side whatever this says (`effectiveArrangement`)
+  stackOrder: VectorStackOrder; // which colour is the back sheet when stacked by colour (DESIGN.md §35.3 item 11); ignored otherwise
   minFeatureMm: number;
   kerfMm: number;
   bleedMm: number;
@@ -54,7 +55,7 @@ export function defaultVectorForm(caps: Capabilities): VectorForm {
   const v = caps.limits.vector;
   return {
     idea: "", kind: v.defaults.kind, colours: v.colours.default, palette: [], widthMm: v.size_mm.default[0], heightMm: v.size_mm.default[1],
-    layersBy: v.defaults.layers_by, arrangement: v.defaults.arrangement, minFeatureMm: v.min_feature_mm.default, kerfMm: v.kerf_mm.default,
+    layersBy: v.defaults.layers_by, arrangement: v.defaults.arrangement, stackOrder: v.defaults.stack_order, minFeatureMm: v.min_feature_mm.default, kerfMm: v.kerf_mm.default,
     bleedMm: v.bleed_mm.default, numImages: v.versions.min, seedLocked: false, seed: 42, recipeEdited: false, recipeText: "",
   };
 }
@@ -137,7 +138,22 @@ export const KIND_HINTS: Record<VectorKind, string> = {
 export const kindLabel = (kind: string): string => KIND_LABELS[kind as VectorKind] ?? kind;
 
 export const LAYERS_BY_LABELS: Record<VectorLayersBy, string> = { colour: "Colour", shape: "Shape" };
-export const ARRANGEMENT_LABELS: Record<VectorArrangement, string> = { side_by_side: "Side by side", stacked: "Stacked" };
+/** The two arrangements as the form and the cards name them (DESIGN.md §35.2): "Stacked" says what it does, which is depth. */
+export const ARRANGEMENT_LABELS: Record<VectorArrangement, string> = { side_by_side: "Side by side", stacked: "Stacked (depth)" };
+/** What each arrangement does, in a line under the choice (§35.2). The old explanation of Stacked, a way to glue pieces up, is gone. */
+export const ARRANGEMENT_HINTS: Record<VectorArrangement, string> = {
+  side_by_side: "Each layer holds only its own colour and nothing overlaps: for inlay and engraving.",
+  stacked: "Each sheet holds its own colour and everything in front of it, so the sheets build up into relief: with 6 layers the front colour stands 6 sheets high.",
+};
+
+/** Back sheet: which colour is at the back of a stacked run (§35.2). Its labels are the three the spec gives, in the words of the form. */
+export const STACK_ORDER_LABELS: Record<VectorStackOrder, string> = {
+  area_desc: "The colour with the most ink", area_asc: "The colour with the least ink", palette: "The first ink in my list",
+};
+export const STACK_ORDER_HINT = "The back sheet is the whole design; each sheet in front of it holds less. Which colour is at the back decides how high each colour stands.";
+/** The help under Bleed, which now says what it does for a stacked run (§35.2). */
+export const BLEED_HINT = "0 puts each colour's edge exactly where the drawing has it; more makes each upper sheet a little larger than its colour so that it overlaps the sheet behind it.";
+export const stackOrderLabel = (order: string | null | undefined): string => STACK_ORDER_LABELS[(order ?? "area_desc") as VectorStackOrder] ?? String(order);
 
 /** The arrangement the run will use: by shape the pieces are separate by construction, so it is side by side whatever the control says (§31.12.3 item 4).
  *  The page greys the control then, and sends this value, so the run's own record says what was done. */
@@ -146,6 +162,19 @@ export const effectiveArrangement = (form: Pick<VectorForm, "layersBy" | "arrang
 
 /** The Bleed box is used only when the layers are stacked (§31.12.2: "stacked only"), so it is greyed in every other case. */
 export const bleedApplies = (form: Pick<VectorForm, "layersBy" | "arrangement">): boolean => effectiveArrangement(form) === "stacked";
+
+/** The Back sheet choice is used for exactly the same runs as the bleed: stacked by colour. Layers by shape are always side by side, so both are greyed then. */
+export const stackOrderApplies = (form: Pick<VectorForm, "layersBy" | "arrangement">): boolean => effectiveArrangement(form) === "stacked";
+
+/** Whether a version was made stacked (and so has a back sheet, a stack view and a Height column). A run made in 1.17 says so in its check's `arrangement`
+ *  as any run does, so this needs nothing newer (DESIGN.md §35.4). */
+export const isStacked = (check: Pick<VectorCheck, "arrangement">): boolean => check.arrangement === "stacked";
+
+/** How many sheets high a layer's colour stands: the check says (`height`), and a run from before 1.18, which has none, stacked its layers in order, so a
+ *  layer stands as high as its number (§35.4). A side-by-side layer stands 1 high. */
+export function layerHeight(layer: Pick<VectorLayer, "index" | "height">, check: Pick<VectorCheck, "arrangement">): number {
+  return layer.height ?? (isStacked(check) ? layer.index : 1);
+}
 
 /** A length in millimetres without trailing noise: 100 → "100", 100.5 → "100.5", 0.62 → "0.62". */
 export const mmText = (mm: number): string => String(Number(mm.toFixed(3)));
@@ -198,6 +227,7 @@ export function vectorProblem(form: VectorForm, caps: Capabilities): string | nu
   if (!inRange(form.widthMm, v.size_mm) || !inRange(form.heightMm, v.size_mm)) return `Each side of the sheet must be from ${v.size_mm.min} to ${v.size_mm.max} mm.`;
   if (!v.layers_by.includes(form.layersBy)) return "Choose what the layers are by: colour or shape.";
   if (!v.arrangements.includes(form.arrangement)) return "Choose an arrangement: side by side or stacked.";
+  if (!v.stack_orders.includes(form.stackOrder)) return "Choose which colour is the back sheet.";
   if (!inRange(form.minFeatureMm, v.min_feature_mm)) return `The smallest feature must be from ${v.min_feature_mm.min} to ${v.min_feature_mm.max} mm.`;
   if (!inRange(form.kerfMm, v.kerf_mm)) return `Kerf must be from ${v.kerf_mm.min} to ${v.kerf_mm.max} mm.`;
   if (!inRange(form.bleedMm, v.bleed_mm)) return `Bleed must be from ${v.bleed_mm.min} to ${v.bleed_mm.max} mm.`;
@@ -232,6 +262,7 @@ export function sanitizeVectorForm(raw: unknown, caps: Capabilities): { form: Ve
     heightMm: pick("heightMm", (value) => inRange(value, v.size_mm)),
     layersBy: pick("layersBy", (value) => (v.layers_by as readonly unknown[]).includes(value)),
     arrangement: pick("arrangement", (value) => (v.arrangements as readonly unknown[]).includes(value)),
+    stackOrder: pick("stackOrder", (value) => (v.stack_orders as readonly unknown[]).includes(value)),
     minFeatureMm: pick("minFeatureMm", (value) => inRange(value, v.min_feature_mm)),
     kerfMm: pick("kerfMm", (value) => inRange(value, v.kerf_mm)),
     bleedMm: pick("bleedMm", (value) => inRange(value, v.bleed_mm)),
@@ -275,6 +306,7 @@ export function buildVectorRequest(form: VectorForm, caps: Capabilities): Create
       height_mm: form.heightMm,
       layers_by: form.layersBy,
       arrangement: effectiveArrangement(form),
+      stack_order: form.stackOrder,
       bleed_mm: form.bleedMm,
       min_feature_mm: form.minFeatureMm,
       kerf_mm: form.kerfMm,
@@ -295,7 +327,7 @@ export function vectorRetryRequest(run: VectorRun): CreateVectorBody {
     prompt: run.prompt,
     options: {
       colours: o.colours, palette: [...o.palette], kind: o.kind, width_mm: o.width_mm, height_mm: o.height_mm, layers_by: o.layers_by,
-      arrangement: o.arrangement, bleed_mm: o.bleed_mm, min_feature_mm: o.min_feature_mm, kerf_mm: o.kerf_mm, steps: o.steps, seed: o.seed,
+      arrangement: o.arrangement, stack_order: o.stack_order ?? "area_desc", bleed_mm: o.bleed_mm, min_feature_mm: o.min_feature_mm, kerf_mm: o.kerf_mm, steps: o.steps, seed: o.seed,
       num_images: o.num_images, recipe: o.recipe,
     },
   };
@@ -308,7 +340,7 @@ export function vectorFormFromRun(run: VectorRun, caps: Capabilities, current: V
   const merged: VectorForm = {
     ...current,
     idea: run.prompt, kind: o.kind, colours: o.colours, palette: [...o.palette], widthMm: o.width_mm, heightMm: o.height_mm, layersBy: o.layers_by,
-    arrangement: o.arrangement, minFeatureMm: o.min_feature_mm, kerfMm: o.kerf_mm, bleedMm: o.bleed_mm, numImages: o.num_images, seedLocked: true,
+    arrangement: o.arrangement, stackOrder: o.stack_order ?? "area_desc", minFeatureMm: o.min_feature_mm, kerfMm: o.kerf_mm, bleedMm: o.bleed_mm, numImages: o.num_images, seedLocked: true,
     seed: o.seed, recipeEdited: false, recipeText: "",
   };
   return sanitizeVectorForm(merged, caps).form;
@@ -361,6 +393,38 @@ export function smallestFeatureText(smallest: number | null, limit: number): str
  *  is only named by its seed. */
 export function versionLabel(item: Pick<VectorItem, "idx" | "seed">, asked: number): string {
   return asked > 1 ? `Version ${item.idx + 1} of ${asked}` : `Seed ${item.seed}`;
+}
+
+/** "Version 2 of 3": which version, by its PLACE among the versions the run has now. A version that was deleted leaves no gap: the others are numbered
+ *  again by position and keep their seeds (DESIGN.md §35.2). A lone version is only named by its seed. */
+export function placeLabel(position: number, of: number, seed: number): string {
+  return of > 1 ? `Version ${position} of ${of}` : `Seed ${seed}`;
+}
+
+/** "2 layers", "1 layer". */
+export const layersCount = (layers: number): string => `${layers} ${layers === 1 ? "layer" : "layers"}`;
+
+/** The viewer's title line (§35.2): "Version 2 of 3 · seed 41 · 100 × 100 mm · 2 layers · 1.5 KB". A lone version is "Seed 41 · …", as its card says. */
+export function viewerSummary(item: Pick<VectorItem, "seed" | "width_mm" | "height_mm" | "layers" | "bytes">, position: number, of: number): string {
+  const lead = of > 1 ? `Version ${position} of ${of} · seed ${item.seed}` : `Seed ${item.seed}`;
+  return `${lead} · ${mmText(item.width_mm)} × ${mmText(item.height_mm)} mm · ${layersCount(item.layers)} · ${bytesText(item.bytes)}`;
+}
+
+/** How a version in the bin is named (§35.2): the place it had when it was made, and its seed, which never changes: "version 2, seed 41". */
+export const binnedVersionName = (item: Pick<VectorItem, "idx" | "seed">): string => `Version ${item.idx + 1} · seed ${item.seed}`;
+
+/** The picture the model drew, as a line under it (§35.2): "What Qwen-Image drew, 1536 × 1536 px". */
+export const drawingCaption = (run: Pick<VectorRun, "options">): string => `What Qwen-Image drew, ${run.options.draw_width} × ${run.options.draw_height} px`;
+
+/** The colour word of a layer's name: "Layer 2 (red)" is "red". A layer whose name has none (by shape the name is a piece) is told by its colour. */
+export function layerColourWord(layer: Pick<VectorLayer, "name" | "colour">): string {
+  return /\(([^)]+)\)\s*$/.exec(layer.name)?.[1] ?? layer.colour;
+}
+
+/** One line of the stack view (§35.2): "Layer 2, red, 2 high", with "(back)" on the first sheet and "(front)" on the last. */
+export function stackCaption(layer: VectorLayer, check: Pick<VectorCheck, "arrangement">, count: number): string {
+  const place = layer.index === 1 ? " (back)" : layer.index === count ? " (front)" : "";
+  return `Layer ${layer.index}, ${layerColourWord(layer)}, ${layerHeight(layer, check)} high${place}`;
 }
 
 /** "18 KB", "1.2 MB": a file size for the Download buttons. */

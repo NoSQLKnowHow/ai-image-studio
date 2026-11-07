@@ -3,17 +3,21 @@ import type { ComponentProps } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "./api";
+import { BinnedItemsCard } from "./components/BinnedItemsCard";
 import { ConfirmCancel, ConfirmDelete } from "./components/Dialogs";
 import { EmptyHistory, FilterBar } from "./components/FilterBar";
 import { Tabs } from "./components/Tabs";
 import type { ProjectControls } from "./components/ProjectMenu";
+import { StackView } from "./components/StackView";
 import { VectorCard } from "./components/VectorCard";
 import { VectorPanel } from "./components/VectorPanel";
+import { VectorViewer } from "./components/VectorViewer";
 import { NO_FILTER, ONLY_DELETED, ONLY_KEPT, withProject } from "./history";
 import { browserStore, type KeyValueStore } from "./options";
-import { CAPS, STATUS, VECTOR_CONTRACT, makeMusicRun, makeRun, makeVectorItem, makeVectorRun } from "./testdata";
+import { CAPS, STATUS, VECTOR_CONTRACT, makeBinnedVector, makeMusicRun, makeRun, makeVectorItem, makeVectorRun } from "./testdata";
 import type { Capabilities, Project, VectorLimits, VectorRecipeRequest, VectorRun } from "./types";
-import { VECTOR_FORM_KEY, defaultVectorForm, saveVectorForm } from "./vector";
+import { BLEED_HINT, STACK_ORDER_HINT, STACK_ORDER_LABELS, VECTOR_FORM_KEY, defaultVectorForm, saveVectorForm } from "./vector";
+import { useCopyVectorSvg } from "./useCopyVectorSvg";
 import { workingNote } from "./format";
 
 // The Vector tab on the page (DESIGN.md §31.12.8), in the browser stand-in: the form (its defaults and limits from the capabilities, the colours and their
@@ -46,7 +50,7 @@ function fakeRecipe() {
 // ------------------------------------------------------------------ the card
 function cardProps(run: VectorRun, over: Partial<ComponentProps<typeof VectorCard>> = {}): ComponentProps<typeof VectorCard> {
   return {
-    run, now: Date.parse("2026-10-11T02:00:00.000Z"), workerState: "ready", transient: false, viewScope: "kept", projects: controls(), pngRange: { min: 16, max: 8192 },
+    run, now: Date.parse("2026-10-11T02:00:00.000Z"), workerState: "ready", transient: false, viewScope: "kept", projects: controls(), onOpenVersion: vi.fn(),
     onReuse: vi.fn(), onRetry: vi.fn(), onCancel: vi.fn(), onToggleKeep: vi.fn(), onRestore: vi.fn(), onDelete: vi.fn(), onCopySvg: vi.fn(), ...over,
   };
 }
@@ -73,7 +77,7 @@ describe("the card of a finished Vector run (the contract's run)", () => {
     const images = Array.from(container.querySelectorAll("img"));
     expect(images).toHaveLength(1);
     expect(images[0].getAttribute("src")).toBe(item.preview_url);
-    expect(images[0].getAttribute("alt")).toBe("Preview of seed 1234: 100 by 100 mm, 3 layers");
+    expect(images[0].getAttribute("alt")).toBe(""); // decorative: the button around it is named (below)
     // nothing that could run or show a file as part of the page, and no element but the <img> and the download links carries a link to a file
     expect(container.querySelectorAll("object, embed, iframe, script, [srcdoc]")).toHaveLength(0);
     expect(Array.from(container.querySelectorAll("[src]")).every((element) => element.tagName === "IMG")).toBe(true);
@@ -84,7 +88,24 @@ describe("the card of a finished Vector run (the contract's run)", () => {
     render(<VectorCard {...cardProps(run)} />);
     expect(card().querySelector("[data-vector-colours]")?.textContent).toBe("4 colours found, 4 asked. White, the bare material, is one of them and has no layer.");
     expect(card().querySelector("[data-vector-feature]")?.textContent).toBe("Smallest feature: 0.62 mm (your limit is 0.5 mm).");
-    expect(card().querySelector(".vector-summary")?.textContent).toBe("Seed 1234 · seed 1234 · 100 × 100 mm · 3 layers · 18.4 KB");
+    expect(card().querySelector(".vector-summary")).toBeNull(); // the old heading of the version's block is gone: the card is one for the run
+  });
+
+  it("has one preview, a button that opens the viewer at that version, named for what it opens", () => {
+    const props = cardProps(run);
+    render(<VectorCard {...props} />);
+    const thumb = screen.getByRole("button", { name: "Open the vector (seed 1234, 3 layers)" });
+    expect(thumb.getAttribute("data-vector-id")).toBe(item.id);
+    expect(thumb.querySelector(".vt-number")).toBeNull(); // a lone version has no place among others to number
+    expect(thumb.querySelector(".vt-layers")?.textContent).toBe("3 layers");
+    fireEvent.click(thumb);
+    expect(props.onOpenVersion).toHaveBeenCalledWith(0);
+  });
+
+  it("reserves the sheet's own shape for the preview before it arrives, so the card does not jump", () => {
+    const wide = makeVectorRun({ vectors: [makeVectorItem(0, { width_mm: 600, height_mm: 307 })] });
+    render(<VectorCard {...cardProps(wide)} />);
+    expect((card().querySelector("img") as HTMLImageElement).style.aspectRatio).toBe("600 / 307");
   });
 
   it("lists every layer: its swatch, name, paths and cut length, and the picture's own colour only where it differs", () => {
@@ -133,8 +154,8 @@ describe("the card of a finished Vector run (the contract's run)", () => {
     cleanup();
     const one = makeVectorRun({ vectors: [makeVectorItem(0, { layers: 1, check: { ...item.check, layers: [item.check.layers[0]] } })] });
     render(<VectorCard {...cardProps(one)} />);
-    expect(card().querySelector(".vector-summary")?.textContent).toContain("· 1 layer ·");
-    expect(card().querySelector("img")?.getAttribute("alt")).toBe("Preview of seed 1234: 100 by 100 mm, 1 layer");
+    expect(card().querySelector(".vt-layers")?.textContent).toBe("1 layer");
+    expect(screen.getByRole("button", { name: "Open the vector (seed 1234, 1 layer)" })).toBeTruthy();
   });
 
   it("has no list of notes when there are none", () => {
@@ -149,7 +170,7 @@ describe("the card of a finished Vector run (the contract's run)", () => {
     expect(within(card()).queryByRole("table")).toBeNull();
   });
 
-  it("offers the three downloads and Copy SVG code, with the server's own links", () => {
+  it("offers the three downloads and Copy SVG code on a run with one version, with the server's own links, and no PNG box: that is the viewer's", () => {
     const props = cardProps(run);
     render(<VectorCard {...props} />);
     const svg = byAction("download-svg") as HTMLAnchorElement;
@@ -159,57 +180,29 @@ describe("the card of a finished Vector run (the contract's run)", () => {
     const zip = byAction("download-zip") as HTMLAnchorElement;
     expect(zip.textContent).toContain("Download layers (ZIP)");
     expect(zip.getAttribute("href")).toBe(item.zip_url);
-    expect((byAction("download-png") as HTMLAnchorElement).getAttribute("href")).toBe(`${item.png_download_url}&size=2048`);
     fireEvent.click(screen.getByRole("button", { name: "Copy SVG code" }));
     expect(props.onCopySvg).toHaveBeenCalledWith(item);
+    expect(byAction("download-png")).toBeNull();
+    expect(screen.queryByLabelText(/PNG size/)).toBeNull();
+    expect(byAction("download-more")).toBeNull(); // Download… is for a run with several versions
   });
 
-  it("gives the PNG a size box that starts at 2048, and the link follows the size typed", () => {
-    render(<VectorCard {...cardProps(run)} />);
-    const box = screen.getByLabelText("PNG size, long side") as HTMLInputElement;
-    expect(box.value).toBe("2048");
-    fireEvent.change(box, { target: { value: "4096" } });
-    expect((byAction("download-png") as HTMLAnchorElement).getAttribute("href")).toBe(`${item.png_download_url}&size=4096`);
-    fireEvent.change(box, { target: { value: "16" } }); // the ends of the range are allowed
-    expect((byAction("download-png") as HTMLAnchorElement).getAttribute("href")).toBe(`${item.png_download_url}&size=16`);
-    fireEvent.change(box, { target: { value: "8192" } });
-    expect((byAction("download-png") as HTMLAnchorElement).getAttribute("href")).toBe(`${item.png_download_url}&size=8192`);
-  });
-
-  it("switches the PNG link off for a size the server would refuse, and says the range", () => {
-    render(<VectorCard {...cardProps(run)} />);
-    const box = screen.getByLabelText("PNG size, long side") as HTMLInputElement;
-    for (const bad of ["15", "8193", "100.5", "", "abc", "-4"]) {
-      fireEvent.change(box, { target: { value: bad } });
-      const png = byAction("download-png") as HTMLElement;
-      expect(png.getAttribute("href"), `"${bad}"`).toBeNull();
-      expect(png.getAttribute("aria-disabled")).toBe("true");
-      expect(box.getAttribute("aria-invalid")).toBe("true");
-      expect(screen.getByRole("alert").textContent).toBe("Enter a whole number from 16 to 8192.");
-    }
-    fireEvent.change(box, { target: { value: "1024" } });
-    expect(screen.queryByRole("alert")).toBeNull();
-    expect((byAction("download-png") as HTMLElement).getAttribute("href")).toBe(`${item.png_download_url}&size=1024`);
-  });
-
-  it("takes the range of the PNG size from what it is given (the server's capabilities)", () => {
-    render(<VectorCard {...cardProps(run, { pngRange: { min: 100, max: 3000 } })} />);
-    const box = screen.getByLabelText("PNG size, long side");
-    fireEvent.change(box, { target: { value: "99" } });
-    expect(screen.getByRole("alert").textContent).toBe("Enter a whole number from 100 to 3000.");
-    fireEvent.change(box, { target: { value: "3001" } });
-    expect(screen.getByRole("alert").textContent).toBe("Enter a whole number from 100 to 3000.");
-    fireEvent.change(box, { target: { value: "3000" } });
-    expect(screen.queryByRole("alert")).toBeNull();
-  });
-
-  it("has Keep, Reuse, Project and Delete on a finished run, and no Cancel, Retry, Restore, viewer, Make 4K or Delete picture", () => {
+  it("has Keep, Reuse, Project and Delete on a finished run, and no Cancel, Retry, Restore, Make 4K or Delete picture", () => {
     render(<VectorCard {...cardProps(run)} />);
     for (const action of ["keep", "reuse", "project", "delete"]) expect(byAction(action), action).not.toBeNull();
-    for (const action of ["cancel", "restore", "make-4k", "enlarge", "delete-picture", "edit-this", "regenerate-larger"]) expect(byAction(action), action).toBeNull();
+    for (const action of ["cancel", "restore", "make-4k", "enlarge", "delete-picture", "edit-this", "regenerate-larger", "delete-version"]) expect(byAction(action), action).toBeNull();
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Open image/ })).toBeNull(); // the preview is not a button: there is no viewer in 1.17
-    expect(card().querySelector("img")?.closest("button")).toBeNull();
+    expect(card().querySelectorAll("button.vector-thumb")).toHaveLength(1); // the preview is a button now, as on an Images card
+  });
+
+  it("says what Delete takes: the run alone, or the run and all its versions", () => {
+    render(<VectorCard {...cardProps(run)} />);
+    expect(byAction("delete")?.getAttribute("title")).toBe("Delete this run and its files");
+    cleanup();
+    const three = makeVectorRun({ options: { ...run.options, num_images: 3 }, vectors: [makeVectorItem(0), makeVectorItem(1), makeVectorItem(2)] });
+    render(<VectorCard {...cardProps(three)} />);
+    expect(byAction("delete")?.getAttribute("title")).toBe("Delete this run and all 3 versions");
+    expect(byAction("delete")?.textContent).toContain("Delete"); // the label is the same as ever
   });
 
   it("hands each button's press to the page", () => {
@@ -265,40 +258,68 @@ describe("the card of a finished Vector run (the contract's run)", () => {
   });
 });
 
-describe("a Vector run with several versions", () => {
+describe("a Vector run with several versions (DESIGN.md §35.2)", () => {
   const options = { ...makeVectorRun().options, num_images: 3, seed: 100 };
   const run = makeVectorRun({ options, vectors: [makeVectorItem(0, { seed: 100 }), makeVectorItem(2, { seed: 102, id: "second0000000000000000000000000000" })] });
 
-  it("names each version by its place when it was asked for, so the gap shows which one failed, and numbers none by position", () => {
+  it("is one compact card: a grid of previews, and none of the blocks, tables and buttons that each version used to have", () => {
     render(<VectorCard {...cardProps(run)} />);
-    const versions = Array.from(card().querySelectorAll(".vector-item"));
-    expect(versions.map((li) => li.getAttribute("aria-label"))).toEqual(["Version 1 of 3", "Version 3 of 3"]);
-    expect(versions.map((li) => li.querySelector("img")?.getAttribute("src"))).toEqual([run.vectors[0].preview_url, run.vectors[1].preview_url]);
+    expect(card().querySelector(".vector-media")?.className).toContain("grid-2");
+    expect(Array.from(card().querySelectorAll("button.vector-thumb img")).map((img) => img.getAttribute("src"))).toEqual([run.vectors[0].preview_url, run.vectors[1].preview_url]);
+    expect(card().querySelectorAll(".vector-item, .vector-lone, table, [data-vector-colours], [data-vector-feature]")).toHaveLength(0);
+    for (const action of ["download-svg", "download-zip", "copy-svg", "download-png"]) expect(card().querySelectorAll(`[data-action="${action}"]`), action).toHaveLength(0);
     expect(card().querySelector(".run-meta")?.textContent).toContain("seeds 100–102");
   });
 
-  it("names each version's buttons, and gives each its own links", () => {
+  it("names each preview by its place among the versions the run has now, and shows that place in its corner", () => {
     render(<VectorCard {...cardProps(run)} />);
-    expect(screen.getAllByRole("link", { name: /^Download SVG, version/ }).map((a) => a.getAttribute("href"))).toEqual(run.vectors.map((v) => v.download_url));
-    expect(screen.getByRole("link", { name: "Download layers (ZIP), version 3 of 3" }).getAttribute("href")).toBe(run.vectors[1].zip_url);
-    expect(screen.getAllByRole("button", { name: /^Copy SVG code, version/ })).toHaveLength(2);
+    const thumbs = Array.from(card().querySelectorAll("button.vector-thumb"));
+    // the run was asked for 3 and has 2: a version that was deleted leaves no gap, the others are numbered again by position and keep their seeds
+    expect(thumbs.map((b) => b.getAttribute("aria-label"))).toEqual(["Open version 1 of 2 (seed 100, 3 layers)", "Open version 2 of 2 (seed 102, 3 layers)"]);
+    expect(thumbs.map((b) => b.querySelector(".vt-number")?.textContent)).toEqual(["1", "2"]);
+    expect(thumbs.map((b) => b.querySelector(".vt-layers")?.textContent)).toEqual(["3 layers", "3 layers"]);
   });
 
-  it("shares one PNG size between the versions", () => {
-    render(<VectorCard {...cardProps(run)} />);
-    const [first, second] = screen.getAllByLabelText(/^PNG size, long side, version/) as HTMLInputElement[];
-    fireEvent.change(first, { target: { value: "512" } });
-    expect(second.value).toBe("512");
-    expect(screen.getAllByRole("link", { name: /^Download PNG, version/ }).map((a) => a.getAttribute("href"))).toEqual(run.vectors.map((v) => `${v.png_download_url}&size=512`));
+  it("opens the viewer at the version that is pressed", () => {
+    const props = cardProps(run);
+    render(<VectorCard {...props} />);
+    fireEvent.click(screen.getByRole("button", { name: "Open version 2 of 2 (seed 102, 3 layers)" }));
+    expect(props.onOpenVersion).toHaveBeenCalledWith(1);
+  });
+
+  it("has Download…, which opens the viewer at the first version, where each version's downloads are", () => {
+    const props = cardProps(run);
+    render(<VectorCard {...props} />);
+    const more = byAction("download-more") as HTMLElement;
+    expect(more.textContent).toContain("Download…");
+    expect(more.getAttribute("title")).toBe("Open the first of the 2 versions: each one's downloads are there");
+    fireEvent.click(more);
+    expect(props.onOpenVersion).toHaveBeenCalledWith(0);
+  });
+
+  it("shows four previews at most and counts the rest on the fourth", () => {
+    const six = makeVectorRun({ options: { ...options, num_images: 6 }, vectors: [0, 1, 2, 3, 4, 5].map((i) => makeVectorItem(i, { id: `six${i}`.padEnd(32, "0") })) });
+    render(<VectorCard {...cardProps(six)} />);
+    expect(card().querySelectorAll("button.vector-thumb")).toHaveLength(4);
+    expect(card().querySelector(".vector-media")?.className).toContain("grid-4");
+    expect(card().querySelectorAll(".more")).toHaveLength(1);
+    expect(card().querySelector(".more")?.textContent).toBe("+2");
+  });
+
+  it("shows a version in the bin only in the Deleted view: the run's own card holds the ones that are not in the bin", () => {
+    const withBinned = { ...run, binned_vectors: [makeBinnedVector(1, { seed: 101 })] };
+    render(<VectorCard {...cardProps(withBinned)} />);
+    expect(card().querySelectorAll("button.vector-thumb")).toHaveLength(2);
+    expect(card().textContent).not.toContain("seed 101");
   });
 });
 
 describe("a Vector run of exactly two versions", () => {
-  it("names each version's buttons already (two are several), and says the seeds of both", () => {
+  it("has Download… already (two are several), and says the seeds of both", () => {
     const options = { ...makeVectorRun().options, num_images: 2 };
     const two = makeVectorRun({ options, vectors: [makeVectorItem(0), makeVectorItem(1, { id: "other00000000000000000000000000" })] });
     render(<VectorCard {...cardProps(two)} />);
-    expect(screen.getAllByRole("link", { name: /^Download SVG, version [12] of 2$/ })).toHaveLength(2);
+    expect(byAction("download-more")).not.toBeNull();
     expect(card().querySelector(".run-meta")?.textContent).toContain("seeds 1234–1235");
   });
 });
@@ -462,7 +483,7 @@ describe("the card of a Vector run in the bin (DESIGN.md §30.1)", () => {
   it("still shows the preview and the downloads (they only read the run), and the project it is filed in", () => {
     render(<VectorCard {...cardProps({ ...binned, project_id: LOGO.id, pinned: true })} />);
     expect(card().querySelector("img")).not.toBeNull();
-    expect(byAction("download-svg")).not.toBeNull();
+    expect(byAction("download-svg")).not.toBeNull(); // (a run with one version)
     expect(card().querySelector("[data-project-chip]")?.textContent).toContain("Logo");
     expect(screen.queryByRole("button", { name: /Project:/ })).toBeNull(); // it cannot be pressed in the bin
   });
@@ -477,8 +498,9 @@ describe("the card of a Vector run in the bin (DESIGN.md §30.1)", () => {
 function panelProps(over: Partial<ComponentProps<typeof VectorPanel>> = {}): ComponentProps<typeof VectorPanel> {
   return {
     hidden: false, caps: CAPS, status: STATUS, store: memoryStore(), runs: [], runsReady: true, filterBar: <div data-testid="filter-bar" />, loadProblem: null,
-    empty: <p>Nothing here yet.</p>, isTransient: () => false, viewScope: "kept", projects: controls(), more: false, loadingOlder: false, now: Date.now(), push: vi.fn(),
-    onRun: vi.fn(), onLoadOlder: vi.fn(), onCancel: vi.fn(), onToggleKeep: vi.fn(), onRestore: vi.fn(), onDelete: vi.fn(), ...over,
+    empty: <p>Nothing here yet.</p>, isTransient: () => false, viewScope: "kept", projects: controls(), inDeletedView: false,
+    binnedHandlers: { onOpen: vi.fn(), onRestore: vi.fn(), onDeleteForever: vi.fn() }, more: false, loadingOlder: false, now: Date.now(), push: vi.fn(),
+    onRun: vi.fn(), onLoadOlder: vi.fn(), onOpenVersion: vi.fn(), onCopySvg: vi.fn(), onCancel: vi.fn(), onToggleKeep: vi.fn(), onRestore: vi.fn(), onDelete: vi.fn(), ...over,
   };
 }
 const form = () => screen.getByRole("region", { name: "New vector" });
@@ -686,27 +708,27 @@ describe("Size, layers, arrangement and More", () => {
 
   it("greys Arrangement when the layers are by shape, shows side by side as what will be used, and says why", () => {
     render(<VectorPanel {...panelProps()} />);
-    fireEvent.click(radio("Arrangement", "Stacked"));
-    expect(radio("Arrangement", "Stacked").getAttribute("aria-checked")).toBe("true");
-    expect(radio("Arrangement", "Stacked").disabled).toBe(false);
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
+    expect(radio("Arrangement", "Stacked (depth)").getAttribute("aria-checked")).toBe("true");
+    expect(radio("Arrangement", "Stacked (depth)").disabled).toBe(false);
     fireEvent.click(radio("Layers by", "Shape"));
-    for (const name of ["Side by side", "Stacked"]) expect(radio("Arrangement", name).disabled, name).toBe(true);
+    for (const name of ["Side by side", "Stacked (depth)"]) expect(radio("Arrangement", name).disabled, name).toBe(true);
     expect(radio("Arrangement", "Side by side").getAttribute("aria-checked")).toBe("true");
-    expect(radio("Arrangement", "Stacked").getAttribute("aria-checked")).toBe("false");
+    expect(radio("Arrangement", "Stacked (depth)").getAttribute("aria-checked")).toBe("false");
     expect(within(form()).getByRole("radiogroup", { name: "Arrangement" }).getAttribute("aria-disabled")).toBe("true");
     expect(form().textContent).toContain("Layers by shape are always side by side.");
     // back to colour: the choice the person made is still there
     fireEvent.click(radio("Layers by", "Colour"));
-    expect(radio("Arrangement", "Stacked").getAttribute("aria-checked")).toBe("true");
-    expect(radio("Arrangement", "Stacked").disabled).toBe(false);
+    expect(radio("Arrangement", "Stacked (depth)").getAttribute("aria-checked")).toBe("true");
+    expect(radio("Arrangement", "Stacked (depth)").disabled).toBe(false);
   });
 
   it("says what each arrangement does, and that by shape there is only one", () => {
     render(<VectorPanel {...panelProps()} />);
     const hint = () => within(form()).getByRole("radiogroup", { name: "Arrangement" }).parentElement?.querySelector(".field-hint")?.textContent;
-    expect(hint()).toBe("Each layer holds only its own colour. For inlay and for engraving.");
-    fireEvent.click(radio("Arrangement", "Stacked"));
-    expect(hint()).toBe("Each layer also holds everything above it, a little larger, so sheets cut from the layers glue up with no gaps.");
+    expect(hint()).toBe("Each layer holds only its own colour and nothing overlaps: for inlay and engraving.");
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
+    expect(hint()).toBe("Each sheet holds its own colour and everything in front of it, so the sheets build up into relief: with 6 layers the front colour stands 6 sheets high.");
     fireEvent.click(radio("Layers by", "Shape"));
     expect(hint()).toBe("Layers by shape are always side by side.");
     const layersHint = () => within(form()).getByRole("radiogroup", { name: "Layers by" }).parentElement?.querySelector(".field-hint")?.textContent;
@@ -722,7 +744,7 @@ describe("Size, layers, arrangement and More", () => {
     expect(JSON.parse(store.data[VECTOR_FORM_KEY]).heightMm).toBe(45.25);
     type(num("Smallest feature (mm)"), "0.75");
     type(num("Kerf (mm)"), "0.125");
-    fireEvent.click(radio("Arrangement", "Stacked"));
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
     type(num("Bleed (mm)"), "1.25");
     expect(JSON.parse(store.data[VECTOR_FORM_KEY])).toMatchObject({ minFeatureMm: 0.75, kerfMm: 0.125, bleedMm: 1.25 });
     expect([num("Width (mm)"), num("Height (mm)"), num("Smallest feature (mm)"), num("Kerf (mm)"), num("Bleed (mm)")].map((box) => box.getAttribute("step"))).toEqual(["1", "1", "0.05", "0.05", "0.1"]);
@@ -737,9 +759,11 @@ describe("Size, layers, arrangement and More", () => {
     expect(num("Kerf (mm)").value).toBe("0");
     expect(num("Bleed (mm)").value).toBe("0.5");
     expect(num("Bleed (mm)").disabled).toBe(true); // side by side
-    expect(form().textContent).toContain("Used only when the layers are stacked.");
-    fireEvent.click(radio("Arrangement", "Stacked"));
+    expect(form().textContent).toContain("Used only when the layers are Stacked (depth).");
+    expect(form().textContent).not.toContain(BLEED_HINT); // what Bleed does is said when it can be used
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
     expect(num("Bleed (mm)").disabled).toBe(false);
+    expect(form().textContent).toContain(BLEED_HINT);
     fireEvent.click(radio("Layers by", "Shape"));
     expect(num("Bleed (mm)").disabled).toBe(true); // by shape they are side by side
     expect(num("Smallest feature (mm)").disabled).toBe(false);
@@ -752,7 +776,7 @@ describe("Size, layers, arrangement and More", () => {
     expect(form().textContent).toContain("Enter a number from 0.05 to 10.");
     type(num("Kerf (mm)"), "2");
     expect(form().textContent).toContain("Enter a number from 0 to 1.");
-    fireEvent.click(radio("Arrangement", "Stacked"));
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
     type(num("Bleed (mm)"), "6");
     expect(form().textContent).toContain("Enter a number from 0 to 5.");
   });
@@ -767,6 +791,61 @@ describe("Size, layers, arrangement and More", () => {
     expect(form().textContent).toContain("make the same drawing, and the same SVG");
     type(num("Seed"), "77");
     expect((num("Seed")).value).toBe("77");
+  });
+});
+
+describe("Back sheet (DESIGN.md §35.2)", () => {
+  const backSheet = () => form().querySelector("[data-back-sheet] select") as HTMLSelectElement;
+  const backHint = () => form().querySelector("[data-back-sheet] .field-hint")?.textContent;
+
+  it("offers the three orders in the spec's words, with the colour with the most ink first, and starts there", () => {
+    render(<VectorPanel {...panelProps()} />);
+    expect(Array.from(backSheet().options).map((o) => [o.value, o.textContent])).toEqual([
+      ["area_desc", "The colour with the most ink"], ["area_asc", "The colour with the least ink"], ["palette", "The first ink in my list"],
+    ]);
+    expect(backSheet().value).toBe("area_desc");
+    expect(within(form()).getByLabelText("Back sheet")).toBe(backSheet());
+  });
+
+  it("is greyed, with the reason, until the layers are stacked by colour: side by side has no back sheet", () => {
+    render(<VectorPanel {...panelProps()} />);
+    expect(backSheet().disabled).toBe(true);
+    expect(backHint()).toBe("Used only when the layers are Stacked (depth).");
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
+    expect(backSheet().disabled).toBe(false);
+    expect(backHint()).toBe(STACK_ORDER_HINT);
+    fireEvent.click(radio("Layers by", "Shape"));
+    expect(backSheet().disabled).toBe(true);
+    expect(backHint()).toBe("Layers by shape are always side by side, so there is no back sheet.");
+  });
+
+  it("says, for the list order, that the first ink row is the back sheet and what follows it", () => {
+    render(<VectorPanel {...panelProps()} />);
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
+    fireEvent.change(backSheet(), { target: { value: "palette" } });
+    expect(backHint()).toContain("The order of the ink rows above is the order here: the first is at the back");
+  });
+
+  it("is remembered with the rest of the form, and sent as stack_order", async () => {
+    fakeRecipe();
+    const store = memoryStore();
+    const props = panelProps({ store });
+    const created = vi.spyOn(api, "createVectorRun").mockResolvedValue(makeVectorRun());
+    render(<VectorPanel {...props} />);
+    type(idea(), "a fox head");
+    fireEvent.click(radio("Arrangement", "Stacked (depth)"));
+    fireEvent.change(backSheet(), { target: { value: "area_asc" } });
+    expect(JSON.parse(store.data[VECTOR_FORM_KEY]).stackOrder).toBe("area_asc");
+    await waitFor(() => expect(make().disabled).toBe(false));
+    fireEvent.click(make());
+    await waitFor(() => expect(created).toHaveBeenCalled());
+    const body = created.mock.calls[0][0];
+    expect(body.options.stack_order).toBe("area_asc");
+    expect(body.options.arrangement).toBe("stacked");
+  });
+
+  it("uses the labels of the spec and no others", () => {
+    expect(STACK_ORDER_LABELS).toEqual({ area_desc: "The colour with the most ink", area_asc: "The colour with the least ink", palette: "The first ink in my list" });
   });
 });
 
@@ -1175,7 +1254,7 @@ describe("Reuse and Retry from a card", () => {
   // a run that differs from the form's defaults in every field
   const options = {
     ...makeVectorRun().options, colours: 6, palette: ["#0000FF", "#FFA500"], kind: "line" as const, width_mm: 321.5, height_mm: 45, layers_by: "shape" as const,
-    arrangement: "stacked" as const, bleed_mm: 1.5, min_feature_mm: 0.8, kerf_mm: 0.2, num_images: 3, seed: 555, recipe: wordsFor({ prompt: "an owl", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500"] }),
+    arrangement: "stacked" as const, stack_order: "palette" as const, bleed_mm: 1.5, min_feature_mm: 0.8, kerf_mm: 0.2, num_images: 3, seed: 555, recipe: wordsFor({ prompt: "an owl", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500"] }),
   };
   const run = makeVectorRun({ id: "reuse-me", prompt: "an owl", options });
 
@@ -1194,7 +1273,8 @@ describe("Reuse and Retry from a card", () => {
     // by shape the arrangement is greyed and shows side by side, but the choice the run recorded is what the form holds: stacked
     expect(radio("Arrangement", "Side by side").getAttribute("aria-checked")).toBe("true");
     fireEvent.click(radio("Layers by", "Colour"));
-    expect(radio("Arrangement", "Stacked").getAttribute("aria-checked")).toBe("true");
+    expect(radio("Arrangement", "Stacked (depth)").getAttribute("aria-checked")).toBe("true");
+    expect((form().querySelector("[data-back-sheet] select") as HTMLSelectElement).value).toBe("palette");
     expect(num("Bleed (mm)").value).toBe("1.5");
     expect(num("Smallest feature (mm)").value).toBe("0.8");
     expect(num("Kerf (mm)").value).toBe("0.2");
@@ -1289,6 +1369,12 @@ describe("Reuse and Retry from a card", () => {
   });
 });
 
+/** The page's way of using the hook, in miniature: a card whose Copy SVG code button goes through it, and the words it tells, shown where the test can read them. */
+function CopyHarness({ run, told }: { run: VectorRun; told: (kind: string, text: string) => void }) {
+  const copy = useCopyVectorSvg(told);
+  return <VectorCard {...cardProps(run, { onCopySvg: (item) => void copy(item) })} />;
+}
+
 describe("Copy SVG code", () => {
   const run = makeVectorRun({ id: "copy-me" });
   const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm"><g id="THE-FILES-OWN-MARKER"/></svg>';
@@ -1302,10 +1388,10 @@ describe("Copy SVG code", () => {
   it("fetches the file as text, copies it, and says so; the file is never put in the page", async () => {
     const writeText = clipboard();
     const fetched = vi.spyOn(api, "fetchText").mockResolvedValue(SVG);
-    const props = panelProps({ runs: [run] });
-    const { container } = render(<VectorPanel {...props} />);
+    const told = vi.fn();
+    const { container } = render(<CopyHarness run={run} told={told} />);
     fireEvent.click(screen.getByRole("button", { name: "Copy SVG code" }));
-    await waitFor(() => expect(props.push).toHaveBeenCalledWith("success", "SVG code copied."));
+    await waitFor(() => expect(told).toHaveBeenCalledWith("success", "SVG code copied."));
     expect(fetched).toHaveBeenCalledWith(run.vectors[0].url);
     expect(writeText).toHaveBeenCalledWith(SVG);
     expect(container.innerHTML).not.toContain("THE-FILES-OWN-MARKER"); // not as markup, not as text: only on the clipboard
@@ -1314,29 +1400,46 @@ describe("Copy SVG code", () => {
   it("says so when the file could not be had, and when it could not be copied", async () => {
     clipboard();
     const fetched = vi.spyOn(api, "fetchText").mockRejectedValue(new ApiError("That vector no longer exists.", 404));
-    const props = panelProps({ runs: [run] });
-    render(<VectorPanel {...props} />);
+    const told = vi.fn();
+    render(<CopyHarness run={run} told={told} />);
     fireEvent.click(screen.getByRole("button", { name: "Copy SVG code" }));
-    await waitFor(() => expect(props.push).toHaveBeenCalledWith("error", "Couldn't get the SVG: That vector no longer exists."));
+    await waitFor(() => expect(told).toHaveBeenCalledWith("error", "Couldn't get the SVG: That vector no longer exists."));
     fetched.mockResolvedValue(SVG);
     Object.defineProperty(navigator, "clipboard", { value: { writeText: vi.fn(async () => { throw new Error("denied"); }) }, configurable: true });
     document.execCommand = vi.fn(() => false); // the older way fails too
     fireEvent.click(screen.getByRole("button", { name: "Copy SVG code" }));
-    await waitFor(() => expect(props.push).toHaveBeenCalledWith("error", "Couldn't copy. Use Download SVG instead."));
+    await waitFor(() => expect(told).toHaveBeenCalledWith("error", "Couldn't copy. Use Download SVG instead."));
   });
 
-  it("fetches once for a double press", async () => {
+  it("fetches once for a double press, and again after the first has finished", async () => {
     clipboard();
     let finish: (text: string) => void = () => undefined;
     const fetched = vi.spyOn(api, "fetchText").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
-    const props = panelProps({ runs: [run] });
-    render(<VectorPanel {...props} />);
+    const told = vi.fn();
+    render(<CopyHarness run={run} told={told} />);
     const button = screen.getByRole("button", { name: "Copy SVG code" });
     fireEvent.click(button);
     fireEvent.click(button);
     expect(fetched).toHaveBeenCalledTimes(1);
     await act(async () => { finish(SVG); });
-    await waitFor(() => expect(props.push).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(told).toHaveBeenCalledTimes(1));
+    fireEvent.click(button);
+    expect(fetched).toHaveBeenCalledTimes(2);
+    await act(async () => { finish(SVG); });
+  });
+
+  it("tells the latest place that asked, even for a request already under way (a card's toast becomes the viewer's note when the viewer opens)", async () => {
+    clipboard();
+    let finish: (text: string) => void = () => undefined;
+    vi.spyOn(api, "fetchText").mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = render(<CopyHarness run={run} told={first} />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy SVG code" }));
+    rerender(<CopyHarness run={run} told={second} />);
+    await act(async () => { finish(SVG); });
+    await waitFor(() => expect(second).toHaveBeenCalledWith("success", "SVG code copied."));
+    expect(first).not.toHaveBeenCalled();
   });
 });
 
@@ -1426,10 +1529,17 @@ describe("the filter bar and the empty states on the Vector tab", () => {
 describe("the questions about a Vector run", () => {
   const run = makeVectorRun({ options: { ...makeVectorRun().options, num_images: 2 }, vectors: [makeVectorItem(0), makeVectorItem(1)] });
 
-  it("Delete: a finished run moves to Deleted for as long as the bin keeps it, and without a bin it says its versions are removed", () => {
+  it("Delete: a run with several versions says that all of them go; a run with one is asked as it always was", () => {
     render(<ConfirmDelete run={run} binDays={30} projectName={null} onCancel={nothing} onConfirm={nothing} />);
-    expect(screen.getByRole("alertdialog").textContent).toContain("It moves to Deleted and stays there for 30 days; you can restore it from there.");
+    expect(screen.getByRole("alertdialog").textContent).toContain(
+      "It has 2 versions. All of them move to Deleted and stay there for 30 days; you can restore the run from there. After that they are gone for good.");
     cleanup();
+    render(<ConfirmDelete run={makeVectorRun()} binDays={30} projectName={null} onCancel={nothing} onConfirm={nothing} />);
+    expect(screen.getByRole("alertdialog").textContent).toContain("It moves to Deleted and stays there for 30 days; you can restore it from there.");
+    expect(screen.getByRole("alertdialog").textContent).not.toContain("All of them");
+  });
+
+  it("Delete: without a bin it says its versions are removed, and in the bin it says it is for good", () => {
     render(<ConfirmDelete run={run} binDays={0} projectName={null} onCancel={nothing} onConfirm={nothing} />);
     expect(screen.getByRole("alertdialog").textContent).toContain("Its 2 versions are removed from the Spark.");
     cleanup();

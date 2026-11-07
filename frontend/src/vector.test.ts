@@ -38,15 +38,16 @@ const ODD: VectorLimits = {
   kinds: ["flat", "line"],
   layers_by: ["shape", "colour"],
   arrangements: ["stacked", "side_by_side"],
+  stack_orders: ["palette", "area_asc", "area_desc"],
   presets: [{ id: "bench", name: "Bench", width_mm: 400, height_mm: 250 }],
-  defaults: { kind: "line", layers_by: "shape", arrangement: "stacked" },
+  defaults: { kind: "line", layers_by: "shape", arrangement: "stacked", stack_order: "palette" },
   recipe_max_chars: 500,
 };
 const ODD_CAPS: Capabilities = { ...CAPS, limits: { ...CAPS.limits, vector: ODD } };
 
 /** The form the contract's `create_request` describes. */
 const FOX: VectorForm = {
-  idea: "a fox head", kind: "flat", colours: 4, palette: ["#FF0000", "#00AA00"], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side",
+  idea: "a fox head", kind: "flat", colours: 4, palette: ["#FF0000", "#00AA00"], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side", stackOrder: "area_desc",
   minFeatureMm: 0.5, kerfMm: 0, bleedMm: 0.5, numImages: 1, seedLocked: true, seed: 1234, recipeEdited: false, recipeText: "",
 };
 
@@ -62,25 +63,25 @@ describe("the types match the contract file", () => {
     const run: Record<keyof VectorRun, true> = {
       id: true, status: true, prompt: true, effective_prompt: true, model_id: true, created_at: true, started_at: true, finished_at: true, error: true, pinned: true,
       expires_at: true, deleted_at: true, purge_at: true, project_id: true, queue_position: true, progress: true, canceling: true, mode: true, options: true,
-      lyrics: true, inputs: true, images: true, binned_images: true, tracks: true, binned_tracks: true, vectors: true,
+      lyrics: true, inputs: true, images: true, binned_images: true, tracks: true, binned_tracks: true, vectors: true, binned_vectors: true,
     };
     same(run, c.run);
     const options: Record<keyof VectorOptionsSnapshot, true> = {
-      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, bleed_mm: true, min_feature_mm: true, kerf_mm: true,
+      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, stack_order: true, bleed_mm: true, min_feature_mm: true, kerf_mm: true,
       steps: true, seed: true, num_images: true, recipe: true, seed_was_random: true, negative: true, draw_width: true, draw_height: true,
     };
     same(options, c.run.options);
     const item: Record<keyof VectorItem, true> = {
       id: true, idx: true, seed: true, width_mm: true, height_mm: true, colours: true, layers: true, bytes: true, check: true, url: true, download_url: true,
-      zip_url: true, png_url: true, png_download_url: true, preview_url: true,
+      zip_url: true, png_url: true, png_download_url: true, preview_url: true, drawing_url: true, drawing_download_url: true, layer_urls: true,
     };
     same(item, c.run.vectors[0]);
     const check: Record<keyof VectorCheck, true> = {
-      colours_asked: true, colours_found: true, white: true, size_mm: true, layers_by: true, arrangement: true, svg_bytes: true, layers: true, smallest_feature_mm: true,
+      colours_asked: true, colours_found: true, white: true, size_mm: true, layers_by: true, arrangement: true, stack_order: true, svg_bytes: true, layers: true, smallest_feature_mm: true,
       removed: true, mm_per_pixel: true, notes: true,
     };
     same(check, c.run.vectors[0].check);
-    const layer: Record<keyof VectorLayer, true> = { index: true, id: true, name: true, colour: true, picture_colour: true, paths: true, length_mm: true };
+    const layer: Record<keyof VectorLayer, true> = { index: true, id: true, name: true, colour: true, picture_colour: true, paths: true, length_mm: true, height: true };
     same(layer, c.run.vectors[0].check.layers[0]);
     const note: Record<keyof VectorNote, true> = { code: true, message: true };
     same(note, c.run.vectors[0].check.notes[0]);
@@ -90,7 +91,7 @@ describe("the types match the contract file", () => {
     const body: Record<keyof CreateVectorBody, true> = { mode: true, prompt: true, options: true };
     same(body, c.create_request);
     const options: Record<keyof CreateVectorBody["options"], true> = {
-      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, bleed_mm: true, min_feature_mm: true,
+      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, stack_order: true, bleed_mm: true, min_feature_mm: true,
       kerf_mm: true, steps: true, seed: true, num_images: true, recipe: true,
     };
     same(options, c.create_request.options);
@@ -101,7 +102,7 @@ describe("the types match the contract file", () => {
     // `png_px` is the page's own optional extra (the contract does not carry the PNG range): every other key of the type is the contract's
     const limits: Record<Exclude<keyof VectorLimits, "png_px">, true> = {
       colours: true, size_mm: true, versions: true, min_feature_mm: true, kerf_mm: true, bleed_mm: true, shape_layer_cap: true, kinds: true, layers_by: true,
-      arrangements: true, presets: true, defaults: true, recipe_max_chars: true,
+      arrangements: true, stack_orders: true, presets: true, defaults: true, recipe_max_chars: true,
     };
     same(limits, c.capabilities.limits_vector);
     const availability: Record<keyof VectorAvailability, true> = { available: true, reason: true, hint: true };
@@ -128,14 +129,14 @@ describe("the types match the contract file", () => {
 describe("the form's defaults and limits", () => {
   it("takes every default from the capabilities (the contract's here)", () => {
     expect(defaultVectorForm(CAPS)).toEqual({
-      idea: "", kind: "silhouette", colours: 2, palette: [], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side",
+      idea: "", kind: "silhouette", colours: 2, palette: [], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side", stackOrder: "area_desc",
       minFeatureMm: 0.5, kerfMm: 0, bleedMm: 0.5, numImages: 1, seedLocked: false, seed: 42, recipeEdited: false, recipeText: "",
     });
   });
 
   it("takes them from the capabilities, not from numbers of its own", () => {
     expect(defaultVectorForm(ODD_CAPS)).toEqual({
-      idea: "", kind: "line", colours: 4, palette: [], widthMm: 250, heightMm: 120, layersBy: "shape", arrangement: "stacked",
+      idea: "", kind: "line", colours: 4, palette: [], widthMm: 250, heightMm: 120, layersBy: "shape", arrangement: "stacked", stackOrder: "palette",
       minFeatureMm: 0.3, kerfMm: 0.02, bleedMm: 0.7, numImages: 2, seedLocked: false, seed: 42, recipeEdited: false, recipeText: "",
     });
   });
@@ -381,13 +382,13 @@ describe("the request", () => {
 
   it("sends the values as they stand, each under its own key", () => {
     const form: VectorForm = {
-      idea: "x", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], widthMm: 321.5, heightMm: 12.25, layersBy: "shape", arrangement: "stacked",
+      idea: "x", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], widthMm: 321.5, heightMm: 12.25, layersBy: "shape", arrangement: "stacked", stackOrder: "area_asc",
       minFeatureMm: 0.75, kerfMm: 0.125, bleedMm: 2.5, numImages: 3, seedLocked: true, seed: 99, recipeEdited: false, recipeText: "",
     };
     expect(buildVectorRequest(form, CAPS)).toEqual({
       mode: "vector", prompt: "x",
       options: {
-        colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], kind: "line", width_mm: 321.5, height_mm: 12.25, layers_by: "shape", arrangement: "side_by_side",
+        colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], kind: "line", width_mm: 321.5, height_mm: 12.25, layers_by: "shape", arrangement: "side_by_side", stack_order: "area_asc",
         bleed_mm: 2.5, min_feature_mm: 0.75, kerf_mm: 0.125, steps: 40, seed: 99, num_images: 3, recipe: null,
       },
     });
@@ -406,8 +407,8 @@ describe("the request", () => {
     expect(body).toEqual({
       mode: "vector", prompt: "a fox head",
       options: {
-        colours: 4, palette: ["#FF0000", "#00AA00"], kind: "flat", width_mm: 100, height_mm: 100, layers_by: "colour", arrangement: "side_by_side", bleed_mm: 0.5,
-        min_feature_mm: 0.5, kerf_mm: 0, steps: 40, seed: 1234, num_images: 1, recipe: "A fox head, flat colour artwork ...",
+        colours: 4, palette: ["#FF0000", "#00AA00"], kind: "flat", width_mm: 100, height_mm: 100, layers_by: "colour", arrangement: "side_by_side", stack_order: "area_desc",
+        bleed_mm: 0.5, min_feature_mm: 0.5, kerf_mm: 0, steps: 40, seed: 1234, num_images: 1, recipe: "A fox head, flat colour artwork ...",
       },
     });
     // it has the keys of a first request, no more and no fewer
@@ -421,14 +422,14 @@ describe("Reuse", () => {
   const run = makeVectorRun({
     prompt: "an owl", options: {
       ...makeVectorRun().options, colours: 6, palette: ["#0000FF", "#FFA500"], kind: "line", width_mm: 321.5, height_mm: 45, layers_by: "shape", arrangement: "stacked",
-      bleed_mm: 1.5, min_feature_mm: 0.8, kerf_mm: 0.2, num_images: 3, seed: 555, recipe: "The owl, in words.",
+      stack_order: "area_asc", bleed_mm: 1.5, min_feature_mm: 0.8, kerf_mm: 0.2, num_images: 3, seed: 555, recipe: "The owl, in words.",
     },
   });
 
   it("restores every field of the form from the run's options, with the seed locked", () => {
     const current: VectorForm = { ...defaultVectorForm(CAPS), idea: "something else", recipeEdited: true, recipeText: "old edit", seedLocked: false, seed: 1 };
     expect(vectorFormFromRun(run, CAPS, current)).toEqual({
-      idea: "an owl", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500"], widthMm: 321.5, heightMm: 45, layersBy: "shape", arrangement: "stacked",
+      idea: "an owl", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500"], widthMm: 321.5, heightMm: 45, layersBy: "shape", arrangement: "stacked", stackOrder: "area_asc",
       minFeatureMm: 0.8, kerfMm: 0.2, bleedMm: 1.5, numImages: 3, seedLocked: true, seed: 555, recipeEdited: false, recipeText: "",
     });
   });
@@ -662,7 +663,7 @@ describe("the words on a card", () => {
     expect(vectorMeta(run, "8s").at(-1)).toBe("8s");
     const shape = makeVectorRun({ options: { ...run.options, layers_by: "shape", arrangement: "stacked", num_images: 3, width_mm: 600, height_mm: 307.5 } });
     expect(vectorMeta(shape, null)).toEqual(["600 × 307.5 mm", "4 colours", "flat colour art", "layers by shape", "seeds 1234–1236"]);
-    expect(vectorMeta(makeVectorRun({ options: { ...run.options, arrangement: "stacked" } }), null)[3]).toBe("layers by colour, stacked");
+    expect(vectorMeta(makeVectorRun({ options: { ...run.options, arrangement: "stacked" } }), null)[3]).toBe("layers by colour, stacked (depth)");
     expect(vectorSeedText(run)).toBe("seed 1234");
     expect(vectorSeedText(makeVectorRun({ options: { ...run.options, num_images: 2 } }))).toBe("seeds 1234–1235"); // two versions are already a range
   });

@@ -1,21 +1,22 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ApiError, api } from "../api";
-import { copyText, type ToastKind } from "../hooks";
+import type { ToastKind } from "../hooks";
 import type { ViewScope } from "../format";
 import type { KeyValueStore } from "../options";
 import type { Capabilities, Run, Status, VectorItem, VectorRun } from "../types";
 import { recipeKey, useVectorRecipe } from "../useVectorRecipe";
 import {
-  ARRANGEMENT_LABELS, KIND_HINTS, KIND_LABELS, LAYERS_BY_LABELS, WHITE, WHITE_LABEL, addInk, bleedApplies, buildVectorRequest, editRecipe, effectiveArrangement,
-  inkCount, layersLine, loadVectorForm, pngRange, presetMatches, rebuildRecipe, reconcileReusedRecipe, recipeRequest, removeInk, saveVectorForm, setInk,
+  ARRANGEMENT_HINTS, ARRANGEMENT_LABELS, BLEED_HINT, KIND_HINTS, KIND_LABELS, LAYERS_BY_LABELS, STACK_ORDER_HINT, STACK_ORDER_LABELS, WHITE, WHITE_LABEL, addInk,
+  bleedApplies, buildVectorRequest, editRecipe, effectiveArrangement, inkCount, layersLine, loadVectorForm, presetMatches, rebuildRecipe, reconcileReusedRecipe, recipeRequest, removeInk, saveVectorForm, setInk, stackOrderApplies,
   unavailableText, vectorFormFromRun, vectorProblem, vectorRetryRequest, vectorUsable, withColours, type VectorForm,
 } from "../vector";
 import { QueueBar } from "./Feedback";
 import { NumberField } from "./NumberField";
 import { panelId, tabId } from "./Tabs";
-import { type ProjectControls } from "./ProjectMenu";
+import { projectOf, type ProjectControls } from "./ProjectMenu";
 import { VectorIcon } from "./icons";
 import { Swatch } from "./Swatch";
+import { BinnedItemsCard, type BinnedItemHandlers } from "./BinnedItemsCard";
 import { VectorCard } from "./VectorCard";
 
 // The Vector tab (DESIGN.md §31, §31.12.8): the form that makes a laser-ready SVG from an idea, and the vectors made so far. It follows the Music tab's shape
@@ -34,10 +35,14 @@ interface Props {
   isTransient: (run: VectorRun) => boolean; // in a filtered view only because it is working (§29.3, §32)
   viewScope: ViewScope; // which filter that is
   projects: ProjectControls; // the project folders and what the Project button does (§32)
+  inDeletedView: boolean; // the Deleted filter: a run in the history that has versions in the bin is then one card of those versions (§35.2)
+  binnedHandlers: BinnedItemHandlers; // what that card hands back: open a deleted version, restore it, delete it for good
   more: boolean; // older runs can be loaded
   loadingOlder: boolean;
   now: number;
   push: (kind: ToastKind, text: string) => void;
+  onOpenVersion: (run: VectorRun, index: number) => void; // the viewer, at this version of the run's versions that are not in the bin
+  onCopySvg: (item: VectorItem) => void; // fetch the SVG's text and copy it: a run with one version has the button on its card
   onRun: (run: VectorRun) => void; // a run was made (or retried): the page adds it to its list
   onLoadOlder: () => void;
   onCancel: (run: Run) => void;
@@ -47,8 +52,8 @@ interface Props {
 }
 
 export function VectorPanel({
-  hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, more, loadingOlder, now, push, onRun, onLoadOlder,
-  onCancel, onToggleKeep, onRestore, onDelete,
+  hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, inDeletedView, binnedHandlers, more, loadingOlder, now, push,
+  onRun, onLoadOlder, onOpenVersion, onCopySvg, onCancel, onToggleKeep, onRestore, onDelete,
 }: Props) {
   const ids = useId();
   const idOf = (name: string) => `${ids}-${name}`;
@@ -58,7 +63,6 @@ export function VectorPanel({
   const [problem, setProblem] = useState<string | null>(null);
   const [inkNote, setInkNote] = useState<string | null>(null); // why a colour was refused (white, or one an ink has already)
   const [submitting, setSubmitting] = useState(false);
-  const copying = useRef(new Set<string>()); // versions whose SVG is being fetched to copy: one request at a time for each
   // The recipe the run being reused used, and the request it belongs to: when the server's words for that request arrive they are compared with it
   // (`reconcileReusedRecipe`). Any change the person makes meanwhile cancels the comparison.
   const reused = useRef<{ key: string | null; text: string } | null>(null);
@@ -100,7 +104,6 @@ export function VectorPanel({
   const ready = form.idea.trim() !== ""; // an empty idea is nothing to make
   const arrangement = effectiveArrangement(form);
   const byShape = form.layersBy === "shape";
-  const range = pngRange(limits);
   const seedHint = form.seedLocked ? "The same prompt, settings and seed make the same drawing, and the same SVG." : "A new random seed for every run. Lock it to repeat a drawing.";
   // The box shows the hand-written words once there are some, else the server's last answer (kept while a newer one is on its way, so that it does not
   // flicker empty on every key), and nothing while there is no prompt to write words around.
@@ -146,21 +149,6 @@ export function VectorPanel({
       onRun(await api.createVectorRun(vectorRetryRequest(run)));
     } catch (error) {
       push("error", `Couldn't retry: ${(error as Error).message}`);
-    }
-  };
-
-  // Copy SVG code: the file is fetched as TEXT and copied. It is never put in the page as markup (§31.12.8).
-  const copySvg = async (item: VectorItem) => {
-    if (copying.current.has(item.id)) return;
-    copying.current.add(item.id);
-    try {
-      const text = await api.fetchText(item.url);
-      const ok = await copyText(text);
-      push(ok ? "success" : "error", ok ? "SVG code copied." : "Couldn't copy. Use Download SVG instead.");
-    } catch (error) {
-      push("error", `Couldn't get the SVG: ${(error as Error).message}`);
-    } finally {
-      copying.current.delete(item.id);
     }
   };
 
@@ -307,12 +295,23 @@ export function VectorPanel({
           <div className="field">
             <span className="field-label" id={idOf("arrangement")}>Arrangement</span>
             {choice("arrangement", limits.arrangements, ARRANGEMENT_LABELS, arrangement, (value) => update({ arrangement: value }), byShape)}
-            <p className="field-hint">
-              {byShape ? "Layers by shape are always side by side." : arrangement === "stacked"
-                ? "Each layer also holds everything above it, a little larger, so sheets cut from the layers glue up with no gaps."
-                : "Each layer holds only its own colour. For inlay and for engraving."}
-            </p>
+            <p className="field-hint" data-arrangement-hint>{byShape ? "Layers by shape are always side by side." : ARRANGEMENT_HINTS[arrangement]}</p>
           </div>
+        </div>
+
+        {/* Back sheet (DESIGN.md §35.2): which colour is at the back of a stacked run. Greyed, with the reason, for every run that is not stacked by colour */}
+        <div className="field" data-back-sheet>
+          <label htmlFor={idOf("backsheet")}>Back sheet</label>
+          <select id={idOf("backsheet")} value={form.stackOrder} disabled={!stackOrderApplies(form)} aria-describedby={idOf("backsheet-hint")}
+            onChange={(e) => update({ stackOrder: e.target.value as VectorForm["stackOrder"] })}>
+            {limits.stack_orders.map((order) => <option key={order} value={order}>{STACK_ORDER_LABELS[order] ?? order}</option>)}
+          </select>
+          <p id={idOf("backsheet-hint")} className="field-hint">
+            {byShape ? "Layers by shape are always side by side, so there is no back sheet."
+              : arrangement !== "stacked" ? "Used only when the layers are Stacked (depth)."
+              : form.stackOrder === "palette" ? `${STACK_ORDER_HINT} The order of the ink rows above is the order here: the first is at the back, and the colours the picture chooses follow, the biggest first.`
+              : STACK_ORDER_HINT}
+          </p>
         </div>
 
         {/* what the studio sends: the server's words, editable; Rebuild takes the edit away; the negative text is fixed */}
@@ -369,7 +368,7 @@ export function VectorPanel({
             <NumberField label="Kerf (mm)" value={form.kerfMm} min={limits.kerf_mm.min} max={limits.kerf_mm.max} integer={false} step={0.05}
               hint="0 leaves the shapes as drawn. Above 0 every layer is offset by half of it, to make up for the width of the cut." onChange={(kerfMm) => update({ kerfMm })} />
             <NumberField label="Bleed (mm)" value={form.bleedMm} min={limits.bleed_mm.min} max={limits.bleed_mm.max} integer={false} step={0.1} disabled={!bleedApplies(form)}
-              hint={bleedApplies(form) ? "How much each stacked layer grows over the one above it." : "Used only when the layers are stacked."} onChange={(bleedMm) => update({ bleedMm })} />
+              hint={bleedApplies(form) ? BLEED_HINT : "Used only when the layers are Stacked (depth)."} onChange={(bleedMm) => update({ bleedMm })} />
           </div>
         </details>
 
@@ -398,12 +397,17 @@ export function VectorPanel({
         ) : runs.length === 0 ? (
           empty
         ) : (
-          // A Vector run is binned and restored whole: the Deleted view never shows a card of deleted versions for it (§31.12.6), so every run is an ordinary card
-          runs.map((run) => (
-            <VectorCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)} viewScope={viewScope} projects={projects}
-              pngRange={range} onReuse={() => reuse(run)} onRetry={() => void retry(run)} onCancel={() => onCancel(run)} onToggleKeep={() => onToggleKeep(run)}
-              onRestore={() => onRestore(run)} onDelete={() => onDelete(run)} onCopySvg={(item) => void copySvg(item)} />
-          ))
+          // In Deleted, a run that is in the history but has versions of its own in the bin is one card of those versions (DESIGN.md §35.2); a run that is itself in
+          // the bin, and every run in the other views, is an ordinary card
+          runs.map((run) =>
+            inDeletedView && run.deleted_at === null ? (
+              <BinnedItemsCard key={run.id} run={run} now={now} projectName={projectOf(run, projects.projects)?.name ?? null} handlers={binnedHandlers} />
+            ) : (
+              <VectorCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)} viewScope={viewScope} projects={projects}
+                onOpenVersion={(index) => onOpenVersion(run, index)} onReuse={() => reuse(run)} onRetry={() => void retry(run)} onCancel={() => onCancel(run)}
+                onToggleKeep={() => onToggleKeep(run)} onRestore={() => onRestore(run)} onDelete={() => onDelete(run)} onCopySvg={onCopySvg} />
+            ),
+          )
         )}
         {more && (
           <button type="button" className="button load-more" onClick={onLoadOlder} disabled={loadingOlder}>

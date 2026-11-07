@@ -152,6 +152,7 @@ export interface ImageRun extends RunBase {
   tracks: [];
   binned_tracks: [];
   vectors: []; // always present, and empty, on a run that is not a Vector run (§31.12.7)
+  binned_vectors: [];
 }
 
 /** One finished track of a music run (DESIGN.md §26.3). `seconds` is what the model really made. */
@@ -194,6 +195,7 @@ export interface MusicRun extends RunBase {
   tracks: TrackInfo[]; // the tracks that are not in the bin, numbered by position (DESIGN.md §33.1)
   binned_tracks: BinnedTrack[]; // the ones that are; empty for a run that is itself in the bin
   vectors: [];
+  binned_vectors: [];
 }
 
 // ------------------------------------------------------------------ Vector (DESIGN.md §31, version 1.17)
@@ -203,6 +205,8 @@ export interface MusicRun extends RunBase {
 export type VectorKind = "silhouette" | "flat" | "line"; // Silhouette or stencil, Flat colour art, Line art (§31.3)
 export type VectorLayersBy = "colour" | "shape";
 export type VectorArrangement = "side_by_side" | "stacked";
+/** Which colour is the back sheet of a stacked run (DESIGN.md §35.3 item 11): the most ink (today's rule), the least, or the first ink of the form's list. */
+export type VectorStackOrder = "area_desc" | "area_asc" | "palette";
 
 /** What a Vector run asked for, and what the server added when it made it. This is what Reuse and Retry restore (§31.12.6). */
 export interface VectorOptionsSnapshot {
@@ -213,6 +217,7 @@ export interface VectorOptionsSnapshot {
   height_mm: number;
   layers_by: VectorLayersBy;
   arrangement: VectorArrangement;
+  stack_order?: VectorStackOrder; // a run made in 1.17 has none: it was `area_desc` (§35.4)
   bleed_mm: number;
   min_feature_mm: number;
   kerf_mm: number;
@@ -242,6 +247,7 @@ export interface VectorLayer {
   picture_colour: string;
   paths: number;
   length_mm: number; // the total cut length of the layer, a rough idea of the time
+  height?: number; // how many sheets high this colour stands: its number when stacked (the back sheet is 1), else 1. A 1.17 run has none (§35.4)
 }
 
 /** The check of one version (§31.4): what the clean-up found and did. */
@@ -252,6 +258,7 @@ export interface VectorCheck {
   size_mm: [number, number];
   layers_by: VectorLayersBy;
   arrangement: VectorArrangement;
+  stack_order?: VectorStackOrder | null; // the order used when stacked by colour, else null; a 1.17 run has none (§35.4)
   svg_bytes: number;
   layers: VectorLayer[];
   smallest_feature_mm: number | null; // the smallest feature that remains; null if the clean-up found none
@@ -277,6 +284,15 @@ export interface VectorItem {
   png_url: string;
   png_download_url: string;
   preview_url: string; // a PNG made from the SVG, for the card's <img>
+  drawing_url: string; // the picture the image model drew, which this was traced from: shown beside the vector in the viewer (DESIGN.md §35.2)
+  drawing_download_url: string;
+  layer_urls: string[]; // each layer's own SVG, in order from layer 1, for the stack view (§35.4)
+}
+
+/** A version that is in the bin on its own (DESIGN.md §35.4): as any version, with when it went and when it will be deleted for good. */
+export interface BinnedVectorItem extends VectorItem {
+  deleted_at: string;
+  purge_at: string | null; // null when there is no bin
 }
 
 export interface VectorRun extends RunBase {
@@ -285,10 +301,11 @@ export interface VectorRun extends RunBase {
   lyrics: null;
   inputs: [];
   images: [];
-  binned_images: []; // a Vector run is binned and restored whole: it has no pictures of its own in the bin (§31.12.6)
+  binned_images: []; // a Vector run has no pictures of its own
   tracks: [];
   binned_tracks: [];
-  vectors: VectorItem[];
+  vectors: VectorItem[]; // the versions that are NOT in the bin: what the card and the viewer show, numbered by position (§35.4)
+  binned_vectors: BinnedVectorItem[]; // the ones that are; empty for a run that is itself in the bin
 }
 
 export type Run = ImageRun | MusicRun | VectorRun;
@@ -361,8 +378,9 @@ export interface VectorLimits {
   kinds: VectorKind[];
   layers_by: VectorLayersBy[];
   arrangements: VectorArrangement[];
+  stack_orders: VectorStackOrder[]; // which colour can be the back sheet of a stacked run (§35.4)
   presets: VectorPreset[];
-  defaults: { kind: VectorKind; layers_by: VectorLayersBy; arrangement: VectorArrangement };
+  defaults: { kind: VectorKind; layers_by: VectorLayersBy; arrangement: VectorArrangement; stack_order: VectorStackOrder };
   recipe_max_chars: number; // the longest edited recipe the server accepts
   // The PNG size range (the long side, in pixels). The contract's `limits_vector` does not carry it (it is in the route's description, §31.12.7: 16 to
   // 8192), so it is optional here: the page uses it if the server ever sends it and VECTOR_PNG_RANGE (vector.ts) otherwise.
@@ -486,6 +504,7 @@ export interface CreateVectorBody {
     height_mm: number;
     layers_by: VectorLayersBy;
     arrangement: VectorArrangement;
+    stack_order: VectorStackOrder;
     bleed_mm: number;
     min_feature_mm: number;
     kerf_mm: number;
