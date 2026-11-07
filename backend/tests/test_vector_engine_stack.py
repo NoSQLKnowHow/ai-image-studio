@@ -105,12 +105,13 @@ def test_palette_order_puts_the_first_ink_of_the_form_at_the_back_then_the_rest_
 
 
 def test_palette_order_with_one_ink_listed_puts_it_at_the_back_and_the_rest_by_area():
-    """The inks the form does not list keep their default order (the biggest first), after the listed ones."""
+    """The inks the form does not list keep their default order (the biggest first), after the listed ones. The green dot is the smallest ink, so
+    it is the back sheet only because the form lists it: black (the ring) and red (the square) follow it in area order, and every one of them
+    stands as high as its place."""
     result = stacked(disc_square_dot(), stack_order="palette", palette=("#00A000",))
-    assert ids(result)[0].startswith("layer-1-")
-    # the unlisted inks follow in area order: black before red (green is the listed one, if the picture's green matched it)
-    names = [i.split("-", 2)[2] for i in ids(result)]
-    assert names.index("black") < names.index("red")
+    assert ids(result) == ["layer-1-green", "layer-2-black", "layer-3-red"]
+    assert [layer["colour"] for layer in result.check["layers"]] == ["#00A000", "#000000", "#FF0000"]  # the listed ink keeps the colour that was named
+    assert [layer["height"] for layer in result.check["layers"]] == [1, 2, 3]
 
 
 def test_changing_the_order_never_changes_a_layer_s_colour():

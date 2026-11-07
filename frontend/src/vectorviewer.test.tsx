@@ -142,6 +142,47 @@ describe("the viewer of a Vector run's versions", () => {
     expect(within(dialog()).queryByRole("alert")).toBeNull();
   });
 
+  it("describes the vector for a screen reader, with the layers counted in the singular or the plural", () => {
+    render(<VectorViewer {...viewerProps(makeVectorRun())} />);
+    expect(dialog().querySelector("[data-vector-image]")?.getAttribute("alt")).toBe("The vector: 100 by 100 mm, 3 layers");
+    cleanup();
+    render(<VectorViewer {...viewerProps(makeVectorRun({ vectors: [makeVectorItem(0, { layers: 1, width_mm: 60.5, height_mm: 40 })] }))} />);
+    expect(dialog().querySelector("[data-vector-image]")?.getAttribute("alt")).toBe("The vector: 60.5 by 40 mm, 1 layer");
+  });
+
+  it("says what the PNG is when the size is right, and says it as an error (and only then) when it is not; both ends of the range are right", () => {
+    render(<VectorViewer {...viewerProps(makeVectorRun())} />);
+    const help = () => dialog().querySelector('[id$="-png-help"]') as HTMLElement;
+    expect(help().textContent).toBe("Drawn from the SVG, so it is sharp at any size.");
+    expect(help().className).toBe("field-hint");
+    expect(help().hasAttribute("role")).toBe(false);
+    const box = within(dialog()).getByLabelText("PNG size, long side");
+    fireEvent.change(box, { target: { value: "15" } });
+    expect(help().className).toBe("field-error");
+    expect(help().getAttribute("role")).toBe("alert");
+    fireEvent.change(box, { target: { value: "16" } }); // the lowest the server takes
+    expect(within(dialog()).queryByRole("alert")).toBeNull();
+    expect(help().className).toBe("field-hint");
+    expect(action("download-png")?.getAttribute("href")).toContain("&size=16");
+    expect(dialog().querySelector(".vector-png-row span[aria-hidden='true']")?.textContent).toBe("px"); // the unit is not read out after the number
+  });
+
+  it("moves with the arrow keys between two versions, and does nothing for a lone one", () => {
+    const two = makeVectorRun({ options: { ...makeVectorRun().options, num_images: 2 }, vectors: [makeVectorItem(0), makeVectorItem(1, { id: "two".padEnd(32, "0") })] });
+    const props = viewerProps(two);
+    render(<VectorViewer {...props} />);
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    expect(props.onIndex).toHaveBeenLastCalledWith(1);
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    expect(props.onIndex).toHaveBeenLastCalledWith(1); // from the first, back goes round to the second
+    cleanup();
+    const lone = viewerProps(makeVectorRun());
+    render(<VectorViewer {...lone} />);
+    fireEvent.keyDown(document, { key: "ArrowRight" });
+    fireEvent.keyDown(document, { key: "ArrowLeft" });
+    expect(lone.onIndex).not.toHaveBeenCalled();
+  });
+
   it("takes the PNG range from what it is given (the server's capabilities)", () => {
     render(<VectorViewer {...viewerProps(makeVectorRun(), { pngRange: { min: 100, max: 3000 } })} />);
     const box = within(dialog()).getByLabelText("PNG size, long side");
@@ -264,6 +305,14 @@ describe("the viewer of a Vector run's versions", () => {
       expect(dialog().querySelectorAll(".stack-sheet")).toHaveLength(3);
     });
 
+    it("shows the stack view for a stacked version of a single layer too: one sheet, the back one", () => {
+      const base = stackedItem();
+      const one = { ...base, layers: 1, layer_urls: base.layer_urls.slice(0, 1), check: { ...base.check, layers: base.check.layers.slice(0, 1) } };
+      render(<VectorViewer {...viewerProps(makeVectorRun({ vectors: [one] }))} />);
+      expect(dialog().querySelector("[data-stack-view]")).not.toBeNull();
+      expect(dialog().querySelectorAll(".stack-sheet")).toHaveLength(1);
+    });
+
     it("shows no stack view for a version whose layer files cannot be offered", () => {
       render(<VectorViewer {...viewerProps(makeVectorRun({ vectors: [{ ...stackedItem(), layer_urls: [] }] }))} />);
       expect(dialog().querySelector("[data-stack-view]")).toBeNull();
@@ -341,6 +390,12 @@ describe("the stack view (DESIGN.md §35.2)", () => {
     expect(sheets()).toHaveLength(1);
     fireEvent.change(slider(), { target: { value: "3" } });
     expect(sheets()).toHaveLength(3);
+  });
+
+  it("names a sheet by its number when the check lists fewer layers than there are sheets (a file that disagrees with its check)", () => {
+    const short = { ...item, check: { ...item.check, layers: item.check.layers.slice(0, 2) } };
+    render(<StackView item={short} />);
+    expect(sheets().map((s) => s.querySelector("img")?.getAttribute("alt"))).toEqual(["Layer 1, black, 1 high (back)", "Layer 2, red, 2 high", "Layer 3"]);
   });
 
   it("names its sheets by their own colour word, and by the colour's code where the name has none (layers by shape)", () => {

@@ -262,6 +262,28 @@ describe("adding pictures to the tray (criteria 215)", () => {
     expect(result.current.items.map((i) => i.name)).toEqual(["ok.png"]);
   });
 
+  it("takes a file of exactly the size limit and refuses one a byte over", () => {
+    const sized = (name: string, bytes: number) => Object.defineProperty(png(name), "size", { value: bytes });
+    const { result } = renderHook(() => useTray(CAPS));
+    let outcome!: AddOutcome;
+    act(() => { outcome = result.current.addFiles([sized("exact.png", 20 * 1024 * 1024), sized("over.png", 20 * 1024 * 1024 + 1)]); });
+    expect(outcome.added).toBe(1);
+    expect(outcome.problems).toEqual(["over.png: the file is larger than 20 MB."]);
+    expect(result.current.items.map((i) => i.name)).toEqual(["exact.png"]);
+  });
+
+  it("announces what was added, for a screen reader: the picture's number for one, the count for several", () => {
+    const { result } = renderHook(() => useTray(CAPS));
+    act(() => { result.current.addFiles([png("a.png")]); });
+    expect(result.current.announcement).toBe("Image 1 added.");
+    act(() => { result.current.addFiles([png("b.png"), png("c.png")]); });
+    expect(result.current.announcement).toBe("2 images added.");
+    act(() => { result.current.addFiles([png("d.png")]); });
+    expect(result.current.announcement).toBe("Image 4 added."); // by its place in the tray
+    act(() => { result.current.addFiles([png("report.pdf", "application/pdf")]); });
+    expect(result.current.announcement).toBe("Image 4 added."); // nothing was added: nothing new is said
+  });
+
   it("returns the reasons without posting them in the tray when asked to be quiet (Generate's tray is not on screen)", () => {
     const { result } = renderHook(() => useTray(CAPS));
     let outcome!: AddOutcome;
@@ -401,6 +423,26 @@ describe("the page's one paste listener (criteria 211, 212, 216, 217)", () => {
     expect(PICTURES_ON_IMAGES_TAB).toBe("Pictures are used on the Images tab.");
   });
 
+  it("says nothing about a drop on the Music or Vector tab while a dialog is open, or before the page is ready", () => {
+    const drop = () => {
+      const event = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(event, "dataTransfer", { value: { types: ["Files"] } });
+      window.dispatchEvent(event);
+    };
+    const onWrongTab = vi.fn();
+    render(<Harness tab="music" onWrongTab={onWrongTab}><div role="dialog" aria-label="Options" /></Harness>);
+    drop();
+    expect(onWrongTab).not.toHaveBeenCalled(); // a dialog has the focus: nothing is said behind it
+    cleanup();
+    render(<Harness tab="music" ready={false} onWrongTab={onWrongTab} />);
+    drop();
+    expect(onWrongTab).not.toHaveBeenCalled(); // the page does not yet know what it can do
+    cleanup();
+    render(<Harness tab="music" onWrongTab={onWrongTab} />);
+    drop();
+    expect(onWrongTab).toHaveBeenCalledTimes(1); // and the same drop, with neither, is told
+  });
+
   it("does not say it for a drop on the Images tab, where pictures are used", () => {
     const onWrongTab = vi.fn();
     render(<Harness onWrongTab={onWrongTab} />);
@@ -505,6 +547,7 @@ describe("Upscale a picture… (criterion 218)", () => {
     expect(button().getAttribute("title")).toBe(UPSCALE_TITLE);
     expect(button().getAttribute("title")).toContain("or drop or paste a picture here.");
     expect(button().hasAttribute("data-upscale-drop")).toBe(true); // the mark the page's listener looks for
+    expect(screen.getByTestId("upscale-file-input").getAttribute("aria-hidden")).toBe("true"); // the hidden file input is not read out
   });
 
   it("takes a chosen file as a list of one", () => {

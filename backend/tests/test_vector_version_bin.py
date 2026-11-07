@@ -228,6 +228,20 @@ def test_delete_forever_removes_the_four_files_of_the_version_and_nothing_else(v
     assert vclient.get(victim["url"]).status_code == 404 and vclient.get(victim["drawing_url"]).status_code == 404
 
 
+def test_delete_forever_does_not_mind_a_file_that_is_already_gone(vclient):
+    """A drawing, a preview or a ZIP removed by hand must not stop a version from being deleted for good (§35.3 item 2: a file that is not there is not an
+    error): the rows go, the files that are there go, and the answer is the same."""
+    run = three(vclient)
+    victim = run["vectors"][1]
+    mine = files_of(vclient, run, victim)
+    mine["-source.png"].unlink()
+    mine[".png"].unlink()
+    assert bin_version(vclient, victim["id"]).status_code == 200
+    assert delete_version(vclient, victim["id"]).status_code == 204
+    assert not any(exists(mine).values())
+    assert [v["seed"] for v in get_run(vclient, run["id"])["vectors"]] == [100, 102]
+
+
 def test_a_present_version_can_be_deleted_for_good_directly(vclient):
     run = three(vclient)
     victim = run["vectors"][0]
@@ -396,6 +410,21 @@ def test_a_layer_outside_the_ones_that_exist_is_a_404(vclient, number):
     vector = three(vclient)["vectors"][0]
     response = vclient.get(f"/api/vectors/{vector['id']}/layers/{number}.svg")
     assert response.status_code == 404 and code(response) == "not_found"
+
+
+def test_the_viewers_routes_say_in_words_what_is_missing(vclient):
+    """The page shows these texts (the drawing's own is pinned in its test): an unknown version, a layer that does not exist, and a ZIP that lacks the layer."""
+    run = three(vclient)
+    vector = run["vectors"][0]
+    for url in (f"/api/vectors/{NO_SUCH}/drawing", f"/api/vectors/{NO_SUCH}/layers/1.svg"):
+        response = vclient.get(url)
+        assert response.status_code == 404 and response.json()["detail"] == "Vector not found.", url
+    assert vclient.get(f"/api/vectors/{vector['id']}/layers/9.svg").json()["detail"] == "That layer does not exist."
+    # a ZIP that no longer holds the layer's file (made by hand): the route says so and does not guess
+    with zipfile.ZipFile(files_of(vclient, run, vector)["-layers.zip"], "w") as empty:
+        empty.writestr("unrelated.svg", "<svg/>")
+    response = vclient.get(vector["layer_urls"][0])
+    assert response.status_code == 404 and response.json()["detail"] == "That layer is not in the file."
 
 
 def test_the_layer_route_does_not_answer_for_what_is_not_a_number_or_a_version(vclient):
