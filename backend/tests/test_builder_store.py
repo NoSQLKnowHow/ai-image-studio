@@ -48,6 +48,8 @@ def test_messages_are_numbered_from_one_in_order_and_the_chat_notes_the_time(sto
     messages = store.messages(chat)
     assert [(m["seq"], m["role"], m["text"], m["model"]) for m in messages] == [(1, "user", "hi", None), (2, "assistant", "hello", "m")]
     assert json.loads(messages[1]["content"]) == {"questions": []} and messages[0]["content"] is None
+    store.add_message(chat, now=T2, role="assistant", text="again", content={"b": 1, "a": 2})
+    assert store.messages(chat)[2]["content"] == '{"a": 2, "b": 1}'  # one way of writing it, whatever order it was built in
     assert store.get_chat(chat)["created_at"] == T0 and store.get_chat(chat)["updated_at"] == T2
 
 
@@ -58,7 +60,7 @@ def test_a_message_for_a_chat_that_is_not_there_is_none_and_numbers_do_not_cross
 
 
 def test_values_the_schema_does_not_hold_are_refused_not_stored(store, db):
-    with pytest.raises(StoreError):
+    with pytest.raises(StoreError, match="for 'paintings' is not one of images, vector, music, edit"):
         store.create_chat(now=T0, title="x", for_kind="paintings")
     with pytest.raises(StoreError):
         store.create_chat(now=T0, title="x", detail="huge")
@@ -94,6 +96,14 @@ def test_a_version_number_is_used_once_so_a_version_cannot_be_written_over(store
         c.execute("INSERT INTO prompt_versions (id, prompt_id, n, text, settings, source, created_at) VALUES ('v', ?, 1, 'x', '{}', 'hand', ?)", ("e" * 32, T1))
 
 
+def test_the_versions_of_a_prompt_are_listed_oldest_first(store, db):
+    prompt = store.create_prompt(now=T0, title="t", text="one")
+    with db.tx() as c:
+        for n, text in ((3, "three"), (2, "two")):  # written out of order, to be read back in order
+            c.execute("INSERT INTO prompt_versions (id, prompt_id, n, text, settings, source, created_at) VALUES (?, ?, ?, ?, '{}', 'hand', ?)", (f"v{n}", prompt, n, text, T1))
+    assert [(v["n"], v["text"]) for v in store.versions(prompt)] == [(1, "one"), (2, "two"), (3, "three")]
+
+
 # ------------------------------------------------------------------ the word index
 def test_the_word_index_holds_the_title_the_newest_text_and_the_tags(store, db):
     fox = store.create_prompt(now=T0, title="Winter fox", text="a red fox in deep snow", tags=["animals", "snow"])
@@ -121,6 +131,19 @@ def test_the_index_is_rebuilt_at_start_up_only_when_it_is_not_in_step(store, db)
     assert find(db, "word1") == [] and store.ensure_search_in_step() is True
     assert find(db, "word1") == [ids[1]] and count(db, "prompt_search") == 3 and store.ensure_search_in_step() is False
     assert store.reindex_all() == 3
+
+
+def test_an_index_with_a_row_too_many_or_for_a_prompt_that_is_gone_is_rebuilt_too(store, db):
+    ids = [store.create_prompt(now=T0, title=f"p{n}", text=f"word{n}") for n in range(2)]
+    with db.tx() as c:  # a row for a prompt that does not exist: the counts now differ the other way round
+        c.execute("INSERT INTO prompt_search (prompt_id, title, text, tags) VALUES ('ghost', 'ghost', 'phantom', '')")
+    assert find(db, "phantom") == ["ghost"] and store.ensure_search_in_step() is True
+    assert find(db, "phantom") == [] and count(db, "prompt_search") == 2 and store.ensure_search_in_step() is False
+    with db.tx() as c:  # same number of rows, but one is for a ghost and one prompt is missing: only a full rebuild puts it right
+        c.execute("DELETE FROM prompt_search WHERE prompt_id=?", (ids[0],))
+        c.execute("INSERT INTO prompt_search (prompt_id, title, text, tags) VALUES ('ghost', 'ghost', 'phantom', '')")
+    assert store.reindex_all() == 2
+    assert find(db, "phantom") == [] and find(db, "word0") == [ids[0]] and count(db, "prompt_search") == 2  # the rebuild starts from nothing
 
 
 # ------------------------------------------------------------------ the bin
@@ -215,9 +238,10 @@ def test_the_counts_for_the_tab_and_its_filters(store):
     store.create_chat(now=T0, title="1", project_id=PROJECT), store.create_chat(now=T0, title="2")
     binned = store.create_chat(now=T0, title="3", project_id=PROJECT)
     store.bin_item("chat", binned, T1)
+    store.bin_item("chat", store.create_chat(now=T0, title="4"), T1)  # in no project, and in the bin: counted only under deleted
     assert (a, b, c, d) and store.counts() == {
         "prompts": {"all": 4, "favourites": 2, "deleted": 1, "no_project": 1, "projects": {PROJECT: 2, OTHER: 1}, "tags": {"dusk": 1, "sea": 3}},  # `rare` and the bin: not counted
-        "chats": {"all": 2, "deleted": 1, "no_project": 1, "projects": {PROJECT: 1}},
+        "chats": {"all": 2, "deleted": 2, "no_project": 1, "projects": {PROJECT: 1}},
     }
 
 
