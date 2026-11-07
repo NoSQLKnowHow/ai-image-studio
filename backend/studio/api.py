@@ -21,6 +21,8 @@ from starlette.types import Scope
 from . import __version__
 from . import presets as P
 from .builder import builder_limits
+from .builder.chat_routes import add_chat_routes as add_builder_chat_routes
+from .builder.engine import BuilderEngine
 from .builder.routes import add_routes as add_builder_routes
 from .builder.service import BuilderService
 from .builder.store import BuilderStore
@@ -171,6 +173,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             settings, db, storage, bus, jobs)
         app.state.builder = BuilderService(settings)  # the Prompt builder's view of Ollama (DESIGN.md §37.4)
         app.state.builder_store = BuilderStore(db)  # its prompts, versions and chats (§37.4)
+        app.state.builder_engine = BuilderEngine(settings, app.state.builder, app.state.builder_store, storage)
+        app.state.builder_slots = asyncio.Semaphore(settings.builder_at_once)  # one reply is written at a time (§37.3 rule 9)
+        app.state.builder_jobs = {}  # chat id -> the reply being written in it
         if app.state.builder_store.ensure_search_in_step():
             log.info("the prompts' word index was not in step with the prompts and has been rebuilt")
         app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
@@ -872,6 +877,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         )
 
     add_builder_routes(app)  # /api/builder/... (registered before the page below, which takes every other path)
+    add_builder_chat_routes(app)
 
     static_dir = settings.static_dir or DEFAULT_STATIC_DIR
     if (static_dir / "index.html").is_file():

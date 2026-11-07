@@ -175,7 +175,7 @@ def test_the_limits_the_page_needs_are_in_the_capabilities(client):
 # ------------------------------------------------------------------ the scripted model of the tests
 def test_the_scripted_model_is_always_there(client_factory):
     client = client_factory(builder_llm="fake")
-    assert client.get("/api/builder/status").json() == {"configured": True, "reachable": True, "model": "fake-builder", "vision": False, "message": None, "hint": None}
+    assert client.get("/api/builder/status").json() == {"configured": True, "reachable": True, "model": "fake-builder", "vision": True, "message": None, "hint": None}
     assert client.get("/api/capabilities").json()["builder"]["available"] is True
     assert client.post("/api/builder/unload").json() == {"ok": True, "unloaded": ["fake-builder"]}
     assert client.post("/api/builder/test").json()["model_present"] is True

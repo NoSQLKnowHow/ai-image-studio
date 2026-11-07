@@ -12,6 +12,7 @@ manager removes a run's files after its rows are gone.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import sqlite3
 from typing import Any, Mapping, Optional, Sequence
@@ -66,6 +67,132 @@ class BuilderStore:
 
     def messages(self, chat_id: str) -> list[sqlite3.Row]:
         return self.db.read_all("SELECT * FROM chat_messages WHERE chat_id=? ORDER BY seq", (chat_id,))
+
+    def last_draft(self, chat_id: str) -> Optional[dict[str, Any]]:
+        """The current draft of a chat: the newest one in its messages, whether the model wrote it or the person edited it by hand (their message carries the edited
+        draft). None when no message has had one yet."""
+        for row in self.db.read_all("SELECT content FROM chat_messages WHERE chat_id=? AND content IS NOT NULL ORDER BY seq DESC", (chat_id,)):
+            content = json.loads(row["content"])
+            draft = content.get("draft")
+            if isinstance(draft, dict) and str(draft.get("prompt") or "").strip():
+                return draft
+        return None
+
+    def list_chats(self, *, project: Optional[str] = None, deleted: bool = False, limit: int = 300) -> list[dict[str, Any]]:
+        """The chats, newest activity first, each with a line of its last message. `project` is a project's id, or "none" for the chats in no project, or None for
+        all; `deleted` lists the bin instead of the chats on show."""
+        where, args = ["c.deleted_at IS NOT NULL" if deleted else "c.deleted_at IS NULL"], []
+        if project == "none":
+            where.append("c.project_id IS NULL")
+        elif project:
+            where.append("c.project_id = ?")
+            args.append(project)
+        rows = self.db.read_all(
+            "SELECT c.*, (SELECT text FROM chat_messages m WHERE m.chat_id = c.id ORDER BY m.seq DESC LIMIT 1) AS last_text, "
+            "(SELECT COUNT(*) FROM chat_messages m WHERE m.chat_id = c.id) AS message_count "
+            f"FROM chats c WHERE {' AND '.join(where)} ORDER BY c.updated_at DESC, c.id LIMIT ?", (*args, limit))
+        return [{**dict(r), "last_text": " ".join((r["last_text"] or "").split())[:120]} for r in rows]
+
+    _CHAT_FIELDS = {"title": "title", "for_kind": "for_kind", "project_id": "project_id", "detail": "detail"}
+
+    def update_chat(self, chat_id: str, *, now: str, **fields: Any) -> str:
+        """Change a chat's title, what it is for, its project or its detail level (only the fields given). Returns 'updated' or 'not_found'."""
+        for name in fields:
+            if name not in self._CHAT_FIELDS:
+                raise StoreError(f"a chat has no {name!r} to change")
+        if "for_kind" in fields:
+            _check(fields["for_kind"], FOR_KINDS, "for")
+        if "detail" in fields:
+            _check(fields["detail"], DETAILS, "detail")
+        with self.db.tx() as c:
+            if c.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone() is None:
+                return "not_found"
+            for name, value in fields.items():
+                c.execute(f"UPDATE chats SET {self._CHAT_FIELDS[name]}=? WHERE id=?", (value, chat_id))
+            c.execute("UPDATE chats SET updated_at=? WHERE id=?", (now, chat_id))
+            return "updated"
+
+    # ------------------------------------------------------------------ a chat's pictures (DESIGN.md section 37.3 rule 13)
+    # A picture is attached before the message it goes with exists, so it waits with message_seq 0 and is given its message's number when that is sent.
+    def add_attachment(self, chat_id: str, *, path: str, width: int, height: int, name: Optional[str], message_seq: int = 0) -> Optional[str]:
+        with self.db.tx() as c:
+            if c.execute("SELECT 1 FROM chats WHERE id=?", (chat_id,)).fetchone() is None:
+                return None
+            attachment_id = secrets.token_hex(16)
+            c.execute("INSERT INTO chat_attachments (id, chat_id, message_seq, path, width, height, name) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                      (attachment_id, chat_id, message_seq, path, width, height, name))
+            return attachment_id
+
+    def get_attachment(self, attachment_id: str) -> Optional[sqlite3.Row]:
+        return self.db.read_one("SELECT * FROM chat_attachments WHERE id=?", (attachment_id,))
+
+    def attachments(self, chat_id: str, *, pending: bool = False) -> list[sqlite3.Row]:
+        """A chat's pictures in the order they were attached; with `pending`, only those not yet sent with a message."""
+        return self.db.read_all(f"SELECT * FROM chat_attachments WHERE chat_id=?{' AND message_seq = 0' if pending else ''} ORDER BY rowid", (chat_id,))
+
+    def send_attachments(self, chat_id: str, ids: Sequence[str], message_seq: int) -> list[str]:
+        """Attach the waiting pictures named in `ids` (and in this chat) to a message, in the order named. Returns the ids that were."""
+        sent: list[str] = []
+        with self.db.tx() as c:
+            for attachment_id in ids:
+                cur = c.execute("UPDATE chat_attachments SET message_seq=? WHERE id=? AND chat_id=? AND message_seq=0", (message_seq, attachment_id, chat_id))
+                if cur.rowcount == 1:
+                    sent.append(attachment_id)
+        return sent
+
+    def delete_attachment(self, attachment_id: str) -> Optional[sqlite3.Row]:
+        """Remove a picture that is still waiting (not yet sent with a message). Returns its row (so the caller can remove the file) or None."""
+        with self.db.tx() as c:
+            row = c.execute("SELECT * FROM chat_attachments WHERE id=? AND message_seq=0", (attachment_id,)).fetchone()
+            if row is not None:
+                c.execute("DELETE FROM chat_attachments WHERE id=?", (attachment_id,))
+            return row
+
+    # ------------------------------------------------------------------ what the model is told about the person (rules 7 and 8)
+    def active_preferences(self, project_id: Optional[str]) -> list[str]:
+        """The standing notes that apply to a chat: the enabled ones for everywhere, and those of the chat's project, in the order the person put them."""
+        rows = self.db.read_all(
+            "SELECT text FROM preferences WHERE enabled = 1 AND (project_id IS NULL OR project_id = ?) ORDER BY position, created_at, id", (project_id,))
+        return [r["text"] for r in rows]
+
+    def all_preference_texts(self) -> list[str]:
+        return [r["text"] for r in self.db.read_all("SELECT text FROM preferences")]
+
+    _WORD = re.compile(r"\w+", re.UNICODE)
+    _STOP = frozenset("the and for with that this from are was were has have into onto over under about but not you your our their its they them his her she him who how what when where which while".split())
+
+    @classmethod
+    def words_of(cls, text: str, limit: int = 12) -> list[str]:
+        """The words of an idea that are worth looking for: at least three letters (or a number), not a common word, each once."""
+        found: list[str] = []
+        for word in cls._WORD.findall(text.casefold()):
+            if (len(word) >= 3 or word.isdigit()) and word not in cls._STOP and word not in found:
+                found.append(word)
+        return found[:limit]
+
+    def similar_prompts(self, text: str, *, project_id: Optional[str] = None, exclude: Sequence[str] = (), limit: int = 3) -> list[dict[str, Any]]:
+        """Up to `limit` of the person's saved prompts (not in the bin) that share the most words with `text`, those in `project_id` first, for the model to see as
+        examples of their taste (rule 8). Words are looked for in the title, the newest text and the tags, with the word index where there is one."""
+        words = self.words_of(text)
+        if not words:
+            return []
+        skip = set(exclude)
+        newest = "(SELECT text FROM prompt_versions v WHERE v.prompt_id = p.id ORDER BY v.n DESC LIMIT 1)"
+        negative = "(SELECT negative FROM prompt_versions v WHERE v.prompt_id = p.id ORDER BY v.n DESC LIMIT 1)"
+        if self.db.has_fts5:
+            query = " OR ".join('"' + w.replace('"', '""') + '"' for w in words)
+            rows = self.db.read_all(
+                f"SELECT p.id, p.title, p.for_kind, p.project_id, {newest} AS text, {negative} AS negative FROM prompt_search s JOIN prompts p ON p.id = s.prompt_id "
+                "WHERE prompt_search MATCH ? AND p.deleted_at IS NULL ORDER BY (p.project_id IS NOT NULL AND p.project_id = ?) DESC, s.rank LIMIT ?",
+                (query, project_id, limit + len(skip)))
+        else:
+            wanted = [f"%{w}%" for w in words]
+            haystack = f"lower(p.title || ' ' || COALESCE({newest}, '') || ' ' || COALESCE((SELECT group_concat(tag, ' ') FROM prompt_tags t WHERE t.prompt_id = p.id), ''))"
+            score = " + ".join(f"({haystack} LIKE ?)" for _ in words)
+            rows = self.db.read_all(
+                f"SELECT p.id, p.title, p.for_kind, p.project_id, {newest} AS text, {negative} AS negative, ({score}) AS hits FROM prompts p WHERE p.deleted_at IS NULL "
+                "AND hits > 0 ORDER BY (p.project_id IS NOT NULL AND p.project_id = ?) DESC, hits DESC, p.updated_at DESC LIMIT ?", (*wanted, project_id, limit + len(skip)))
+        return [{k: r[k] for k in ("id", "title", "for_kind", "text", "negative")} for r in rows if r["id"] not in skip][:limit]
 
     # ------------------------------------------------------------------ prompts
     def create_prompt(self, *, now: str, title: str, text: str, negative: Optional[str] = None, settings: Optional[Mapping[str, Any]] = None,

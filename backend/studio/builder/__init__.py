@@ -7,7 +7,8 @@ This package is the server's side of it. `ollama.py` is the client (the Python s
 
 from __future__ import annotations
 
-from typing import Any
+import unicodedata
+from typing import Any, Optional
 
 # What the model may give back and what a person may save (DESIGN.md §37.5). Chosen here, in one place, so that the page, the checks and the
 # instructions the model is given all say the same numbers. Tags and preferences are PROPOSED (§37 gives no number for them).
@@ -21,6 +22,19 @@ TAGS_MAX = 12  # tags on one prompt
 TAG_CHARS = 30
 PREFERENCES_MAX = 50  # standing notes in all
 PREFERENCE_CHARS = 300
+QUESTION_CHARS = 300  # PROPOSED: one question's text
+LABEL_CHARS = 60  # PROPOSED: the name of one wording ("simpler", "more cinematic")
+REMEMBER_MAX = 2  # suggested preferences in one reply (DESIGN.md section 37.5)
+VARIATIONS = 3  # "Try 3 wordings"
+
+
+def normalize_tag(raw: Any) -> Optional[str]:
+    """A tag as it is stored: trimmed, lower-cased, white space made one space, at most `TAG_CHARS` characters, no comma (the page's tag box splits on commas),
+    and nothing that is not text. None when nothing usable is left."""
+    if not isinstance(raw, str):
+        return None
+    text = " ".join("".join(" " if unicodedata.category(c).startswith("C") else c for c in raw).replace(",", " ").split()).casefold()
+    return text[:TAG_CHARS].strip() or None
 
 
 def builder_limits() -> dict[str, Any]:

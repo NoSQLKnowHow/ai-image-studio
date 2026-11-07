@@ -47,6 +47,7 @@ class BuilderService:
                                        keep_alive=settings.ollama_keep_alive, num_ctx=settings.ollama_num_ctx)
         self._lock = threading.Lock()
         self._last: Optional[tuple[float, Probe]] = None
+        self._fake_model: Any = None
 
     # ------------------------------------------------------------------ what is set up
     @property
@@ -64,11 +65,34 @@ class BuilderService:
             return override
         return {"on": True, "off": False}.get(self.settings.ollama_think)
 
+    def model_for(self, has_pictures: bool) -> str:
+        """The model for a call: the vision model when pictures are attached and one is set, otherwise the main model (DESIGN.md section 37.4, criterion 254)."""
+        if has_pictures and self.settings.ollama_vision_model and not self.fake:
+            return self.settings.ollama_vision_model
+        return self.model
+
+    def can_see(self, has_pictures: bool = True) -> bool:
+        """Whether the model that would be used can look at pictures, as far as is known (a hint from Ollama, never relied on for anything else)."""
+        return self.probe().vision
+
+    def chat(self, model: str, messages: list[dict[str, Any]], *, think: Optional[bool], schema: Optional[dict[str, Any]]) -> Any:
+        """Start a reply: the scripted model, or Ollama. Iterate the result for the pieces; `cancel()` on it stops it."""
+        if self.fake:
+            from .fake import FakeModel
+
+            with self._lock:
+                if self._fake_model is None:
+                    self._fake_model = FakeModel()
+            return self._fake_model.chat(model, messages, think=think, schema=schema)
+        if self.client is None:
+            raise OllamaError("unreachable", "The Prompt builder needs an Ollama server.", NOT_SET_UP)
+        return self.client.chat(model, messages, think=think, schema=schema)
+
     # ------------------------------------------------------------------ looking at the server
     def _look(self) -> Probe:
         """Ask Ollama (blocking, a few short calls). A failure is the answer, not an exception."""
         if self.fake:
-            return Probe(reachable=True, version="fake", models=[FAKE_MODEL], model_present=True, vision=False)
+            return Probe(reachable=True, version="fake", models=[FAKE_MODEL], model_present=True, vision=True)
         assert self.client is not None
         try:
             version = self.client.version()
