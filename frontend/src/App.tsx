@@ -23,7 +23,9 @@ import {
 } from "./format";
 import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withProject, working, type HistoryFilter, type TabKind } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
+import { PICTURES_ON_IMAGES_TAB, STILL_UPSCALING, takePictures } from "./paste";
 import { useCopyVectorSvg } from "./useCopyVectorSvg";
+import { usePicturePaste } from "./usePicturePaste";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
 import {
@@ -395,15 +397,35 @@ export default function App() {
     });
   };
 
-  /** Pictures dropped on the prompt card or pasted into the prompt. Generate has no use for them. */
+  /** Pictures dropped on the prompt card or pasted anywhere on the Images tab (DESIGN.md §36). In Edit they go to the tray; in Generate they are added and the
+   *  card becomes Edit, keeping the prompt, with a toast that offers Undo. The rules are in `takePictures`. */
   const handleFiles = (files: File[]) => {
-    if (!caps || !options || files.length === 0) return;
-    if (options.mode !== "edit") {
-      push("info", caps.modes.includes("edit") ? "Switch to Edit to work with pictures." : "Editing isn't available.");
+    if (!caps || !options) return;
+    takePictures(files, {
+      canEdit: caps.modes.includes("edit"), mode: options.mode === "edit" ? "edit" : "generate", trayCount: () => tray.items.length,
+      addFiles: tray.addFiles, note: tray.note, remove: tray.remove, push,
+      // the newest options, so that Undo, which runs later, does not put back what was there when the paste happened
+      setMode: (mode) => {
+        setOptions((current) => (current ? { ...current, mode } : current));
+        if (mode === "edit") setFormProblem(null);
+      },
+    });
+  };
+
+  /** Pictures for Upscale a picture… (chosen, dropped on it, or pasted while it has the focus): the first is used, and the person is told when there were more,
+   *  or when it is still busy with the last one (§36.2). */
+  const upscaleFiles = (files: File[]) => {
+    if (files.length === 0) return;
+    if (upscaling || inFlight.current.has("upscale-picture")) {
+      push("info", STILL_UPSCALING);
       return;
     }
-    tray.addFiles(files);
+    if (files.length > 1) push("info", `Upscaling the first picture only; the other ${files.length - 1} ${files.length === 2 ? "was" : "were"} left out.`);
+    void upscalePicture(files[0]);
   };
+
+  // One listener for pasted pictures on the whole page (§36.4): the prompt box, the bare page, a button, Upscale a picture… when it has the focus
+  usePicturePaste({ tab, ready: !!caps && !!options, onTray: handleFiles, onUpscale: upscaleFiles, onWrongTab: () => push("info", PICTURES_ON_IMAGES_TAB) });
 
   const applyStarter = () => {
     if (!options || prompt.trim()) return;
@@ -996,7 +1018,7 @@ export default function App() {
               onDraft={() => void submitDraft()}
             />
             <QueueBar status={status} />
-            <UpscalePicture busy={upscaling} onPick={(file) => void upscalePicture(file)} />
+            <UpscalePicture busy={upscaling} onFiles={upscaleFiles} />
             {filterBar}
             <section className="timeline" aria-label="Your runs">
               {!runsReady ? (

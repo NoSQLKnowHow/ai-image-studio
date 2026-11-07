@@ -168,14 +168,16 @@ test("pictures can be dropped on the prompt card and pasted into the prompt", as
   await expect(tiles(page)).toHaveCount(3);
 });
 
-test("a picture dropped in Generate mode says to switch to Edit, and one dropped outside the card does not leave the page", async ({ page }) => {
+test("a picture dropped in Generate mode switches the card to Edit with an Undo, and one dropped outside the card does not leave the page", async ({ page }) => {
   await useOptions(page, { mode: "generate" });
   await page.goto("/");
+  await promptBox(page).fill("a red door"); // the prompt is kept across the switch
   const dropped = await dataTransfer(page, [red()]);
   await page.locator(".prompt-card").dispatchEvent("drop", { dataTransfer: dropped });
-  await expect(page.getByRole("status").filter({ hasText: "Switch to Edit to work with pictures." })).toBeVisible();
-  await editRadio(page).click();
-  await expect(tiles(page)).toHaveCount(0); // nothing was added behind the toast
+  await expect(page.getByRole("status").filter({ hasText: "Switched to Edit: 1 picture added. Refer to it as image 1." })).toBeVisible(); // DESIGN.md §36.2
+  await expect(editRadio(page)).toHaveAttribute("aria-checked", "true");
+  await expect(tiles(page)).toHaveCount(1);
+  await expect(promptBox(page)).toHaveValue("a red door");
 
   // the browser would open a file dropped on the bare page; the page must stop that
   const prevented = await page.evaluate(() => {
