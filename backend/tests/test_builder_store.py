@@ -111,7 +111,9 @@ def test_the_word_index_holds_the_title_the_newest_text_and_the_tags(store, db):
     assert find(db, "fox") == [fox] and find(db, "snow") == [fox] and find(db, "animals") == [fox] and find(db, "sea") != [fox]
     assert find(db, "winter") == [fox] and find(db, "fo*") == [fox]  # a title word, and a prefix as someone typing would have it
     assert find(db, "ZEBRA") == []
-    assert find(db, "café") == find(db, "cafe")  # accents do not matter
+    cafe = store.create_prompt(now=T0, title="Night market", text="a café at midnight, Zürich")
+    assert find(db, "cafe") == [cafe] and find(db, "café") == [cafe] and find(db, "zurich") == [cafe]  # accents do not matter, in the words or in the search
+    assert find(db, "CAFÉ") == [cafe]  # nor does case
 
 
 def test_the_index_follows_the_newest_version_and_not_an_older_one(store, db):

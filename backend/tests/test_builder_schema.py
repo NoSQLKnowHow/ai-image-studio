@@ -9,7 +9,7 @@ from test_bin import columns
 from test_db import run_row
 
 import studio.db as db_module
-from studio.builder.schema import BUILDER_SCHEMA
+from studio.builder.schema import BUILDER_SCHEMA, DETAILS, FOR_KINDS, PREFERENCE_SOURCES, ROLES, SOURCES
 from studio.builder.store import BuilderStore
 from studio.db import SCHEMA_VERSION, Database, DatabaseError
 
@@ -145,3 +145,117 @@ def test_a_sqlite_without_fts5_still_opens_and_keeps_prompts_without_an_index(tm
         assert store.delete_item("prompt", prompt) == "deleted"
     finally:
         db.close()
+
+
+# ------------------------------------------------------------------ the tables hold the rules themselves (whoever writes to them)
+@pytest.fixture
+def db(tmp_path):
+    database = Database(tmp_path / "studio.sqlite")
+    yield database
+    database.close()
+
+
+def insert(db: Database, sql: str, args: tuple = ()) -> None:
+    with db.tx() as c:
+        c.execute(sql, args)
+
+
+def make_prompt(db: Database, prompt_id: str = "p") -> str:
+    insert(db, "INSERT INTO prompts (id, title, created_at, updated_at) VALUES (?, 't', ?, ?)", (prompt_id, NOW, NOW))
+    return prompt_id
+
+
+def make_chat(db: Database, chat_id: str = "c") -> str:
+    insert(db, "INSERT INTO chats (id, title, created_at, updated_at) VALUES (?, 't', ?, ?)", (chat_id, NOW, NOW))
+    return chat_id
+
+
+@pytest.mark.parametrize("value", FOR_KINDS)
+def test_every_kind_a_prompt_or_chat_can_be_for_is_accepted(db, value):
+    insert(db, "INSERT INTO prompts (id, title, for_kind, created_at, updated_at) VALUES ('p', 't', ?, ?, ?)", (value, NOW, NOW))
+    insert(db, "INSERT INTO chats (id, title, for_kind, created_at, updated_at) VALUES ('c', 't', ?, ?, ?)", (value, NOW, NOW))
+
+
+@pytest.mark.parametrize("value", DETAILS)
+def test_every_detail_level_is_accepted(db, value):
+    insert(db, "INSERT INTO chats (id, title, detail, created_at, updated_at) VALUES ('c', 't', ?, ?, ?)", (value, NOW, NOW))
+
+
+@pytest.mark.parametrize("value", SOURCES)
+def test_every_source_of_a_version_is_accepted(db, value):
+    """builder, hand, wording, revision (DESIGN.md §37.3 rule 2): the schema and the store say the same four."""
+    prompt = make_prompt(db)
+    insert(db, "INSERT INTO prompt_versions (id, prompt_id, n, text, source, created_at) VALUES ('v', ?, 1, 'x', ?, ?)", (prompt, value, NOW))
+    assert BuilderStore(db).create_prompt(now=NOW, title="t", text="x", source=value)
+
+
+@pytest.mark.parametrize("value", ROLES)
+def test_every_role_of_a_message_is_accepted(db, value):
+    chat = make_chat(db)
+    insert(db, "INSERT INTO chat_messages (id, chat_id, seq, role, text, created_at) VALUES ('m', ?, 1, ?, 'x', ?)", (chat, value, NOW))
+
+
+@pytest.mark.parametrize("value", PREFERENCE_SOURCES)
+def test_every_source_of_a_preference_is_accepted(db, value):
+    insert(db, "INSERT INTO preferences (id, text, source, created_at) VALUES ('f', 'x', ?, ?)", (value, NOW))
+
+
+def test_the_sets_are_the_ones_the_spec_names():
+    assert (FOR_KINDS, DETAILS, SOURCES, ROLES, PREFERENCE_SOURCES) == (
+        ("images", "vector", "music", "edit"), ("short", "normal", "rich"), ("builder", "hand", "wording", "revision"), ("user", "assistant"), ("hand", "suggestion"))
+
+
+@pytest.mark.parametrize("sql,args", [
+    ("INSERT INTO prompts (id, title, for_kind, created_at, updated_at) VALUES ('p', 't', 'sculptures', ?, ?)", (NOW, NOW)),
+    ("INSERT INTO chats (id, title, for_kind, created_at, updated_at) VALUES ('c', 't', 'sculptures', ?, ?)", (NOW, NOW)),
+    ("INSERT INTO chats (id, title, detail, created_at, updated_at) VALUES ('c', 't', 'huge', ?, ?)", (NOW, NOW)),
+    ("INSERT INTO preferences (id, text, source, created_at) VALUES ('f', 'x', 'telepathy', ?)", (NOW,)),
+])
+def test_a_value_outside_the_sets_is_refused_by_the_table(db, sql, args):
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(db, sql, args)
+
+
+def test_a_version_source_a_role_and_a_number_below_one_are_refused_by_the_table(db):
+    prompt, chat = make_prompt(db), make_chat(db)
+    for sql, args in [
+        ("INSERT INTO prompt_versions (id, prompt_id, n, text, source, created_at) VALUES ('v', ?, 1, 'x', 'magic', ?)", (prompt, NOW)),
+        ("INSERT INTO prompt_versions (id, prompt_id, n, text, source, created_at) VALUES ('v', ?, 0, 'x', 'hand', ?)", (prompt, NOW)),
+        ("INSERT INTO chat_messages (id, chat_id, seq, role, text, created_at) VALUES ('m', ?, 1, 'system', 'x', ?)", (chat, NOW)),
+        ("INSERT INTO chat_messages (id, chat_id, seq, role, text, created_at) VALUES ('m', ?, 0, 'user', 'x', ?)", (chat, NOW)),
+    ]:
+        with pytest.raises(sqlite3.IntegrityError):
+            insert(db, sql, args)
+    assert db.read_one("SELECT COUNT(*) AS n FROM prompt_versions")["n"] == 0 and db.read_one("SELECT COUNT(*) AS n FROM chat_messages")["n"] == 0
+
+
+def test_a_chat_has_each_message_number_once_and_a_prompt_each_version_number_once(db):
+    prompt, chat = make_prompt(db), make_chat(db)
+    other_chat = make_chat(db, "d")
+    insert(db, "INSERT INTO chat_messages (id, chat_id, seq, role, text, created_at) VALUES ('m1', ?, 1, 'user', 'x', ?)", (chat, NOW))
+    insert(db, "INSERT INTO chat_messages (id, chat_id, seq, role, text, created_at) VALUES ('m2', ?, 1, 'user', 'x', ?)", (other_chat, NOW))  # another chat's own 1
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(db, "INSERT INTO chat_messages (id, chat_id, seq, role, text, created_at) VALUES ('m3', ?, 1, 'assistant', 'y', ?)", (chat, NOW))
+    other_prompt = make_prompt(db, "q")
+    insert(db, "INSERT INTO prompt_versions (id, prompt_id, n, text, source, created_at) VALUES ('a', ?, 1, 'x', 'hand', ?)", (prompt, NOW))
+    insert(db, "INSERT INTO prompt_versions (id, prompt_id, n, text, source, created_at) VALUES ('b', ?, 1, 'x', 'hand', ?)", (other_prompt, NOW))
+    with pytest.raises(sqlite3.IntegrityError):
+        insert(db, "INSERT INTO prompt_versions (id, prompt_id, n, text, source, created_at) VALUES ('c', ?, 1, 'z', 'hand', ?)", (prompt, NOW))
+
+
+def test_what_a_row_gets_when_nothing_is_said(db):
+    """The defaults (DESIGN.md §37.4): a new preference is ON, a new prompt is not a favourite, a chat is for Images at Normal detail, nothing is in the bin."""
+    make_prompt(db), make_chat(db)
+    insert(db, "INSERT INTO preferences (id, text, created_at) VALUES ('f', 'always 16:9', ?)", (NOW,))
+    prompt, chat, preference = db.read_one("SELECT * FROM prompts"), db.read_one("SELECT * FROM chats"), db.read_one("SELECT * FROM preferences")
+    assert (prompt["favourite"], prompt["for_kind"], prompt["deleted_at"], prompt["restored_at"], prompt["project_id"]) == (0, "images", None, None, None)
+    assert (chat["detail"], chat["for_kind"], chat["deleted_at"], chat["prompt_id"], chat["project_id"]) == ("normal", "images", None, None, None)
+    assert (preference["enabled"], preference["source"], preference["position"], preference["project_id"]) == (1, "hand", 0, None)
+    insert(db, "INSERT INTO prompt_versions (id, prompt_id, n, text, source, created_at) VALUES ('v', 'p', 1, 'x', 'hand', ?)", (NOW,))
+    assert db.read_one("SELECT settings, negative, note, chat_id FROM prompt_versions")["settings"] == "{}"
+
+
+def test_the_word_index_folds_accents_and_case_at_the_level_of_the_table(db):
+    insert(db, "INSERT INTO prompt_search (prompt_id, title, text, tags) VALUES ('p', 'Café', 'Zürich at night', '')")
+    for word in ("cafe", "CAFÉ", "zurich", "ZÜRICH", "night"):
+        assert [r["prompt_id"] for r in db.read_all("SELECT prompt_id FROM prompt_search WHERE prompt_search MATCH ?", (word,))] == ["p"], word
