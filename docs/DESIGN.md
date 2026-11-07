@@ -2187,7 +2187,7 @@ Built to §34.1–§34.4: `DEFAULT_ASPECT = "16:9"` in `presets.py` (`DEFAULT_SI
 
 ---
 
-## 35. Version 1.18: Vector versions as one group, a viewer with the drawing, Delete version, and a depth stack you can see and order (decision #54 DECIDED for what you said; the rest PROPOSED; nothing built)
+## 35. Version 1.18: Vector versions as one group, a viewer with the drawing, Delete version, and a depth stack you can see and order (decision #54 DECIDED for what you said; the rest PROPOSED; BUILT in 1.18, §36.9)
 
 You made a Vector run with **several versions** and found two problems with it:
 
@@ -2325,7 +2325,7 @@ Deleting several versions at once (select and delete); deleting a version from i
 
 §36 is the other change planned for 1.18 (pictures by paste).
 
-## 36. Version 1.18, part 2: pictures by paste, anywhere on the page, from Generate, into Upscale, and up to 8 of them (decision #55 DECIDED for what you said; the rest PROPOSED; nothing built)
+## 36. Version 1.18, part 2: pictures by paste, anywhere on the page, from Generate, into Upscale, and up to 8 of them (decision #55 DECIDED for what you said; the rest PROPOSED; BUILT in 1.18, §36.9)
 
 You asked: *"Is there a way to take an image via cut and paste from the device's clipboard into the prompt area and add that image like you would if it was uploaded? Same for a new image and for editing an image."* I looked at the page and the code first (§36.1), told you what was there, and asked; you answered:
 

@@ -899,6 +899,53 @@ and if the drawing is too coarse for it the card says so (`coarse_drawing`: 1536
 **Send back:** the `Vector:` line from (a); from (b) the two times and the memory numbers; from (c) the notes and any screenshot; from (e) what the P2's software and LightBurn showed (**and the test sheet's six answers**);
 the verdict of (f), and anything that did not match "Good".
 
+## 29. Vector versions, the stack view, and pictures by paste (new in 1.18)
+
+Update first: `git pull && docker compose up -d --build`; the title should read **v1.18** (reload with Ctrl+Shift+R). **Back up first: the first start of 1.18 upgrades the database to schema 8**
+(one new column, `vectors.deleted_at`, so a single version of a Vector run can go to the bin). A copy is made before it (`data/studio.sqlite.before-schema-8`); `ls -l data/studio.sqlite*` shows it.
+Nothing here is a new kind of GPU work, except (k), which is the edit measurement that sets the picture limit.
+
+**a) A Vector run as one card.** Make a Vector run with **Versions 3** (Flat, Colours 4). **Good:** one compact card with a small grid of three previews at the left and one row of buttons
+(Reuse, Keep, Project, Delete, **Download…**), about the height of an Images card of three pictures, not three full blocks. Press a preview.
+
+**b) The viewer and the drawing.** **Good:** a large view opens with **The drawing** at the left (*What Qwen-Image drew, 1536 × 1536 px*) and **The vector** at the right, the same size, so you can judge the trace
+against what it was traced from; under them the colours line, the layer table, the notes and the downloads; **Escape** closes it, the arrow keys move between the versions, and focus returns to the preview.
+**Write down** whether the trace is a fair copy of the drawing. If the drawing is gone (it is not, on a fresh run) the panel says *The drawing is no longer on the disk*.
+
+**c) Delete version.** In the viewer press **Delete version** on version 2. **Good:** a question, then a toast with **Undo**; the card now has two previews, numbered 1 and 2 again (the seeds do not change);
+the **Deleted** view shows one card for the run with *version 2, seed N* and **Restore** and **Delete forever**; Restore puts it back **in its own place** (version 2 again). Delete the versions one at a time down to the last:
+**good:** the last one sends the whole run to Deleted and says so. Then **Delete** on a card with several versions: **good:** its question says *It has 3 versions. All of them move to Deleted …*.
+
+**d) Stacked (depth), and the Back sheet.** Lock the seed, Colours **4**, **Stacked (depth)**, **Back sheet: The colour with the most ink**, Bleed **0**. **Good:** the viewer has a **Height** column (1, 2, 3) and a
+**Stack view** with a **Sheets shown** slider; sliding it peels the sheets off from the front. Make the same run with **The colour with the least ink** and again with **The first ink in my list**.
+**Good:** the back sheet is a different colour each time and the heights follow it. **Send me** which of the three you would use, and whether the stack view reads as depth to you.
+
+**e) The laser software.** Download the **layers ZIP** of (d) (most ink at the back) and open the SVG in **xTool Creative Space** and **LightBurn**. **Good:** the back layer is the whole design, each layer in front of it holds less,
+and cut from separate sheets they glue up into relief. **Send me** whether the sheets register and whether 0 bleed gave you flush edges or the 0.5 you would rather have.
+
+**f) A run made in 1.17.** Open a Vector run from before the update. **Good:** it opens in the viewer with its drawing and its Height column (each layer as high as its number); **Reuse** fills Back sheet with *The colour with the most ink*.
+
+**g) Pictures by paste.** On the Images tab (all of these on your own browser, on the Spark's address over plain `http`): (1) take a **screenshot** and press **Ctrl+V** (⌘+V) with the cursor in the prompt box, then again
+with the cursor on the bare page, then on a button; (2) **Copy image** on a web page and paste it on the bare page; (3) copy a **range from a spreadsheet** and paste it in the prompt box, then in the Options drawer's negative
+prompt (don't: the drawer blocks paste, and that is the point; try the history's project name field in the Manage dialog instead); (4) paste **text** only, in the prompt box. **Good:** (1) and (2) add a picture to the tray, once each
+(in Edit; in Generate see (h)); (3) the picture wins in the prompt box and the text wins in the other field; (4) pastes as text and nothing else happens.
+
+**h) Generate pastes.** Switch to **Generate**, write a prompt, and paste a screenshot. **Good:** the card turns into **Edit** with your prompt kept, and a toast says *Switched to Edit: 1 picture added. Refer to it as image 1.*
+with **Undo**; Undo takes the picture out and returns to Generate. Drop two pictures on the card: the toast counts two.
+
+**i) On a phone.** Long-press the prompt box and choose **Paste**, with a screenshot and with a photo from the gallery. **Good:** as (g). **Send me** whether your phone's keyboard offers the picture at all: that is the browser's doing.
+
+**j) Upscale a picture….** Click **Upscale a picture…**, close the file chooser, press **Ctrl+V** with a screenshot on the clipboard. **Good:** a 4K PNG downloads. Drop a picture on the button (it lights up while it is over it).
+Drop two: **good:** it uses the first and says so. Paste a picture on the bare page afterwards: **good:** it goes to the tray, and no upscale starts.
+
+**k) Eight pictures (the measurement).** Set `STUDIO_MAX_INPUT_IMAGES=8` in `.env`, restart, and make **Edit** runs with **6** and then **8** pictures at **1K** (and 4 at 2K if the memory allows), with Hermes loaded.
+**Good:** the tile reads *8 of 8* and is switched off; a ninth is skipped and counted; the run finishes. **Write down** the seconds, `MemAvailable` before and the lowest while it ran, and whether it ran out of memory (the failure card should
+say so and suggest 1K or fewer pictures, and the server should stay up). **Send me** whether the model follows **"image 7"** and **"image 8"** in a prompt as it does "image 1" and "image 2", and what to set
+`STUDIO_MAX_INPUT_IMAGES` (shipped 4) and `STUDIO_EDIT_WARN_UNITS` (shipped 8; eight pictures at 1K are 8 units and do not warn) to.
+
+**Send back:** the `ls -l data/studio.sqlite*` line; from (b) your judgement of the trace; from (d) the three back-sheet results and your verdict; from (e) what the laser software showed; from (g) to (j) anything that did not match
+"Good" and which browser and device; from (k) the times, memory and the numbers you suggest.
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -924,3 +971,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 19. From step 26 (deleting one picture): the `ls -l data/studio.sqlite*` line, what (c) showed, and anything that did not match "Good".
 20. From step 27 (the default size): the time and the memory numbers (A, B, `worker_rss_gb`) for one run at 2752 × 1536 and one at 2048 × 2048 from (c), whether the note in (b) appeared, and anything that did not match "Good".
 21. From step 28 (Vector): the `Vector:` line from (a), the seconds of the drawing and of the tracing and the memory numbers from (b), the notes from (c) with a screenshot if the drawing had shading or gradients, what XCS and LightBurn showed in (e) (and the laser test sheet's six answers, `DESIGN.md` §31.9 item 1), your verdict on side by side against stacked in (f), and anything that did not match "Good".
+22. From step 29 (Vector versions, the stack view, pictures by paste): the `ls -l data/studio.sqlite*` line, your judgement of the trace against the drawing in (b), the three back-sheet results and your verdict in (d), what XCS and LightBurn showed of the stacked layers in (e), which browsers and devices did and did not take a pasted picture in (g) to (j), and from (k) the times, the memory numbers, whether eight pictures ran, whether the model follows "image 7" and "image 8", and the numbers you suggest for the limit and the cost warning.
