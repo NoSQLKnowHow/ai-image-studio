@@ -22,16 +22,16 @@ from typing import Any, Iterator, Mapping, Optional, Sequence
 from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
 
-# 7: mode 'vector' and the vectors table (DESIGN.md §31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
+# 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
 # 5: the projects table and runs.project_id, for project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
 # 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 log = logging.getLogger("studio.db")
 
 # A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
 _FINISHED = ("done", "failed", "canceled")
-# The two kinds of thing a run holds that can be sent to the bin one at a time, and the table each is in
-_ITEM_TABLES = {"image": "images", "track": "tracks"}
+# The three kinds of thing a run holds that can be sent to the bin one at a time (a picture, a track, a version of a Vector run), and the table each is in
+_ITEM_TABLES = {"image": "images", "track": "tracks", "vector": "vectors"}
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS images (
     deleted_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status, seq);
--- `images.deleted_at` and `tracks.deleted_at` (DESIGN.md §33.3) are null, or the moment a single picture or track was sent to the bin. It stays in
+-- `images.deleted_at`, `tracks.deleted_at` and `vectors.deleted_at` (DESIGN.md §33.3, §35.4) are null, or the moment a single picture, track or version was sent to the bin. It stays in
 -- the table, and its files stay on the disk, until its days are over; the run's own `deleted_at` is a different thing (the whole run in the bin).
 -- The tracks of a music run (DESIGN.md §26.5): one WAV file each, under <data>/audio/<run>/.
 CREATE TABLE IF NOT EXISTS tracks (
@@ -112,8 +112,9 @@ CREATE TABLE IF NOT EXISTS tracks (
 CREATE INDEX IF NOT EXISTS idx_tracks_run ON tracks(run_id, idx);
 -- The versions of a vector run (DESIGN.md §31.12.6): one row for each drawing that the clean-up turned into an SVG. The three paths are relative to the
 -- data folder (<data>/vector/<run>/<idx>.svg, <idx>-layers.zip, <idx>.png). `check_json` is the clean-up's check as it made it (the page shows it), and
--- `colours` and `layers` are copies of two of its numbers so that a list needs no parsing. There is no `deleted_at`: a vector run goes to the bin, comes
--- back and is deleted as a whole (§31.12.9 item 3), so a version is never in the bin by itself.
+-- `colours` and `layers` are copies of two of its numbers so that a list needs no parsing. `deleted_at` (schema 8, DESIGN.md §35.4) is null, or the moment
+-- this one version was sent to the bin; it is the LAST column, so that a database upgraded from schema 7 (where it is added with ALTER TABLE) has the same
+-- columns in the same order as a new one. The drawing (<idx>-source.png) has no column: its file is found from the run and the idx.
 CREATE TABLE IF NOT EXISTS vectors (
     id          TEXT PRIMARY KEY,
     run_id      TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
@@ -128,7 +129,8 @@ CREATE TABLE IF NOT EXISTS vectors (
     svg_path    TEXT NOT NULL,
     zip_path    TEXT NOT NULL,
     png_path    TEXT NOT NULL,
-    created_at  TEXT NOT NULL
+    created_at  TEXT NOT NULL,
+    deleted_at  TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_vectors_run ON vectors(run_id, idx);
 CREATE INDEX IF NOT EXISTS idx_images_run ON images(run_id, idx);
@@ -275,10 +277,10 @@ class Database:
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_project ON runs(project_id)")
 
     def _add_picture_bin_columns(self) -> None:
-        """Schema 6: the column that sends a single picture or track to the bin (DESIGN.md §33.3), added to the two tables that lack it; then the
+        """Schemas 6 and 8: the column that sends a single picture, track or version to the bin (DESIGN.md §33.3, §35.4), added to each table that lacks it; then the
         indexes on it (which cannot be made before the column exists, so they are not in `_SCHEMA`). The index is what lets the daily clean-up find
         what is due without reading every picture."""
-        for table in ("images", "tracks"):
+        for table in ("images", "tracks", "vectors"):
             have = {row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})")}
             if "deleted_at" not in have:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
@@ -536,8 +538,8 @@ class Database:
             self._delete_rows(c, [run_id])
             return "deleted"
 
-    # ------------------------------------------- single pictures and tracks in the bin (DESIGN.md §33)
-    # Each of these takes `kind` ("image" or "track") and the item's id, does everything in one transaction, and answers (result, run id); the
+    # ------------------------------------------- single pictures, tracks and versions in the bin (DESIGN.md §33, §35)
+    # Each of these takes `kind` ("image", "track" or "vector") and the item's id, does everything in one transaction, and answers (result, run id); the
     # run id is None when the item was not found. They never touch a file: the job manager removes files after the rows are gone.
     def _item_and_run(self, c: sqlite3.Connection, kind: str, item_id: str) -> tuple[Optional[sqlite3.Row], Optional[sqlite3.Row]]:
         item = c.execute(f"SELECT * FROM {_ITEM_TABLES[kind]} WHERE id=?", (item_id,)).fetchone()
@@ -617,8 +619,8 @@ class Database:
             return "picture", run_id, item
 
     def purge_binned_items(self, cutoff: Optional[str], limit: int) -> list[tuple[str, sqlite3.Row]]:
-        """Delete for good up to `limit` pictures and `limit` tracks that went into the bin before `cutoff` (all of them when `cutoff` is None),
-        wherever their run is (§33.2 item 7). Returns [(kind, row)] so that the files can follow."""
+        """Delete for good up to `limit` pictures, `limit` tracks and `limit` versions that went into the bin before `cutoff` (all of them when `cutoff`
+        is None), wherever their run is (§33.2 item 7, §35.3 item 6). Returns [(kind, row)] so that the files can follow."""
         purged: list[tuple[str, sqlite3.Row]] = []
         with self.tx() as c:
             for kind, table in _ITEM_TABLES.items():
@@ -774,13 +776,23 @@ class Database:
         return self._one("SELECT * FROM vectors WHERE id=?", (vector_id,))
 
     def vectors_for_runs(self, run_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
-        """The versions of each run, in the order they were drawn. A vector run is binned whole, so there is no bin to leave any out (unlike
-        `images_for_runs` and `tracks_for_runs`)."""
+        """The versions of each run that are not in the bin, in the order they were drawn: what the card and the viewer show, numbered by position
+        (DESIGN.md §35.4), as `images_for_runs` and `tracks_for_runs` are for pictures and tracks."""
         result: dict[str, list[sqlite3.Row]] = {rid: [] for rid in run_ids}
         if not run_ids:
             return result
         placeholders = ", ".join("?" for _ in run_ids)
-        for row in self._all(f"SELECT * FROM vectors WHERE run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
+        for row in self._all(f"SELECT * FROM vectors WHERE deleted_at IS NULL AND run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
+            result[row["run_id"]].append(row)
+        return result
+
+    def binned_vectors_for_runs(self, run_ids: list[str]) -> dict[str, list[sqlite3.Row]]:
+        """The versions of each run that are in the bin, in the order they were drawn (DESIGN.md §35.4)."""
+        result: dict[str, list[sqlite3.Row]] = {rid: [] for rid in run_ids}
+        if not run_ids:
+            return result
+        placeholders = ", ".join("?" for _ in run_ids)
+        for row in self._all(f"SELECT * FROM vectors WHERE deleted_at IS NOT NULL AND run_id IN ({placeholders}) ORDER BY run_id, idx", tuple(run_ids)):
             result[row["run_id"]].append(row)
         return result
 

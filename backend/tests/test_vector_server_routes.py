@@ -83,7 +83,7 @@ def test_the_layers_come_as_a_zip_attachment_always(made):
     assert response.headers["content-disposition"] == f"attachment; filename=\"{name}\"; filename*=UTF-8''{name}"  # no `?download=1` needed
     assert "immutable" in response.headers["cache-control"]
     with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
-        assert bundle.namelist() == ["layer-1-black.svg"]  # it is the file the job made, whole
+        assert bundle.namelist() == ["layer-1-black.svg", "layer-2-red.svg", "layer-3-green.svg"]  # one for each layer of the check, the file the job made, whole
 
 
 # ------------------------------------------------------------------ the PNG

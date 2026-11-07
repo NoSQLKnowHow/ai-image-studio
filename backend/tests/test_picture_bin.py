@@ -1,4 +1,6 @@
-"""A single picture or track in the bin, the server's side (DESIGN.md §33; criteria 163-166, 168-174, 176).
+"""A single picture or track in the bin, the server's side (DESIGN.md §33; criteria 163-166, 168-174, 176). Since 1.18 the database-level rules
+are also run for a version of a Vector run (§35.4; criteria 188-192), which is binned, restored, deleted and purged by the very same code; the API of versions
+is in test_vector_version_bin.py.
 
 The bin of §30 holds a whole run. Here it learns to hold ONE picture (or one track of a music run) as well: a deleted picture stays in the run's own
 folders with its thumbnail and its 4K copies for `bin_days`, is not shown on the card, can be restored to its place, and is deleted for good by
@@ -98,14 +100,17 @@ def code(response) -> str:
 
 
 # ------------------------------------------------------------------ the database, for pictures and for tracks
-# A finished run with `count` pictures or tracks on disk, as a real one has (a picture, its thumbnail; a track is one file). Returns the run's id and
-# the ids of its items in order. Items are made by hand so that the rules below can be tested without a worker.
+# A finished run with `count` pictures, tracks or versions on disk, as a real one has (a picture, its thumbnail; a track is one file; a version is its
+# SVG, ZIP, preview and drawing). Returns the run's id and the ids of its items in order. Items are made by hand so that the rules below can be tested
+# without a worker.
 def seed_items(db: Database, storage, n: int, count: int, *, kind: str = "image", status: str = "done") -> tuple[str, list[str]]:
     run_id = seed_run(db, storage, n, age_days=1, status=status)
     with db.tx() as c:
         c.execute("DELETE FROM images WHERE run_id=?", (run_id,))  # seed_run makes one picture; here the count is ours
         if kind == "track":
             c.execute("UPDATE runs SET mode='music' WHERE id=?", (run_id,))
+        if kind == "vector":
+            c.execute("UPDATE runs SET mode='vector' WHERE id=?", (run_id,))
     ids: list[str] = []
     for idx in range(count):
         item_id = f"{(n << 8) + idx + 1:032x}"
@@ -116,6 +121,15 @@ def seed_items(db: Database, storage, n: int, count: int, *, kind: str = "image"
             thumb = storage.make_thumbnail(path, run_id, idx)
             db.add_image({"id": item_id, "run_id": run_id, "kind": "output", "idx": idx, "seed": idx, "width": 8, "height": 8, "has_alpha": 0,
                           "bytes": path.stat().st_size, "path": storage.rel(path), "thumb_path": storage.rel(thumb), "created_at": NOW})
+        elif kind == "vector":
+            folder = storage.vector_dir(run_id)
+            folder.mkdir(parents=True, exist_ok=True)
+            paths = [folder / f"{idx}.svg", folder / f"{idx}-layers.zip", folder / f"{idx}.png", folder / f"{idx}-source.png"]
+            for file in paths:
+                file.write_bytes(b"x")
+            db.add_vector({"id": item_id, "run_id": run_id, "idx": idx, "seed": idx, "width_mm": 100.0, "height_mm": 100.0, "colours": 2, "layers": 1,
+                           "bytes": 1, "check_json": "{}", "svg_path": storage.rel(paths[0]), "zip_path": storage.rel(paths[1]),
+                           "png_path": storage.rel(paths[2]), "created_at": NOW})
         else:
             path = storage.audio_dir(run_id) / f"{idx}.wav"
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -127,17 +141,21 @@ def seed_items(db: Database, storage, n: int, count: int, *, kind: str = "image"
 
 
 def present(db: Database, kind: str, run_id: str) -> list[int]:
-    rows = (db.images_for_runs if kind == "image" else db.tracks_for_runs)([run_id])[run_id]
+    rows = {"image": db.images_for_runs, "track": db.tracks_for_runs, "vector": db.vectors_for_runs}[kind]([run_id])[run_id]
     return [row["idx"] for row in rows]
 
 
 def binned(db: Database, kind: str, run_id: str) -> list[int]:
-    rows = (db.binned_images_for_runs if kind == "image" else db.binned_tracks_for_runs)([run_id])[run_id]
+    rows = {"image": db.binned_images_for_runs, "track": db.binned_tracks_for_runs, "vector": db.binned_vectors_for_runs}[kind]([run_id])[run_id]
     return [row["idx"] for row in rows]
 
 
+def get_item(db: Database, kind: str, item_id: str):
+    return {"image": db.get_image, "track": db.get_track, "vector": db.get_vector}[kind](item_id)
+
+
 # One item goes to the bin and the others stay, in their places; a second press changes nothing, not even the date; and a restore puts it back.
-@pytest.mark.parametrize("kind", ["image", "track"])
+@pytest.mark.parametrize("kind", ["image", "track", "vector"])
 def test_an_item_goes_to_the_bin_alone_and_comes_back_to_its_place(seeded, kind):
     db, storage = seeded
     run_id, ids = seed_items(db, storage, 1, 3, kind=kind)
@@ -145,7 +163,7 @@ def test_an_item_goes_to_the_bin_alone_and_comes_back_to_its_place(seeded, kind)
     assert present(db, kind, run_id) == [0, 2] and binned(db, kind, run_id) == [1]  # the others keep their idx: nothing is renumbered in the database
     assert db.get_run(run_id)["deleted_at"] is None  # the run itself is in the history as ever
     assert db.bin_picture(kind, ids[1], "2026-10-09T10:00:00.000Z") == ("picture", run_id)  # again: it is there already
-    row = (db.get_image if kind == "image" else db.get_track)(ids[1])
+    row = get_item(db, kind, ids[1])
     assert row["deleted_at"] == NOW  # the first time counts
     assert db.restore_picture(kind, ids[1]) == ("restored", run_id)
     assert present(db, kind, run_id) == [0, 1, 2] and binned(db, kind, run_id) == []  # back between its neighbours
@@ -154,7 +172,7 @@ def test_an_item_goes_to_the_bin_alone_and_comes_back_to_its_place(seeded, kind)
 
 # A run's last picture is not deleted by itself: the run goes to the bin, with the picture still in it (criterion 165). With one picture it is the first
 # one; with three it is the third, after two were deleted alone, and those two stay in the bin on their own clocks.
-@pytest.mark.parametrize("kind", ["image", "track"])
+@pytest.mark.parametrize("kind", ["image", "track", "vector"])
 def test_the_last_item_sends_the_run_to_the_bin_instead(seeded, kind):
     db, storage = seeded
     only, [only_id] = seed_items(db, storage, 1, 1, kind=kind)
@@ -172,7 +190,7 @@ def test_the_last_item_sends_the_run_to_the_bin_instead(seeded, kind):
 
 
 # The refusals, each with its own word: nothing is changed by any of them.
-@pytest.mark.parametrize("kind", ["image", "track"])
+@pytest.mark.parametrize("kind", ["image", "track", "vector"])
 def test_an_item_that_cannot_go_to_the_bin_is_refused_and_nothing_changes(seeded, kind):
     db, storage = seeded
     assert db.bin_picture(kind, NO_SUCH, NOW) == ("not_found", None)
@@ -207,7 +225,7 @@ def test_an_edits_source_and_a_staged_upload_are_not_pictures_to_delete(seeded):
 
 # Deleting for good: a picture that is not the last goes alone; one in the bin goes whatever its run is doing; the last one takes the run with it
 # (the caller removes the files). A picture that is present needs a finished run in the history, as sending it to the bin does.
-@pytest.mark.parametrize("kind", ["image", "track"])
+@pytest.mark.parametrize("kind", ["image", "track", "vector"])
 def test_deleting_an_item_for_good_takes_it_alone_unless_it_is_the_last(seeded, kind):
     db, storage = seeded
     run_id, ids = seed_items(db, storage, 1, 3, kind=kind)
@@ -220,7 +238,7 @@ def test_deleting_an_item_for_good_takes_it_alone_unless_it_is_the_last(seeded, 
     assert (result, run) == ("run", run_id) and db.get_run(run_id) is None
 
 
-@pytest.mark.parametrize("kind", ["image", "track"])
+@pytest.mark.parametrize("kind", ["image", "track", "vector"])
 def test_deleting_for_good_is_refused_for_an_unfinished_run_and_for_a_present_item_of_a_run_in_the_bin(seeded, kind):
     db, storage = seeded
     run_id, ids = seed_items(db, storage, 1, 2, kind=kind)
@@ -253,6 +271,20 @@ def test_purging_takes_what_is_due_from_both_tables_and_wherever_the_run_is(seed
     assert binned(db, "image", run_id) == [1, 2] and binned(db, "track", track_run) == [1]
     assert len(db.purge_binned_items(None, 1)) == 2  # no cutoff: all of it, one of each table per call at limit 1
     assert len(db.purge_binned_items(None, 100)) == 1 and db.purge_binned_items(None, 100) == []
+
+
+# Versions of a Vector run are the third table (§35.3 item 6): due ones are purged wherever their run is, with the rest, each on its own clock.
+def test_purging_takes_the_versions_that_are_due_too(seeded):
+    db, storage = seeded
+    run_id, ids = seed_items(db, storage, 1, 3, kind="vector")
+    for item, when in ((ids[0], "2026-09-01T00:00:00.000Z"), (ids[1], "2026-10-01T00:00:00.000Z")):
+        with db.tx() as c:
+            c.execute("UPDATE vectors SET deleted_at=? WHERE id=?", (when, item))
+    purged = db.purge_binned_items("2026-09-10T00:00:00.000Z", 100)
+    assert [(kind, row["id"], row["idx"]) for kind, row in purged] == [("vector", ids[0], 0)]  # the row, whole, so that its files can follow
+    assert binned(db, "vector", run_id) == [1] and present(db, "vector", run_id) == [2]
+    assert db.bin_run(run_id, NOW) == "binned"  # in a run that is in the bin, the version is still purged on its own clock
+    assert [row["id"] for _, row in db.purge_binned_items(None, 100)] == [ids[1]]
 
 
 # The count beside Deleted counts things (§33.1): each run in the bin once, and each picture or track in it of a run that is in the history once.
@@ -664,7 +696,7 @@ def test_a_track_of_a_run_that_has_not_finished_is_refused(client):
 
 # ------------------------------------------------------------------ schema 6
 def test_the_schema_is_7():
-    assert SCHEMA_VERSION == 7  # 1.15 made it 6 (this file's columns); 1.17's Vector made it 7 and keeps them
+    assert SCHEMA_VERSION == 8  # 1.15 made it 6 (this file's columns); 1.17's Vector made it 7 and 1.18's versions in the bin made it 8; both keep them
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:

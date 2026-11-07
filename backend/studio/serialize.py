@@ -140,7 +140,16 @@ def vector_payload(row: sqlite3.Row) -> dict[str, Any]:
         "png_url": f"{base}/png",
         "png_download_url": f"{base}/png?download=1",
         "preview_url": f"{base}/png?size={PREVIEW_SIZE}",
+        # what the viewer shows beside the vector (DESIGN.md §35.2, §35.4): the model's drawing, and each layer's own SVG for the stack view, numbered from 1
+        "drawing_url": f"{base}/drawing",
+        "drawing_download_url": f"{base}/drawing?download=1",
+        "layer_urls": [f"{base}/layers/{n}.svg" for n in range(1, int(row["layers"]) + 1)],
     }
+
+
+def binned_vector_payload(row: sqlite3.Row, bin_days: int) -> dict[str, Any]:
+    """A version of a vector run that is in the bin (DESIGN.md §35.4): as any version, with when it went and when it will be deleted for good."""
+    return {**vector_payload(row), "deleted_at": row["deleted_at"], "purge_at": purge_time(row["deleted_at"], bin_days)}
 
 
 def binned_image_payload(row: sqlite3.Row, four_k: Optional[dict[str, Any]], bin_days: int) -> dict[str, Any]:
@@ -184,6 +193,7 @@ def run_payload(
     binned_tracks: Optional[list[sqlite3.Row]] = None,
     bin_days: int = 0,
     vectors: Optional[list[sqlite3.Row]] = None,
+    binned_vectors: Optional[list[sqlite3.Row]] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -216,7 +226,8 @@ def run_payload(
         "tracks": [track_payload(track) for track in tracks or []],
         "binned_images": [] if row["deleted_at"] else [binned_image_payload(img, (four_k or {}).get(img["id"]), bin_days) for img in binned_images or []],
         "binned_tracks": [] if row["deleted_at"] else [binned_track_payload(track, bin_days) for track in binned_tracks or []],
-        # the versions of a vector run (DESIGN.md §31.12.7); always there, an empty list for a picture or a music run, as `tracks` is. A vector run has no
-        # per-version bin (§31.12.9 item 3), so there is nothing to leave out of it and no `binned_vectors`.
+        # the versions of a vector run (DESIGN.md §31.12.7); always there, an empty list for a picture or a music run, as `tracks` is. Like `images` and
+        # `tracks` it is what is NOT in the bin (1.18, §35.4); the versions in the bin are beside it, and none for a run that is itself in the bin
         "vectors": [vector_payload(vec) for vec in vectors or []],
+        "binned_vectors": [] if row["deleted_at"] else [binned_vector_payload(vec, bin_days) for vec in binned_vectors or []],
     }

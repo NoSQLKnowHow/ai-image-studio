@@ -172,8 +172,10 @@ def test_a_vectors_addresses_are_its_own_and_follow_the_contract(vclient):
     run = make_vector(vclient)
     vector, fixture = run["vectors"][0], CONTRACT["run"]["vectors"][0]
     stand_in = fixture["id"]
-    for key in ("url", "download_url", "zip_url", "png_url", "png_download_url"):
+    for key in ("url", "download_url", "zip_url", "png_url", "png_download_url", "drawing_url", "drawing_download_url"):
         assert vector[key] == fixture[key].replace(stand_in, vector["id"]), key
+    # one address for each layer, from 1 (the stack view shows the sheets one at a time, DESIGN.md §35.4)
+    assert vector["layer_urls"] == [f"/api/vectors/{vector['id']}/layers/{n}.svg" for n in range(1, vector["layers"] + 1)]
     # the preview is the stored 1024 px one (the contract's example says 640, which would be drawn on request every time a card is shown)
     assert vector["preview_url"] == f"/api/vectors/{vector['id']}/png?size=1024"
     assert vector["check"] == {**fixture["check"], "size_mm": [100.0, 100.0], "colours_asked": 2, "svg_bytes": vector["bytes"]}
@@ -236,35 +238,35 @@ def test_a_version_whose_clean_up_fails_is_missing_and_named_and_the_run_keeps_t
     run = make_vector(vclient, num_images=3, seed=10)
     assert run["status"] == "done"  # a run that keeps at least one version is done
     assert [v["idx"] for v in run["vectors"]] == [0, 2] and [v["seed"] for v in run["vectors"]] == [10, 12]  # version 2 (idx 1) is the one missing
-    assert run["error"] == {"message": "Version 2 could not be made: Nothing was left of drawing 1 after the smallest feature.",
-                            "hint": "Make the smallest feature smaller."}  # named, in the job's own words, with its hint
+    assert run["error"] == {"message": "The version with seed 11 could not be made: Nothing was left of drawing 1 after the smallest feature.",
+                            "hint": "Make the smallest feature smaller."}  # named by its seed (a place changes when another version is deleted, DESIGN.md §35.3 item 8), in the job's own words, with its hint
     assert stored_files(vclient, run["id"]) == sorted(["0-layers.zip", "0-source.png", "0.png", "0.svg", "1-source.png", "2-layers.zip", "2-source.png",
                                                        "2.png", "2.svg"])  # nothing of the missing version but its drawing
 
 
 def test_every_missing_version_is_named_in_one_text(vclient, monkeypatch):
     monkeypatch.setenv("FAKE_VECTOR_FAIL", "0,2")
-    run = make_vector(vclient, num_images=3)
+    run = make_vector(vclient, num_images=3, seed=20)
     assert run["status"] == "done" and [v["idx"] for v in run["vectors"]] == [1]
-    assert run["error"]["message"] == ("Version 1 could not be made: Nothing was left of drawing 0 after the smallest feature. "
-                                       "Version 3 could not be made: Nothing was left of drawing 2 after the smallest feature.")
+    assert run["error"]["message"] == ("The version with seed 20 could not be made: Nothing was left of drawing 0 after the smallest feature. "
+                                       "The version with seed 22 could not be made: Nothing was left of drawing 2 after the smallest feature.")
 
 
 def test_a_run_with_no_version_made_has_failed(vclient, monkeypatch):
     monkeypatch.setenv("FAKE_VECTOR_FAIL", "0,1")
-    run = make_vector(vclient, num_images=2)
+    run = make_vector(vclient, num_images=2, seed=30)
     assert run["status"] == "failed" and run["vectors"] == [] and run["finished_at"]
-    assert "Version 1 could not be made" in run["error"]["message"] and "Version 2 could not be made" in run["error"]["message"]
+    assert "The version with seed 30 could not be made" in run["error"]["message"] and "The version with seed 31 could not be made" in run["error"]["message"]
     assert run["error"]["hint"] == "Make the smallest feature smaller."
-    single = make_vector(vclient, num_images=1)  # one version, and it fails: the run has nothing to show
-    assert single["status"] == "failed" and single["error"]["message"].startswith("Version 1 could not be made: ")
+    single = make_vector(vclient, num_images=1, seed=40)  # one version, and it fails: the run has nothing to show
+    assert single["status"] == "failed" and single["error"]["message"].startswith("The version with seed 40 could not be made: ")
 
 
 def test_a_job_that_crashes_is_reported_as_stopping_unexpectedly(vclient, monkeypatch):
     monkeypatch.setenv("FAKE_VECTOR_CRASH", "0")
-    run = make_vector(vclient, num_images=2)
+    run = make_vector(vclient, num_images=2, seed=50)
     assert run["status"] == "done" and [v["idx"] for v in run["vectors"]] == [1]
-    assert run["error"] == {"message": "Version 1 could not be made: The clean-up stopped unexpectedly (exit code 3).", "hint": "See the server log for details."}
+    assert run["error"] == {"message": "The version with seed 50 could not be made: The clean-up stopped unexpectedly (exit code 3).", "hint": "See the server log for details."}
 
 
 def failing_replace(monkeypatch, ends_with: str):
@@ -285,9 +287,9 @@ def failing_replace(monkeypatch, ends_with: str):
 def test_a_version_that_cannot_be_moved_into_place_leaves_no_part_of_itself_behind(vclient, monkeypatch):
     """The SVG is moved first and the ZIP second: when the ZIP cannot be, the SVG already in place is taken away again."""
     failing_replace(monkeypatch, "-layers.zip")
-    run = make_vector(vclient, num_images=1)
+    run = make_vector(vclient, num_images=1, seed=60)
     assert run["status"] == "failed" and run["vectors"] == []
-    assert run["error"]["message"] == "Version 1 could not be made: The clean-up's files could not be stored: No space left on device"
+    assert run["error"]["message"] == "The version with seed 60 could not be made: The clean-up's files could not be stored: No space left on device"
     assert stored_files(vclient, run["id"]) == ["0-source.png"]
 
 
@@ -305,8 +307,8 @@ def test_a_drawing_that_cannot_be_stored_fails_the_run_and_starts_no_clean_up(vc
 ])
 def test_a_job_that_says_something_the_protocol_does_not_allow_makes_no_version(vclient, monkeypatch, answer, message):
     monkeypatch.setenv("FAKE_VECTOR_ANSWER", answer)
-    run = make_vector(vclient, num_images=1)
-    assert run["status"] == "failed" and run["vectors"] == [] and run["error"]["message"] == f"Version 1 could not be made: {message}"
+    run = make_vector(vclient, num_images=1, seed=70)
+    assert run["status"] == "failed" and run["vectors"] == [] and run["error"]["message"] == f"The version with seed 70 could not be made: {message}"
     assert run["error"]["hint"] == "See the server log for details."
     assert stored_files(vclient, run["id"]) == ["0-source.png"]  # no half-stored version, and no working folder left behind
 
@@ -315,17 +317,17 @@ def test_a_job_that_says_something_the_protocol_does_not_allow_makes_no_version(
 def test_a_version_is_stored_whole_or_not_at_all(vclient, monkeypatch, missing):
     """A job that says it is done but did not write a file: nothing of that version is kept, so there is no SVG without its ZIP or preview."""
     monkeypatch.setenv("FAKE_VECTOR_SKIP", missing)
-    run = make_vector(vclient, num_images=1)
+    run = make_vector(vclient, num_images=1, seed=80)
     assert run["status"] == "failed" and run["vectors"] == []
-    assert run["error"]["message"] == f"Version 1 could not be made: The clean-up's files could not be stored: the clean-up did not write {missing}"
+    assert run["error"]["message"] == f"The version with seed 80 could not be made: The clean-up's files could not be stored: the clean-up did not write {missing}"
     assert stored_files(vclient, run["id"]) == ["0-source.png"]
 
 
 def test_a_clean_up_that_cannot_be_started_fails_its_versions(vclient_factory):
     client = vclient_factory(vector_job_command=("/no/such/program",))
-    run = make_vector(client, num_images=1)
+    run = make_vector(client, num_images=1, seed=90)
     assert run["status"] == "failed" and run["vectors"] == []
-    assert run["error"]["message"].startswith("Version 1 could not be made: The clean-up could not be started: ")
+    assert run["error"]["message"].startswith("The version with seed 90 could not be made: The clean-up could not be started: ")
     assert run["error"]["hint"] == "See the server log for details."
 
 
@@ -333,9 +335,9 @@ def test_a_clean_up_that_takes_too_long_is_stopped_and_its_version_is_missing(vc
     monkeypatch.setenv("FAKE_VECTOR_SLEEP", "30")
     vclient.app.state.jobs.vector_job_timeout = 0.5
     started = time.monotonic()
-    run = make_vector(vclient, num_images=1)
+    run = make_vector(vclient, num_images=1, seed=95)
     assert time.monotonic() - started < 15  # not the 30 seconds the job wanted: it was killed
-    assert run["status"] == "failed" and run["error"]["message"].startswith("Version 1 could not be made: The clean-up took longer than ")
+    assert run["status"] == "failed" and run["error"]["message"].startswith("The version with seed 95 could not be made: The clean-up took longer than ")
     assert process_is_gone(job_calls(vclient)[0]["pid"])
 
 
@@ -544,11 +546,13 @@ def test_a_vector_run_goes_to_the_bin_whole_with_its_files_and_comes_back(vclien
     assert stored_files(vclient, run["id"]) == files
 
 
-def test_there_is_no_bin_for_a_single_version(vclient):
-    """A vector run is deleted and restored as a whole (§31.12.9 item 3): the picture routes do not reach a version."""
+def test_the_picture_routes_do_not_reach_a_version(vclient):
+    """A version has its own bin routes under /api/vectors (DESIGN.md §35.4, tested in test_vector_version_bin.py); the picture and track routes
+    are for pictures and tracks, so an id of a version is not found there and nothing is deleted by asking the wrong route."""
     run = make_vector(vclient, num_images=2)
     vid = run["vectors"][0]["id"]
-    assert vclient.post(f"/api/images/{vid}/bin").status_code == 404 and vclient.delete(f"/api/vectors/{vid}").status_code in (404, 405)
+    assert vclient.post(f"/api/images/{vid}/bin").status_code == 404 and vclient.delete(f"/api/images/{vid}").status_code == 404
+    assert vclient.post(f"/api/tracks/{vid}/bin").status_code == 404 and vclient.delete(f"/api/tracks/{vid}").status_code == 404
     assert len(vclient.get(f"/api/runs/{run['id']}").json()["vectors"]) == 2
 
 
