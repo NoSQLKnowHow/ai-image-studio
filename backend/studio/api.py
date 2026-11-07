@@ -23,6 +23,7 @@ from . import presets as P
 from .builder import builder_limits
 from .builder.routes import add_routes as add_builder_routes
 from .builder.service import BuilderService
+from .builder.store import BuilderStore
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
@@ -169,6 +170,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         app.state.settings, app.state.db, app.state.storage, app.state.bus, app.state.jobs = (
             settings, db, storage, bus, jobs)
         app.state.builder = BuilderService(settings)  # the Prompt builder's view of Ollama (DESIGN.md §37.4)
+        app.state.builder_store = BuilderStore(db)  # its prompts, versions and chats (§37.4)
+        if app.state.builder_store.ensure_search_in_step():
+            log.info("the prompts' word index was not in step with the prompts and has been rebuilt")
         app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
         app.state.vector_png_slots = asyncio.Semaphore(VECTOR_PNG_AT_ONCE)
         log.info("AI Image Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
