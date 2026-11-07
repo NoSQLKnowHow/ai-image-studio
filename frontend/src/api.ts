@@ -5,10 +5,10 @@ import type {
   VectorRecipeRequest, VectorRun,
 } from "./types";
 
-/** What sending a picture or track to the bin answers (DESIGN.md §33.3): what moved, and the run as it is now. A run's last picture is not deleted
- *  by itself, so `moved` is "run" and the whole run is in the bin. */
+/** What sending a picture, track or version to the bin answers (DESIGN.md §33.3, §35.4): what moved, and the run as it is now. A run's last one is not deleted
+ *  by itself, so `moved` is "run" and the whole run is in the bin. A version is "version", a picture or a track "picture". */
 export interface BinAnswer {
-  moved: "picture" | "run";
+  moved: "picture" | "version" | "run";
   run: Run;
 }
 
@@ -198,6 +198,11 @@ export const api = {
   binTrack: (id: string) => request<BinAnswer>(`/api/tracks/${encodeURIComponent(id)}/bin`, { method: "POST" }),
   restoreTrack: (id: string) => request<Run>(`/api/tracks/${encodeURIComponent(id)}/restore`, { method: "POST" }),
   deleteTrack: (id: string) => request<void>(`/api/tracks/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  // A single version of a Vector run in the bin (DESIGN.md §35.4), as a picture or a track is: binning answers what moved ("version", or "run" when it was the
+  // run's last), restoring answers the run, and deleting for good answers nothing.
+  binVector: (id: string) => request<BinAnswer>(`/api/vectors/${encodeURIComponent(id)}/bin`, { method: "POST" }),
+  restoreVector: (id: string) => request<Run>(`/api/vectors/${encodeURIComponent(id)}/restore`, { method: "POST" }),
+  deleteVector: (id: string) => request<void>(`/api/vectors/${encodeURIComponent(id)}`, { method: "DELETE" }),
   // Project folders (DESIGN.md §32.4). Filing a run also keeps it; the answer to a filing is the run, as for Keep.
   listProjects: () => request<{ projects: Project[] }>("/api/projects").then((answer) => answer.projects),
   createProject: (name: string) => request<Project>("/api/projects", { method: "POST", body: JSON.stringify({ name }) }),

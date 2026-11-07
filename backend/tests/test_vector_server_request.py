@@ -51,7 +51,7 @@ def test_every_option_has_its_default(client):
     recipe = V.build_recipe("a fox head", "silhouette", 2, ())
     assert options == {
         "colours": 2, "palette": [], "kind": "silhouette", "width_mm": 100.0, "height_mm": 100.0, "layers_by": "colour", "arrangement": "side_by_side",
-        "bleed_mm": 0.5, "min_feature_mm": 0.5, "kerf_mm": 0.0, "steps": 40, "seed": options["seed"], "num_images": 1, "recipe": recipe.positive,
+        "stack_order": "area_desc", "bleed_mm": 0.5, "min_feature_mm": 0.5, "kerf_mm": 0.0, "steps": 40, "seed": options["seed"], "num_images": 1, "recipe": recipe.positive,
         "seed_was_random": True, "negative": recipe.negative, "draw_width": 1536, "draw_height": 1536}
     assert 0 <= options["seed"] <= 2**32 - 1
 
@@ -134,13 +134,13 @@ def test_the_number_of_versions_is_one_to_four_whatever_the_picture_limit_is():
 
 
 def test_every_problem_is_reported_at_once():
-    found = refused(colours=1, steps=0, num_images=9, seed=-5, kind="blob", layers_by="stripe", arrangement="pile", palette=["red"])
+    found = refused(colours=1, steps=0, num_images=9, seed=-5, kind="blob", layers_by="stripe", arrangement="pile", stack_order="loudest", palette=["red"])
     assert set(found) == {"options.colours", "options.steps", "options.num_images", "options.seed", "options.kind", "options.layers_by",
-                          "options.arrangement", "options.palette"}
+                          "options.arrangement", "options.stack_order", "options.palette"}
 
 
 def test_the_text_options_must_be_one_of_the_known_words():
-    for name in ("kind", "layers_by", "arrangement"):
+    for name in ("kind", "layers_by", "arrangement", "stack_order"):
         assert "Must be one of" in refused(**{name: "nonsense"})[f"options.{name}"]
     for kind in V.KINDS:
         assert resolve(kind=kind).options_snapshot()["kind"] == kind
@@ -148,6 +148,8 @@ def test_the_text_options_must_be_one_of_the_known_words():
         assert resolve(layers_by=by).options_snapshot()["layers_by"] == by
     for arrangement in V.ARRANGEMENTS:
         assert resolve(arrangement=arrangement).options_snapshot()["arrangement"] == arrangement
+    for order in V.STACK_ORDERS:  # DESIGN.md §35.4: the new option is stored with the run, so that Reuse and the job get what was chosen
+        assert resolve(stack_order=order).options_snapshot()["stack_order"] == order
 
 
 # ------------------------------------------------------------------ the palette
@@ -206,7 +208,7 @@ def test_an_option_of_another_kind_of_run_is_refused_by_the_vector_run_through_t
 
 
 @pytest.mark.parametrize("name, value", [("colours", 3), ("palette", ["#FF0000"]), ("kind", "flat"), ("width_mm", 50.0), ("height_mm", 50.0),
-                                         ("layers_by", "shape"), ("arrangement", "stacked"), ("bleed_mm", 1.0), ("min_feature_mm", 1.0), ("kerf_mm", 0.1),
+                                         ("layers_by", "shape"), ("arrangement", "stacked"), ("stack_order", "palette"), ("bleed_mm", 1.0), ("min_feature_mm", 1.0), ("kerf_mm", 0.1),
                                          ("recipe", "words")])
 @pytest.mark.parametrize("mode", ["generate", "music"])
 def test_a_vector_option_sent_with_another_kind_of_run_is_refused_and_named(client, mode, name, value):

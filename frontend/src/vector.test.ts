@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { NO_FILTER, ONLY_DELETED, ONLY_KEPT, filterParams, matches, visibleRuns, withProject } from "./history";
-import { binContents, canceledText, deleteProjectQuestion, emptyBinQuestion, emptiedText, projectContents, type BinContents } from "./format";
+import {
+  binContents, binnedText, canceledText, deleteItemQuestion, deleteItemTitle, deleteProjectQuestion, deleteRunTitle, emptyBinQuestion, emptiedText, itemBinnedText, itemDeletedText,
+  itemRestoredText, projectContents, type BinContents, type DeleteItemAsk, type ItemRef,
+} from "./format";
 import { browserStore, type KeyValueStore } from "./options";
 import { CAPS, VECTOR_CONTRACT, makeMusicRun, makeRun, makeVectorItem, makeVectorRun } from "./testdata";
 import type {
@@ -13,7 +16,7 @@ import {
   editRecipe, effectiveArrangement, inkCount, kindLabel, layersLine, lengthText, loadVectorForm, mmText, normaliseColour, paletteProblem, pngDownloadUrl, pngRange,
   presetMatches, rebuildRecipe, reconcileReusedRecipe, recipeRequest, recipeToSend, removeInk, sanitizeVectorForm, saveVectorForm, setInk, smallestFeatureText,
   unavailableText, vectorFormFromRun, vectorMeta, vectorPhases, vectorProblem, vectorProgressText, vectorRetryRequest, vectorSeedText, vectorTitle, vectorUsable,
-  versionLabel, withColours, type VectorForm,
+  versionLabel, withColours, type VectorForm, placeLabel,
 } from "./vector";
 
 // The Vector tab's pure logic (DESIGN.md §31.12.8): the form and where its limits come from, the palette rules, the line about layers, the request, Reuse and
@@ -38,21 +41,95 @@ const ODD: VectorLimits = {
   kinds: ["flat", "line"],
   layers_by: ["shape", "colour"],
   arrangements: ["stacked", "side_by_side"],
+  stack_orders: ["palette", "area_asc", "area_desc"],
   presets: [{ id: "bench", name: "Bench", width_mm: 400, height_mm: 250 }],
-  defaults: { kind: "line", layers_by: "shape", arrangement: "stacked" },
+  defaults: { kind: "line", layers_by: "shape", arrangement: "stacked", stack_order: "palette" },
   recipe_max_chars: 500,
 };
 const ODD_CAPS: Capabilities = { ...CAPS, limits: { ...CAPS.limits, vector: ODD } };
 
 /** The form the contract's `create_request` describes. */
 const FOX: VectorForm = {
-  idea: "a fox head", kind: "flat", colours: 4, palette: ["#FF0000", "#00AA00"], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side",
+  idea: "a fox head", kind: "flat", colours: 4, palette: ["#FF0000", "#00AA00"], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side", stackOrder: "area_desc",
   minFeatureMm: 0.5, kerfMm: 0, bleedMm: 0.5, numImages: 1, seedLocked: true, seed: 1234, recipeEdited: false, recipeText: "",
 };
 
 // ------------------------------------------------------------------ the page and the contract cannot drift apart
 // A `Record<keyof T, true>` literal must list every key of the type, and no other (the compiler checks both), so each one below is the type's keys written
 // out. The tests compare it with the keys of the contract file, which is what the server sends: a key added on either side fails one of the two.
+// ------------------------------------------------------------------ the words about versions in the bin (DESIGN.md §35.2)
+describe("the words about deleting a Vector run's versions", () => {
+  const several = { prompt: "a fox head", mode: "vector", vectors: [1, 2, 3] };
+
+  it("tell, in the toast and the tooltip for deleting a run, how many versions go with it; a run with one version, or a picture run, says nothing of versions", () => {
+    expect(binnedText(several, 30)).toBe("Deleted “a fox head” and its 3 versions. It stays in Deleted for 30 days.");
+    expect(binnedText({ ...several, vectors: [1, 2] }, 1)).toBe("Deleted “a fox head” and its 2 versions. It stays in Deleted for 1 day.");
+    expect(binnedText({ ...several, vectors: [1] }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days.");
+    expect(binnedText({ ...several, vectors: [] }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days.");
+    expect(binnedText({ ...several, mode: "image" }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days."); // only a Vector run has versions
+    expect(binnedText({ prompt: "a fox head" }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days.");
+    expect(deleteRunTitle(several)).toBe("Delete this run and all 3 versions");
+    expect(deleteRunTitle({ mode: "vector", vectors: [1] })).toBe("Delete this run and its files");
+    expect(deleteRunTitle({ mode: "vector" })).toBe("Delete this run and its files");
+    expect(deleteRunTitle({ mode: "image", vectors: [1, 2, 3] })).toBe("Delete this run and its files");
+  });
+
+  it("count versions in what Empty bin asks and what it says it did, in the singular or the plural, with the other kinds beside them", () => {
+    const bin = (vector: { runs: number; items: number }): BinContents => ({ image: { runs: 0, items: 0 }, music: { runs: 0, items: 0 }, vector });
+    expect(emptyBinQuestion(bin({ runs: 1, items: 2 }), false)).toBe("Delete 1 run and 2 versions for good (1 run and 2 versions on Vector), with their files. This can't be undone.");
+    expect(emptyBinQuestion(bin({ runs: 0, items: 1 }), false)).toBe("Delete 1 version for good (1 version on Vector), with their files. This can't be undone.");
+    expect(emptyBinQuestion({ image: { runs: 2, items: 1 }, music: { runs: 0, items: 0 }, vector: { runs: 0, items: 3 } }, false)).toBe(
+      "Delete 2 runs, 1 picture and 3 versions for good (2 runs and 1 picture on Images, 3 versions on Vector), with their files. This can't be undone.");
+    expect(emptiedText(1, 2, { pictures: 0, tracks: 0, versions: 2 })).toBe("Emptied the bin: 1 run and 2 versions deleted for good.");
+    expect(emptiedText(0, 1, { pictures: 0, tracks: 0, versions: 1 })).toBe("Emptied the bin: 1 version deleted for good.");
+    expect(emptiedText(0, 3, { pictures: 1, tracks: 1, versions: 1 })).toBe("Emptied the bin: 1 picture, 1 track and 1 version deleted for good.");
+    // the counts and the answer disagree (something changed in between): all that is certain is the total, and it is called pictures
+    expect(emptiedText(0, 2, { pictures: 0, tracks: 0, versions: 1 })).toBe("Emptied the bin: 2 pictures deleted for good.");
+    expect(emptiedText(0, 0)).toBe("The bin was already empty.");
+  });
+
+  const version: ItemRef = { kind: "vector", position: 2, of: 3, seed: 41 };
+  const ask = (over: Partial<DeleteItemAsk> = {}): DeleteItemAsk => ({ item: version, binDays: 30, last: false, forever: false, filed: false, projectName: null, ...over });
+
+  it("name a version in the question, by its place and its seed (a lone one, or one in the bin, by its seed alone)", () => {
+    expect(deleteItemTitle(version, false)).toBe("Delete this version?");
+    expect(deleteItemTitle(version, true)).toBe("Delete this version for good?");
+    expect(deleteItemQuestion(ask())).toBe("(version 2 of 3, seed 41.) It moves to Deleted and stays there for 30 days; you can restore it from there.");
+    expect(deleteItemQuestion(ask({ item: { ...version, position: null, of: 0 } }))).toContain("(seed 41.)");
+    expect(deleteItemQuestion(ask({ item: { ...version, position: 1, of: 1 } }))).toContain("(seed 41.)");
+  });
+
+  it("say, for the last version, that the whole run moves; for Delete forever, what is removed; with no bin, that it is for good; and which project the run is in", () => {
+    expect(deleteItemQuestion(ask({ last: true, item: { ...version, position: 1, of: 1 } }))).toBe(
+      "(seed 41.) This is the last version of this run, so the whole run moves to Deleted and stays there for 30 days; you can restore it from there.");
+    expect(deleteItemQuestion(ask({ forever: true, item: { ...version, position: null, of: 0 } }))).toBe(
+      "(seed 41.) Its SVG, its layers, its PNG and the drawing the model made are removed from the Spark. This can't be undone.");
+    expect(deleteItemQuestion(ask({ binDays: 0 }))).toBe(
+      "(version 2 of 3, seed 41.) It is deleted for good: its SVG, its layers, its PNG and the drawing the model made are removed from the Spark. This can't be undone.");
+    expect(deleteItemQuestion(ask({ binDays: 0, last: true }))).toContain("so the whole run is deleted for good, with its files");
+    expect(deleteItemQuestion(ask({ filed: true, projectName: "Logo" }))).toContain("The run stays in the project “Logo” with its other versions.");
+    expect(deleteItemQuestion(ask({ filed: true, last: true }))).toContain("Restoring it puts it back in a project.");
+    expect(deleteItemQuestion(ask({ binDays: 1 }))).toContain("for 1 day;");
+  });
+
+  it("say in the toasts which version went, came back or was deleted for good, of which run", () => {
+    const run = { prompt: "a fox head" };
+    expect(itemBinnedText(run, version, 30)).toBe("Deleted version 2 of “a fox head”. It stays in Deleted for 30 days.");
+    expect(itemDeletedText(run, version)).toBe("Deleted version 2 of “a fox head” for good.");
+    expect(itemRestoredText(run, version)).toBe("Restored version 2 of “a fox head”.");
+    expect(itemDeletedText(run, { ...version, position: null })).toBe("Deleted a version of “a fox head” for good."); // one in the bin has no place
+  });
+});
+
+// ------------------------------------------------------------------ naming a version by its place (DESIGN.md §35.2)
+describe("placeLabel", () => {
+  it("names a version by its place among the versions the run has now, and a lone version by its seed alone", () => {
+    expect(placeLabel(2, 3, 41)).toBe("Version 2 of 3");
+    expect(placeLabel(1, 2, 41)).toBe("Version 1 of 2"); // two are already several
+    expect(placeLabel(1, 1, 41)).toBe("Seed 41");
+  });
+});
+
 describe("the types match the contract file", () => {
   const keys = (record: Record<string, true>) => Object.keys(record).sort();
   const same = (record: Record<string, true>, example: object) => expect(keys(record)).toEqual(Object.keys(example).sort());
@@ -62,25 +139,25 @@ describe("the types match the contract file", () => {
     const run: Record<keyof VectorRun, true> = {
       id: true, status: true, prompt: true, effective_prompt: true, model_id: true, created_at: true, started_at: true, finished_at: true, error: true, pinned: true,
       expires_at: true, deleted_at: true, purge_at: true, project_id: true, queue_position: true, progress: true, canceling: true, mode: true, options: true,
-      lyrics: true, inputs: true, images: true, binned_images: true, tracks: true, binned_tracks: true, vectors: true,
+      lyrics: true, inputs: true, images: true, binned_images: true, tracks: true, binned_tracks: true, vectors: true, binned_vectors: true,
     };
     same(run, c.run);
     const options: Record<keyof VectorOptionsSnapshot, true> = {
-      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, bleed_mm: true, min_feature_mm: true, kerf_mm: true,
+      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, stack_order: true, bleed_mm: true, min_feature_mm: true, kerf_mm: true,
       steps: true, seed: true, num_images: true, recipe: true, seed_was_random: true, negative: true, draw_width: true, draw_height: true,
     };
     same(options, c.run.options);
     const item: Record<keyof VectorItem, true> = {
       id: true, idx: true, seed: true, width_mm: true, height_mm: true, colours: true, layers: true, bytes: true, check: true, url: true, download_url: true,
-      zip_url: true, png_url: true, png_download_url: true, preview_url: true,
+      zip_url: true, png_url: true, png_download_url: true, preview_url: true, drawing_url: true, drawing_download_url: true, layer_urls: true,
     };
     same(item, c.run.vectors[0]);
     const check: Record<keyof VectorCheck, true> = {
-      colours_asked: true, colours_found: true, white: true, size_mm: true, layers_by: true, arrangement: true, svg_bytes: true, layers: true, smallest_feature_mm: true,
+      colours_asked: true, colours_found: true, white: true, size_mm: true, layers_by: true, arrangement: true, stack_order: true, svg_bytes: true, layers: true, smallest_feature_mm: true,
       removed: true, mm_per_pixel: true, notes: true,
     };
     same(check, c.run.vectors[0].check);
-    const layer: Record<keyof VectorLayer, true> = { index: true, id: true, name: true, colour: true, picture_colour: true, paths: true, length_mm: true };
+    const layer: Record<keyof VectorLayer, true> = { index: true, id: true, name: true, colour: true, picture_colour: true, paths: true, length_mm: true, height: true };
     same(layer, c.run.vectors[0].check.layers[0]);
     const note: Record<keyof VectorNote, true> = { code: true, message: true };
     same(note, c.run.vectors[0].check.notes[0]);
@@ -90,7 +167,7 @@ describe("the types match the contract file", () => {
     const body: Record<keyof CreateVectorBody, true> = { mode: true, prompt: true, options: true };
     same(body, c.create_request);
     const options: Record<keyof CreateVectorBody["options"], true> = {
-      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, bleed_mm: true, min_feature_mm: true,
+      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, stack_order: true, bleed_mm: true, min_feature_mm: true,
       kerf_mm: true, steps: true, seed: true, num_images: true, recipe: true,
     };
     same(options, c.create_request.options);
@@ -101,7 +178,7 @@ describe("the types match the contract file", () => {
     // `png_px` is the page's own optional extra (the contract does not carry the PNG range): every other key of the type is the contract's
     const limits: Record<Exclude<keyof VectorLimits, "png_px">, true> = {
       colours: true, size_mm: true, versions: true, min_feature_mm: true, kerf_mm: true, bleed_mm: true, shape_layer_cap: true, kinds: true, layers_by: true,
-      arrangements: true, presets: true, defaults: true, recipe_max_chars: true,
+      arrangements: true, stack_orders: true, presets: true, defaults: true, recipe_max_chars: true,
     };
     same(limits, c.capabilities.limits_vector);
     const availability: Record<keyof VectorAvailability, true> = { available: true, reason: true, hint: true };
@@ -128,14 +205,14 @@ describe("the types match the contract file", () => {
 describe("the form's defaults and limits", () => {
   it("takes every default from the capabilities (the contract's here)", () => {
     expect(defaultVectorForm(CAPS)).toEqual({
-      idea: "", kind: "silhouette", colours: 2, palette: [], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side",
+      idea: "", kind: "silhouette", colours: 2, palette: [], widthMm: 100, heightMm: 100, layersBy: "colour", arrangement: "side_by_side", stackOrder: "area_desc",
       minFeatureMm: 0.5, kerfMm: 0, bleedMm: 0.5, numImages: 1, seedLocked: false, seed: 42, recipeEdited: false, recipeText: "",
     });
   });
 
   it("takes them from the capabilities, not from numbers of its own", () => {
     expect(defaultVectorForm(ODD_CAPS)).toEqual({
-      idea: "", kind: "line", colours: 4, palette: [], widthMm: 250, heightMm: 120, layersBy: "shape", arrangement: "stacked",
+      idea: "", kind: "line", colours: 4, palette: [], widthMm: 250, heightMm: 120, layersBy: "shape", arrangement: "stacked", stackOrder: "palette",
       minFeatureMm: 0.3, kerfMm: 0.02, bleedMm: 0.7, numImages: 2, seedLocked: false, seed: 42, recipeEdited: false, recipeText: "",
     });
   });
@@ -381,13 +458,13 @@ describe("the request", () => {
 
   it("sends the values as they stand, each under its own key", () => {
     const form: VectorForm = {
-      idea: "x", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], widthMm: 321.5, heightMm: 12.25, layersBy: "shape", arrangement: "stacked",
+      idea: "x", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], widthMm: 321.5, heightMm: 12.25, layersBy: "shape", arrangement: "stacked", stackOrder: "area_asc",
       minFeatureMm: 0.75, kerfMm: 0.125, bleedMm: 2.5, numImages: 3, seedLocked: true, seed: 99, recipeEdited: false, recipeText: "",
     };
     expect(buildVectorRequest(form, CAPS)).toEqual({
       mode: "vector", prompt: "x",
       options: {
-        colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], kind: "line", width_mm: 321.5, height_mm: 12.25, layers_by: "shape", arrangement: "side_by_side",
+        colours: 6, palette: ["#0000FF", "#FFA500", "#800080"], kind: "line", width_mm: 321.5, height_mm: 12.25, layers_by: "shape", arrangement: "side_by_side", stack_order: "area_asc",
         bleed_mm: 2.5, min_feature_mm: 0.75, kerf_mm: 0.125, steps: 40, seed: 99, num_images: 3, recipe: null,
       },
     });
@@ -406,8 +483,8 @@ describe("the request", () => {
     expect(body).toEqual({
       mode: "vector", prompt: "a fox head",
       options: {
-        colours: 4, palette: ["#FF0000", "#00AA00"], kind: "flat", width_mm: 100, height_mm: 100, layers_by: "colour", arrangement: "side_by_side", bleed_mm: 0.5,
-        min_feature_mm: 0.5, kerf_mm: 0, steps: 40, seed: 1234, num_images: 1, recipe: "A fox head, flat colour artwork ...",
+        colours: 4, palette: ["#FF0000", "#00AA00"], kind: "flat", width_mm: 100, height_mm: 100, layers_by: "colour", arrangement: "side_by_side", stack_order: "area_desc",
+        bleed_mm: 0.5, min_feature_mm: 0.5, kerf_mm: 0, steps: 40, seed: 1234, num_images: 1, recipe: "A fox head, flat colour artwork ...",
       },
     });
     // it has the keys of a first request, no more and no fewer
@@ -421,14 +498,14 @@ describe("Reuse", () => {
   const run = makeVectorRun({
     prompt: "an owl", options: {
       ...makeVectorRun().options, colours: 6, palette: ["#0000FF", "#FFA500"], kind: "line", width_mm: 321.5, height_mm: 45, layers_by: "shape", arrangement: "stacked",
-      bleed_mm: 1.5, min_feature_mm: 0.8, kerf_mm: 0.2, num_images: 3, seed: 555, recipe: "The owl, in words.",
+      stack_order: "area_asc", bleed_mm: 1.5, min_feature_mm: 0.8, kerf_mm: 0.2, num_images: 3, seed: 555, recipe: "The owl, in words.",
     },
   });
 
   it("restores every field of the form from the run's options, with the seed locked", () => {
     const current: VectorForm = { ...defaultVectorForm(CAPS), idea: "something else", recipeEdited: true, recipeText: "old edit", seedLocked: false, seed: 1 };
     expect(vectorFormFromRun(run, CAPS, current)).toEqual({
-      idea: "an owl", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500"], widthMm: 321.5, heightMm: 45, layersBy: "shape", arrangement: "stacked",
+      idea: "an owl", kind: "line", colours: 6, palette: ["#0000FF", "#FFA500"], widthMm: 321.5, heightMm: 45, layersBy: "shape", arrangement: "stacked", stackOrder: "area_asc",
       minFeatureMm: 0.8, kerfMm: 0.2, bleedMm: 1.5, numImages: 3, seedLocked: true, seed: 555, recipeEdited: false, recipeText: "",
     });
   });
@@ -662,7 +739,7 @@ describe("the words on a card", () => {
     expect(vectorMeta(run, "8s").at(-1)).toBe("8s");
     const shape = makeVectorRun({ options: { ...run.options, layers_by: "shape", arrangement: "stacked", num_images: 3, width_mm: 600, height_mm: 307.5 } });
     expect(vectorMeta(shape, null)).toEqual(["600 × 307.5 mm", "4 colours", "flat colour art", "layers by shape", "seeds 1234–1236"]);
-    expect(vectorMeta(makeVectorRun({ options: { ...run.options, arrangement: "stacked" } }), null)[3]).toBe("layers by colour, stacked");
+    expect(vectorMeta(makeVectorRun({ options: { ...run.options, arrangement: "stacked" } }), null)[3]).toBe("layers by colour, stacked (depth)");
     expect(vectorSeedText(run)).toBe("seed 1234");
     expect(vectorSeedText(makeVectorRun({ options: { ...run.options, num_images: 2 } }))).toBe("seeds 1234–1235"); // two versions are already a range
   });

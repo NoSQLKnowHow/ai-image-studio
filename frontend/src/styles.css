@@ -657,15 +657,61 @@ fieldset.field { gap: 8px; }
   .vector-size, .vector-settings, .vector-more-body { grid-template-columns: minmax(0, 1fr); }
 }
 
-/* the card: a version is the preview beside what the check found, and on a phone the preview above it */
-.vector-card { grid-template-columns: minmax(0, 1fr); }
-.vectors { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
-.vector-item { display: grid; grid-template-columns: minmax(0, 240px) minmax(0, 1fr); gap: 14px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); align-items: start; }
-@media (max-width: 640px) { .vector-item { grid-template-columns: minmax(0, 1fr); } }
-/* white behind the preview whatever the theme: white is the material, and a transparent PNG of black shapes would vanish on a dark page */
-.vector-preview { background: #fff; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); overflow: hidden; }
-.vector-preview img { width: 100%; height: auto; object-fit: contain; }
-.vector-details { display: grid; gap: 8px; min-width: 0; }
+/* the card (DESIGN.md §35.2): as an Images card is, the grid of previews at the left and the run at the right; a preview is a button that opens the viewer */
+.vector-media { align-items: start; }
+.vector-media.grid-1 { grid-template-columns: 1fr; }
+.vector-media.grid-2 { aspect-ratio: auto; }
+/* white behind a preview whatever the theme: white is the material, and a transparent PNG of black shapes would vanish on a dark page */
+.vector-thumb { background: #fff; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); cursor: zoom-in; display: block; }
+.vector-thumb img { width: 100%; height: auto; object-fit: contain; display: block; }
+.vector-thumb:hover img { transform: none; }
+/* the version's place in a corner, and under it how many layers it has */
+.vt-number { position: absolute; left: 4px; top: 4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+.vt-layers { position: absolute; left: 0; right: 0; bottom: 0; padding: 2px 6px; background: rgb(255 255 255 / 85%); color: #333; font-size: 11px; text-align: center; font-variant-numeric: tabular-nums; }
+.vector-lone { display: grid; gap: 8px; min-width: 0; }
+.binned-thumb.vector-binned-thumb { background: #fff; }
+.binned-thumb.vector-binned-thumb img { object-fit: contain; }
+
+/* the viewer (DESIGN.md §35.2): the drawing beside the vector, then what the clean-up found, the downloads and the stack view; it scrolls inside the dialog */
+.vector-viewer { grid-template-rows: auto minmax(0, 1fr); }
+.vv-scroll { overflow-y: auto; padding: 0 16px 24px; min-height: 0; }
+.vv-body { display: grid; gap: 16px; max-width: 1100px; margin: 0 auto; }
+.vv-pictures { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+@media (max-width: 760px) { .vv-pictures { grid-template-columns: minmax(0, 1fr); } }
+.vv-panel { margin: 0; display: grid; gap: 6px; justify-items: start; min-width: 0; }
+.vv-heading { font-size: 14px; font-weight: 650; margin: 0; }
+.vv-frame { width: 100%; max-height: 70vh; background: rgb(255 255 255 / 6%); border: 1px solid rgb(255 255 255 / 25%); border-radius: var(--radius-sm); overflow: hidden; display: grid; place-items: center; }
+.vv-frame.white { background: #fff; }
+.vv-frame img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.vv-missing { margin: 0; padding: 24px 12px; text-align: center; color: #d6d6de; font-size: 14px; }
+.vv-caption { margin: 0; font-size: 13px; color: #c9c9d2; font-variant-numeric: tabular-nums; }
+.vv-details { display: grid; gap: 8px; min-width: 0; }
+.vector-viewer .vector-colours, .vector-viewer .vector-feature { color: #d6d6de; }
+.vector-viewer .vector-notes { color: #d6d6de; }
+.vector-viewer .vector-layers-wrap { background: rgb(255 255 255 / 8%); border-color: rgb(255 255 255 / 25%); }
+.vector-viewer .vector-layers th, .vector-viewer .vector-layers td { border-bottom-color: rgb(255 255 255 / 18%); color: #f3f3f6; }
+.vector-viewer .vector-layers thead th, .vector-viewer .layer-colour { color: #b9b9c4; }
+.vector-viewer .button { color: #f3f3f6; }
+.vector-viewer .field-hint { color: #b9b9c4; }
+.vector-viewer .field > label { color: #f3f3f6; }
+.vector-viewer .vector-png .vector-png-row input[type="number"] { background: rgb(255 255 255 / 10%); color: #f3f3f6; }
+
+/* the stack view: the sheets one above another in depth, back to front (DESIGN.md §35.2). Each is offset up and to the right by one step more than the one behind it,
+   and the stage has room for all of them; a phone uses a smaller step */
+.stack-view { display: grid; gap: 8px; }
+.stack-stage { padding-top: calc(var(--sheets, 3) * var(--step, 12px)); padding-right: calc(var(--sheets, 3) * var(--step, 12px)); max-width: 560px; }
+@media (max-width: 520px) { .stack-stage { --step: 7px; } }
+.stack-frame { position: relative; width: 100%; }
+.stack-sheet { position: absolute; inset: 0; background: rgb(255 255 255 / 92%); border: 1px solid rgb(0 0 0 / 35%); border-radius: 2px; box-shadow: 0 2px 8px rgb(0 0 0 / 45%); transition: opacity 0.15s; }
+.stack-sheet img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.stack-control { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.stack-control input[type="range"] { flex: 1 1 200px; min-width: 140px; }
+.stack-control output { font-variant-numeric: tabular-nums; min-width: 4.5em; }
+.stack-captions { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 13px; }
+.stack-captions li { display: flex; align-items: center; gap: 8px; }
+.stack-captions li.hidden-sheet { opacity: 0.45; text-decoration: line-through; }
+@media (max-width: 520px) { .stack-control input[type="range"] { flex-basis: 100%; } }
+
 .vector-summary { font-size: 14px; font-variant-numeric: tabular-nums; }
 .vector-colours, .vector-feature { font-size: 13px; color: var(--text-2); }
 .vector-layers-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }

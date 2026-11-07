@@ -89,6 +89,11 @@ class Storage:
         """Where a vector run keeps its drawings and what was made of them (DESIGN.md §31.12.6)."""
         return self.vector / check_id(run_id)
 
+    def drawing_path(self, run_id: str, idx: int) -> Path:
+        """The drawing the image model made for one version of a vector run: `<idx>-source.png` in the run's vector folder (DESIGN.md §31.12.5). It has no
+        column in the database, so everything that needs it, the route that serves it and the removal of a version's files, finds it here."""
+        return self.vector_dir(run_id) / f"{int(idx)}-source.png"
+
     def rel(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root).as_posix()
 
@@ -175,6 +180,12 @@ class Storage:
     def delete_track_file(self, path_rel: str) -> None:
         """The file of one track (DESIGN.md §33.3); the run's folder stays."""
         self.abs(path_rel).unlink(missing_ok=True)
+
+    def delete_vector_files(self, run_id: str, idx: int, svg_rel: str, zip_rel: str, png_rel: str) -> None:
+        """The four files of one version of a vector run, and nothing else of its run (DESIGN.md §35.3 item 2): the combined SVG, the ZIP of layers, the
+        PNG preview and the model's drawing. The run's folder stays. A file that is not there is not an error."""
+        for path in (self.abs(svg_rel), self.abs(zip_rel), self.abs(png_rel), self.drawing_path(run_id, idx)):
+            path.unlink(missing_ok=True)
 
     def delete_staged_files(self, upload_id: str) -> None:
         check_id(upload_id)

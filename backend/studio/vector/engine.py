@@ -107,6 +107,19 @@ def _order(layers: list[_Layer]) -> list[_Layer]:
     return sorted(layers, key=lambda layer: (-round(layer.geometry.area, 6), layer.ink.lightness, layer.ink.index))
 
 
+def _stack_sorted(layers: list[_Layer], stack_order: str, palette: tuple[str, ...]) -> list[_Layer]:
+    """The order of a stacked run's layers, back sheet first (DESIGN.md §35.3 item 11). `layers` comes in largest ink area first, which is
+    `area_desc` and is returned as it is; `area_asc` is that reversed (the least ink at the back); `palette` puts the form's inks first, in the
+    order the form lists them, and then the inks the picture chose, still biggest first (a stable sort keeps their order). The sheets hold the same
+    shapes whatever the order: only which colour stands 1 high and which stands highest changes."""
+    if stack_order == "area_asc":
+        return list(reversed(layers))
+    if stack_order == "palette":
+        position = {colour: n for n, colour in enumerate(palette)}
+        return sorted(layers, key=lambda layer: position.get(layer.ink.palette, len(position)))
+    return layers
+
+
 def _name(number: int, label: str) -> tuple[str, str]:
     """(id, name) of a layer: `layer-2-red`, `Layer 2 (red)` (§31.12.3 item 3, the test sheet's convention)."""
     return f"layer-{number}-{label}", f"Layer {number} ({label})"
@@ -194,7 +207,9 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
         candidates = [(f"piece-{n}", SHAPE_COLOURS[n - 1], item[0].ink.picture, item[1]) for n, item in enumerate(pieces, start=1)]
     else:
         arrangement = opts.arrangement
-        _assign_colours(layers)
+        _assign_colours(layers)  # before the reordering, so that the order chosen can never change a layer's colour
+        if arrangement == "stacked":
+            layers = _stack_sorted(layers, opts.stack_order, opts.palette)
         candidates = [(colour_name(layer.colour), layer.colour, layer.ink.picture, layer.geometry) for layer in layers]
     # each candidate is (name word, layer colour, the picture's colour, shapes)
     geometries = _arrange([candidate[3] for candidate in candidates], arrangement, float(opts.bleed_mm), float(opts.kerf_mm), width, height, eps)
@@ -211,8 +226,9 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
         layer_id, name = _name(number, label)
         svg_layers.append(svgio.SvgLayer(number=number, id=layer_id, name=name, colour=colour, shapes=tuple(shapes)))
         kept_geometries.append(geometry)
+        # `height` is how many sheets high this colour stands: its number when stacked (the back sheet is 1), and 1 when each layer holds only its own colour
         check_layers.append({"index": number, "id": layer_id, "name": name, "colour": colour, "picture_colour": picture, "paths": len(shapes),
-                             "length_mm": round(sum(shape.length_mm for shape in shapes), 1)})
+                             "length_mm": round(sum(shape.length_mm for shape in shapes), 1), "height": number if arrangement == "stacked" else 1})
     if not svg_layers:
         raise VectorError("Nothing is left to cut.", "Lower the smallest feature, or make a bolder drawing with larger shapes.")
 
@@ -237,6 +253,7 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
         "size_mm": [width, height],
         "layers_by": opts.layers_by,
         "arrangement": arrangement,
+        "stack_order": opts.stack_order if arrangement == "stacked" else None,  # the choice only counts when stacked by colour (`arrangement` is side by side by shape)
         "svg_bytes": len(svg.encode("utf-8")),
         "layers": check_layers,
         "smallest_feature_mm": round(smallest, 2),

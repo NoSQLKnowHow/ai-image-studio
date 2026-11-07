@@ -272,12 +272,13 @@ class JobManager:
         images, inputs, tracks = self.db.images_for_runs(ids), self.db.inputs_for_runs(ids), self.db.tracks_for_runs(ids)
         vectors = self.db.vectors_for_runs(ids)
         binned_images, binned_tracks = self.db.binned_images_for_runs(ids), self.db.binned_tracks_for_runs(ids)  # the pictures in the bin (§33.3)
+        binned_vectors = self.db.binned_vectors_for_runs(ids)  # and the versions (§35.4)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *binned_images[run_id], *inputs[run_id])])
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
                         r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r),
-                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]])
+                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]], binned_vectors[r["id"]])
             for r in rows
         ]
 
@@ -678,7 +679,7 @@ class JobManager:
             removed += len(ids)
         return removed
 
-    # ------------------------------------------------------------ a single picture or track in the bin (DESIGN.md §33)
+    # ------------------------------------------------------------ a single picture, track or version in the bin (DESIGN.md §33, §35)
     def _busy(self, kind: str, item_id: str) -> bool:
         """Whether Make 4K or Enlarge is working on this picture, or has it waiting (§33.2 item 4): the copy being written would be left behind.
         Only a result picture can be, and only if it exists; any other id is not busy, and the database says what is wrong with it."""
@@ -690,7 +691,7 @@ class JobManager:
     @staticmethod
     def _picture_error(result: str, kind: str, item_id: str) -> Exception:
         """The exception for a refusal of the database (`db.bin_picture` and its neighbours), with the words the page shows."""
-        what = "picture" if kind == "image" else "track"
+        what = {"image": "picture", "track": "track", "vector": "version"}[kind]
         if result == "not_found":
             return ImageNotFound(item_id)
         words = {
@@ -702,7 +703,7 @@ class JobManager:
         return PictureConflict("run_not_finished" if result == "not_finished" else result, words[result])
 
     async def bin_picture(self, kind: str, item_id: str) -> tuple[str, dict[str, Any]]:
-        """Send a result picture (`kind` "image") or a track ("track") to the bin; its last one sends the run instead. Returns ("picture" or
+        """Send a result picture (`kind` "image"), a track ("track") or a version of a Vector run ("vector") to the bin; its last one sends the run instead. Returns ("picture" or
         "run", the updated run). Raises ImageNotFound or PictureConflict."""
         if self._busy(kind, item_id):
             raise PictureConflict("image_busy", "Make 4K or Enlarge is working on this picture. Try again when it has finished.")
@@ -712,7 +713,8 @@ class JobManager:
         self._publish_run(run_id)
         payload = self.payload(run_id)
         assert payload is not None  # the run was in the database a moment ago, and only this process deletes
-        return result, payload
+        # the page is told what moved in its own words: a version of a Vector run is "version" (DESIGN.md §35.4), a picture or a track "picture"
+        return ("version" if kind == "vector" and result == "picture" else result), payload
 
     async def restore_picture(self, kind: str, item_id: str) -> dict[str, Any]:
         """Take a picture or track out of the bin, back into its run at its own place. Returns the updated run."""
@@ -747,6 +749,8 @@ class JobManager:
         try:
             if kind == "image":
                 self.storage.delete_picture_files(row["path"], row["thumb_path"])
+            elif kind == "vector":
+                self.storage.delete_vector_files(row["run_id"], row["idx"], row["svg_path"], row["zip_path"], row["png_path"])
             else:
                 self.storage.delete_track_file(row["path"])
         except (OSError, StorageError):
@@ -997,6 +1001,7 @@ class JobManager:
         clean_up = vector_mod.VectorOptions(
             colours=options["colours"], palette=tuple(options["palette"]), kind=options["kind"], width_mm=options["width_mm"],
             height_mm=options["height_mm"], layers_by=options["layers_by"], arrangement=options["arrangement"], bleed_mm=options["bleed_mm"],
+            stack_order=options.get("stack_order", vector_mod.STACK_ORDER_DEFAULT),  # a run made in 1.17 stored none
             min_feature_mm=options["min_feature_mm"], kerf_mm=options["kerf_mm"])
         problems: list[tuple[str, Optional[str]]] = []  # (message, hint) for each version that is missing, with its number in the message
         made = 0
@@ -1016,7 +1021,8 @@ class JobManager:
                 made += 1
                 self._publish_run(run_id)
             else:
-                problems.append((f"Version {idx + 1} could not be made: {result.message}", result.hint))
+                # named by its seed, not its place: a place changes when another version is deleted, a seed never does (DESIGN.md §35.3 item 8)
+                problems.append((f"The version with seed {seed} could not be made: {result.message}", result.hint))
         # what the card says about the versions that are missing: all of them in one text, and the first hint there is
         message = " ".join(text for text, _ in problems) or None
         hint = next((hint for _, hint in problems if hint), None)

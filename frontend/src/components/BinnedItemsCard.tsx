@@ -1,28 +1,32 @@
 import { binNote, runMadeText } from "../format";
 import { clock } from "../music";
-import type { BinnedImage, BinnedTrack, Run } from "../types";
+import type { BinnedImage, BinnedTrack, BinnedVectorItem, Run } from "../types";
+import { binnedVersionName, layersCount, mmText } from "../vector";
 import { FolderIcon, RestoreIcon, TrashIcon } from "./icons";
 
-// The card the Deleted view shows for a run that is still in the history but has pictures (or tracks) of its own in the bin (DESIGN.md §33.1): one card
+// The card the Deleted view shows for a run that is still in the history but has pictures, tracks or versions of its own in the bin (DESIGN.md §33.1, §35.2): one card
 // for the run, however many of its pictures were deleted, with each deleted picture listed under it. A run that is itself in the bin is an ordinary card
 // in the bin (§30.1) and does not use this one: it lists the pictures it has, and not the ones deleted before it (§33.2 item 5).
 
-/** What the card hands back to the page: open a deleted picture to look at it, put one back, or delete one for good. The page asks before the last. */
+type BinnedItem = BinnedImage | BinnedTrack | BinnedVectorItem;
+
+/** What the card hands back to the page: open a deleted picture or version to look at it, put one back, or delete one for good. The page asks before the last. */
 export interface BinnedItemHandlers {
-  onOpen: (run: Run, index: number) => void; // the viewer, read-only, on the run's deleted pictures; `index` is the place in that list
-  onRestore: (run: Run, item: BinnedImage | BinnedTrack) => void;
-  onDeleteForever: (run: Run, item: BinnedImage | BinnedTrack) => void;
+  onOpen: (run: Run, index: number) => void; // the viewer, read-only, on the run's deleted pictures or versions; `index` is the place in that list
+  onRestore: (run: Run, item: BinnedItem) => void;
+  onDeleteForever: (run: Run, item: BinnedItem) => void;
 }
 
-/** One deleted picture or track and how the card names it: its own place in the run when it was made (it goes back there), and its seed. */
-function name(run: Run, item: BinnedImage | BinnedTrack): string {
-  return `${run.mode === "music" ? "Version" : "Image"} ${item.idx + 1} · seed ${item.seed}`;
+/** One deleted picture, track or version and how the card names it: its own place in the run when it was made (it goes back there), and its seed. */
+function name(run: Run, item: BinnedItem): string {
+  return run.mode === "vector" ? binnedVersionName(item as BinnedVectorItem) : `${run.mode === "music" ? "Version" : "Image"} ${item.idx + 1} · seed ${item.seed}`;
 }
 
 export function BinnedItemsCard({ run, now, projectName, handlers }: { run: Run; now: number; projectName: string | null; handlers: BinnedItemHandlers }) {
   const music = run.mode === "music";
-  const items: (BinnedImage | BinnedTrack)[] = music ? run.binned_tracks : run.binned_images;
-  const noun = music ? "track" : "picture";
+  const vector = run.mode === "vector";
+  const items: BinnedItem[] = music ? run.binned_tracks : vector ? run.binned_vectors : run.binned_images;
+  const noun = music ? "track" : vector ? "version" : "picture";
   return (
     <article className="run-card binned-items" data-run-id={run.id} data-card="binned-items"
       aria-label={`Deleted ${noun}${items.length === 1 ? "" : "s"} of: ${run.prompt.slice(0, 80)}`}>
@@ -41,16 +45,23 @@ export function BinnedItemsCard({ run, now, projectName, handlers }: { run: Run;
               <li key={item.id} className="binned-item" data-item-id={item.id}>
                 {music ? (
                   // a track is listened to where it is: the file is still there, and a player needs nothing of the run
-                  <audio controls preload="none" src={item.url} aria-label={`Play: ${label}`} />
+                  <audio controls preload="none" src={(item as BinnedTrack).url} aria-label={`Play: ${label}`} />
+                ) : vector ? (
+                  // a version's preview opens it in the viewer, read-only: its files are still there (§35.2). White behind it: white is the material
+                  <button type="button" className="binned-thumb vector-binned-thumb" data-action="open-deleted" aria-label={`Open ${label}`} onClick={() => handlers.onOpen(run, index)}>
+                    <img src={(item as BinnedVectorItem).preview_url} alt="" loading="lazy" />
+                  </button>
                 ) : (
                   // a picture's thumbnail opens it in the viewer, read-only (§33.1)
                   <button type="button" className="binned-thumb" data-action="open-deleted" aria-label={`Open ${label}`} onClick={() => handlers.onOpen(run, index)}>
-                    <img src={(item as BinnedImage).thumb_url ?? item.url} alt="" loading="lazy" />
+                    <img src={(item as BinnedImage).thumb_url ?? (item as BinnedImage).url} alt="" loading="lazy" />
                   </button>
                 )}
                 <div className="binned-text">
                   <strong>{label}</strong>
-                  <span>{music ? clock((item as BinnedTrack).seconds) : `${(item as BinnedImage).width}×${(item as BinnedImage).height}`}</span>
+                  <span>{music ? clock((item as BinnedTrack).seconds)
+                    : vector ? `${mmText((item as BinnedVectorItem).width_mm)} × ${mmText((item as BinnedVectorItem).height_mm)} mm · ${layersCount((item as BinnedVectorItem).layers)}`
+                    : `${(item as BinnedImage).width}×${(item as BinnedImage).height}`}</span>
                   {/* since when it is in the bin, and until when */}
                   <p className="run-note" data-note="in-bin">{binNote(item, now)}</p>
                 </div>

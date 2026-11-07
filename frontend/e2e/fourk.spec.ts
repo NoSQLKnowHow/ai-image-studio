@@ -417,7 +417,7 @@ test("a file that is not a picture is refused in words", async ({ page }) => {
   await expect(page.getByRole("alert").filter({ hasText: "Couldn't upscale notes.png: That isn't a PNG, JPEG or WebP image." })).toBeVisible();
 });
 
-test("while it works the button says so and a second file is ignored", async ({ page }) => {
+test("while it works the button says so and a second file is ignored, in words", async ({ page }) => {
   await page.goto("/");
   let posts = 0;
   await page.route("**/api/upscale*", async (route) => {
@@ -430,6 +430,7 @@ test("while it works the button says so and a second file is ignored", async ({ 
   await expect(upscaleButton(page)).toHaveText("Upscaling…");
   await expect(upscaleButton(page)).toHaveAttribute("aria-disabled", "true");
   await fileInput(page).setInputFiles(pic("second.png", 1920, 1080)); // while the first is still being made
+  await expect(page.getByRole("status").filter({ hasText: "Still upscaling the last picture." })).toBeVisible(); // DESIGN.md §36.2
   await downloading;
   await expect(upscaleButton(page)).toHaveText("Upscale a picture…");
   expect(posts).toBe(1);

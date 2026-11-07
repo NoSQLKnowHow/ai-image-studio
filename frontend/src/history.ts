@@ -54,14 +54,15 @@ export function filterParams(filter: HistoryFilter): Record<string, string> {
   };
 }
 
-/** Whether a run has a picture or a track of its own in the bin while it is itself in the history (DESIGN.md §33.1). A Vector run never has: its
- *  `binned_images` and `binned_tracks` are empty lists, so the rule below gives the right answer for it without a case of its own. */
-export const hasItemsInTheBin = (run: Pick<Run, "binned_images" | "binned_tracks">): boolean => run.binned_images.length > 0 || run.binned_tracks.length > 0;
+/** Whether a run has a picture, a track or a version of its own in the bin while it is itself in the history (DESIGN.md §33.1, §35.4). Each kind of run has
+ *  only its own, the other lists being empty, so the rule needs no case for the kind. */
+export const hasItemsInTheBin = (run: Pick<Run, "binned_images" | "binned_tracks" | "binned_vectors">): boolean =>
+  run.binned_images.length > 0 || run.binned_tracks.length > 0 || run.binned_vectors.length > 0;
 
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
-export function matches(run: Pick<Run, "pinned" | "deleted_at" | "project_id" | "binned_images" | "binned_tracks">, filter: HistoryFilter): boolean {
+export function matches(run: Pick<Run, "pinned" | "deleted_at" | "project_id" | "binned_images" | "binned_tracks" | "binned_vectors">, filter: HistoryFilter): boolean {
   // The history (`deleted: false`) is every run that is not in the bin, whatever it has in the bin. The Deleted view (`true`) is every run that is
-  // in the bin AND every run that has a picture or a track in it (§33.3): a run is in the bin exactly when it has a `deleted_at`. Either field
+  // in the bin AND every run that has a picture, a track or a version in it (§33.3, §35.4): a run is in the bin exactly when it has a `deleted_at`. Either field
   // set to null means "either".
   const keptOk = filter.kept === null || run.pinned === filter.kept;
   const inTheDeletedView = run.deleted_at !== null || hasItemsInTheBin(run);
@@ -188,13 +189,13 @@ export function watchWorking(watched: ReadonlySet<string>, runs: Record<string, 
 }
 
 /** The counts the server keeps (`GET /api/runs/counts`): per tab, how many runs there are and how many are kept. `deleted` counts THINGS in the
- *  bin (DESIGN.md §33.1): each run in it, and each picture or track in it of a run that is still in the history; `deleted_items` is the second part
+ *  bin (DESIGN.md §33.1): each run in it, and each picture, track or version in it of a run that is still in the history; `deleted_items` is the second part
  *  alone, so a page can say "3 runs and 2 pictures". */
 export interface TabCounts { all: number; kept: number; deleted: number; deleted_items: number }
 export interface Counts {
   image: TabCounts;
   music: TabCounts;
-  vector: TabCounts; // a Vector run is binned whole, so its `deleted_items` is always 0 (DESIGN.md §31.12.6)
+  vector: TabCounts; // its `deleted_items` counts versions in the bin (DESIGN.md §35.4)
 }
 
 /** The three tabs, in the order the page shows them: the keys of `Counts`, and what a tab is called when the page asks the server about it. */

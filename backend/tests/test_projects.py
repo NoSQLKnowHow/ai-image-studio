@@ -516,10 +516,11 @@ def test_the_daily_clean_up_leaves_a_filed_run_alone(seeded, client_factory):
 
 
 # ------------------------------------------------------------------ schema 5
-# The current schema is 7 (1.17's mode 'vector' and the vectors table; 1.15 made it 6, images.deleted_at and tracks.deleted_at; 1.14 made it 5, the
-# projects table and runs.project_id). When the next release changes it, this is the line to move.
-def test_the_schema_is_7():
-    assert SCHEMA_VERSION == 7
+# The current schema is 8 (1.18's vectors.deleted_at, which lets one version of a Vector run go to the bin; 1.17 made it 7, the mode 'vector' and the vectors
+# table; 1.15 made it 6, images.deleted_at and tracks.deleted_at; 1.14 made it 5, the projects table and runs.project_id). When the next release changes it,
+# this is the line to move.
+def test_the_schema_is_8():
+    assert SCHEMA_VERSION == 8
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:

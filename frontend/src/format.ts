@@ -119,8 +119,17 @@ export const WORKING_IN_PROJECT_NOTE = "Shown while it works. It stays in this v
 export const workingNote = (scope: ViewScope): string => (scope === "kept" ? WORKING_IN_KEPT_NOTE : WORKING_IN_PROJECT_NOTE);
 
 /** The toast after a run was moved to the bin (DESIGN.md §30.1). */
-export function binnedText(run: { prompt: string }, binDays: number): string {
-  return `Deleted “${shorten(run.prompt)}”. It stays in Deleted for ${binDays} ${binDays === 1 ? "day" : "days"}.`;
+export function binnedText(run: { prompt: string; mode?: string; vectors?: readonly unknown[] }, binDays: number): string {
+  // a Vector run with several versions says how many go with it (DESIGN.md §35.2): Delete on the run is the whole run, and that was a surprise before
+  const versions = run.mode === "vector" ? run.vectors?.length ?? 0 : 0;
+  const and = versions > 1 ? ` and its ${versions} versions` : "";
+  return `Deleted “${shorten(run.prompt)}”${and}. It stays in Deleted for ${binDays} ${binDays === 1 ? "day" : "days"}.`;
+}
+
+/** The tooltip of a Vector card's Delete button (§35.2): with several versions it says that all of them go. */
+export function deleteRunTitle(run: { mode: string; vectors?: readonly unknown[] }): string {
+  const versions = run.mode === "vector" ? run.vectors?.length ?? 0 : 0;
+  return versions > 1 ? `Delete this run and all ${versions} versions` : "Delete this run and its files";
 }
 
 /** The toast after a restore (§30.4): a kept run is still kept; any other has a fresh clock, so it says how long that is. */
@@ -162,56 +171,57 @@ export function binNote(
   return `${since} It will be deleted for good around ${day(run.purge_at as string)}, in ${days} ${days === 1 ? "day" : "days"}.`;
 }
 
-/** What a bin holds, as it is said: runs, and the pictures and tracks of runs that stay (DESIGN.md §33.1). */
+/** What a bin holds, as it is said: runs, and the pictures, tracks and versions of runs that stay (DESIGN.md §33.1, §35.2). */
 interface Things {
   runs: number;
   pictures: number;
   tracks: number;
+  versions?: number;
 }
 
 /** "1 run, 2 pictures and 1 track": what there is, leaving out what there is none of, singular where there is one. */
-function thingsText({ runs, pictures, tracks }: Things): string {
+function thingsText({ runs, pictures, tracks, versions = 0 }: Things): string {
   const parts = [
     runs ? `${runs} ${runs === 1 ? "run" : "runs"}` : "",
     pictures ? `${pictures} ${pictures === 1 ? "picture" : "pictures"}` : "",
     tracks ? `${tracks} ${tracks === 1 ? "track" : "tracks"}` : "",
+    versions ? `${versions} ${versions === 1 ? "version" : "versions"}` : "",
   ].filter(Boolean);
   return parts.length < 2 ? (parts[0] ?? "") : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
 }
 
-/** The toast after the bin was emptied (§30.1, §33.1): how many runs, and how many pictures and tracks of runs that stay (`items` is the server's total of
- *  the two; `kinds` is how many of each there were before, from the counts, so the toast can say which). With none of the second kind it is the sentence
- *  it always was. */
-export function emptiedText(runs: number, items = 0, kinds?: { pictures: number; tracks: number }): string {
+/** The toast after the bin was emptied (§30.1, §33.1, §35.2): how many runs, and how many pictures, tracks and versions of runs that stay (`items` is the
+ *  server's total of the three; `kinds` is how many of each there were before, from the counts, so the toast can say which). With none of the second kind
+ *  it is the sentence it always was. */
+export function emptiedText(runs: number, items = 0, kinds?: { pictures: number; tracks: number; versions?: number }): string {
   if (runs === 0 && items === 0) return "The bin was already empty.";
   // the counts and the answer can differ if something changed in between: then all that is certain is the answer's total, and it is called pictures
-  const known = kinds && kinds.pictures + kinds.tracks === items ? kinds : { pictures: items, tracks: 0 };
+  const known = kinds && kinds.pictures + kinds.tracks + (kinds.versions ?? 0) === items ? kinds : { pictures: items, tracks: 0, versions: 0 };
   return `Emptied the bin: ${thingsText({ runs, ...known })} deleted for good.`;
 }
 
-/** What is in the bin, per tab: how many runs, and how many pictures (Images) or tracks (Music) of runs that are still in the history. Made from the
- *  server's counts, whose `deleted` is the two added together (§33.1). A Vector run is binned whole and has no per-item bin (§31.12.6), so the Vector
- *  tab's `items` is 0 by construction and all of its `deleted` are runs. */
+/** What is in the bin, per tab: how many runs, and how many pictures (Images), tracks (Music) or versions (Vector) of runs that are still in the history.
+ *  Made from the server's counts, whose `deleted` is the two added together (§33.1, §35.2). */
 export interface BinTab { runs: number; items: number }
-export interface BinContents { image: BinTab; music: BinTab; vector?: BinTab } // `vector` missing means none of its runs are in the bin
-export function binContents(counts: { image: { deleted: number; deleted_items: number }; music: { deleted: number; deleted_items: number }; vector?: { deleted: number } }): BinContents {
-  const tab = (c: { deleted: number; deleted_items: number }): BinTab => ({ runs: c.deleted - c.deleted_items, items: c.deleted_items });
-  return { image: tab(counts.image), music: tab(counts.music), vector: { runs: counts.vector?.deleted ?? 0, items: 0 } };
+export interface BinContents { image: BinTab; music: BinTab; vector?: BinTab } // `vector` missing means nothing of its is in the bin
+export function binContents(counts: { image: { deleted: number; deleted_items: number }; music: { deleted: number; deleted_items: number }; vector?: { deleted: number; deleted_items?: number } }): BinContents {
+  const tab = (c: { deleted: number; deleted_items?: number }): BinTab => ({ runs: c.deleted - (c.deleted_items ?? 0), items: c.deleted_items ?? 0 });
+  return { image: tab(counts.image), music: tab(counts.music), vector: tab(counts.vector ?? { deleted: 0, deleted_items: 0 }) };
 }
 
-/** The question Empty bin asks (§30.1, §33.1): how many runs, pictures and tracks go, and how many on each tab, so that it is concrete. With only runs in
- *  the bin it is the question it was before a picture could be deleted alone. */
+/** The question Empty bin asks (§30.1, §33.1, §35.2): how many runs, pictures, tracks and versions go, and how many on each tab, so that it is concrete. With
+ *  only runs in the bin it is the question it was before a picture could be deleted alone. */
 export function emptyBinQuestion(bin: BinContents, wholeBin: boolean): string {
   const vector = bin.vector ?? { runs: 0, items: 0 };
-  const items = bin.image.items + bin.music.items; // a Vector run has no items of its own in the bin
-  const what = thingsText({ runs: bin.image.runs + bin.music.runs + vector.runs, pictures: bin.image.items, tracks: bin.music.items });
+  const items = bin.image.items + bin.music.items + vector.items;
+  const what = thingsText({ runs: bin.image.runs + bin.music.runs + vector.runs, pictures: bin.image.items, tracks: bin.music.items, versions: vector.items });
   // how many are on each tab: just the numbers when it is only runs (as ever), else each tab's runs and pictures or tracks, since "3 on Images" would not say of what
   const onTab = (tab: BinTab, name: string, things: (tab: BinTab) => Things): string =>
     !tab.runs && !tab.items ? "" : items === 0 ? `${tab.runs} on ${name}` : `${thingsText(things(tab))} on ${name}`;
   const parts = [
     onTab(bin.image, "Images", (tab) => ({ runs: tab.runs, pictures: tab.items, tracks: 0 })),
     onTab(bin.music, "Music", (tab) => ({ runs: tab.runs, pictures: 0, tracks: tab.items })),
-    onTab(vector, "Vector", (tab) => ({ runs: tab.runs, pictures: 0, tracks: 0 })),
+    onTab(vector, "Vector", (tab) => ({ runs: tab.runs, pictures: 0, tracks: 0, versions: tab.items })),
   ].filter(Boolean).join(", ");
   const text = `Delete ${what} for good${parts ? ` (${parts})` : ""}, with their files. This can't be undone.`;
   // with a project chosen, the bar on screen shows only that project's part of the bin: say that the whole bin goes
@@ -219,16 +229,16 @@ export function emptyBinQuestion(bin: BinContents, wholeBin: boolean): string {
 }
 
 // ------------------------------------------------------------------ one picture or track in the bin (DESIGN.md §33)
-/** A picture or track of a run as the words about deleting it name it: which one among the run's pictures that are not in the bin, and its seed.
+/** A picture, track or version of a run as the words about deleting it name it: which one among the run's that are not in the bin, and its seed.
  *  `position` is null for one that is in the bin already (it has no place until it is restored). */
 export interface ItemRef {
-  kind: "image" | "track";
-  position: number | null; // 1-based, among the run's pictures (or tracks) that are not in the bin
+  kind: "image" | "track" | "vector";
+  position: number | null; // 1-based, among the run's pictures (or tracks, or versions) that are not in the bin
   of: number; // how many the run has that are not in the bin
   seed: number;
 }
 
-const itemNoun = (kind: ItemRef["kind"]): string => (kind === "image" ? "picture" : "track");
+const itemNoun = (kind: ItemRef["kind"]): string => (kind === "image" ? "picture" : kind === "vector" ? "version" : "track");
 const itemWhich = (kind: ItemRef["kind"]): string => (kind === "image" ? "image" : "version");
 
 /** "image 2 of 4, seed 1234" (a track: "version 2 of 3, seed 5"); a lone one, or one in the bin, is only its seed: "seed 1234". */
@@ -260,7 +270,7 @@ export function deleteItemQuestion(ask: DeleteItemAsk): string {
   const project = projectName === null ? "a project" : `the project “${projectName}”`;
   const days = `${binDays} ${binDays === 1 ? "day" : "days"}`;
   // what is removed from the disk: a picture has its thumbnail and its two kinds of 4K copy beside it (§33.2 item 2)
-  const files = picture ? "its file, its thumbnail and its 4K and Enlarge copies are" : "its file is";
+  const files = picture ? "its file, its thumbnail and its 4K and Enlarge copies are" : item.kind === "vector" ? "its SVG, its layers, its PNG and the drawing the model made are" : "its file is";
   if (forever) return `${lead} ${files.charAt(0).toUpperCase()}${files.slice(1)} removed from the Spark. This can't be undone.`;
   if (binDays > 0) {
     if (last) return `${lead} This is the last ${noun} of this run, so the whole run moves to Deleted and stays there for ${days}; you can restore it from there.${filed ? ` Restoring it puts it back in ${project}.` : ""}`;

@@ -15,6 +15,7 @@ import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
 import { VectorPanel } from "./components/VectorPanel";
+import { VectorViewer } from "./components/VectorViewer";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
 import {
   binContents, binnedText, emptiedText, filedText, itemBinnedText, itemDeletedText, itemRestoredText, leftTheViewText, movedText, restoredText, takenOutText,
@@ -22,6 +23,9 @@ import {
 } from "./format";
 import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withProject, working, type HistoryFilter, type TabKind } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
+import { PICTURES_ON_IMAGES_TAB, STILL_UPSCALING, takePictures } from "./paste";
+import { useCopyVectorSvg } from "./useCopyVectorSvg";
+import { usePicturePaste } from "./usePicturePaste";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
 import {
@@ -45,12 +49,23 @@ import {
 } from "./options";
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
-import { isImageRun, isMusicRun, isVectorRun, type BinnedImage, type BinnedTrack, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun, type Project, type Run } from "./types";
+import {
+  isImageRun, isMusicRun, isVectorRun, type BinnedImage, type BinnedTrack, type BinnedVectorItem, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun,
+  type Project, type Run,
+} from "./types";
+import { VECTOR_PNG_RANGE, pngRange } from "./vector";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
 import { viewerItems, viewerKnown } from "./viewer";
 
 const NO_PROJECTS: Project[] = []; // the list of projects before it has arrived: one array, so nothing re-renders for a new empty one
+// The three calls that send one picture, track or version to the bin, take it out again, and delete it for good (DESIGN.md §33.3, §35.4). One table, so that the
+// handlers below are the same for all three and a new kind of item is a new row.
+const ITEM_API = {
+  image: { bin: api.binPicture, restore: api.restorePicture, remove: api.deletePicture },
+  track: { bin: api.binTrack, restore: api.restoreTrack, remove: api.deleteTrack },
+  vector: { bin: api.binVector, restore: api.restoreVector, remove: api.deleteVector },
+} as const;
 const EMPTY_BIN: BinContents = { image: { runs: 0, items: 0 }, music: { runs: 0, items: 0 }, vector: { runs: 0, items: 0 } }; // what is in the bin before the counts have arrived
 
 function prefersReducedMotion(): boolean {
@@ -73,6 +88,12 @@ export default function App() {
   useEffect(() => {
     lightboxOpen.current = lightbox !== null;
   }, [lightbox]);
+  // The viewer of a Vector run's versions (DESIGN.md §35.2). `binned`: it is on the versions that are in the bin (the Deleted view), read-only, and its places are theirs.
+  const [vectorView, setVectorView] = useState<{ runId: string; index: number; notice?: ViewerNotice; binned?: boolean } | null>(null);
+  const vectorViewOpen = useRef(false);
+  useEffect(() => {
+    vectorViewOpen.current = vectorView !== null;
+  }, [vectorView]);
   const [pendingDelete, setPendingDelete] = useState<Run | null>(null);
   const [pendingEmptyBin, setPendingEmptyBin] = useState(false); // the "Empty the bin?" question is open (DESIGN.md §30.1)
   const [pendingCancel, setPendingCancel] = useState<Run | null>(null);
@@ -376,15 +397,35 @@ export default function App() {
     });
   };
 
-  /** Pictures dropped on the prompt card or pasted into the prompt. Generate has no use for them. */
+  /** Pictures dropped on the prompt card or pasted anywhere on the Images tab (DESIGN.md §36). In Edit they go to the tray; in Generate they are added and the
+   *  card becomes Edit, keeping the prompt, with a toast that offers Undo. The rules are in `takePictures`. */
   const handleFiles = (files: File[]) => {
-    if (!caps || !options || files.length === 0) return;
-    if (options.mode !== "edit") {
-      push("info", caps.modes.includes("edit") ? "Switch to Edit to work with pictures." : "Editing isn't available.");
+    if (!caps || !options) return;
+    takePictures(files, {
+      canEdit: caps.modes.includes("edit"), mode: options.mode === "edit" ? "edit" : "generate", trayCount: () => tray.items.length,
+      addFiles: tray.addFiles, note: tray.note, remove: tray.remove, push,
+      // the newest options, so that Undo, which runs later, does not put back what was there when the paste happened
+      setMode: (mode) => {
+        setOptions((current) => (current ? { ...current, mode } : current));
+        if (mode === "edit") setFormProblem(null);
+      },
+    });
+  };
+
+  /** Pictures for Upscale a picture… (chosen, dropped on it, or pasted while it has the focus): the first is used, and the person is told when there were more,
+   *  or when it is still busy with the last one (§36.2). */
+  const upscaleFiles = (files: File[]) => {
+    if (files.length === 0) return;
+    if (upscaling || inFlight.current.has("upscale-picture")) {
+      push("info", STILL_UPSCALING);
       return;
     }
-    tray.addFiles(files);
+    if (files.length > 1) push("info", `Upscaling the first picture only; the other ${files.length - 1} ${files.length === 2 ? "was" : "were"} left out.`);
+    void upscalePicture(files[0]);
   };
+
+  // One listener for pasted pictures on the whole page (§36.4): the prompt box, the bare page, a button, Upscale a picture… when it has the focus
+  usePicturePaste({ tab, ready: !!caps && !!options, onTray: handleFiles, onUpscale: upscaleFiles, onWrongTab: () => push("info", PICTURES_ON_IMAGES_TAB) });
 
   const applyStarter = () => {
     if (!options || prompt.trim()) return;
@@ -526,10 +567,21 @@ export default function App() {
   // ------------------------------------------------------------------ one picture or track in the bin (DESIGN.md §33)
   // Delete picture (in the viewer) and Delete track (on a track's row) ask first, then send ONE picture or track to the bin, or the whole run when it is the
   // run's last. A toast offers Undo, which is Restore. In the Deleted view a picture in the bin has Restore and Delete forever (which asks).
-  const askDeleteItem = (run: Run, kind: "image" | "track", item: { id: string; seed: number }, position: number, of: number) =>
+  const askDeleteItem = (run: Run, kind: ItemRef["kind"], item: { id: string; seed: number }, position: number, of: number) =>
     setPendingItem({ run, item: { kind, id: item.id, seed: item.seed, position, of }, last: of <= 1, forever: false });
-  const askDeleteItemForever = (run: Run, item: BinnedImage | BinnedTrack) =>
-    setPendingItem({ run, item: { kind: run.mode === "music" ? "track" : "image", id: item.id, seed: item.seed, position: null, of: 0 }, last: false, forever: true });
+  // what kind of item a run's deleted ones are: a Vector run's are versions, a music run's tracks, an image run's pictures
+  const itemKindOf = (run: Run): ItemRef["kind"] => (run.mode === "music" ? "track" : run.mode === "vector" ? "vector" : "image");
+  const askDeleteItemForever = (run: Run, item: BinnedImage | BinnedTrack | BinnedVectorItem) =>
+    setPendingItem({ run, item: { kind: itemKindOf(run), id: item.id, seed: item.seed, position: null, of: 0 }, last: false, forever: true });
+
+  // After a version left a Vector run, its viewer moves on in the same way: the next version takes its place in the list, so the same index shows it; at the end the
+  // index steps back to the last one. A run that left the history, or has no version left in it, closes the viewer (DESIGN.md §35.2).
+  const settleVectorViewer = (updated: Run | null) =>
+    setVectorView((current) => {
+      if (!current || current.binned || (updated !== null && current.runId !== updated.id)) return current;
+      const count = updated !== null && isVectorRun(updated) && updated.deleted_at === null ? updated.vectors.length : 0;
+      return count === 0 ? null : { ...current, index: Math.min(current.index, count - 1), notice: undefined };
+    });
 
   // After a picture left a run, the viewer on that run moves on: the next picture takes its place in the list, so the same index shows it; at the end the
   // index steps back to the last one. A run with nothing left to show closes the viewer (DESIGN.md §33.1).
@@ -541,8 +593,8 @@ export default function App() {
     });
 
   // what the person was told and what the request said can differ by the time it is answered: 404 (gone), 409 (the server says why in its words)
-  const itemProblem = (err: ApiError, what: string): { kind: "info" | "error"; text: string } =>
-    err.status === 404 ? { kind: "info", text: "That picture no longer exists." }
+  const itemProblem = (err: ApiError, what: string, kind: ItemRef["kind"] = "image"): { kind: "info" | "error"; text: string } =>
+    err.status === 404 ? { kind: "info", text: `That ${kind === "vector" ? "version" : "picture"} no longer exists.` }
       : err.status === 409 ? { kind: "info", text: err.message }
       : { kind: "error", text: `Couldn't ${what}: ${err.message}` };
 
@@ -553,32 +605,36 @@ export default function App() {
     const { run, item, forever } = ask;
     try {
       if (!forever && binDays > 0) {
-        const answer = await (item.kind === "image" ? api.binPicture(item.id) : api.binTrack(item.id));
+        const answer = await ITEM_API[item.kind].bin(item.id);
         dispatch({ type: "runUpsert", run: answer.run });
         if (answer.moved === "run") {
           // it was the run's last: the run is in the bin, there is nothing left to look at, and Undo restores the run
           setLightbox((current) => (current?.runId === run.id ? null : current));
+          setVectorView((current) => (current?.runId === run.id ? null : current));
           push("info", binnedText(run, binDays), { label: "Undo", run: () => void restore(answer.run, false) });
         } else {
           settleViewer(answer.run);
+          settleVectorViewer(answer.run);
           push("info", itemBinnedText(run, item, binDays), { label: "Undo", run: () => void restoreItem(item, false) });
         }
       } else {
         // with no bin, or from the bin: for good. The answer is nothing, so the run is read again to learn whether it went with its last picture
-        await (item.kind === "image" ? api.deletePicture(item.id) : api.deleteTrack(item.id));
+        await ITEM_API[item.kind].remove(item.id);
         try {
           const updated = await api.getRun(run.id);
           dispatch({ type: "runUpsert", run: updated });
           settleViewer(updated);
+          settleVectorViewer(updated);
         } catch (error) {
           if ((error as ApiError).status !== 404) throw error;
           dispatch({ type: "runDeleted", id: run.id });
           settleViewer(null);
+          settleVectorViewer(null);
         }
         push("info", itemDeletedText(run, item));
       }
     } catch (error) {
-      const problem = itemProblem(error as ApiError, "delete it");
+      const problem = itemProblem(error as ApiError, "delete it", item.kind);
       push(problem.kind, problem.text);
     }
   };
@@ -588,27 +644,34 @@ export default function App() {
   const restoreItem = (item: ItemRef & { id: string }, fromCard: boolean) =>
     once(`restore-item:${item.id}`, async () => {
       try {
-        const updated = await (item.kind === "image" ? api.restorePicture(item.id) : api.restoreTrack(item.id));
+        const updated = await ITEM_API[item.kind].restore(item.id);
         if (fromCard) refocus.current = true;
         dispatch({ type: "runUpsert", run: updated });
+        // a version restored while its deleted ones are being looked at: the list the viewer pages through has changed under it
+        setVectorView((current) => (current?.binned && current.runId === updated.id ? (isVectorRun(updated) && updated.binned_vectors.length ? { ...current, index: Math.min(current.index, updated.binned_vectors.length - 1) } : null) : current));
         // it is back at its own place: say which place that is now
-        const places: { id: string }[] = updated.mode === "music" ? updated.tracks : updated.images;
+        const places: { id: string }[] = updated.mode === "music" ? updated.tracks : updated.mode === "vector" ? updated.vectors : updated.images;
         const at = places.findIndex((place) => place.id === item.id);
         push("info", itemRestoredText(updated, { ...item, position: at >= 0 ? at + 1 : null, of: places.length }));
       } catch (error) {
         const err = error as ApiError;
-        const words = err.status === 409 && err.code === "run_in_bin" ? "That run is in the bin. Restore the run first." : err.status === 409 ? "That picture is not in the bin any more." : null;
-        const problem = words ? { kind: "info" as const, text: words } : itemProblem(err, "restore it");
+        const words = err.status === 409 && err.code === "run_in_bin" ? "That run is in the bin. Restore the run first." : err.status === 409 ? `That ${item.kind === "vector" ? "version" : "picture"} is not in the bin any more.` : null;
+        const problem = words ? { kind: "info" as const, text: words } : itemProblem(err, "restore it", item.kind);
         push(problem.kind, problem.text);
       }
     });
 
   // what a card of deleted pictures hands back (DESIGN.md §33.1)
   const binnedHandlers: BinnedItemHandlers = {
-    onOpen: (run, index) => setLightbox({ runId: run.id, index, binned: true }),
-    onRestore: (run, item) => void restoreItem({ kind: run.mode === "music" ? "track" : "image", id: item.id, seed: item.seed, position: null, of: 0 }, true),
+    onOpen: (run, index) => (run.mode === "vector" ? setVectorView({ runId: run.id, index, binned: true }) : setLightbox({ runId: run.id, index, binned: true })),
+    onRestore: (run, item) => void restoreItem({ kind: itemKindOf(run), id: item.id, seed: item.seed, position: null, of: 0 }, true),
     onDeleteForever: askDeleteItemForever,
   };
+
+  // Copy SVG code (DESIGN.md §31.12.8, §35.2): the hook fetches the file as text and copies it. From a card the answer is a toast; from the viewer it is a
+  // note inside the viewer, because the page behind a modal, toasts included, is hidden from screen readers (§24.2).
+  const copyVectorSvg = useCopyVectorSvg((kind, text) =>
+    vectorViewOpen.current ? setVectorView((current) => (current ? { ...current, notice: { kind: kind === "error" ? "error" : "info", text } } : current)) : push(kind, text));
 
   // ------------------------------------------------------------------ project folders (DESIGN.md §32)
   // What a failed project request says, in words for the place that asked: a refused name or a taken one is the server's own message, a project
@@ -736,7 +799,7 @@ export default function App() {
       const { deleted, pictures } = await api.emptyBin();
       for (const run of Object.values(state.runs)) if (run.deleted_at !== null) dispatch({ type: "runDeleted", id: run.id });
       // the pictures and tracks in the bin of runs that stay: the server tells every page `run.updated` for each of those runs, so the cards follow
-      push("info", emptiedText(deleted, pictures, { pictures: binTotals.image.items, tracks: binTotals.music.items }));
+      push("info", emptiedText(deleted, pictures, { pictures: binTotals.image.items, tracks: binTotals.music.items, versions: binTotals.vector?.items ?? 0 }));
     } catch (error) {
       push("error", `Couldn't empty the bin: ${(error as Error).message}`);
     }
@@ -866,6 +929,9 @@ export default function App() {
   // The viewer shows the run's own pictures; on a card of deleted pictures it shows THOSE (DESIGN.md §33.1), as a run made of them, with no sources. A
   // run whose pictures were all restored meanwhile has nothing left to show.
   const lightboxRun = found && isImageRun(found) ? (lightbox?.binned ? (found.binned_images.length ? { ...found, inputs: [], images: found.binned_images } : null) : found) : null;
+  // the Vector viewer shows the run's own versions; from a card of deleted versions it shows THOSE (§35.2). A run with none left to show closes it.
+  const foundVector = vectorView ? state.runs[vectorView.runId] : undefined;
+  const vectorViewRun = foundVector && isVectorRun(foundVector) && (vectorView?.binned ? foundVector.binned_vectors.length > 0 : foundVector.vectors.length > 0) ? foundVector : null;
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
   // the whole bin, both tabs, whatever project is chosen: what Empty bin deletes (the counts on the bar are for the tab and the project shown)
   const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted + state.totals.vector.deleted : null;
@@ -952,7 +1018,7 @@ export default function App() {
               onDraft={() => void submitDraft()}
             />
             <QueueBar status={status} />
-            <UpscalePicture busy={upscaling} onPick={(file) => void upscalePicture(file)} />
+            <UpscalePicture busy={upscaling} onFiles={upscaleFiles} />
             {filterBar}
             <section className="timeline" aria-label="Your runs">
               {!runsReady ? (
@@ -1058,12 +1124,16 @@ export default function App() {
               isTransient={transient}
               viewScope={viewScope}
               projects={projectControls}
+              inDeletedView={filter.deleted === true}
+              binnedHandlers={binnedHandlers}
               more={more}
               loadingOlder={loadingOlder}
               now={now}
               push={push}
               onRun={(run) => dispatch({ type: "runUpsert", run })}
               onLoadOlder={() => void loadOlder()}
+              onOpenVersion={(run, index) => setVectorView({ runId: run.id, index })}
+              onCopySvg={(item) => void copyVectorSvg(item)}
               onCancel={requestCancel}
               onToggleKeep={(run) => void toggleKeep(run)}
               onRestore={(run) => void restore(run, true)}
@@ -1072,6 +1142,17 @@ export default function App() {
           </>
         )}
       </main>
+      <VectorViewer
+        run={vectorViewRun}
+        index={vectorView?.index ?? 0}
+        readOnly={!!vectorView?.binned || !!vectorViewRun?.deleted_at}
+        pngRange={caps ? pngRange(caps.limits.vector) : VECTOR_PNG_RANGE}
+        notice={vectorView?.notice ?? null}
+        onIndex={(index) => setVectorView((current) => (current ? { ...current, index, notice: undefined } : current))}
+        onCopySvg={(item) => void copyVectorSvg(item)}
+        onDeleteVersion={(item, position, of) => vectorViewRun && askDeleteItem(vectorViewRun, "vector", item, position, of)}
+        onClose={() => setVectorView(null)}
+      />
       <Lightbox
         run={lightboxRun}
         index={lightbox?.index ?? 0}

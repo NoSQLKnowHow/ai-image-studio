@@ -38,7 +38,11 @@ RECIPE_CFG_SCALE = 4.0
 KINDS = ("silhouette", "flat", "line")  # Silhouette or stencil, Flat colour art, Line art
 LAYERS_BY = ("colour", "shape")
 ARRANGEMENTS = ("side_by_side", "stacked")
+# Which colour is the back sheet of a stacked run (DESIGN.md §35.3 item 11): the one with the most ink (today's rule, the default), the one with
+# the least, or the first ink of the form's list. It only matters when stacked by colour; everywhere else it is accepted and ignored.
+STACK_ORDERS = ("area_desc", "area_asc", "palette")
 KIND_DEFAULT, LAYERS_BY_DEFAULT, ARRANGEMENT_DEFAULT = "silhouette", "colour", "side_by_side"
+STACK_ORDER_DEFAULT = "area_desc"
 
 # One machine preset for now (§31.7: the Gweike's working area is not confirmed, so it has none yet).
 PRESETS = ({"id": "xtool-p2", "name": "xTool P2 bed", "width_mm": 600, "height_mm": 307},)
@@ -46,6 +50,7 @@ PRESETS = ({"id": "xtool-p2", "name": "xTool P2 bed", "width_mm": 600, "height_m
 Kind = Literal["silhouette", "flat", "line"]
 LayersBy = Literal["colour", "shape"]
 Arrangement = Literal["side_by_side", "stacked"]
+StackOrder = Literal["area_desc", "area_asc", "palette"]
 # The one switch the laser test sheet (§31.9) may flip: whether a shape is written as an area or as an outline (§31.10 item 8).
 FillMode = Literal["filled", "outline"]
 
@@ -73,6 +78,7 @@ class VectorOptions:
     layers_by: LayersBy = LAYERS_BY_DEFAULT  # type: ignore[assignment]
     arrangement: Arrangement = ARRANGEMENT_DEFAULT  # type: ignore[assignment]
     bleed_mm: float = BLEED_MM_DEFAULT
+    stack_order: StackOrder = STACK_ORDER_DEFAULT  # type: ignore[assignment]  # which colour is at the back when stacked (a 1.17 job file has none: the default)
     min_feature_mm: float = MIN_FEATURE_MM_DEFAULT
     kerf_mm: float = KERF_MM_DEFAULT
     shape_layer_cap: int = SHAPE_LAYER_CAP
@@ -135,6 +141,7 @@ def check_options(opts: VectorOptions) -> list[tuple[str, str]]:
         else:
             seen.add(colour)
     for name, value, allowed in (("kind", opts.kind, KINDS), ("layers_by", opts.layers_by, LAYERS_BY), ("arrangement", opts.arrangement, ARRANGEMENTS),
+                                 ("stack_order", opts.stack_order, STACK_ORDERS),
                                  ("fill_mode", opts.fill_mode, ("filled", "outline"))):
         if value not in allowed:
             errors.append((name, f"Must be one of: {', '.join(allowed)}."))

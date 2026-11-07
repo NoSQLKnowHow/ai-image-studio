@@ -4,6 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, uploadImage } from "./api";
+import { NOT_A_PICTURE, mayBePicture } from "./paste";
 import { addItems, moveBy as moveByInList, moveItem, positionOf, removeItem, room, type KnownImage, type TrayItem } from "./tray";
 import type { Capabilities, ImageRun } from "./types";
 
@@ -16,6 +17,7 @@ export interface AddOutcome {
   added: number;
   skipped: number;
   keys: string[]; // the keys of the images that were added, in order
+  problems: string[]; // what was refused here, each named (a file too large, a file that is not a picture, how many did not fit)
 }
 
 export function useTray(caps: Capabilities | null) {
@@ -82,12 +84,23 @@ export function useTray(caps: Capabilities | null) {
     );
   }, [commit, note, patch]);
 
-  /** Add files from the picker, a drop or a paste. Each is checked on its own; the first that fit are kept. */
-  const addFiles = useCallback((files: File[]): AddOutcome => {
+  /** Add files from the picker, a drop or a paste. Each is checked on its own (a file that is not a picture, a file over the size limit); the first that fit
+   *  are kept. What was refused is returned as `problems` and, unless `quiet`, posted in the tray, which is where a person adding to Edit is looking. Generate
+   *  asks for `quiet` because its tray is not on screen: it says the reasons itself, in a toast, or posts them once the card has become Edit (§36.2). */
+  const addFiles = useCallback((files: File[], quiet = false): AddOutcome => {
     const limit = uploadLimitMb * 1024 * 1024;
+    const problems: string[] = [];
+    const problem = (text: string) => {
+      problems.push(text);
+      if (!quiet) note(text);
+    };
     const usable = files.filter((file) => {
+      if (!mayBePicture(file)) {
+        problem(`${file.name || "A file"}: ${NOT_A_PICTURE}`);
+        return false;
+      }
       if (file.size > limit) {
-        note(`${file.name || "A file"}: the file is larger than ${uploadLimitMb} MB.`);
+        problem(`${file.name || "A file"}: the file is larger than ${uploadLimitMb} MB.`);
         return false;
       }
       return true;
@@ -101,9 +114,9 @@ export function useTray(caps: Capabilities | null) {
     candidates.slice(accepted.length).forEach((item) => item.previewUrl && URL.revokeObjectURL(item.previewUrl)); // did not fit
     commit(next);
     accepted.forEach((item, i) => startUpload(item.key, usable[i]));
-    if (skipped) note(`${skipped} ${skipped === 1 ? "image" : "images"} did not fit: one edit takes at most ${cap}.`);
+    if (skipped) problem(`${skipped} ${skipped === 1 ? "image" : "images"} did not fit: one edit takes at most ${cap}.`);
     if (accepted.length) setAnnouncement(accepted.length === 1 ? `Image ${next.length} added.` : `${accepted.length} images added.`);
-    return { added: accepted.length, skipped, keys: accepted.map((item) => item.key) };
+    return { added: accepted.length, skipped, keys: accepted.map((item) => item.key), problems };
   }, [cap, commit, note, startUpload, uploadLimitMb]);
 
   /** Add images the server already has (Edit this on a result). */
@@ -116,7 +129,7 @@ export function useTray(caps: Capabilities | null) {
     commit(next);
     const added = images.length - skipped;
     if (added) setAnnouncement(added === 1 ? `Image ${next.length} added.` : `${added} images added.`);
-    return { added, skipped, keys: candidates.slice(0, added).map((item) => item.key) };
+    return { added, skipped, keys: candidates.slice(0, added).map((item) => item.key), problems: [] };
   }, [cap, commit]);
 
   /** Replace the whole tray (Reuse): what it held is let go first. */
@@ -173,6 +186,6 @@ export function useTray(caps: Capabilities | null) {
 
   return {
     items, cap, shapeKey, setShapeKey, notes, announcement, room: room(items, cap),
-    addFiles, addKnown, replaceWith, remove, moveTo, moveBy, markMissing, adoptRun, dismissNote,
+    note, addFiles, addKnown, replaceWith, remove, moveTo, moveBy, markMissing, adoptRun, dismissNote,
   };
 }

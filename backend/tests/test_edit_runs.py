@@ -220,6 +220,43 @@ def test_the_number_of_images_is_limited_by_the_server(client_factory):
     wait_for(client, run["id"])
 
 
+# ------------------------------------------------------------------ eight pictures (DESIGN.md §36.3 items 5 and 6, criteria 215 and 220)
+EIGHT = [RED, GREEN, BLUE, (255, 255, 0), (255, 0, 255), (0, 255, 255), (128, 128, 128), (255, 128, 0)]  # eight colours that tell the images apart
+
+
+def test_a_limit_of_eight_takes_eight_pictures_in_order_and_refuses_a_ninth_naming_the_limit(client_factory):
+    """1.18 asks for up to 8 pictures with no server change: the limit is the setting `STUDIO_MAX_INPUT_IMAGES` (1 to 10), served to the page as
+    `limits.input_images.max`. At 8 an edit is an ordinary edit (§36.3 item 6): the images arrive in the order given, and a ninth is refused in the words
+    the page shows, naming the limit, with nothing consumed. (The shipped default stays 4 until the Spark has measured 6 and 8, §36.7.)"""
+    client = client_factory(max_input_images=8)
+    assert client.get("/api/capabilities").json()["limits"]["input_images"] == {"min": 1, "max": 8}
+    ups = [stage(client, image_bytes(c)) for c in EIGHT]
+    ninth = stage(client, image_bytes(RED))
+    refusal = client.post("/api/runs", json=edit_body("x", [ref(u) for u in ups + [ninth]]))
+    assert refusal.status_code == 422
+    assert refusal.json()["detail"][0]["msg"] == "An edit takes at most 8 images; this one has 9."
+    assert client.get(ninth["url"]).status_code == 200 and client.app.state.db.known_ids()[0] == set()  # nothing was consumed, no run was made
+    run = create_edit(client, "x", [ref(u) for u in ups])  # eight is at the cap: fine
+    assert [(i["position"], i["role"]) for i in run["inputs"]] == [(n, "reference") for n in range(1, 9)]
+    assert inputs_on_disk(client, run["id"]) == [f"{n}.png" for n in range(1, 9)]
+    done = wait_for(client, run["id"])
+    assert done["status"] == "done" and strip_colours(open_result(client, done), 8) == EIGHT  # image 1 to image 8, exactly as submitted
+
+
+def test_an_edit_of_eight_is_reused_and_retried_with_all_eight(client_factory):
+    """Reuse and Retry name a past run's inputs by `image_id` (§21.4): all eight come back, as copies, in the same order (criterion 220)."""
+    client = client_factory(max_input_images=8)
+    first = wait_for(client, create_edit(client, "x", [ref(stage(client, image_bytes(c))) for c in EIGHT])["id"])
+    again = wait_for(client, create_edit(client, "x", [{"image_id": i["id"]} for i in first["inputs"]])["id"])
+    assert len(again["inputs"]) == 8 and strip_colours(open_result(client, again), 8) == EIGHT
+    assert [i["id"] for i in again["inputs"]] != [i["id"] for i in first["inputs"]]  # copies, in the same order
+
+
+def test_the_shipped_limit_is_still_four(client):
+    """The spec says 8 is allowed by setting it and the default stays 4 until measured (§36.5 item 5): a change of the default is a decision, not a side effect."""
+    assert client.get("/api/capabilities").json()["limits"]["input_images"] == {"min": 1, "max": 4}
+
+
 def test_images_in_generate_mode_are_refused(client):
     up = stage(client, image_bytes())
     response = client.post("/api/runs", json={"prompt": "x", "input_images": [ref(up)]})

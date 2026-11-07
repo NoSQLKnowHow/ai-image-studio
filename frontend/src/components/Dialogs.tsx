@@ -198,6 +198,8 @@ export function ConfirmDelete({ run, binDays, projectName, onCancel, onConfirm }
     if (run) redirectTo(focusAfterDelete(run.id));
     onConfirm();
   };
+  // a Vector run with several versions says that all of them go (DESIGN.md §35.2): this is the run's Delete, not a version's
+  const severalVersions = vector && n > 1;
   return (
     <Dialog.Root open={!!run} onOpenChange={(open) => !open && onCancel()}>
       <Dialog.Portal>
@@ -205,7 +207,9 @@ export function ConfirmDelete({ run, binDays, projectName, onCancel, onConfirm }
         <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
           <Dialog.Title>{inBin ? "Delete this run for good?" : "Delete this run?"}</Dialog.Title>
           <Dialog.Description>
-            {toBin
+            {toBin && severalVersions
+              ? `${filed ? `It is in ${project}. ` : ""}It has ${n} versions. All of them move to Deleted and stay there for ${binDays} ${binDays === 1 ? "day" : "days"}; ${filed ? "restoring the run puts it back in the project" : "you can restore the run from there"}. After that they are gone for good.`
+              : toBin
               ? `${filed ? `It is in ${project}. ` : ""}It moves to Deleted and stays there for ${binDays} ${binDays === 1 ? "day" : "days"}; ${filed ? "restoring it puts it back in the project" : "you can restore it from there"}. After that it is gone for good.`
               : `${gone} ${filed ? `It is in ${project}, which loses it. ` : ""}This can't be undone.`}
             {run?.pinned && !inBin && !filed ? " You marked it Keep." : ""}

@@ -1,17 +1,16 @@
-import { useId, useState } from "react";
-import { binNote, canceledText, duration, expiryText, keepLockedTitle, timeAgo, workingNote, type ViewScope } from "../format";
+import { useState } from "react";
+import { binNote, canceledText, deleteRunTitle, duration, expiryText, keepLockedTitle, timeAgo, workingNote, type ViewScope } from "../format";
 import type { VectorItem, VectorRun, WorkerState } from "../types";
-import {
-  DEFAULT_PNG_PX, bytesText, coloursText, kindLabel, lengthText, mmText, pngDownloadUrl, smallestFeatureText, vectorMeta, vectorPhases,
-  vectorProgressText, vectorTitle, versionLabel,
-} from "../vector";
+import { bytesText, kindLabel, layersCount, placeLabel, vectorMeta, vectorPhases, vectorProgressText, vectorTitle } from "../vector";
 import { AlertIcon, CopyIcon, DownloadIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon, VectorIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
-import { Swatch } from "./Swatch";
+import { VersionFacts } from "./VersionFacts";
 
-// The card of a Vector run (DESIGN.md §31.12.8): what was asked, the progress while it works, and for each finished version the preview, the colours found
-// against the colours asked, the table of layers, the smallest feature, every note, and the four ways to take the file away (SVG, layers ZIP, PNG at a size,
-// the SVG's code). A Vector run has no viewer and no Make 4K, Enlarge or Delete picture in 1.17: the preview is the whole picture, and the run is binned whole.
+// The card of a Vector run (DESIGN.md §31.12.8, §35.2): one compact card for the run, as an Images card is. At the left a grid of the versions' previews
+// (up to four, each on white because white is the bare material, in the sheet's own shape, with the version's place in a corner and its number of layers
+// under it); at the right what was asked, the progress while it works, the run's notes and ONE row of the run's buttons. A preview opens the viewer
+// (VectorViewer), where a version's facts, downloads and Delete version are. A run with exactly one version also shows what the clean-up found for it, and
+// has its three downloads on the card, as an Images card has Download for a single picture.
 //
 // The SVG itself is never put in the page: the preview is a PNG (`preview_url`) in an <img>, and "Copy SVG code" fetches the file as text to copy it. A file
 // that came from a model, however clean, never runs as part of the page (§31.6 "Safety").
@@ -23,15 +22,17 @@ interface Props {
   transient: boolean; // in a filtered view only because it is working (DESIGN.md §29.3, §32)
   viewScope: ViewScope; // which filter that is, so the note says what keeps the card there
   projects: ProjectControls; // the project folders, and what the Project button does (§32)
-  pngRange: { min: number; max: number }; // the PNG's long side, in pixels
+  onOpenVersion: (index: number) => void; // open the viewer at this version (its place among the run's versions that are not in the bin)
   onReuse: () => void;
   onRetry: () => void;
   onCancel: () => void;
   onToggleKeep: () => void;
   onRestore: () => void; // take the run out of the bin (§30)
   onDelete: () => void;
-  onCopySvg: (item: VectorItem) => void; // fetch the SVG's text and copy it; the page tells the person how it went
+  onCopySvg: (item: VectorItem) => void; // fetch the SVG's text and copy it; the page tells the person how it went (a run with one version has the button)
 }
+
+const MAX_THUMBS = 4;
 
 function statusLabel(run: VectorRun): string {
   switch (run.status) {
@@ -84,114 +85,63 @@ function VectorProgress({ run, workerState }: { run: VectorRun; workerState: Wor
   );
 }
 
-/** The table of a version's layers: swatch and name, how many paths, and the cut length (a rough idea of the time). When the picture's own colour differs from
- *  the layer's (always, in shape mode, where a layer's colour is a label from a fixed list: §31.10 item 7) it is shown under the name. */
-function LayerTable({ item }: { item: VectorItem }) {
-  if (item.check.layers.length === 0) return null;
+/** The grid of previews (§35.2): up to four, then a "+n". Each is a button that opens the viewer at that version. */
+function Previews({ run, versions, onOpenVersion }: { run: VectorRun; versions: VectorItem[]; onOpenVersion: (index: number) => void }) {
+  if (!versions.length) {
+    return (
+      <div className={`run-media empty status-${run.status}`} aria-hidden="true">
+        {run.status === "failed" ? <AlertIcon /> : run.status === "canceled" ? <StopIcon /> : <span className="shimmer" />}
+      </div>
+    );
+  }
+  const shown = versions.slice(0, MAX_THUMBS);
   return (
-    <div className="vector-layers-wrap" role="region" aria-label="Layers" tabIndex={0}>
-      <table className="vector-layers">
-        <thead>
-          <tr><th scope="col">Layer</th><th scope="col" className="num">Paths</th><th scope="col" className="num">Cut length</th></tr>
-        </thead>
-        <tbody>
-          {item.check.layers.map((layer) => (
-            <tr key={layer.id} data-layer-id={layer.id}>
-              <th scope="row">
-                <span className="layer-name"><Swatch colour={layer.colour} /> {layer.name}</span>
-                <span className="layer-colour">
-                  {layer.colour}
-                  {layer.picture_colour !== layer.colour && <> · in the picture <Swatch colour={layer.picture_colour} small /> {layer.picture_colour}</>}
-                </span>
-              </th>
-              <td className="num">{layer.paths}</td>
-              <td className="num">{lengthText(layer.length_mm)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className={`run-media vector-media grid-${Math.min(versions.length, MAX_THUMBS)}`} data-vector-previews>
+      {shown.map((item, i) => (
+        <button key={item.id} type="button" className="thumb vector-thumb" data-vector-id={item.id} onClick={() => onOpenVersion(i)}
+          aria-label={`Open ${versions.length > 1 ? placeLabel(i + 1, versions.length, item.seed).toLowerCase() : "the vector"} (seed ${item.seed}, ${layersCount(item.layers)})`}>
+          {/* the sheet's own shape is reserved before the picture arrives, so the card does not jump; white behind it: white is the material (§31.7 answer 2) */}
+          <img src={item.preview_url} alt="" style={{ aspectRatio: `${item.width_mm} / ${item.height_mm}` }} loading="lazy" />
+          {versions.length > 1 && <span className="vt-number" aria-hidden="true">{i + 1}</span>}
+          <span className="vt-layers" aria-hidden="true">{layersCount(item.layers)}</span>
+          {i === MAX_THUMBS - 1 && versions.length > MAX_THUMBS && <span className="more">+{versions.length - MAX_THUMBS}</span>}
+        </button>
+      ))}
     </div>
   );
 }
 
-/** One finished version: its preview, what the check found, and its downloads. */
-function VersionBlock({ run, item, pngText, pngInvalid, onPngText, onCopySvg }: {
-  run: VectorRun; item: VectorItem; pngText: string; pngInvalid: string | null; onPngText: (text: string) => void; onCopySvg: (item: VectorItem) => void;
-}) {
-  const id = useId();
-  const asked = run.options.num_images;
-  const label = versionLabel(item, asked);
-  const check = item.check;
-  const [wide, tall] = check.size_mm;
-  // with several versions the same button names would repeat down the card: name each one for its version (a lone version keeps the plain names)
-  const named = (text: string) => (asked > 1 ? `${text}, ${label.toLowerCase()}` : text);
-  return (
-    <li className="vector-item" data-vector-id={item.id} aria-label={label}>
-      <div className="vector-preview">
-        {/* the sheet's own shape is reserved before the picture arrives, so the card does not jump. White behind it: white is the material (§31.7 answer 2) */}
-        <img src={item.preview_url} alt={`Preview of ${label.toLowerCase()}: ${mmText(wide)} by ${mmText(tall)} mm, ${item.layers} ${item.layers === 1 ? "layer" : "layers"}`}
-          style={{ aspectRatio: `${wide} / ${tall}` }} loading="lazy" />
-      </div>
-      <div className="vector-details">
-        <p className="vector-summary">
-          <strong>{label}</strong> · seed {item.seed} · {mmText(wide)} × {mmText(tall)} mm · {item.layers} {item.layers === 1 ? "layer" : "layers"} · {bytesText(item.bytes)}
-        </p>
-        <p className="vector-colours" data-vector-colours>{coloursText(check)}</p>
-        <LayerTable item={item} />
-        <p className="vector-feature" data-vector-feature>{smallestFeatureText(check.smallest_feature_mm, run.options.min_feature_mm)}</p>
-        {check.notes.length > 0 && (
-          <ul className="vector-notes" aria-label="Notes">
-            {check.notes.map((note, i) => (
-              <li key={`${note.code}-${i}`} data-note-code={note.code}><AlertIcon /> <span>{note.message}</span></li>
-            ))}
-          </ul>
-        )}
-        <div className="vector-downloads">
-          <a className="button small" href={item.download_url} download data-action="download-svg" aria-label={named("Download SVG")} title={`The combined SVG, ${bytesText(item.bytes)}, at its real size in millimetres`}>
-            <DownloadIcon /> Download SVG
-          </a>
-          <a className="button small" href={item.zip_url} download data-action="download-zip" aria-label={named("Download layers (ZIP)")} title="One SVG for each layer, all at the same size and origin, so they register when stacked">
-            <DownloadIcon /> Download layers (ZIP)
-          </a>
-          <button type="button" className="button small" data-action="copy-svg" aria-label={named("Copy SVG code")} onClick={() => onCopySvg(item)}
-            title="Copy the SVG's text, to paste into your laser software">
-            <CopyIcon /> Copy SVG code
-          </button>
-        </div>
-        {/* a PNG drawn from the SVG at the size typed here: its link is the server's own (`png_download_url`) with the size added */}
-        <div className="vector-png">
-          <div className="field">
-            <label htmlFor={`${id}-png`}>{named("PNG size, long side")}</label>
-            <span className="vector-png-row">
-              <input id={`${id}-png`} type="number" inputMode="numeric" value={pngText} aria-invalid={pngInvalid !== null} aria-describedby={`${id}-png-help`}
-                data-vector-png-size onChange={(e) => onPngText(e.target.value)} />
-              <span aria-hidden="true">px</span>
-              {pngInvalid === null ? (
-                <a className="button small" href={pngDownloadUrl(item, Number(pngText))} download data-action="download-png" aria-label={named("Download PNG")}>
-                  <DownloadIcon /> Download PNG
-                </a>
-              ) : (
-                // a size the server would refuse: the link is switched off rather than left to fail
-                <button type="button" className="button small" data-action="download-png" aria-disabled="true" aria-label={named("Download PNG")}
-                  onClick={(e) => e.preventDefault()}>
-                  <DownloadIcon /> Download PNG
-                </button>
-              )}
-            </span>
-            <p id={`${id}-png-help`} className={pngInvalid ? "field-error" : "field-hint"} role={pngInvalid ? "alert" : undefined}>
-              {pngInvalid ?? "Drawn from the SVG, so it is sharp at any size."}
-            </p>
-          </div>
-        </div>
-      </div>
-    </li>
-  );
+/** The run's ways to take a file away (§35.2): a run with exactly one version has its three downloads on the card, as an Images card has Download for a single
+ *  picture; one with several has Download…, which opens the viewer at the first version, where each version's downloads are. None while nothing is made yet. */
+function Downloads({ versions, lone, onOpenVersion, onCopySvg }: { versions: VectorItem[]; lone: VectorItem | null; onOpenVersion: (index: number) => void; onCopySvg: (item: VectorItem) => void }) {
+  if (lone) {
+    return (
+      <>
+        <a className="button small" href={lone.download_url} download data-action="download-svg" title={`The combined SVG, ${bytesText(lone.bytes)}, at its real size in millimetres`}>
+          <DownloadIcon /> Download SVG
+        </a>
+        <a className="button small" href={lone.zip_url} download data-action="download-zip" title="One SVG for each layer, all at the same size and origin, so they register when stacked">
+          <DownloadIcon /> Download layers (ZIP)
+        </a>
+        <button type="button" className="button small" data-action="copy-svg" onClick={() => onCopySvg(lone)} title="Copy the SVG's text, to paste into your laser software">
+          <CopyIcon /> Copy SVG code
+        </button>
+      </>
+    );
+  }
+  if (versions.length > 1) {
+    return (
+      <button type="button" className="button small" data-action="download-more" onClick={() => onOpenVersion(0)}
+        title={`Open the first of the ${versions.length} versions: each one's downloads are there`}>
+        <DownloadIcon /> Download…
+      </button>
+    );
+  }
+  return null;
 }
 
-export function VectorCard({ run, now, workerState, transient, viewScope, projects, pngRange, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopySvg }: Props) {
+export function VectorCard({ run, now, workerState, transient, viewScope, projects, onOpenVersion, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopySvg }: Props) {
   const [expanded, setExpanded] = useState(false);
-  // the PNG size is one setting for the card: every version's box shows it, and it is kept as text so that a half-typed number is not lost
-  const [pngText, setPngText] = useState(String(DEFAULT_PNG_PX));
   const long = run.prompt.length > 240;
   const label = statusLabel(run);
   const active = run.status === "queued" || run.status === "running";
@@ -202,13 +152,13 @@ export function VectorCard({ run, now, workerState, transient, viewScope, projec
   const filed = run.project_id !== null;
   const project = projectOf(run, projects.projects);
   const versions = [...run.vectors].sort((a, b) => a.idx - b.idx);
-  const sizeNumber = Number(pngText);
-  const pngInvalid = pngText.trim() === "" || !Number.isInteger(sizeNumber) || sizeNumber < pngRange.min || sizeNumber > pngRange.max
-    ? `Enter a whole number from ${pngRange.min} to ${pngRange.max}.`
-    : null;
+  const lone = versions.length === 1 ? versions[0] : null; // a run with exactly one version has its facts and downloads on the card (§35.2)
 
   return (
     <article className={`run-card vector-card status-${run.status}`} data-run-id={run.id} aria-label={`${label}: vector, ${vectorTitle(run)}`}>
+      <div className="run-media-col">
+        <Previews run={run} versions={versions} onOpenVersion={onOpenVersion} />
+      </div>
       <div className="run-body">
         <div className="run-head">
           <span className="music-mark" aria-hidden="true"><VectorIcon /></span>
@@ -232,13 +182,8 @@ export function VectorCard({ run, now, workerState, transient, viewScope, projec
 
         {run.status === "running" && <VectorProgress run={run} workerState={workerState} />}
 
-        {versions.length > 0 && (
-          <ul className="vectors" aria-label="Versions">
-            {versions.map((item) => (
-              <VersionBlock key={item.id} run={run} item={item} pngText={pngText} pngInvalid={pngInvalid} onPngText={setPngText} onCopySvg={onCopySvg} />
-            ))}
-          </ul>
-        )}
+        {/* what the clean-up found, for a run that has just the one version; with several, the viewer has them for each */}
+        {lone && <div className="vector-lone" data-vector-id={lone.id}><VersionFacts run={run} item={lone} /></div>}
 
         {/* A run that kept at least one good version is done, and keeps the text that says why another version is missing (§31.12.5) */}
         {run.status === "done" && run.error && (
@@ -271,6 +216,7 @@ export function VectorCard({ run, now, workerState, transient, viewScope, projec
         {/* changes the run. The downloads above only read it, so they stay. */}
         {inBin ? (
           <div className="run-actions">
+            <Downloads versions={versions} lone={lone} onOpenVersion={onOpenVersion} onCopySvg={onCopySvg} />
             <button type="button" className="button small" data-action="restore" onClick={onRestore}
               title="Take this run out of the bin. A kept run is still kept; any other gets a fresh clock.">
               <RestoreIcon /> Restore
@@ -293,6 +239,7 @@ export function VectorCard({ run, now, workerState, transient, viewScope, projec
                 <StopIcon /> {run.canceling ? "Stopping…" : "Cancel"}
               </button>
             )}
+            <Downloads versions={versions} lone={lone} onOpenVersion={onOpenVersion} onCopySvg={onCopySvg} />
             <button type="button" className="button small ghost" data-action="reuse" onClick={onReuse}
               title="Load this prompt and its settings, with the seed locked">
               <ReuseIcon /> Reuse
@@ -306,7 +253,7 @@ export function VectorCard({ run, now, workerState, transient, viewScope, projec
             </button>
             <ProjectMenu run={run} controls={projects} />
             <button type="button" className="button small ghost danger" data-action="delete" onClick={onDelete} disabled={run.status === "running"}
-              title={run.status === "running" ? "Can't delete while it's being made" : "Delete this run and its files"}>
+              title={run.status === "running" ? "Can't delete while it's being made" : deleteRunTitle(run)}>
               <TrashIcon /> Delete
             </button>
           </div>

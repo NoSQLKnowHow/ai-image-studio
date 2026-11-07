@@ -84,6 +84,11 @@ def main() -> int:
     check["size_mm"] = [options["width_mm"], options["height_mm"]]
     check["colours_asked"] = options["colours"]
     check["layers_by"], check["arrangement"] = options["layers_by"], options["arrangement"]
+    # what the real engine says about a stacked run (DESIGN.md §35.4): the choice made, and each layer as high as its number
+    if options["arrangement"] == "stacked" and options["layers_by"] == "colour":
+        check["stack_order"] = options.get("stack_order", "area_desc")
+        for layer in check["layers"]:
+            layer["height"] = layer["index"]
     svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{options["width_mm"]}mm" height="{options["height_mm"]}mm" '
            f'viewBox="0 0 {options["width_mm"]} {options["height_mm"]}"><!-- version {version}, drawing {hashlib.sha1(drawing).hexdigest()} -->'
            '<g id="layer-1-black" fill="#000000"><path d="M0 0L10 0L10 10Z"/></g></svg>')
@@ -98,7 +103,9 @@ def main() -> int:
     }
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as bundle:
-        bundle.writestr("layer-1-black.svg", svg)
+        # one SVG for each layer of the check, as the engine packs them, each saying which it is (so that a test can tell the layers apart)
+        for layer in check["layers"]:
+            bundle.writestr(f'{layer["id"]}.svg', svg.replace("<g id=\"layer-1-black\"", f'<g id="{layer["id"]}"'))
     files["layers.zip"] = archive.getvalue()
     for name, data in files.items():
         if name not in skipped:

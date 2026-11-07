@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import cases from "../../backend/tests/filter_cases.json";
 import {
-  FILTER_KEY, NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, canBin, filterKey, filterParams, isDefault, matches, parseFilterKey, readFilter, saveFilter, showsWorking,
+  FILTER_KEY, NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, canBin, filterKey, filterParams, hasItemsInTheBin, isDefault, matches, parseFilterKey, readFilter, saveFilter, showsWorking,
   visibleRuns, watchWorking, withProject, working,
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
-import { makeBinnedImage, makeBinnedTrack, makeMusicRun, makeRun, makeVectorRun } from "./testdata";
+import { makeBinnedImage, makeBinnedTrack, makeBinnedVector, makeMusicRun, makeRun, makeVectorRun } from "./testdata";
 import type { Run, RunStatus } from "./types";
 
 // ------------------------------------------------------------------ the table both sides are tested against (DESIGN.md §29.5, criterion 120)
@@ -15,13 +15,13 @@ import type { Run, RunStatus } from "./types";
 const STATUSES: Record<string, RunStatus> = { queued: "queued", running: "running", done: "done", failed: "failed", canceled: "canceled" };
 
 // build a page `Run` from one row of the shared table (music rows become music runs; a deleted row is in the bin; `items_in_bin` is how many of its
-// own pictures, or tracks for a music run, are in the bin, as `binned_images` or `binned_tracks`)
+// own pictures, tracks for a music run, or versions for a vector run, are in the bin, as `binned_images`, `binned_tracks` or `binned_vectors`)
 type TableRun = { id: string; mode: string; status: string; pinned: boolean; deleted: boolean; project: string | null; items_in_bin: number };
 function tableRun(entry: TableRun): Run {
   const extra = { id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned, deleted_at: entry.deleted ? "2026-10-02T00:00:00.000Z" : null, project_id: entry.project };
   const items = Array.from({ length: entry.items_in_bin }, (_, i) => i);
-  // a Vector row (DESIGN.md §31.12.6) has no pictures or tracks of its own in the bin: it is binned whole, so `items_in_bin` is 0 for it
-  if (entry.mode === "vector") return makeVectorRun(extra);
+  // a Vector row's items are its versions (DESIGN.md §35.4)
+  if (entry.mode === "vector") return makeVectorRun({ ...extra, binned_vectors: items.map((i) => makeBinnedVector(i + 1)) });
   return entry.mode === "music"
     ? makeMusicRun({ ...extra, binned_tracks: items.map((i) => makeBinnedTrack(i)) })
     : makeRun({ ...extra, mode: entry.mode as "generate" | "edit", binned_images: items.map((i) => makeBinnedImage(i)) });
@@ -30,6 +30,17 @@ function tableRun(entry: TableRun): Run {
 // which tab a run belongs to, as the server's counts name it
 type Kind = "image" | "music" | "vector";
 const kindOf = (run: Run): Kind => (run.mode === "music" ? "music" : run.mode === "vector" ? "vector" : "image");
+
+// ------------------------------------------------------------------ a run with one thing of its own in the bin (DESIGN.md §33.1, §35.2)
+describe("hasItemsInTheBin", () => {
+  it("is true for a run with even one picture, one track or one version in the bin, and false for none", () => {
+    expect(hasItemsInTheBin(makeRun({ binned_images: [makeBinnedImage(0)] }))).toBe(true);
+    expect(hasItemsInTheBin(makeMusicRun({ binned_tracks: [makeBinnedTrack(0)] }))).toBe(true);
+    expect(hasItemsInTheBin(makeVectorRun({ binned_vectors: [makeBinnedVector(0)] }))).toBe(true);
+    expect(hasItemsInTheBin(makeRun())).toBe(false);
+    expect(hasItemsInTheBin(makeVectorRun())).toBe(false);
+  });
+});
 
 describe("the shared table of cases", () => {
   const runs = cases.runs.map(tableRun); // newest first, as the table lists them
@@ -47,7 +58,7 @@ describe("the shared table of cases", () => {
     const inTab = (kind: Kind, project: string | null) => runs.filter((run) => kindOf(run) === kind && matches(run, withProject(NO_FILTER, project)));
     const count = (kind: Kind, filter: HistoryFilter) => runs.filter((run) => kindOf(run) === kind && matches(run, filter)).length;
     const items = (kind: Kind, project: string | null) =>
-      inTab(kind, project).reduce((sum, run) => sum + run.binned_images.length + run.binned_tracks.length, 0); // `inTab` is the history: not the runs in the bin
+      inTab(kind, project).reduce((sum, run) => sum + run.binned_images.length + run.binned_tracks.length + run.binned_vectors.length, 0); // `inTab` is the history: not the runs in the bin
     const of = (kind: Kind, project: string | null = null) => ({
       all: count(kind, withProject(NO_FILTER, project)), kept: count(kind, withProject(ONLY_KEPT, project)),
       deleted: runs.filter((run) => kindOf(run) === kind && matches(run, withProject({ ...NO_FILTER, deleted: null }, project)) && run.deleted_at !== null).length

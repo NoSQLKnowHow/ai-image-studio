@@ -110,8 +110,8 @@ OLD_DATABASES = [(make_v2, "1.7 (schema 2)"), (v3_database, "1.12 (schema 3)"), 
 
 
 # ------------------------------------------------------------------ the number
-def test_the_schema_is_7():
-    assert SCHEMA_VERSION == 7  # Vector's: when the next release changes the schema, this is the line to move
+def test_the_schema_is_8():
+    assert SCHEMA_VERSION == 8  # 1.17's Vector made it 7 and 1.18's versions in the bin made it 8: when the next release changes the schema, this is the line to move
 
 
 # ------------------------------------------------------------------ migrating 1.16 (schema 6), losing nothing
@@ -131,7 +131,7 @@ def test_a_1_16_database_is_migrated_and_every_run_keeps_every_column(tmp_path):
     assert count(path, "images") == 2 and count(path, "tracks") == 2 and count(path, "projects") == 1  # the rows that point at runs survived too
     conn = sqlite3.connect(path)
     try:
-        assert conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "7"
+        assert conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == str(SCHEMA_VERSION)  # an old database is upgraded all the way, in one start
         # the pictures in the bin are still in it: the other schema 6 column was not touched either
         assert conn.execute("SELECT COUNT(*) FROM images WHERE deleted_at IS NOT NULL").fetchone()[0] == 1
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -158,7 +158,7 @@ def test_the_copy_of_the_1_16_database_is_made_first_and_left_as_it_was(tmp_path
     path = tmp_path / "studio.sqlite"
     v6_database(path)
     Database(path).close()
-    copy = tmp_path / "studio.sqlite.before-schema-7"
+    copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"  # named by the schema it is upgraded TO
     assert copy.is_file()
     conn = sqlite3.connect(copy)
     try:
@@ -187,7 +187,7 @@ def test_a_migrated_database_is_the_same_as_a_fresh_one(tmp_path, build):
     for table in ("runs", "images", "tracks", "run_inputs", "projects", "vectors"):
         assert full_columns(migrated, table) == full_columns(fresh, table), table
     assert [(row["id"], row["created_at"], row["mode"]) for row in run_rows(migrated)] == kept  # no run was lost
-    copy = tmp_path / "migrated.sqlite.before-schema-7"
+    copy = tmp_path / f"migrated.sqlite.before-schema-{SCHEMA_VERSION}"
     first = copy.read_bytes()
     Database(migrated).close()  # starting it again changes nothing: the copy is not made again, and nothing is rebuilt
     assert copy.read_bytes() == first and schema_names(migrated) == first_look
@@ -222,7 +222,7 @@ def test_the_rebuild_happens_once_and_after_the_copy(tmp_path, monkeypatch):
     original = Database._rebuild_runs
 
     def watching(self, previous):
-        seen.append((previous, (tmp_path / "studio.sqlite.before-schema-7").is_file()))
+        seen.append((previous, (tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}").is_file()))
         original(self, previous)
 
     monkeypatch.setattr(Database, "_rebuild_runs", watching)
@@ -273,10 +273,10 @@ def test_a_rebuild_that_would_orphan_a_picture_is_refused(tmp_path):
 def test_the_vectors_table_has_the_columns_of_the_contract(tmp_path):
     Database(tmp_path / "studio.sqlite").close()
     assert [name for name, *_ in columns_of(tmp_path / "studio.sqlite", "vectors")] == [
-        "id", "run_id", "idx", "seed", "width_mm", "height_mm", "colours", "layers", "bytes", "check_json", "svg_path", "zip_path", "png_path", "created_at"]
+        "id", "run_id", "idx", "seed", "width_mm", "height_mm", "colours", "layers", "bytes", "check_json", "svg_path", "zip_path", "png_path", "created_at", "deleted_at"]  # deleted_at is last: schema 8, DESIGN.md §35.4
     types = {name: kind for name, kind, *_ in columns_of(tmp_path / "studio.sqlite", "vectors")}
     assert types["width_mm"] == types["height_mm"] == "REAL" and types["layers"] == types["bytes"] == "INTEGER" and types["check_json"] == "TEXT"
-    assert "deleted_at" not in types  # a vector run is binned whole (§31.12.9 item 3): there is no per-version bin
+    assert types["deleted_at"] == "TEXT"  # since 1.18 a single version can be in the bin (§35.4)
 
 
 def test_the_vectors_table_has_an_index_on_the_run(tmp_path):

@@ -21,12 +21,13 @@ KINDS: dict[str, tuple[str, ...]] = {"image": ("generate", "edit"), "music": ("m
 NO_PROJECT = "none"
 
 
-# What makes a run belong in the Deleted view (DESIGN.md §33.3): it is in the bin itself, or one of its pictures or tracks is. A fixed fragment with
-# no placeholder: nothing in it comes from outside.
+# What makes a run belong in the Deleted view (DESIGN.md §33.3, §35.4): it is in the bin itself, or one of its pictures, tracks or versions is. A fixed
+# fragment with no placeholder: nothing in it comes from outside.
 _IN_THE_BIN = (
     "(deleted_at IS NOT NULL"
     " OR EXISTS (SELECT 1 FROM images WHERE images.run_id = runs.id AND images.kind = 'output' AND images.deleted_at IS NOT NULL)"
-    " OR EXISTS (SELECT 1 FROM tracks WHERE tracks.run_id = runs.id AND tracks.deleted_at IS NOT NULL))"
+    " OR EXISTS (SELECT 1 FROM tracks WHERE tracks.run_id = runs.id AND tracks.deleted_at IS NOT NULL)"
+    " OR EXISTS (SELECT 1 FROM vectors WHERE vectors.run_id = runs.id AND vectors.deleted_at IS NOT NULL))"
 )
 
 

@@ -4,7 +4,7 @@
 // page's test data cannot drift away from the server's. This file is left out of the production build (tsconfig.build.json), which is why it may read a
 // file outside `frontend/`, as `history.test.ts` does with `filter_cases.json`.
 import contract from "../../backend/tests/vector_contract.json";
-import type { BinnedImage, BinnedTrack, Capabilities, ImageInfo, ImageRun, MusicRun, Status, TrackInfo, VectorItem, VectorLimits, VectorRun } from "./types";
+import type { BinnedImage, BinnedTrack, BinnedVectorItem, Capabilities, ImageInfo, ImageRun, MusicRun, Status, TrackInfo, VectorItem, VectorLimits, VectorRun } from "./types";
 
 /** The contract file as it is, for the tests that compare the page's types and requests with it. Cloned, so a test that changes it changes nothing else. */
 export const VECTOR_CONTRACT = structuredClone(contract);
@@ -112,6 +112,7 @@ export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
     tracks: [],
     binned_tracks: [],
     vectors: [],
+    binned_vectors: [],
     ...overrides,
   };
 }
@@ -147,6 +148,7 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
     tracks: [],
     binned_tracks: [],
     vectors: [],
+    binned_vectors: [],
     ...overrides,
   };
 }
@@ -162,8 +164,15 @@ export function makeVectorItem(idx = 0, overrides: Partial<VectorItem> = {}): Ve
     ...item, id, idx, seed: item.seed + idx,
     url: `${base}/svg`, download_url: `${base}/svg?download=1`, zip_url: `${base}/layers.zip`, png_url: `${base}/png`,
     png_download_url: `${base}/png?download=1`, preview_url: `${base}/png?size=640`,
+    drawing_url: `${base}/drawing`, drawing_download_url: `${base}/drawing?download=1`,
+    layer_urls: item.layer_urls.map((_, n) => `${base}/layers/${n + 1}.svg`),
     ...overrides,
   };
+}
+
+/** A version in the bin, as the server sends it in `binned_vectors` (DESIGN.md §35.4): a version, with when it went and when it will be gone for good. */
+export function makeBinnedVector(idx: number, overrides: Partial<BinnedVectorItem> = {}): BinnedVectorItem {
+  return { ...makeVectorItem(idx), deleted_at: "2026-10-14T09:30:00.000Z", purge_at: "2026-11-13T09:30:00.000Z", ...overrides };
 }
 
 /** A Vector run as the server sends it: the contract's `run` (done, one version, 4 colours of which one is white, so three layers and one note). */
@@ -180,7 +189,7 @@ export function makeVectorRun(overrides: Partial<VectorRun> = {}): VectorRun {
 }
 
 export const STATUS: Status = {
-  version: "1.17",
+  version: "1.18",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", model: "image", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10, enlarge_waiting: [] },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },

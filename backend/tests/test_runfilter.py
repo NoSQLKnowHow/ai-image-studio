@@ -31,11 +31,15 @@ def letter(run_id: str) -> str:
     return chr(int(run_id, 16))
 
 
-# the pictures (or tracks, for a music run) of a run that are in the bin: how many the table says, each a row with its own `deleted_at`
+# the pictures (or tracks, for a music run; versions, for a vector run) of a run that are in the bin: how many the table says, each a row with its own `deleted_at`
 def put_items_in_the_bin(database: Database, run: dict, count: int) -> None:
     for n in range(count):
         item_id = f"{(int(run['id'], 16) << 8) + n + 1:032x}"  # a 32-digit id of its own: the run's number, shifted, plus its place
-        if run["mode"] == "music":
+        if run["mode"] == "vector":  # the items of a Vector run are its versions (DESIGN.md §35.4)
+            database.add_vector({"id": item_id, "run_id": run["id"], "idx": n, "seed": n, "width_mm": 100.0, "height_mm": 100.0, "colours": 2, "layers": 1,
+                                 "bytes": 10, "check_json": "{}", "svg_path": f"vector/{run['id']}/{n}.svg", "zip_path": f"vector/{run['id']}/{n}-layers.zip",
+                                 "png_path": f"vector/{run['id']}/{n}.png", "created_at": run["created_at"], "deleted_at": "2026-10-03T00:00:00.000Z"})
+        elif run["mode"] == "music":
             database.add_track({"id": item_id, "run_id": run["id"], "idx": n, "seed": n, "seconds": 5.0, "sample_rate": 24000, "channels": 1, "bytes": 10,
                                 "path": f"audio/{run['id']}/{n}.wav", "created_at": run["created_at"], "deleted_at": "2026-10-03T00:00:00.000Z"})
         else:
@@ -151,11 +155,11 @@ def test_an_unknown_cursor_is_still_an_error(db):
 
 
 def test_no_filter_is_what_it_was(db):
-    # the history: the runs in the bin (k, m) are not in it; the runs with a picture in the bin (g, j) are
+    # the history: the runs in the bin (k, m) are not in it; the runs with a picture, a track or a version in the bin (g, j, o) are
     rows, _ = db.list_runs(100)
-    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
+    assert [letter(r["id"]) for r in rows] == ["o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
     rows, _ = db.list_runs(100, None, None)
-    assert [letter(r["id"]) for r in rows] == ["j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
+    assert [letter(r["id"]) for r in rows] == ["o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
 
 
 # ------------------------------------------------------------------ the API

@@ -1,5 +1,6 @@
 import { forwardRef, useState, type DragEvent, type ReactNode } from "react";
 import { SCALES, baseSize, effectiveScale, isAutoSize, scaleProblem, scaledSize, sizeLabel, summarize, type Options, type Scale } from "../options";
+import { GENERATE_PICTURES_HELP } from "../paste";
 import type { Capabilities, ImageMode } from "../types";
 import { DraftIcon, SlidersIcon, SparkleIcon } from "./icons";
 
@@ -12,7 +13,7 @@ interface Props {
   tray: ReactNode; // the reference tray, shown in Edit mode (DESIGN.md §21.4)
   blockReason: string | null; // why Generate must wait, in Edit mode (an empty tray, uploads still going)
   starterAvailable: boolean; // the "Extract the subject" starter may replace the prompt (it is empty)
-  onFiles: (files: File[]) => void; // pictures dropped on the card or pasted into the prompt
+  onFiles: (files: File[]) => void; // pictures dropped on the card (a paste is the page's: usePicturePaste)
   onStarter: () => void;
   onPromptFocus: () => void; // the prompt has been focused, so its caret is real (the page inserts "image N" there)
   onPrompt: (text: string) => void;
@@ -45,7 +46,7 @@ export const PromptBar = forwardRef<HTMLTextAreaElement, Props>(function PromptB
     <section className={`prompt-card${dropping ? " dropping" : ""}`} aria-label="New image"
       onDragOver={(e) => {
         if (!carriesFiles(e)) return;
-        e.preventDefault(); // a file may be dropped here, in either mode (Generate says why it can't use it)
+        e.preventDefault(); // a file may be dropped here, in either mode (in Generate it switches the card to Edit, §36.2)
         setDropping(true);
       }}
       onDragLeave={(e) => {
@@ -102,12 +103,7 @@ export const PromptBar = forwardRef<HTMLTextAreaElement, Props>(function PromptB
         aria-describedby="prompt-help"
         onChange={(e) => onPrompt(e.target.value)}
         onFocus={onPromptFocus}
-        onPaste={(e) => {
-          const pictures = Array.from(e.clipboardData?.files ?? []).filter((file) => file.type.startsWith("image/"));
-          if (!pictures.length) return; // ordinary text pastes as always
-          e.preventDefault();
-          onFiles(pictures);
-        }}
+        // (no paste handler here: the page has one for the whole Images tab, so that one paste acts once, DESIGN.md §36.4)
         onKeyDown={(e) => {
           if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
             e.preventDefault();
@@ -151,6 +147,8 @@ export const PromptBar = forwardRef<HTMLTextAreaElement, Props>(function PromptB
       <p id="prompt-help" className="prompt-help">
         Ctrl + Enter (⌘ + Enter on a Mac) generates; add Shift for a draft, a small quick try ({draft.long_side} px, up to {draft.steps} steps)
         that will look different from the full-size image. A smaller scale is a different picture too, even with the same seed.
+        {/* Generate has no tray on screen, so nothing else says that pictures can be pasted or dropped here (§36.2); said only when Edit is there to switch to */}
+        {!editing && caps.modes.includes("edit") && <span data-generate-pictures-help> {GENERATE_PICTURES_HELP}</span>}
       </p>
       {problem && <p className="form-error" role="alert">{problem}</p>}
     </section>

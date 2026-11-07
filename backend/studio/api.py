@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 import json
@@ -526,6 +528,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
 
     picture_routes("image", "images", "Picture")
     picture_routes("track", "tracks", "Track")
+    picture_routes("vector", "vectors", "Version")  # DESIGN.md §35.4: a version of a Vector run is binned, restored and deleted as a picture is
 
     async def _image_file(request: Request, image_id: str, thumb: bool) -> tuple[Any, Optional[bytes]]:
         """(image row, file contents), or (None, None) when there's no such image.
@@ -780,6 +783,44 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         if download and run is not None:
             headers["Content-Disposition"] = content_disposition(vector_download_name(vector, run, ".png"), default="vector.png")
         return Response(data, media_type="image/png", headers=headers)
+
+    @app.get("/api/vectors/{vector_id}/drawing")
+    async def get_vector_drawing(vector_id: str, request: Request, download: bool = False) -> Any:
+        """The picture the image model drew for this version, which the clean-up traced (DESIGN.md §35.2, §35.4): the stored `<idx>-source.png`, shown
+        beside the vector in the viewer. It has no column of its own, so its file is found from the run and the version's place; one that is gone
+        (the disk was cleaned by hand) is a 404 that says so, and nothing else about the version changes."""
+        db: Database = request.app.state.db
+        storage: Storage = request.app.state.storage
+        vector = db.get_vector(vector_id)
+        if vector is None:
+            return _error(404, "Vector not found.", "not_found")
+        run = db.get_run(vector["run_id"])
+        try:
+            data = await asyncio.to_thread(storage.drawing_path(vector["run_id"], vector["idx"]).read_bytes)
+        except (StorageError, FileNotFoundError, IsADirectoryError):
+            return _error(404, "The drawing is no longer on the disk.", "drawing_missing")
+        headers = {"Cache-Control": IMMUTABLE, "X-Content-Type-Options": "nosniff"}
+        if download and run is not None:
+            headers["Content-Disposition"] = content_disposition(vector_download_name(vector, run, "-drawing.png"), default="vector-drawing.png")
+        return Response(data, media_type="image/png", headers=headers)
+
+    @app.get("/api/vectors/{vector_id}/layers/{number}.svg")
+    async def get_vector_layer(vector_id: str, number: int, request: Request) -> Any:
+        """One layer's own SVG, read out of the version's ZIP (DESIGN.md §35.4): the stack view shows the sheets one at a time. `number` counts from 1,
+        as the layers do; one outside 1 to the number of layers is a 404. Served with the same script-forbidding headers as the combined SVG."""
+        vector, _run, data = await _vector_file(request, vector_id, "zip_path")
+        if vector is None:
+            return _error(404, "Vector not found.", "not_found")
+        layers = json.loads(vector["check_json"]).get("layers", [])
+        if not 1 <= number <= len(layers):
+            return _error(404, "That layer does not exist.", "not_found")
+        try:
+            # the entry is named from the layer's own id in the check (`layer-2-red.svg`), never from anything the request sent but the number
+            svg = await asyncio.to_thread(lambda: zipfile.ZipFile(io.BytesIO(data)).read(f"{layers[number - 1]['id']}.svg"))
+        except (KeyError, zipfile.BadZipFile):
+            return _error(404, "That layer is not in the file.", "not_found")
+        return Response(svg, media_type="image/svg+xml",
+                        headers={"Cache-Control": IMMUTABLE, "Content-Security-Policy": SVG_CSP, "X-Content-Type-Options": "nosniff"})
 
     @app.get("/api/events")
     async def events(request: Request) -> StreamingResponse:

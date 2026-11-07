@@ -60,6 +60,7 @@ class RunOptions(BaseModel):
     height_mm: Optional[float] = None
     layers_by: Optional[str] = None
     arrangement: Optional[str] = None
+    stack_order: Optional[str] = None
     bleed_mm: Optional[float] = None
     min_feature_mm: Optional[float] = None
     kerf_mm: Optional[float] = None
@@ -146,6 +147,7 @@ class ResolvedRun:
                 "height_mm": options.height_mm,
                 "layers_by": options.layers_by,
                 "arrangement": options.arrangement,
+                "stack_order": options.stack_order,
                 "bleed_mm": options.bleed_mm,
                 "min_feature_mm": options.min_feature_mm,
                 "kerf_mm": options.kerf_mm,
@@ -188,7 +190,7 @@ class ResolvedRun:
 
 # The options that mean something only for a Vector run: sending one with another kind of run is a mistake the page should hear about, as it is for
 # the music options in `resolve_run`.
-_ONLY_FOR_VECTOR = ("colours", "palette", "kind", "width_mm", "height_mm", "layers_by", "arrangement", "bleed_mm", "min_feature_mm", "kerf_mm", "recipe")
+_ONLY_FOR_VECTOR = ("colours", "palette", "kind", "width_mm", "height_mm", "layers_by", "arrangement", "stack_order", "bleed_mm", "min_feature_mm", "kerf_mm", "recipe")
 
 
 def _vector_only_errors(sent: set[str]) -> list[tuple[tuple[Any, ...], str]]:
@@ -333,6 +335,7 @@ def _resolve_vector(req: RunCreate, settings: Settings) -> ResolvedRun:
         height_mm=opts.height_mm if opts.height_mm is not None else V.SIZE_MM_DEFAULT,
         layers_by=opts.layers_by if opts.layers_by is not None else V.LAYERS_BY_DEFAULT,  # type: ignore[arg-type]
         arrangement=opts.arrangement if opts.arrangement is not None else V.ARRANGEMENT_DEFAULT,  # type: ignore[arg-type]
+        stack_order=opts.stack_order if opts.stack_order is not None else V.STACK_ORDER_DEFAULT,  # type: ignore[arg-type]
         bleed_mm=opts.bleed_mm if opts.bleed_mm is not None else V.BLEED_MM_DEFAULT,
         min_feature_mm=opts.min_feature_mm if opts.min_feature_mm is not None else V.MIN_FEATURE_MM_DEFAULT,
         kerf_mm=opts.kerf_mm if opts.kerf_mm is not None else V.KERF_MM_DEFAULT,

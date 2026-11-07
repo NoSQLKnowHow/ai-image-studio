@@ -22,6 +22,7 @@ const CSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"; // §31.12
 type ApiVector = {
   id: string; idx: number; seed: number; layers: number; check: { layers: { id: string; colour: string }[]; colours_asked: number; colours_found: number };
   url: string; download_url: string; zip_url: string; png_url: string; png_download_url: string; preview_url: string;
+  drawing_url: string; drawing_download_url: string; layer_urls: string[];
 };
 type ApiRun = {
   id: string; status: string; mode: string; pinned: boolean; prompt: string; project_id: string | null; deleted_at: string | null; error: unknown;
@@ -47,6 +48,15 @@ const dialog = (page: Page, name: string | RegExp): Locator => page.getByRole("a
 const radio = (page: Page, group: string, name: string): Locator => form(page).getByRole("radiogroup", { name: group }).getByRole("radio", { name });
 const pill = (page: Page): Locator => page.locator('button[aria-controls="model-details"]');
 const done = (c: Locator) => expect(c.locator(".badge").first()).toHaveText("Done", { timeout: 90_000 });
+// the viewer that opens from a version's preview on the card (DESIGN.md §35.2)
+const viewer = (page: Page): Locator => page.locator(".lightbox.vector-viewer");
+/** Press the preview of version `n` (1-based) on a card and wait for the viewer. */
+async function openVersion(page: Page, c: Locator, n = 1): Promise<Locator> {
+  await c.locator("button.vector-thumb").nth(n - 1).click();
+  await expect(viewer(page)).toBeVisible();
+  return viewer(page);
+}
+const loaded = (image: Locator) => expect.poll(() => image.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
 
 async function openVector(page: Page) {
   await page.goto("/");
@@ -218,15 +228,25 @@ test("making a vector: the request, both stages, and the card with everything th
   const run = await status(page, (await c.getAttribute("data-run-id"))!);
   expect(run.status).toBe("done");
   expect(run.vectors.length).toBeGreaterThan(0);
-  const versions = c.locator(".vector-item");
-  await expect(versions).toHaveCount(run.vectors.length);
-  const first = versions.first();
-  const preview = first.locator("img");
+  // the card is one compact card for the run: a grid of previews, one for each version, each a button; none of the full-width blocks 1.17 had
+  const thumbs = c.locator("button.vector-thumb");
+  await expect(thumbs).toHaveCount(run.vectors.length);
+  await expect(c.locator(".vector-item")).toHaveCount(0);
+  const preview = thumbs.first().locator("img");
   await expect(preview).toHaveAttribute("src", run.vectors[0].preview_url);
-  await expect.poll(() => preview.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
-  await expect(first.locator("[data-vector-colours]")).toContainText(/^\d+ colours? found, 3 asked\./);
-  await expect(first.locator("[data-vector-feature]")).toContainText(/^Smallest feature: .* \(your limit is 0\.5 mm\)\.$/);
-  const rows = first.locator("table.vector-layers tbody tr");
+  await loaded(preview);
+
+  // the viewer: the drawing beside the vector, then what the check found
+  const v = await openVersion(page, c);
+  const drawing = v.locator('[data-panel="drawing"] img');
+  await expect(drawing).toHaveAttribute("src", run.vectors[0].drawing_url);
+  await loaded(drawing);
+  const traced = v.locator('[data-panel="vector"] img');
+  await expect(traced).toHaveAttribute("src", run.vectors[0].url);
+  await loaded(traced);
+  await expect(v.locator("[data-vector-colours]")).toContainText(/^\d+ colours? found, 3 asked\./);
+  await expect(v.locator("[data-vector-feature]")).toContainText(/^Smallest feature: .* \(your limit is 0\.5 mm\)\.$/);
+  const rows = v.locator("table.vector-layers tbody tr");
   const layerCount = await rows.count();
   expect(layerCount).toBeGreaterThan(0);
   expect(layerCount).toBeLessThanOrEqual(2); // at most colours - 1: white gets no layer
@@ -236,13 +256,17 @@ test("making a vector: the request, both stages, and the card with everything th
     await expect(rows.nth(i).locator("td").last()).toHaveText(/^[\d.]+ (mm|m)$/);
   }
   expect(run.vectors[0].check.layers.map((l) => l.colour)).not.toContain("#FFFFFF"); // white has no layer
-  // every note the check made is on the card
+  // every note the check made is in the viewer
   const noted = (run.vectors[0].check as unknown as { notes: { code: string; message: string }[] }).notes;
-  await expect(first.locator(".vector-notes li")).toHaveCount(noted.length);
-  for (const note of noted) await expect(first.locator(`[data-note-code="${note.code}"]`)).toContainText(note.message);
+  await expect(v.locator(".vector-notes li")).toHaveCount(noted.length);
+  for (const note of noted) await expect(v.locator(`[data-note-code="${note.code}"]`)).toContainText(note.message);
   // the page shows the SVG only as a picture of it (an <img>), never as markup of its own
-  await expect(c.locator("object, embed, iframe")).toHaveCount(0);
-  await expect(c.locator("svg:not([aria-hidden='true'])")).toHaveCount(0);
+  await expect(v.locator("object, embed, iframe")).toHaveCount(0);
+  await expect(v.locator("svg:not([aria-hidden='true'])")).toHaveCount(0);
+  // Escape closes the viewer and focus goes back to the preview that opened it
+  await page.keyboard.press("Escape");
+  await expect(viewer(page)).toHaveCount(0);
+  await expect(thumbs.first()).toBeFocused();
   expect(run.options).toMatchObject({ colours: 3, palette: ["#FF0000"], seed: 4242, num_images: 2 });
 });
 
@@ -282,10 +306,12 @@ test("the card's downloads: the SVG, the layers ZIP, and a PNG at the size typed
   expect(zip.headers()["content-disposition"]).toMatch(/^attachment; filename="?vector_.*-layers\.zip"?$/);
   expect((await zip.body()).subarray(0, 2).toString()).toBe("PK");
 
-  // Download PNG: the size box starts at 2048, the link is the server's with the size added, and the file is that size on its long side
-  const size = c.getByLabel("PNG size, long side");
+  // Download PNG is in the viewer, one size box for it: it starts at 2048, the link is the server's with the size added, and the file is that size on its long side
+  await expect(c.getByLabel(/PNG size/)).toHaveCount(0);
+  const v = await openVersion(page, c);
+  const size = v.getByLabel("PNG size, long side");
   await expect(size).toHaveValue("2048");
-  const png = c.getByRole("link", { name: "Download PNG" });
+  const png = v.getByRole("link", { name: "Download PNG" });
   await expect(png).toHaveAttribute("href", `${item.png_download_url}&size=2048`);
   await size.fill("96");
   await expect(png).toHaveAttribute("href", `${item.png_download_url}&size=96`);
@@ -302,13 +328,33 @@ test("the card's downloads: the SVG, the layers ZIP, and a PNG at the size typed
   expect((await page.request.get(`${item.png_url}?size=8193`)).status()).toBe(422);
   for (const bad of ["15", "8193", "1.5", ""]) {
     await size.fill(bad);
-    const off = c.locator('[data-action="download-png"]');
+    const off = v.locator('[data-action="download-png"]');
     await expect(off).not.toHaveAttribute("href", /.*/);
     await expect(off).toHaveAttribute("aria-disabled", "true");
-    await expect(c.getByRole("alert")).toHaveText("Enter a whole number from 16 to 8192.");
+    await expect(v.getByRole("alert")).toHaveText("Enter a whole number from 16 to 8192.");
   }
   await size.fill("2048");
-  await expect(c.getByRole("alert")).toHaveCount(0);
+  await expect(v.getByRole("alert")).toHaveCount(0);
+
+  // the viewer has the same three downloads for the version, and the model's drawing, which the server serves as a PNG with the same protection
+  await expect(v.getByRole("link", { name: "Download SVG" })).toHaveAttribute("href", item.download_url);
+  await expect(v.getByRole("link", { name: "Download layers (ZIP)" })).toHaveAttribute("href", item.zip_url);
+  await expect(v.getByRole("link", { name: "Download drawing" })).toHaveAttribute("href", item.drawing_download_url);
+  const drawing = await page.request.get(item.drawing_download_url);
+  expect(drawing.status()).toBe(200);
+  expect(drawing.headers()["content-type"]).toBe("image/png");
+  expect(drawing.headers()["x-content-type-options"]).toBe("nosniff");
+  expect(drawing.headers()["content-disposition"]).toMatch(/^attachment; filename="?vector_.*-drawing\.png"?$/);
+  expect(pngSize(await drawing.body())).toEqual([Number(run.options.draw_width), Number(run.options.draw_height)]);
+  expect((await page.request.get(item.drawing_url)).headers()["content-disposition"] ?? "").not.toContain("attachment");
+  // each layer's own SVG (the stack view's sheets): served like the combined one, from the ZIP
+  expect(item.layer_urls).toHaveLength(item.check.layers.length);
+  const layer = await page.request.get(item.layer_urls[0]);
+  expect(layer.status()).toBe(200);
+  expect(layer.headers()["content-type"]).toContain("image/svg+xml");
+  expect(layer.headers()["content-security-policy"]).toBe(CSP);
+  expect(layer.headers()["x-content-type-options"]).toBe("nosniff");
+  expect((await page.request.get(`/api/vectors/${item.id}/layers/99.svg`)).status()).toBe(404);
 
   // an id that does not exist is a 404 that says so, as for the other kinds
   const missing = await page.request.get("/api/vectors/00000000000000000000000000000000/svg");
@@ -437,23 +483,24 @@ test("a Vector run can be filed in a project: the chip, the locked Keep, and the
 });
 
 // ------------------------------------------------------------------ Delete, the bin, Restore, Empty bin
-test("Delete moves a Vector run to the bin whole: no per-item delete, the files wait, Restore and Undo bring it back", async ({ page }) => {
+test("Delete on the card moves the whole run to the bin and says how many versions go: the files wait, Restore and Undo bring it back", async ({ page }) => {
   const idea = unique("bin me");
   const id = await makeRun(page, idea, { num_images: 2 });
   const item = (await status(page, id)).vectors[0];
   await openVector(page);
   const c = vectorCard(page, idea).first();
-  await expect(c.getByRole("button", { name: /Delete picture|Delete track|Delete version/ })).toHaveCount(0); // a Vector run is binned whole
+  await expect(c.getByRole("button", { name: /Delete picture|Delete track|Delete version/ })).toHaveCount(0); // a version is deleted from the viewer, not from the card
+  await expect(c.getByRole("button", { name: "Delete", exact: true })).toHaveAttribute("title", "Delete this run and all 2 versions");
   await c.getByRole("button", { name: "Delete", exact: true }).click();
   const question = dialog(page, "Delete this run?");
-  await expect(question).toContainText("It moves to Deleted and stays there for 30 days; you can restore it from there. After that it is gone for good.");
+  await expect(question).toContainText("It has 2 versions. All of them move to Deleted and stay there for 30 days; you can restore the run from there. After that they are gone for good.");
   await question.getByRole("button", { name: "Delete", exact: true }).click();
   await expect(c).toHaveCount(0);
-  await expect(toastWith(page, `Deleted “${idea}”. It stays in Deleted for 30 days.`)).toBeVisible();
+  await expect(toastWith(page, `Deleted “${idea}” and its 2 versions. It stays in Deleted for 30 days.`)).toBeVisible();
   await expect(deletedOption(page)).toHaveText("Deleted 1");
   expect((await status(page, id)).deleted_at).not.toBeNull();
   // the run's files stay with it in the bin (§31.12.6)
-  for (const url of [item.preview_url, item.url, item.zip_url, item.png_url]) expect((await page.request.get(url)).status(), url).toBe(200);
+  for (const url of [item.preview_url, item.url, item.zip_url, item.png_url, item.drawing_url, item.layer_urls[0]]) expect((await page.request.get(url)).status(), url).toBe(200);
 
   // the Deleted view: the same card, with only what is safe in the bin
   await deletedOption(page).click();
@@ -463,7 +510,7 @@ test("Delete moves a Vector run to the bin whole: no per-item delete, the files 
   for (const name of ["Restore", "Reuse", "Delete forever"]) await expect(c.getByRole("button", { name })).toBeVisible();
   for (const name of ["Keep", "Retry", "Cancel"]) await expect(c.getByRole("button", { name })).toHaveCount(0);
   await expect(c.locator("img").first()).toBeVisible();
-  await expect(c.getByRole("link", { name: /Download SVG/ }).first()).toBeVisible(); // the downloads only read the run
+  await expect(c.getByRole("button", { name: /^Download…/ })).toBeVisible(); // the downloads only read the run: Download… opens the viewer, where each version's are
 
   // Restore: it goes back to the history, and focus lands on the filter bar (the card that had it is gone)
   await c.getByRole("button", { name: "Restore" }).click();
@@ -620,22 +667,33 @@ test("at a phone's width (320 px) nothing runs off the page: the tabs, the form 
     expect(box.x + box.width, "right edge").toBeLessThanOrEqual(320);
   }
   expect(await fits()).toEqual({ page: true, body: true });
-  // the card: the previews stack above the details, and the table scrolls inside its own box if it must
+  // the card: the grid of previews is above the details (the card is one column), and nothing is wider than the screen
   const c = vectorCard(page, idea).first();
   await c.scrollIntoViewIfNeeded();
   const cardBox = (await c.boundingBox())!;
   expect(cardBox.x + cardBox.width).toBeLessThanOrEqual(320);
-  for (const image of await c.locator(".vector-preview img").all()) {
+  for (const image of await c.locator("button.vector-thumb img").all()) {
     const box = (await image.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(320);
   }
-  const first = c.locator(".vector-item").first();
-  const preview = (await first.locator(".vector-preview").boundingBox())!;
-  const details = (await first.locator(".vector-details").boundingBox())!;
-  expect(details.y).toBeGreaterThanOrEqual(preview.y + preview.height - 1); // stacked, not side by side
+  const media = (await c.locator(".run-media-col").boundingBox())!;
+  const body = (await c.locator(".run-body").boundingBox())!;
+  expect(body.y).toBeGreaterThanOrEqual(media.y + media.height - 1); // stacked, not side by side
   for (const button of await c.locator(".run-actions button:visible").all()) {
     const box = (await button.boundingBox())!;
     expect(box.x + box.width).toBeLessThanOrEqual(320);
+  }
+  expect(await fits()).toEqual({ page: true, body: true });
+  // the viewer: the drawing above the vector (they stack), the controls reachable, and still no sideways scroll
+  const v = await openVersion(page, c);
+  const drawingBox = (await v.locator('[data-panel="drawing"] .vv-frame').boundingBox())!;
+  const vectorBox = (await v.locator('[data-panel="vector"] .vv-frame').boundingBox())!;
+  expect(vectorBox.y).toBeGreaterThanOrEqual(drawingBox.y + drawingBox.height - 1);
+  for (const control of [v.getByRole("button", { name: "Delete version" }), v.getByRole("button", { name: "Close" }), v.getByLabel("PNG size, long side")]) {
+    await control.scrollIntoViewIfNeeded();
+    const box = (await control.boundingBox())!;
+    expect(box.x, "left edge").toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width, "right edge").toBeLessThanOrEqual(320);
   }
   expect(await fits()).toEqual({ page: true, body: true });
 });
@@ -802,7 +860,7 @@ test("Cancel on a Vector run that is working asks first, counts the versions kep
   await expect(c.locator(".badge").first()).toHaveText("Making vector", { timeout: 30_000 });
   await expect(c.getByRole("button", { name: "Delete", exact: true })).toBeDisabled(); // not while it is being made
   // wait for a first finished version, so that the question has something to say is kept
-  await expect(c.locator(".vector-item").first()).toBeVisible({ timeout: 60_000 });
+  await expect(c.locator("button.vector-thumb").first()).toBeVisible({ timeout: 60_000 });
   await c.getByRole("button", { name: "Cancel" }).click();
   const question = dialog(page, "Stop this run?");
   // (by the time the button is pressed one or two versions are finished: "The version ... is kept" or "The 2 versions ... are kept"; never "Nothing has been finished")
@@ -1282,21 +1340,33 @@ test("the card's details: the kind, the versions in order and named, a long prom
   await expect(c.locator(".run-expiry")).toHaveCount(0); // kept: it will not go
   await expect(c.locator(".run-meta")).toHaveText(/^60 × 40 mm · 3 colours · line art · layers by colour, side by side · seeds 7–8 · (\d+m )?\d+s$/);
 
-  // two versions, first first, and every button and link of a version says which version it is for
-  expect(await c.locator(".vector-item").evaluateAll((items) => items.map((item) => item.getAttribute("aria-label")))).toEqual(["Version 1 of 2", "Version 2 of 2"]);
-  for (const n of [1, 2]) {
-    const named = (text: string) => `${text}, version ${n} of 2`;
-    await expect(c.getByRole("link", { name: named("Download SVG") })).toHaveCount(1);
-    await expect(c.getByRole("link", { name: named("Download layers (ZIP)") })).toHaveCount(1);
-    await expect(c.getByRole("link", { name: named("Download PNG") })).toHaveCount(1);
-    await expect(c.getByRole("button", { name: named("Copy SVG code") })).toHaveCount(1);
-    await expect(c.getByLabel(named("PNG size, long side"))).toHaveCount(1);
-  }
+  // two versions, first first: each preview is a button named for its place, seed and layers, and the card has Download..., not each version's downloads
+  const thumbs = c.locator("button.vector-thumb");
+  await expect(thumbs).toHaveCount(2);
+  const names = await thumbs.evaluateAll((buttons) => buttons.map((b) => b.getAttribute("aria-label")));
+  expect(names[0]).toMatch(/^Open version 1 of 2 \(seed 7, \d+ layers?\)$/);
+  expect(names[1]).toMatch(/^Open version 2 of 2 \(seed 8, \d+ layers?\)$/);
+  await expect(thumbs.first().locator(".vt-number")).toHaveText("1");
+  await expect(thumbs.nth(1).locator(".vt-number")).toHaveText("2");
+  await expect(c.getByRole("link", { name: /Download SVG/ })).toHaveCount(0);
+  await expect(c.getByLabel(/PNG size/)).toHaveCount(0);
+  await expect(c.getByRole("button", { name: /^Download…/ })).toBeVisible();
 
-  // the preview: described for a screen reader, and in the sheet's own shape before the picture arrives
-  const preview = c.locator(".vector-item").first().locator("img");
-  await expect(preview).toHaveAttribute("alt", /^Preview of version 1 of 2: 60 by 40 mm, \d+ layers?$/);
+  // the preview: decorative (its button is named), and in the sheet's own shape before the picture arrives
+  const preview = thumbs.first().locator("img");
+  await expect(preview).toHaveAttribute("alt", "");
   await expect(preview).toHaveCSS("aspect-ratio", "60 / 40");
+
+  // the viewer opens at the version pressed, names its place, and pages to the other and round again
+  const v = await openVersion(page, c, 2);
+  await expect(v.locator("[data-viewer-title]")).toHaveText(/^Version 2 of 2 · seed 8 · 60 × 40 mm · \d+ layers? · /);
+  await v.getByRole("button", { name: "Next version" }).click();
+  await expect(v.locator("[data-viewer-title]")).toHaveText(/^Version 1 of 2 · seed 7 · /);
+  await page.keyboard.press("ArrowLeft");
+  await expect(v.locator("[data-viewer-title]")).toHaveText(/^Version 2 of 2 · seed 8 · /);
+  await page.keyboard.press("Escape");
+  await expect(viewer(page)).toHaveCount(0);
+  await expect(thumbs.nth(1)).toBeFocused();
 
   // a long prompt is shortened, and opens and closes
   const prompt = c.locator(".run-prompt");
@@ -1315,14 +1385,15 @@ test("the PNG size accepts both ends of the server's range, and the SVG link sav
   const item = (await status(page, await makeRun(page, idea))).vectors[0];
   await openVector(page);
   const c = vectorCard(page, idea).first();
-  const size = c.getByLabel("PNG size, long side");
-  const png = c.getByRole("link", { name: "Download PNG" });
+  const v = await openVersion(page, c);
+  const size = v.getByLabel("PNG size, long side");
+  const png = v.getByRole("link", { name: "Download PNG" });
   for (const edge of ["16", "8192"]) {
     await size.fill(edge);
     await expect(png).toHaveAttribute("href", `${item.png_download_url}&size=${edge}`);
-    await expect(c.getByRole("alert")).toHaveCount(0);
+    await expect(v.getByRole("alert")).toHaveCount(0);
   }
-  for (const name of ["Download SVG", "Download layers (ZIP)", "Download PNG"]) await expect(c.getByRole("link", { name })).toHaveAttribute("download", "");
+  for (const name of ["Download SVG", "Download layers (ZIP)", "Download PNG", "Download drawing"]) await expect(v.getByRole("link", { name })).toHaveAttribute("download", "");
 });
 
 // ------------------------------------------------------------------ Keep, locked

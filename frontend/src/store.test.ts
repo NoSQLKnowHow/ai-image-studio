@@ -3,7 +3,7 @@ import { toApiError } from "./api";
 import { EXPIRY_WARNING_DAYS, WORKING_IN_KEPT_NOTE, binNote, binnedText, canceledText, duration, emptiedText, expiryText, leftTheViewText, restoredText, seedText, timeAgo, unkeptText } from "./format";
 import { NO_FILTER, ONLY_KEPT } from "./history";
 import { initialState, reducer, type State } from "./store";
-import { STATUS, makeBinnedImage, makeBinnedTrack, makeImage, makeMusicRun, makeRun, makeTrack } from "./testdata";
+import { STATUS, makeBinnedImage, makeBinnedTrack, makeBinnedVector, makeImage, makeMusicRun, makeRun, makeTrack, makeVectorItem, makeVectorRun } from "./testdata";
 
 const withRuns = (...runs: ReturnType<typeof makeRun>[]): State =>
   reducer({ ...initialState, status: STATUS }, { type: "runsLoaded", page: { runs, next_before: null }, append: false });
@@ -354,6 +354,20 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     const before = music.countsStale;
     music = reducer(music, { type: "runUpsert", run: { ...music.runs.m, tracks: [makeTrack(0)], binned_tracks: [makeBinnedTrack(1)] } as never });
     expect(music.countsStale).toBe(before + 1); // the same for a track
+  });
+
+  // The same for a version of a Vector run (DESIGN.md §35.2): the Deleted count counts versions too. A browser test found that the reducer counted only pictures
+  // and tracks, so a restored version left the number beside Deleted where it was.
+  it("the counts are stale when a version of a Vector run goes to the bin or comes back", () => {
+    let state = withRuns(makeVectorRun({ id: "v", vectors: [makeVectorItem(0), makeVectorItem(1)] }) as never);
+    const before = state.countsStale;
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.v, vectors: [makeVectorItem(0)], binned_vectors: [makeBinnedVector(1)] } as never });
+    expect(state.countsStale).toBe(before + 1); // a version went to the bin
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.v, prompt: "edited" } });
+    expect(state.countsStale).toBe(before + 1); // nothing moved
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.v, vectors: [makeVectorItem(0), makeVectorItem(1)], binned_vectors: [] } as never });
+    expect(state.countsStale).toBe(before + 2); // it came back
+    expect(state.projectsStale).toBe(0);
   });
 
   it("a new run does not make the projects stale (it is in none), but a run kept or deleted does not either", () => {
