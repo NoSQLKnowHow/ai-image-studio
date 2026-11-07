@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-li
 import { useState, type ComponentProps } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { PromptBar } from "./components/PromptBar";
+import { RunCard } from "./components/RunCard";
 import { Tray } from "./components/Tray";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { defaultOptions } from "./options";
@@ -9,7 +10,7 @@ import {
   EDITING_UNAVAILABLE, GENERATE_PICTURES_HELP, NOT_A_PICTURE, PICTURES_ON_IMAGES_TAB, UPSCALE_TITLE, hasPlainText, isTextField, mayBePicture, pastedPictures, routePaste,
   switchedToEditText, takePictures, type IntakeEnv, type PasteFacts,
 } from "./paste";
-import { CAPS } from "./testdata";
+import { CAPS, makeImage, makeRun } from "./testdata";
 import type { TrayItem } from "./tray";
 import type { Capabilities } from "./types";
 import { useTray, type AddOutcome } from "./useTray";
@@ -321,6 +322,31 @@ describe("the tray at a limit of 8", () => {
     expect(add().disabled).toBe(true);
     expect(add().title).toBe("One edit takes at most 8 images.");
     expect(document.querySelectorAll(".tray-tile")).toHaveLength(8);
+  });
+});
+
+describe("an edit of eight pictures is an ordinary run (criterion 220)", () => {
+  const eight = makeRun({
+    id: "edit-eight", mode: "edit", prompt: "put them all together",
+    inputs: Array.from({ length: 8 }, (_, i) => ({ ...makeImage(i), position: i + 1, role: "reference", id: `in${i}`.padEnd(32, "0") })) as never,
+  });
+  const props = (): ComponentProps<typeof RunCard> => ({
+    run: eight, now: Date.parse("2026-10-05T12:00:00.000Z"), workerState: "ready", canEdit: true, making4k: new Set<string>(), enlarging: new Set<string>(),
+    enlargeWaiting: new Set<string>(), transient: false, viewScope: "kept", upscaler: null, onReuse: vi.fn(), onRegenerateLarger: vi.fn(), onMake4K: vi.fn(), onEnlarge: vi.fn(),
+    onEditThis: vi.fn(), onRetry: vi.fn(), onCancel: vi.fn(), onToggleKeep: vi.fn(), onRestore: vi.fn(), onDelete: vi.fn(), onCopy: vi.fn(), onOpenImage: vi.fn(),
+    projects: { projects: [], nameMax: 60, onFile: vi.fn(), onUnfile: vi.fn(), onCreate: vi.fn(async () => null) },
+  });
+
+  it("shows every source picture on its card, numbered in order, each opening the viewer at its place, and says how many it was given", () => {
+    const p = props();
+    render(<RunCard {...p} />);
+    const sources = Array.from(document.querySelectorAll(".run-sources button.source-thumb")) as HTMLElement[];
+    expect(sources).toHaveLength(8); // not cut off at the four a result grid shows
+    expect(sources.map((b) => b.querySelector(".source-number")?.textContent)).toEqual(["1", "2", "3", "4", "5", "6", "7", "8"]);
+    expect(sources[7].getAttribute("aria-label")).toBe("Open source image 8 of 8");
+    fireEvent.click(sources[7]);
+    expect(p.onOpenImage).toHaveBeenCalledWith(7);
+    expect(document.querySelector(".run-meta")?.textContent).toContain("8 images");
   });
 });
 

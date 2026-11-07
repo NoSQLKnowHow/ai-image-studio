@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { NO_FILTER, ONLY_DELETED, ONLY_KEPT, filterParams, matches, visibleRuns, withProject } from "./history";
-import { binContents, canceledText, deleteProjectQuestion, emptyBinQuestion, emptiedText, projectContents, type BinContents } from "./format";
+import {
+  binContents, binnedText, canceledText, deleteItemQuestion, deleteItemTitle, deleteProjectQuestion, deleteRunTitle, emptyBinQuestion, emptiedText, itemBinnedText, itemDeletedText,
+  itemRestoredText, projectContents, type BinContents, type DeleteItemAsk, type ItemRef,
+} from "./format";
 import { browserStore, type KeyValueStore } from "./options";
 import { CAPS, VECTOR_CONTRACT, makeMusicRun, makeRun, makeVectorItem, makeVectorRun } from "./testdata";
 import type {
@@ -54,6 +57,70 @@ const FOX: VectorForm = {
 // ------------------------------------------------------------------ the page and the contract cannot drift apart
 // A `Record<keyof T, true>` literal must list every key of the type, and no other (the compiler checks both), so each one below is the type's keys written
 // out. The tests compare it with the keys of the contract file, which is what the server sends: a key added on either side fails one of the two.
+// ------------------------------------------------------------------ the words about versions in the bin (DESIGN.md §35.2)
+describe("the words about deleting a Vector run's versions", () => {
+  const several = { prompt: "a fox head", mode: "vector", vectors: [1, 2, 3] };
+
+  it("tell, in the toast and the tooltip for deleting a run, how many versions go with it; a run with one version, or a picture run, says nothing of versions", () => {
+    expect(binnedText(several, 30)).toBe("Deleted “a fox head” and its 3 versions. It stays in Deleted for 30 days.");
+    expect(binnedText({ ...several, vectors: [1, 2] }, 1)).toBe("Deleted “a fox head” and its 2 versions. It stays in Deleted for 1 day.");
+    expect(binnedText({ ...several, vectors: [1] }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days.");
+    expect(binnedText({ ...several, vectors: [] }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days.");
+    expect(binnedText({ ...several, mode: "image" }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days."); // only a Vector run has versions
+    expect(binnedText({ prompt: "a fox head" }, 30)).toBe("Deleted “a fox head”. It stays in Deleted for 30 days.");
+    expect(deleteRunTitle(several)).toBe("Delete this run and all 3 versions");
+    expect(deleteRunTitle({ mode: "vector", vectors: [1] })).toBe("Delete this run and its files");
+    expect(deleteRunTitle({ mode: "vector" })).toBe("Delete this run and its files");
+    expect(deleteRunTitle({ mode: "image", vectors: [1, 2, 3] })).toBe("Delete this run and its files");
+  });
+
+  it("count versions in what Empty bin asks and what it says it did, in the singular or the plural, with the other kinds beside them", () => {
+    const bin = (vector: { runs: number; items: number }): BinContents => ({ image: { runs: 0, items: 0 }, music: { runs: 0, items: 0 }, vector });
+    expect(emptyBinQuestion(bin({ runs: 1, items: 2 }), false)).toBe("Delete 1 run and 2 versions for good (1 run and 2 versions on Vector), with their files. This can't be undone.");
+    expect(emptyBinQuestion(bin({ runs: 0, items: 1 }), false)).toBe("Delete 1 version for good (1 version on Vector), with their files. This can't be undone.");
+    expect(emptyBinQuestion({ image: { runs: 2, items: 1 }, music: { runs: 0, items: 0 }, vector: { runs: 0, items: 3 } }, false)).toBe(
+      "Delete 2 runs, 1 picture and 3 versions for good (2 runs and 1 picture on Images, 3 versions on Vector), with their files. This can't be undone.");
+    expect(emptiedText(1, 2, { pictures: 0, tracks: 0, versions: 2 })).toBe("Emptied the bin: 1 run and 2 versions deleted for good.");
+    expect(emptiedText(0, 1, { pictures: 0, tracks: 0, versions: 1 })).toBe("Emptied the bin: 1 version deleted for good.");
+    expect(emptiedText(0, 3, { pictures: 1, tracks: 1, versions: 1 })).toBe("Emptied the bin: 1 picture, 1 track and 1 version deleted for good.");
+    // the counts and the answer disagree (something changed in between): all that is certain is the total, and it is called pictures
+    expect(emptiedText(0, 2, { pictures: 0, tracks: 0, versions: 1 })).toBe("Emptied the bin: 2 pictures deleted for good.");
+    expect(emptiedText(0, 0)).toBe("The bin was already empty.");
+  });
+
+  const version: ItemRef = { kind: "vector", position: 2, of: 3, seed: 41 };
+  const ask = (over: Partial<DeleteItemAsk> = {}): DeleteItemAsk => ({ item: version, binDays: 30, last: false, forever: false, filed: false, projectName: null, ...over });
+
+  it("name a version in the question, by its place and its seed (a lone one, or one in the bin, by its seed alone)", () => {
+    expect(deleteItemTitle(version, false)).toBe("Delete this version?");
+    expect(deleteItemTitle(version, true)).toBe("Delete this version for good?");
+    expect(deleteItemQuestion(ask())).toBe("(version 2 of 3, seed 41.) It moves to Deleted and stays there for 30 days; you can restore it from there.");
+    expect(deleteItemQuestion(ask({ item: { ...version, position: null, of: 0 } }))).toContain("(seed 41.)");
+    expect(deleteItemQuestion(ask({ item: { ...version, position: 1, of: 1 } }))).toContain("(seed 41.)");
+  });
+
+  it("say, for the last version, that the whole run moves; for Delete forever, what is removed; with no bin, that it is for good; and which project the run is in", () => {
+    expect(deleteItemQuestion(ask({ last: true, item: { ...version, position: 1, of: 1 } }))).toBe(
+      "(seed 41.) This is the last version of this run, so the whole run moves to Deleted and stays there for 30 days; you can restore it from there.");
+    expect(deleteItemQuestion(ask({ forever: true, item: { ...version, position: null, of: 0 } }))).toBe(
+      "(seed 41.) Its SVG, its layers, its PNG and the drawing the model made are removed from the Spark. This can't be undone.");
+    expect(deleteItemQuestion(ask({ binDays: 0 }))).toBe(
+      "(version 2 of 3, seed 41.) It is deleted for good: its SVG, its layers, its PNG and the drawing the model made are removed from the Spark. This can't be undone.");
+    expect(deleteItemQuestion(ask({ binDays: 0, last: true }))).toContain("so the whole run is deleted for good, with its files");
+    expect(deleteItemQuestion(ask({ filed: true, projectName: "Logo" }))).toContain("The run stays in the project “Logo” with its other versions.");
+    expect(deleteItemQuestion(ask({ filed: true, last: true }))).toContain("Restoring it puts it back in a project.");
+    expect(deleteItemQuestion(ask({ binDays: 1 }))).toContain("for 1 day;");
+  });
+
+  it("say in the toasts which version went, came back or was deleted for good, of which run", () => {
+    const run = { prompt: "a fox head" };
+    expect(itemBinnedText(run, version, 30)).toBe("Deleted version 2 of “a fox head”. It stays in Deleted for 30 days.");
+    expect(itemDeletedText(run, version)).toBe("Deleted version 2 of “a fox head” for good.");
+    expect(itemRestoredText(run, version)).toBe("Restored version 2 of “a fox head”.");
+    expect(itemDeletedText(run, { ...version, position: null })).toBe("Deleted a version of “a fox head” for good."); // one in the bin has no place
+  });
+});
+
 // ------------------------------------------------------------------ naming a version by its place (DESIGN.md §35.2)
 describe("placeLabel", () => {
   it("names a version by its place among the versions the run has now, and a lone version by its seed alone", () => {
