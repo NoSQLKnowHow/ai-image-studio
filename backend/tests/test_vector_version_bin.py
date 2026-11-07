@@ -234,11 +234,10 @@ def test_delete_forever_does_not_mind_a_file_that_is_already_gone(vclient):
     run = three(vclient)
     victim = run["vectors"][1]
     mine = files_of(vclient, run, victim)
-    mine["-source.png"].unlink()
-    mine[".png"].unlink()
+    mine[".png"].unlink()  # the preview: the third of the four files to be removed, so the fourth (the drawing) is only reached if the loop goes on after it
     assert bin_version(vclient, victim["id"]).status_code == 200
     assert delete_version(vclient, victim["id"]).status_code == 204
-    assert not any(exists(mine).values())
+    assert not any(exists(mine).values())  # the drawing is gone too
     assert [v["seed"] for v in get_run(vclient, run["id"])["vectors"]] == [100, 102]
 
 

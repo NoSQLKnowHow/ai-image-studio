@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import cases from "../../backend/tests/filter_cases.json";
 import {
-  FILTER_KEY, NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, canBin, filterKey, filterParams, isDefault, matches, parseFilterKey, readFilter, saveFilter, showsWorking,
+  FILTER_KEY, NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, canBin, filterKey, filterParams, hasItemsInTheBin, isDefault, matches, parseFilterKey, readFilter, saveFilter, showsWorking,
   visibleRuns, watchWorking, withProject, working,
   type HistoryFilter, type View,
 } from "./history";
@@ -30,6 +30,17 @@ function tableRun(entry: TableRun): Run {
 // which tab a run belongs to, as the server's counts name it
 type Kind = "image" | "music" | "vector";
 const kindOf = (run: Run): Kind => (run.mode === "music" ? "music" : run.mode === "vector" ? "vector" : "image");
+
+// ------------------------------------------------------------------ a run with one thing of its own in the bin (DESIGN.md §33.1, §35.2)
+describe("hasItemsInTheBin", () => {
+  it("is true for a run with even one picture, one track or one version in the bin, and false for none", () => {
+    expect(hasItemsInTheBin(makeRun({ binned_images: [makeBinnedImage(0)] }))).toBe(true);
+    expect(hasItemsInTheBin(makeMusicRun({ binned_tracks: [makeBinnedTrack(0)] }))).toBe(true);
+    expect(hasItemsInTheBin(makeVectorRun({ binned_vectors: [makeBinnedVector(0)] }))).toBe(true);
+    expect(hasItemsInTheBin(makeRun())).toBe(false);
+    expect(hasItemsInTheBin(makeVectorRun())).toBe(false);
+  });
+});
 
 describe("the shared table of cases", () => {
   const runs = cases.runs.map(tableRun); // newest first, as the table lists them

@@ -421,6 +421,14 @@ describe("the card of deleted versions in the Deleted view (DESIGN.md §35.2)", 
     expect(card.querySelector("[data-note=in-bin]")?.textContent).toMatch(/^In the bin since .*\. It will be deleted for good around .*, in 29 days\.$/);
   });
 
+  it("is named for a screen reader by what it holds and which run it is from, in the plural or the singular", () => {
+    render(<BinnedItemsCard run={run} now={now} projectName={null} handlers={handlers()} />);
+    expect((document.querySelector("article") as HTMLElement).getAttribute("aria-label")).toBe("Deleted versions of: a fox head");
+    cleanup();
+    render(<BinnedItemsCard run={{ ...run, binned_vectors: [run.binned_vectors[0]] }} now={now} projectName={null} handlers={handlers()} />);
+    expect((document.querySelector("article") as HTMLElement).getAttribute("aria-label")).toBe("Deleted version of: a fox head");
+  });
+
   it("says one deleted version in the singular", () => {
     render(<BinnedItemsCard run={{ ...run, binned_vectors: [run.binned_vectors[0]] }} now={now} projectName={null} handlers={handlers()} />);
     expect(document.querySelector(".badge-deleted")?.textContent?.trim()).toBe("1 deleted version");

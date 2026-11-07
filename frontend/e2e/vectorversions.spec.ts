@@ -235,6 +235,29 @@ test("a refusal to delete a version is said in the server's words, and the viewe
   expect((await runOf(page, run.id)).binned_vectors).toHaveLength(0);
 });
 
+// ------------------------------------------------------------------ Copy SVG code from the viewer (criterion 186)
+// The page behind a modal, toasts included, is hidden from screen readers (§24.2), so what a request made in the viewer answers is said INSIDE the viewer.
+test("Copy SVG code in the viewer answers inside the viewer, in words, and not as a toast behind it", async ({ page, context }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  const prompt = unique("copy from the viewer");
+  const run = await makeRun(page, prompt, 2);
+  await openVector(page);
+  await thumbs(vectorCard(page, prompt).first()).nth(1).click();
+  await viewer(page).getByRole("button", { name: "Copy SVG code" }).click();
+  await expect(viewer(page).locator(".lightbox-notice")).toHaveText("SVG code copied.");
+  await expect(viewer(page).locator(".lightbox-notice")).not.toHaveClass(/error/);
+  await expect(toastWith(page, "SVG code copied.")).toHaveCount(0);
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toBe(await (await page.request.get(run.vectors[1].url)).text()); // the version that is shown, not another
+  expect(copied).toMatch(/<svg[\s>]/);
+  await viewer(page).getByRole("button", { name: "Next version" }).click();
+  await expect(viewer(page).locator(".lightbox-notice")).toHaveCount(0); // moving on clears what was said about the last one
+  await page.route("**/api/vectors/*/svg", (route) => route.fulfill({ status: 404, contentType: "application/json", body: JSON.stringify({ detail: "That vector no longer exists.", code: "not_found" }) }));
+  await viewer(page).getByRole("button", { name: "Copy SVG code" }).click();
+  await expect(viewer(page).locator(".lightbox-notice.error")).toContainText("Couldn't get the SVG:");
+  await expect(page.getByRole("alert").filter({ hasText: "Couldn't get the SVG" })).toHaveCount(0);
+});
+
 // ------------------------------------------------------------------ Stacked (depth) (criteria 198 to 210)
 test("the Back sheet is greyed until the run is stacked by colour, is sent, is remembered, and Reuse brings it back", async ({ page }) => {
   await openVector(page);

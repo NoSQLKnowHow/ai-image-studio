@@ -9,6 +9,7 @@ import { EmptyHistory, FilterBar } from "./components/FilterBar";
 import { Tabs } from "./components/Tabs";
 import type { ProjectControls } from "./components/ProjectMenu";
 import { StackView } from "./components/StackView";
+import { AlertIcon, StopIcon } from "./components/icons";
 import { VectorCard } from "./components/VectorCard";
 import { VectorPanel } from "./components/VectorPanel";
 import { VectorViewer } from "./components/VectorViewer";
@@ -306,11 +307,44 @@ describe("a Vector run with several versions (DESIGN.md §35.2)", () => {
     expect(card().querySelector(".more")?.textContent).toBe("+2");
   });
 
+  it("hides the number and the layer count in a preview's corner from a screen reader (the button around them is named), and counts the rest only past four", () => {
+    render(<VectorCard {...cardProps(run)} />);
+    for (const corner of Array.from(card().querySelectorAll(".vt-number, .vt-layers"))) expect(corner.getAttribute("aria-hidden"), corner.className).toBe("true");
+    cleanup();
+    const four = makeVectorRun({ options: { ...options, num_images: 4 }, vectors: [0, 1, 2, 3].map((i) => makeVectorItem(i, { id: `four${i}`.padEnd(32, "0") })) });
+    render(<VectorCard {...cardProps(four)} />);
+    expect(card().querySelectorAll("button.vector-thumb")).toHaveLength(4);
+    expect(card().querySelectorAll(".more")).toHaveLength(0); // all four are shown: nothing is left to count
+  });
+
   it("shows a version in the bin only in the Deleted view: the run's own card holds the ones that are not in the bin", () => {
     const withBinned = { ...run, binned_vectors: [makeBinnedVector(1, { seed: 101 })] };
     render(<VectorCard {...cardProps(withBinned)} />);
     expect(card().querySelectorAll("button.vector-thumb")).toHaveLength(2);
     expect(card().textContent).not.toContain("seed 101");
+  });
+});
+
+describe("the empty preview of a run with no version yet (DESIGN.md §35.2)", () => {
+  const media = () => card().querySelector(".run-media.empty") as HTMLElement;
+
+  it("is hidden from a screen reader, and shows a shimmer while the run waits or works, an alert icon once it failed, and a stop icon once it was canceled", () => {
+    for (const status of ["queued", "running"] as const) {
+      render(<VectorCard {...cardProps(makeVectorRun({ status, vectors: [] }))} />);
+      expect(media().getAttribute("aria-hidden")).toBe("true");
+      expect(media().querySelector(".shimmer")).not.toBeNull();
+      expect(media().querySelector("svg")).toBeNull();
+      cleanup();
+    }
+    const html = (node: React.ReactElement) => renderToStaticMarkup(node);
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "failed", vectors: [], error: { message: "x", hint: null } }))} />);
+    expect(media().querySelector(".shimmer")).toBeNull();
+    expect(media().innerHTML).toBe(html(<AlertIcon />));
+    cleanup();
+    render(<VectorCard {...cardProps(makeVectorRun({ status: "canceled", vectors: [] }))} />);
+    expect(media().querySelector(".shimmer")).toBeNull();
+    expect(media().innerHTML).toBe(html(<StopIcon />));
+    expect(html(<AlertIcon />)).not.toBe(html(<StopIcon />)); // (so that the two above say different things)
   });
 });
 
@@ -779,6 +813,13 @@ describe("Size, layers, arrangement and More", () => {
     fireEvent.click(radio("Arrangement", "Stacked (depth)"));
     type(num("Bleed (mm)"), "6");
     expect(form().textContent).toContain("Enter a number from 0 to 5.");
+  });
+
+  it("lists a back sheet order the page has no words for by its own name, so that a newer server's choice is still offered", () => {
+    const vector = { ...CAPS.limits.vector, stack_orders: [...CAPS.limits.vector.stack_orders, "newest_first"] as never };
+    render(<VectorPanel {...panelProps({ caps: { ...CAPS, limits: { ...CAPS.limits, vector } } })} />);
+    const options = Array.from(form().querySelectorAll("[data-back-sheet] select option")).map((o) => o.textContent);
+    expect(options).toEqual(["The colour with the most ink", "The colour with the least ink", "The first ink in my list", "newest_first"]);
   });
 
   it("locks the seed on request, and the number is only for a locked seed", () => {

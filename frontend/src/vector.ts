@@ -153,7 +153,6 @@ export const STACK_ORDER_LABELS: Record<VectorStackOrder, string> = {
 export const STACK_ORDER_HINT = "The back sheet is the whole design; each sheet in front of it holds less. Which colour is at the back decides how high each colour stands.";
 /** The help under Bleed, which now says what it does for a stacked run (§35.2). */
 export const BLEED_HINT = "0 puts each colour's edge exactly where the drawing has it; more makes each upper sheet a little larger than its colour so that it overlaps the sheet behind it.";
-export const stackOrderLabel = (order: string | null | undefined): string => STACK_ORDER_LABELS[(order ?? "area_desc") as VectorStackOrder] ?? String(order);
 
 /** The arrangement the run will use: by shape the pieces are separate by construction, so it is side by side whatever the control says (§31.12.3 item 4).
  *  The page greys the control then, and sends this value, so the run's own record says what was done. */

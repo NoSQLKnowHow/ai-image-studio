@@ -119,6 +119,26 @@ def test_the_job_is_given_the_drawing_the_options_and_a_folder_of_its_own(vclien
     assert not any(name.startswith("work") for name in stored_files(vclient, run["id"]))
 
 
+def test_a_run_stored_by_1_17_with_no_back_sheet_is_cleaned_up_with_the_default(vclient, monkeypatch):
+    """A run queued by 1.17 and cleaned up by 1.18 has no `stack_order` in its stored options (DESIGN.md §35.4, criterion 210): it is traced as `area_desc`,
+    which is what 1.17 did. The run is stored with the option here and the option is taken out as the clean-up begins, which is what an older row looks like."""
+    from studio import jobs
+
+    manager = next(value for value in vars(jobs).values() if isinstance(value, type) and hasattr(value, "_trace_drawings"))
+    original = manager._trace_drawings
+
+    async def as_1_17_stored_it(self, row, drawings):
+        older = dict(zip(row.keys(), tuple(row)))
+        older["options_json"] = json.dumps({key: value for key, value in json.loads(row["options_json"]).items() if key != "stack_order"})
+        return await original(self, older, drawings)
+
+    monkeypatch.setattr(manager, "_trace_drawings", as_1_17_stored_it)
+    run = make_vector(vclient, "a fox head", seed=100, arrangement="stacked", stack_order="area_asc")
+    assert run["status"] == "done"
+    [call] = job_calls(vclient)
+    assert call["options"]["stack_order"] == V.STACK_ORDER_DEFAULT == "area_desc"  # not the area_asc this run asked for: the older row had no say
+
+
 def test_the_options_the_job_gets_are_the_ones_stored_with_the_run(vclient):
     run = make_vector(vclient, "a fox head", **{**CONTRACT["create_request"]["options"], "steps": 3, "recipe": None})
     [call] = job_calls(vclient)

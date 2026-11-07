@@ -13,7 +13,7 @@ import {
   editRecipe, effectiveArrangement, inkCount, kindLabel, layersLine, lengthText, loadVectorForm, mmText, normaliseColour, paletteProblem, pngDownloadUrl, pngRange,
   presetMatches, rebuildRecipe, reconcileReusedRecipe, recipeRequest, recipeToSend, removeInk, sanitizeVectorForm, saveVectorForm, setInk, smallestFeatureText,
   unavailableText, vectorFormFromRun, vectorMeta, vectorPhases, vectorProblem, vectorProgressText, vectorRetryRequest, vectorSeedText, vectorTitle, vectorUsable,
-  versionLabel, withColours, type VectorForm,
+  versionLabel, withColours, type VectorForm, placeLabel,
 } from "./vector";
 
 // The Vector tab's pure logic (DESIGN.md §31.12.8): the form and where its limits come from, the palette rules, the line about layers, the request, Reuse and
@@ -54,6 +54,15 @@ const FOX: VectorForm = {
 // ------------------------------------------------------------------ the page and the contract cannot drift apart
 // A `Record<keyof T, true>` literal must list every key of the type, and no other (the compiler checks both), so each one below is the type's keys written
 // out. The tests compare it with the keys of the contract file, which is what the server sends: a key added on either side fails one of the two.
+// ------------------------------------------------------------------ naming a version by its place (DESIGN.md §35.2)
+describe("placeLabel", () => {
+  it("names a version by its place among the versions the run has now, and a lone version by its seed alone", () => {
+    expect(placeLabel(2, 3, 41)).toBe("Version 2 of 3");
+    expect(placeLabel(1, 2, 41)).toBe("Version 1 of 2"); // two are already several
+    expect(placeLabel(1, 1, 41)).toBe("Seed 41");
+  });
+});
+
 describe("the types match the contract file", () => {
   const keys = (record: Record<string, true>) => Object.keys(record).sort();
   const same = (record: Record<string, true>, example: object) => expect(keys(record)).toEqual(Object.keys(example).sort());
