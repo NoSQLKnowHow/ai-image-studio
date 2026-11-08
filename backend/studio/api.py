@@ -29,6 +29,7 @@ from .builder.routes import add_routes as add_builder_routes
 from .builder.service import BuilderService
 from .builder.store import BuilderStore
 from .speech import speech_limits
+from .speech.routes import add_routes as add_speech_routes
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
@@ -306,11 +307,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except PromptRefRefused as exc:
             return _error(exc.status, exc.message, exc.code)
 
-    async def read_limited_body(request: Request) -> Any:
+    async def read_limited_body(request: Request, megabytes: Optional[int] = None) -> Any:
         """The request body as bytes, or the 413 response when it is larger than STUDIO_MAX_UPLOAD_MB (refused from the declared
-        length when there is one, and while it streams in when there is not). Used by uploads and by Upscale a picture."""
-        limit = settings.max_upload_mb * 1024 * 1024
-        too_big = _error(413, f"The file is larger than {settings.max_upload_mb} MB.", "too_large")
+        length when there is one, and while it streams in when there is not). Used by uploads and by Upscale a picture, and, with its own limit
+        in `megabytes`, by the Speech tab's files (STUDIO_SPEECH_MAX_UPLOAD_MB)."""
+        megabytes = megabytes or settings.max_upload_mb
+        limit = megabytes * 1024 * 1024
+        too_big = _error(413, f"The file is larger than {megabytes} MB.", "too_large")
         declared = request.headers.get("content-length", "")
         if declared.isdigit() and int(declared) > limit:
             return too_big
@@ -890,6 +893,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     add_builder_routes(app)  # /api/builder/... (registered before the page below, which takes every other path)
     add_builder_chat_routes(app)
     add_builder_prompt_routes(app)
+    add_speech_routes(app, read_limited_body)  # /api/speech/... and /api/readings/...
 
     static_dir = settings.static_dir or DEFAULT_STATIC_DIR
     if (static_dir / "index.html").is_file():

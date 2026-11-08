@@ -14,3 +14,7 @@ idna==3.20
 annotated-doc==0.0.5
 opentelemetry-api==1.45.0
 typing-inspection==0.4.4
+
+# Speech (DESIGN.md section 38.5): pypdf reads the text layer of a PDF. BSD-3-Clause, pure Python (a py3-none-any wheel, so nothing is compiled for
+# the Spark), and it needs nothing else on Python 3.11 and later. Web pages, EPUB and Word files are read with the standard library alone.
+pypdf==7.0.0
