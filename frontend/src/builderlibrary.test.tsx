@@ -167,6 +167,22 @@ describe("the prompts list", () => {
     await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("That did not work."));
   });
 
+  it("keeps saying what is wrong with the prompts when the chats, being slower, are read well after the failure", async () => {
+    let release: () => void = () => undefined;
+    const slow = new Promise<void>((resolve) => { release = resolve; });
+    const api = makeApi({
+      listPrompts: vi.fn(async () => { throw new ApiError("The library could not be read.", 500, "server_error"); }),
+      listChats: vi.fn(async () => { await slow; return { chats: [] as ChatListItem[] }; }),
+    });
+    setup(api);
+    await toPrompts();
+    expect((await screen.findByRole("alert")).textContent).toContain("The library could not be read.");
+    release(); // the chats arrive, well, after the prompts have failed: one list being fine says nothing of the other
+    await waitFor(() => expect(api.listChats).toHaveBeenCalled());
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(screen.getByRole("alert").textContent).toContain("The library could not be read.");
+  });
+
   it("stars and unstars a prompt without opening it", async () => {
     const api = makeApi({ listPrompts: vi.fn(async () => ({ prompts: [card()] })), patchPrompt: vi.fn(async () => detail({ favourite: true })) });
     setup(api);

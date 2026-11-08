@@ -302,6 +302,9 @@ def test_a_refine_tells_the_model_how_the_picture_was_made(builder, monkeypatch)
     note = spy.system   # the run being discussed is told in the instruction, not in the person's turn
     assert "The picture was made with: mode generate, size 256x256, steps 3" in note and "seed 777" in note
     assert "Negative prompt used: blurry" in note and "The prompt used was:\na red barn" in note
+    draft = wait_for(builder, create_run(builder, "a red barn", draft=True)["id"])
+    send(builder, new_chat(builder), text="too dark", intent="refine", run_id=draft["id"])
+    assert ", a draft." in spy.system and ", a draft" not in note   # only a quick try is called one
     # a run that is not there adds nothing, and does not stop the reply
     send(builder, new_chat(builder), text="too dark", intent="refine", run_id="f" * 32)
     assert "The picture was made with" not in spy.system
@@ -463,3 +466,40 @@ def test_a_chat_nobody_named_takes_the_models_title_a_named_one_keeps_its_name_a
     send(builder, plain, text="a fox in the snow [[bad-always]]")
     title = builder.get(f"/api/builder/chats/{plain}").json()["chat"]["title"]
     assert title.startswith("a fox in the snow") and title != "New chat"
+
+
+def test_answers_to_the_questions_still_count_after_a_message_that_failed_in_between(builder, monkeypatch):
+    """The questions being answered are the model's last, even when the person's words after them got no reply (the model could not be reached): the failed message must not
+    be taken for the thing that asked."""
+    from studio.builder.ollama import OllamaError
+
+    chat = new_chat(builder)
+    send(builder, chat, text="a lantern")                                   # the model asks "What time of day?" and more
+    Spy(builder.app.state.builder, monkeypatch, fail_first=lambda: OllamaError("unreachable", "Can't reach it."))
+    assert send(builder, chat, text="hello?")[-1][0] == "error"             # no reply to this one
+    spy = Spy(builder.app.state.builder, monkeypatch)
+    send(builder, chat, text="", answers=[{"id": "q1", "chips": ["Dusk"]}])
+    assert '"What time of day?": Dusk' in spy.last_user
+
+
+def test_the_deltas_say_whether_the_model_thought_first_and_never_repeat_themselves(builder):
+    thinking = [data for name, data in send(builder, new_chat(builder), text="a fox", think=True) if name == "delta"]
+    quiet = [data for name, data in send(builder, new_chat(builder), text="a fox", think=False) if name == "delta"]
+    assert thinking and all(d["thought"] is True for d in thinking)
+    assert quiet and all(d["thought"] is False for d in quiet)
+    for deltas in (thinking, quiet):
+        texts = [d["text"] for d in deltas]
+        assert all(a != b for a, b in zip(texts, texts[1:])) and texts == sorted(texts, key=len)   # each one is the reply so far, and it only grows
+
+
+def test_an_answer_with_no_title_names_a_new_chat_after_the_first_words_and_a_picture_alone_leaves_the_name_alone(builder, monkeypatch):
+    service = builder.app.state.builder
+    tries = ['{"reply": "Sure."}', '{"reply": "Nice picture."}']
+    monkeypatch.setattr(service, "chat", lambda model, messages, *, think, schema: Written(tries.pop(0)))
+    chat = new_chat(builder)
+    send(builder, chat, text="a heron on a frozen lake at first light")
+    assert builder.get(f"/api/builder/chats/{chat}").json()["chat"]["title"].startswith("a heron on a frozen lake")   # the model gave none: the person's own first words
+    pictured = new_chat(builder)
+    picture = upload(builder, pictured, name="heron.png").json()["id"]
+    send(builder, pictured, text="", attachments=[picture])
+    assert builder.get(f"/api/builder/chats/{pictured}").json()["chat"]["title"] == "New chat"   # nothing to name it after
