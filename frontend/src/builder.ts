@@ -210,21 +210,21 @@ export function overlayOptions(
 }
 
 /** The toast after Use in Images (criterion 235): what was filled and set. Undo is the toast's button. */
-export function usedText(applied: string[]): string {
-  if (applied.length === 0) return "Filled the prompt.";
+export function usedText(applied: string[], box = "prompt"): string {
+  if (applied.length === 0) return `Filled the ${box}.`;
   const list = applied.length === 1 ? applied[0] : `${applied.slice(0, -1).join(", ")} and ${applied[applied.length - 1]}`;
-  return `Filled the prompt, set ${list}.`;
+  return `Filled the ${box}, set ${list}.`;
 }
 
 /** The request for Generate now and Quick try (criterion 236, 239): the Images tab's current options with the prompt's settings over them, nothing in the form changed.
  *  A quick try is a Draft, within Draft's limits (the studio's own `draftRequest`). Both carry the prompt and version they are made from. For Edit, `inputs` are the tray's pictures. */
 export function promptRun(
-  kind: "images" | "edit", text: string, options: Options, caps: Capabilities, ref: PromptRunRef,
+  kind: "images" | "edit", text: string, options: Options, caps: Capabilities, ref: PromptRunRef | null,
   extra: { quick?: boolean; inputs?: InputRef[]; shapeFrom?: number | null } = {},
 ): WithPromptRef<CreateRunBody> {
   const body = kind === "edit" ? buildEditRequest(text, options, caps, extra.inputs ?? [], extra.shapeFrom ?? null)
     : extra.quick ? draftRequest(text, options, caps) : buildRequest(text, options, caps);
-  return { ...body, prompt_ref: ref };
+  return ref ? { ...body, prompt_ref: ref } : body; // a prompt that is not saved has no reference to carry
 }
 
 /** Why a prompt has no quick try (criterion 239), or null when it has: only an Images prompt does, and only if the studio can draft. */

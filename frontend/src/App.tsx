@@ -57,6 +57,7 @@ import {
 import { VECTOR_PNG_RANGE, pngRange } from "./vector";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
+import { refOf, usePromptUse, type FromPrompt } from "./usePromptUse";
 import { viewerItems, viewerKnown } from "./viewer";
 
 const NO_PROJECTS: Project[] = []; // the list of projects before it has arrived: one array, so nothing re-renders for a new empty one
@@ -107,6 +108,7 @@ export default function App() {
   const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music, Vector or Prompt builder (DESIGN.md §26.1, §31.12.8, §37.2), remembered
   const [builderWorking, setBuilderWorking] = useState(false); // a reply is being written: the dot on the Prompt builder tab
   const [builderTick, setBuilderTick] = useState(0); // another page changed a prompt, chat or preference
+  const [fromPrompt, setFromPrompt] = useState<FromPrompt | null>(null); // the saved prompt the Images prompt box came from: the next Generate carries it (DESIGN.md §37.3 rule 3)
   const builderAttach = useRef<((files: File[]) => void) | null>(null); // the chat's way of taking pictures that are pasted
   const [filter, setFilter] = useState<HistoryFilter>(() => readFilter(store)); // All or Kept, for both tabs (DESIGN.md §29), remembered
   const [filterProblem, setFilterProblem] = useState<string | null>(null); // why the filtered list could not be loaded
@@ -209,7 +211,9 @@ export default function App() {
     setSubmitting(true);
     setFormProblem(null);
     try {
-      const run = await api.createRun(build(prompt, options, caps));
+      const body = build(prompt, options, caps);
+      const ref = refOf(fromPrompt);
+      const run = await api.createRun(ref ? { ...body, prompt_ref: ref } : body);
       dispatch({ type: "runUpsert", run });
       return run;
     } catch (error) {
@@ -220,7 +224,7 @@ export default function App() {
     } finally {
       setSubmitting(false);
     }
-  }, [caps, options, prompt, submitting, push]);
+  }, [caps, options, prompt, submitting, push, fromPrompt]);
 
   // Generate sends the size and scale; Edit sends the tray's images in order. Once an edit is sent the server owns
   // copies of them, so the tray now points at those and stays usable for the next try.
@@ -264,8 +268,26 @@ export default function App() {
     saveTab(next, store);
   };
 
+  // Generate now, Quick try and Use in … from the Prompt builder (DESIGN.md §37.2): they fill the Images form (with an Undo), the Vector and Music forms, or queue a run at once
+  const promptUse = usePromptUse({
+    from: fromPrompt, setFrom: setFromPrompt, caps, options, setOptions, prompt, setPrompt, clearProblem: () => setFormProblem(null), tray, store, push, showTab: changeTab,
+    upsert: (run) => dispatch({ type: "runUpsert", run }), focusPrompt: () => promptRef.current?.focus({ preventScroll: true }),
+  });
+
+  // a prompt's versions show the pictures made from them: read the prompt again when a run made from one appears or finishes (a quick try shows its thumbnail on the version)
+  const madeFromPrompts = useMemo(() => Object.values(state.runs).filter((run) => run.prompt_ref !== null).map((run) => `${run.id}:${run.status}`).sort().join(","), [state.runs]);
+  const sawPromptRuns = useRef(madeFromPrompts);
+  useEffect(() => {
+    if (sawPromptRuns.current === madeFromPrompts) return;
+    sawPromptRuns.current = madeFromPrompts;
+    setBuilderTick((n) => n + 1);
+  }, [madeFromPrompts]);
+
   const reuse = (run: ImageRun) => {
     if (!caps || !options) return;
+    // a run made from a saved prompt brings its chip back, if the prompt is still there; any other run takes the chip away (rule 3)
+    const ref = run.prompt_ref;
+    setFromPrompt(ref && !ref.deleted && ref.title !== null ? { promptId: ref.id, version: ref.version, title: ref.title } : null);
     setPrompt(run.prompt);
     setOptions(optionsFromRun(run, caps, options));
     setFormProblem(null);
@@ -1007,6 +1029,8 @@ export default function App() {
               }
               blockReason={editing ? submitBlock(tray.items) : null}
               starterAvailable={!prompt.trim()}
+              fromPrompt={fromPrompt}
+              onClearFrom={() => setFromPrompt(null)}
               onFiles={handleFiles}
               onStarter={applyStarter}
               onPromptFocus={() => {
@@ -1107,6 +1131,7 @@ export default function App() {
               loadingOlder={loadingOlder}
               now={now}
               push={push}
+              fill={promptUse.musicFill}
               onRun={(run: MusicRun) => dispatch({ type: "runUpsert", run })}
               onLoadOlder={() => void loadOlder()}
               onCancel={requestCancel}
@@ -1116,7 +1141,8 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
-            <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} />
+            <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach}
+              integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
             <VectorPanel
               hidden={tab !== "vector"}
               caps={caps}
@@ -1136,6 +1162,7 @@ export default function App() {
               loadingOlder={loadingOlder}
               now={now}
               push={push}
+              fill={promptUse.vectorFill}
               onRun={(run) => dispatch({ type: "runUpsert", run })}
               onLoadOlder={() => void loadOlder()}
               onOpenVersion={(run, index) => setVectorView({ runId: run.id, index })}

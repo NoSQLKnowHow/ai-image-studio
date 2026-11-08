@@ -1,5 +1,6 @@
 import { forwardRef, useState, type DragEvent, type ReactNode } from "react";
 import { SCALES, baseSize, effectiveScale, isAutoSize, scaleProblem, scaledSize, sizeLabel, summarize, type Options, type Scale } from "../options";
+import { chipLine } from "../builder";
 import { GENERATE_PICTURES_HELP } from "../paste";
 import type { Capabilities, ImageMode } from "../types";
 import { DraftIcon, SlidersIcon, SparkleIcon } from "./icons";
@@ -22,6 +23,11 @@ interface Props {
   onOpenOptions: () => void;
   onSubmit: () => void;
   onDraft: () => void;
+  fromPrompt?: { title: string; version: number } | null; // the saved prompt this text came from (DESIGN.md §37.3 rule 3): the next Generate carries it
+  onClearFrom?: () => void;
+  onOpenFrom?: () => void; // open that prompt in the Prompt builder
+  onHelpWrite?: () => void; // Help me write this (Edit only, DESIGN.md §37.2): open the builder with the tray's pictures
+  helpWriteProblem?: string | null; // why that is off, or null
 }
 
 const MODES: { mode: ImageMode; label: string }[] = [
@@ -30,7 +36,8 @@ const MODES: { mode: ImageMode; label: string }[] = [
 ];
 
 export const PromptBar = forwardRef<HTMLTextAreaElement, Props>(function PromptBar(
-  { caps, options, prompt, submitting, problem, tray, blockReason, starterAvailable, onFiles, onStarter, onPromptFocus, onPrompt, onMode, onScale, onOpenOptions, onSubmit, onDraft },
+  { caps, options, prompt, submitting, problem, tray, blockReason, starterAvailable, onFiles, onStarter, onPromptFocus, onPrompt, onMode, onScale, onOpenOptions, onSubmit, onDraft,
+    fromPrompt = null, onClearFrom, onOpenFrom, onHelpWrite, helpWriteProblem = null },
   textareaRef,
 ) {
   const limit = caps.limits.prompt_chars;
@@ -92,6 +99,14 @@ export const PromptBar = forwardRef<HTMLTextAreaElement, Props>(function PromptB
 
       {editing && tray}
 
+      {fromPrompt && (
+        <p className="from-chip">
+          {onOpenFrom
+            ? <button type="button" className="link-button" onClick={onOpenFrom} title="Open this prompt in the Prompt builder">{chipLine(fromPrompt)}</button>
+            : <span>{chipLine(fromPrompt)}</span>}
+          {onClearFrom && <button type="button" className="icon-button" aria-label={`Forget that this came from “${fromPrompt.title}”`} onClick={onClearFrom}>✕</button>}
+        </p>
+      )}
       <label htmlFor="prompt" className="sr-only">Prompt</label>
       <textarea
         id="prompt"
@@ -142,6 +157,13 @@ export const PromptBar = forwardRef<HTMLTextAreaElement, Props>(function PromptB
           Try: <button type="button" className="link-button" disabled={!starterAvailable} onClick={onStarter}
             title={starterAvailable ? "Fills the prompt and turns Transparent on" : "Clear the prompt first: a starter replaces it."}>Extract the subject</button>
           {" "}(a cut-out of image 1 on a transparent background)
+          {onHelpWrite && (
+            <>
+              {" · "}
+              <button type="button" className="link-button" disabled={!!helpWriteProblem} onClick={onHelpWrite}
+                title={helpWriteProblem ?? "Opens the Prompt builder with these pictures, numbered, to help you write what should change."}>Help me write this</button>
+            </>
+          )}
         </p>
       )}
       <p id="prompt-help" className="prompt-help">

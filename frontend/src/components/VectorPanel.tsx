@@ -1,8 +1,11 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ApiError, api } from "../api";
-import type { ToastKind } from "../hooks";
+import type { ToastAction, ToastKind } from "../hooks";
 import type { ViewScope } from "../format";
+import { usedText } from "../builder";
 import type { KeyValueStore } from "../options";
+import { fillVector, skippedText } from "../promptUse";
+import type { FillRequest } from "../usePromptUse";
 import type { Capabilities, Run, Status, VectorItem, VectorRun } from "../types";
 import { recipeKey, useVectorRecipe } from "../useVectorRecipe";
 import {
@@ -40,7 +43,8 @@ interface Props {
   more: boolean; // older runs can be loaded
   loadingOlder: boolean;
   now: number;
-  push: (kind: ToastKind, text: string) => void;
+  push: (kind: ToastKind, text: string, action?: ToastAction) => void;
+  fill?: FillRequest | null; // a prompt from the Prompt builder to put in the form (DESIGN.md §37.2): a new request each time
   onOpenVersion: (run: VectorRun, index: number) => void; // the viewer, at this version of the run's versions that are not in the bin
   onCopySvg: (item: VectorItem) => void; // fetch the SVG's text and copy it: a run with one version has the button on its card
   onRun: (run: VectorRun) => void; // a run was made (or retried): the page adds it to its list
@@ -52,7 +56,7 @@ interface Props {
 }
 
 export function VectorPanel({
-  hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, inDeletedView, binnedHandlers, more, loadingOlder, now, push,
+  hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, inDeletedView, binnedHandlers, more, loadingOlder, now, push, fill = null,
   onRun, onLoadOlder, onOpenVersion, onCopySvg, onCancel, onToggleKeep, onRestore, onDelete,
 }: Props) {
   const ids = useId();
@@ -100,6 +104,18 @@ export function VectorPanel({
     setInkNote(null);
   };
   const update = (patch: Partial<VectorForm>) => change((current) => ({ ...current, ...patch }));
+
+  // Use in Vector (criterion 242): the prompt's idea and the settings the form can take go in, with an Undo that puts the form back
+  const lastFill = useRef(fill?.seq ?? 0);
+  useEffect(() => {
+    if (!fill || fill.seq === lastFill.current) return;
+    lastFill.current = fill.seq;
+    const before = form;
+    const { form: next, applied, skipped } = fillVector(form, fill.using.draft, caps);
+    change(() => next);
+    push(skipped.length ? "info" : "success", usedText(applied, "idea") + skippedText(skipped), { label: "Undo", run: () => change(() => before) });
+    ideaBox.current?.focus({ preventScroll: true });
+  }, [fill?.seq]);
 
   const ready = form.idea.trim() !== ""; // an empty idea is nothing to make
   const arrangement = effectiveArrangement(form);

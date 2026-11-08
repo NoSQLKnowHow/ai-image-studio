@@ -895,3 +895,9 @@ fieldset.field { gap: 8px; }
 @media (max-width: 900px) {
   .builder-columns.wide-center:not(.narrow) { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Where a prompt came from, beside the Images prompt box (DESIGN.md §37.3 rule 3) */
+.from-chip { margin: 0; display: inline-flex; align-items: center; gap: 2px; align-self: start; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 13px; }
+.from-chip .link-button { color: inherit; }
+.from-chip .icon-button { padding: 0 6px; }
+.run-from { margin: 0; font-size: 13px; color: var(--text-2); }
