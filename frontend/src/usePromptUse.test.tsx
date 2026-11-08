@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "./api";
 import type { Using } from "./components/BuilderPanel";
@@ -25,12 +25,12 @@ const readyItem = (n: number): TrayItem => ({
 });
 
 function setup(over: { options?: Options; prompt?: string; from?: FromPrompt | null; items?: TrayItem[]; store?: ReturnType<typeof memoryStore> } = {}) {
-  const calls = { prompt: vi.fn(), options: vi.fn(), from: vi.fn(), problem: vi.fn(), push: vi.fn(), tab: vi.fn(), upsert: vi.fn(), focus: vi.fn(), adopt: vi.fn() };
+  const calls = { prompt: vi.fn(), options: vi.fn(), from: vi.fn(), problem: vi.fn(), push: vi.fn(), tab: vi.fn(), upsert: vi.fn(), focus: vi.fn(), adopt: vi.fn(), addFiles: vi.fn() };
   const store = over.store ?? memoryStore();
   const options = over.options ?? defaultOptions(CAPS);
   const hook = renderHook(() => usePromptUse({
     from: over.from ?? null, setFrom: calls.from, caps: CAPS, options, setOptions: calls.options, prompt: over.prompt ?? "my own words", setPrompt: calls.prompt, clearProblem: calls.problem,
-    tray: { items: over.items ?? [], shapeKey: null, adoptRun: calls.adopt }, store, push: calls.push, showTab: calls.tab, upsert: calls.upsert, focusPrompt: calls.focus,
+    tray: { items: over.items ?? [], shapeKey: null, adoptRun: calls.adopt, addFiles: calls.addFiles }, store, push: calls.push, showTab: calls.tab, upsert: calls.upsert, focusPrompt: calls.focus,
   }));
   return { ...calls, store, startOptions: options, hook };
 }
@@ -43,7 +43,7 @@ beforeEach(() => {
   vi.spyOn(api, "createVectorRun").mockResolvedValue(makeRun({ id: "vmade" }) as never);
   vi.spyOn(api, "createMusicRun").mockResolvedValue(makeRun({ id: "mmade" }) as never);
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 describe("Use in Images (criterion 235)", () => {
   it("fills the prompt box, sets only the settings left on, goes to Images, and says what it set", () => {
@@ -100,19 +100,66 @@ describe("Use in Images (criterion 235)", () => {
   it("says Edit is not there, and changes nothing, when the pipeline cannot edit", () => {
     const hook = renderHook(() => usePromptUse({
       from: null, setFrom: vi.fn(), caps: { ...CAPS, modes: ["generate"] }, options: defaultOptions(CAPS), setOptions: vi.fn(), prompt: "", setPrompt: vi.fn(), clearProblem: vi.fn(),
-      tray: { items: [], shapeKey: null, adoptRun: vi.fn() }, store: memoryStore(), push: vi.fn(), showTab: vi.fn(), upsert: vi.fn(), focusPrompt: vi.fn(),
+      tray: { items: [], shapeKey: null, adoptRun: vi.fn(), addFiles: vi.fn() }, store: memoryStore(), push: vi.fn(), showTab: vi.fn(), upsert: vi.fn(), focusPrompt: vi.fn(),
     }));
     const push = vi.fn();
     const calls = { setPrompt: vi.fn(), showTab: vi.fn() };
     const again = renderHook(() => usePromptUse({
       from: null, setFrom: vi.fn(), caps: { ...CAPS, modes: ["generate"] }, options: defaultOptions(CAPS), setOptions: vi.fn(), prompt: "", setPrompt: calls.setPrompt, clearProblem: vi.fn(),
-      tray: { items: [], shapeKey: null, adoptRun: vi.fn() }, store: memoryStore(), push, showTab: calls.showTab, upsert: vi.fn(), focusPrompt: vi.fn(),
+      tray: { items: [], shapeKey: null, adoptRun: vi.fn(), addFiles: vi.fn() }, store: memoryStore(), push, showTab: calls.showTab, upsert: vi.fn(), focusPrompt: vi.fn(),
     }));
     hook.unmount();
     act(() => again.result.current.useIn(using({ kind: "edit" })));
     expect(push).toHaveBeenCalledWith("error", "Edit isn't available: the loaded pipeline can't edit images.");
     expect(calls.setPrompt).not.toHaveBeenCalled();
     expect(calls.showTab).not.toHaveBeenCalled();
+  });
+});
+
+describe("Use in Edit puts the chat's pictures in the tray (criterion 243)", () => {
+  const pictures = [{ url: "/api/builder/attachments/a1", name: "dog.png" }, { url: "/api/builder/attachments/a2", name: null }];
+  const stubFetch = (ok = true) => vi.stubGlobal("fetch", vi.fn(async (url: string) => ({ ok, status: ok ? 200 : 404, blob: async () => new Blob([url], { type: "image/png" }) })));
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("in the chat's order, into an empty tray, and says so", async () => {
+    stubFetch();
+    const s = setup();
+    act(() => s.hook.result.current.useIn(using({ kind: "edit", pictures, draft: { prompt: "put the dog from image 1 into the scene from image 2" } })));
+    await waitFor(() => expect(s.addFiles).toHaveBeenCalledTimes(1));
+    const files = s.addFiles.mock.calls[0][0] as File[];
+    expect(files.map((f) => f.name)).toEqual(["dog.png", "picture 2"]);
+    expect(files.map((f) => f.type)).toEqual(["image/png", "image/png"]);
+    await waitFor(() => expect(toast(s.push)[1]).toBe("Put the chat's 2 pictures in the tray, in order."));
+    expect(s.tab).toHaveBeenCalledWith("images");
+    expect(s.options.mock.calls[0][0]).toMatchObject({ mode: "edit" });
+  });
+
+  it("leaves a tray that has pictures in it alone, and says why", () => {
+    stubFetch();
+    const s = setup({ items: [readyItem(1)] });
+    act(() => s.hook.result.current.useIn(using({ kind: "edit", pictures })));
+    expect(s.addFiles).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(said(s.push)[1]).toMatch(/^The tray already has a picture, so it was left as it is\./);
+    cleanup();
+  });
+
+  it("says when the pictures could not be fetched, and puts nothing in the tray", async () => {
+    stubFetch(false);
+    const s = setup();
+    act(() => s.hook.result.current.useIn(using({ kind: "edit", pictures })));
+    await waitFor(() => expect(toast(s.push)[0]).toBe("error"));
+    expect(toast(s.push)[1]).toBe("The chat's pictures could not be put in the tray. Add them by hand.");
+    expect(s.addFiles).not.toHaveBeenCalled();
+  });
+
+  it("does nothing about a tray for an Edit prompt with no pictures, or for any other kind", () => {
+    stubFetch();
+    const s = setup();
+    act(() => s.hook.result.current.useIn(using({ kind: "edit" })));
+    act(() => s.hook.result.current.useIn(using({ kind: "images", pictures })));
+    expect(fetch).not.toHaveBeenCalled();
+    expect(s.addFiles).not.toHaveBeenCalled();
   });
 });
 

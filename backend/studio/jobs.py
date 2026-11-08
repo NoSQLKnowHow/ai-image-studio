@@ -929,7 +929,7 @@ class JobManager:
                     try:
                         started_worker = await self._prepare_worker(self._kind_of(row))
                     except _MemoryShortfall as short:
-                        self._finish(run_id, "failed", str(short), sysinfo.MEMORY_HINT)
+                        self._finish(run_id, "failed", str(short), self._memory_hint())
                         return
                     # Anything stale goes, and only now: a worker that was being stopped (by an Unload this run waited
                     # for, or by `_prepare_worker` making room for the other model) reports its exit as the run's
@@ -1206,7 +1206,7 @@ class JobManager:
         self._model = kind
         shortfall = self._memory_shortfall(kind)
         if shortfall:
-            self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
+            self._set_worker_state("error", shortfall, self._memory_hint())
             raise _MemoryShortfall(shortfall)
         self._set_worker_state("loading")
         await self._worker.start()
@@ -1232,7 +1232,7 @@ class JobManager:
             try:
                 await self._prepare_worker(kind)
             except _MemoryShortfall as short:
-                raise ModelRefused(409, "not_enough_memory", str(short), sysinfo.MEMORY_HINT) from short
+                raise ModelRefused(409, "not_enough_memory", str(short), self._memory_hint()) from short
             except (WorkerGone, OSError) as exc:
                 message = f"Could not start the {kind} worker: {exc}"
                 self._set_worker_state("error", message, "See the server log for details.")
@@ -1262,6 +1262,10 @@ class JobManager:
             await self._worker.stop(busy=loading)
         self._wakeup.set()  # drop the idle timer that was running for the worker that is gone
         return True
+
+    def _memory_hint(self) -> str:
+        """The advice that goes with a refusal for too little free memory; it mentions Unload from memory when the Prompt builder is set up (criterion 249)."""
+        return sysinfo.memory_hint(self.settings.builder_configured)
 
     def _memory_shortfall(self, kind: str = "image") -> Optional[str]:
         """Fail fast (decision #19) instead of starting a load that can't fit next to Hermes."""

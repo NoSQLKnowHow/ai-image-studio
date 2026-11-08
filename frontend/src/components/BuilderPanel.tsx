@@ -23,6 +23,7 @@ export interface Using {
   draft: Draft;
   off: ReadonlySet<SettingKey>;
   from: { promptId: string; version: number; title: string } | null; // set when the words are those of a saved version
+  pictures?: { url: string; name: string | null }[]; // for Edit: the chat's pictures in the order the prompt numbers them (image 1, image 2…)
 }
 
 export interface Integration {
@@ -142,7 +143,8 @@ export function BuilderPanel({ hidden, caps, projects, push, onWorking, integrat
 
   const using = (override?: Draft): Using | null => {
     const d = override ?? shown;
-    return d ? { kind, draft: d, off, from: null } : null;
+    const pictures = kind === "edit" ? [...messages.flatMap((m) => (m.role === "user" ? m.attachments : [])), ...builder.pending].map((a) => ({ url: a.url, name: a.name })) : undefined;
+    return d ? { kind, draft: d, off, from: null, ...(pictures?.length ? { pictures } : {}) } : null;
   };
 
   // ------------------------------------------------------------------ saving (criterion 229)

@@ -38,7 +38,7 @@ interface Deps {
   prompt: string;
   setPrompt: (text: string) => void;
   clearProblem: () => void;
-  tray: { items: TrayItem[]; shapeKey: string | null; adoptRun: (run: ImageRun) => void };
+  tray: { items: TrayItem[]; shapeKey: string | null; adoptRun: (run: ImageRun) => void; addFiles: (files: File[]) => unknown };
   store: KeyValueStore;
   push: (kind: ToastKind, text: string, action?: ToastAction) => void;
   showTab: (tab: TabId) => void;
@@ -52,6 +52,29 @@ export function usePromptUse(deps: Deps) {
   const { from, setFrom, caps, options, setOptions, prompt, setPrompt, clearProblem, tray, store, push, showTab, upsert, focusPrompt } = deps;
   const [vectorFill, setVectorFill] = useState<FillRequest | null>(null);
   const [musicFill, setMusicFill] = useState<FillRequest | null>(null);
+
+  /** An Edit prompt's pictures go in the tray in the order the prompt numbers them, but only into an empty tray: one that has pictures in it is the person's, and "image 1" in the prompt
+   *  would no longer mean the first of the chat's. They are told either way. */
+  const putInTray = useCallback((pictures: NonNullable<Using["pictures"]>) => {
+    if (tray.items.length > 0) {
+      push("info", `The tray already has ${tray.items.length === 1 ? "a picture" : `${tray.items.length} pictures`}, so it was left as it is. The prompt's “image 1”, “image 2” … follow the chat's pictures: check they still mean what you want.`);
+      return;
+    }
+    void (async () => {
+      try {
+        const files = await Promise.all(pictures.map(async (picture, i) => {
+          const response = await fetch(picture.url);
+          if (!response.ok) throw new Error(String(response.status));
+          const blob = await response.blob();
+          return new File([blob], picture.name || `picture ${i + 1}`, { type: blob.type || "image/png" });
+        }));
+        await tray.addFiles(files);
+        push("info", `Put ${files.length === 1 ? "the chat's picture" : `the chat's ${files.length} pictures`} in the tray, in order.`);
+      } catch {
+        push("error", "The chat's pictures could not be put in the tray. Add them by hand.");
+      }
+    })();
+  }, [tray, push]);
 
   /** Use in …: put the prompt in the other tab's form. Nothing is queued. */
   const useIn = useCallback((using: Using) => {
@@ -79,7 +102,8 @@ export function usePromptUse(deps: Deps) {
     showTab("images");
     push("success", usedText(applied), { label: "Undo", run: () => { setPrompt(before.prompt); setOptions(before.options); setFrom(before.from); clearProblem(); } });
     focusPrompt();
-  }, [caps, options, prompt, from, setFrom, setPrompt, setOptions, clearProblem, showTab, push, focusPrompt]);
+    if (using.kind === "edit" && using.pictures?.length) putInTray(using.pictures);
+  }, [caps, options, prompt, from, setFrom, setPrompt, setOptions, clearProblem, showTab, push, focusPrompt, putInTray]);
 
   /** Generate now and Quick try: queue a run from the prompt at once, with the tab's own options and the prompt's settings over them, without changing the form. */
   const generate = useCallback(async (using: Using, quick: boolean) => {
