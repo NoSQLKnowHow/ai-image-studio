@@ -31,6 +31,8 @@ from .db import Database
 from .events import EventBus
 from .projects import normalize_name
 from .runspec import ResolvedRun, RunRequestError
+from .speech import registry as speech_registry
+from .pipelines.base import PipelineError
 from .serialize import format_ts, parse_ts, purge_time, run_payload, utcnow
 from .storage import Storage, StorageError
 from .upscaler import UpscalerUnavailable, make_upscaler
@@ -38,10 +40,22 @@ from .worker_client import WorkerClient, WorkerGone, worker_env
 
 log = logging.getLogger("studio.jobs")
 
-RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "track_done", "run_finished", "run_failed", "run_canceled"})
+RUN_EVENTS = frozenset({"run_started", "progress", "image_done", "track_done", "piece_done", "run_finished", "run_failed", "run_canceled"})
 FAKE_MODEL_ID = "fake-pipeline"
 FAKE_MUSIC_MODEL_ID = "fake-music"
-KINDS = ("image", "music")  # the two models; only one is ever loaded (DESIGN.md §26.4)
+KINDS = ("image", "music")  # the two fixed models; only one model is ever loaded (DESIGN.md §26.4)
+SPEECH = "speech"  # the third kind (DESIGN.md §38.3): one speech engine in one variant, so its worker is identified by `model_key`
+
+
+def model_key(kind: str, engine: str = "", variant: str = "") -> str:
+    """What identifies the worker that holds a model: "image", "music", or "speech:<engine>:<variant>". Two speech workers are different models
+    (a different engine, or a different checkpoint of one engine), so changing from one to the other stops the loaded one first."""
+    return f"{SPEECH}:{engine}:{variant}" if kind == SPEECH else kind
+
+
+def key_kind(key: Optional[str]) -> Optional[str]:
+    """The kind ("image", "music" or "speech") of a model key."""
+    return None if key is None else key.split(":", 1)[0]
 SHUTDOWN_MESSAGE = "Interrupted because the server was stopped."
 PROBE_TIMEOUT_SECONDS = 300  # importing torch + diffusers can be slow on a cold start
 SWEEP_INTERVAL_SECONDS = 24 * 3600  # how often old runs are expired (once at start-up, then daily)
@@ -114,9 +128,9 @@ class JobManager:
         self.storage = storage
         self.bus = bus
         # One worker process per model, never both alive: `_worker` is the one in use (or the last one used).
-        self._clients = {kind: WorkerClient(settings, self._on_worker_event, kind) for kind in KINDS}
+        self._clients = {kind: WorkerClient(settings, self._on_worker_event, kind) for kind in KINDS}  # speech workers are added when first needed
         self._worker = self._clients["image"]
-        self._model: Optional[str] = None  # the model the worker state is about ("image" or "music"); None when nothing is loaded
+        self._model: Optional[str] = None  # the model key the worker state is about ("image", "music", "speech:<engine>:<variant>"); None when nothing is loaded
         self._wakeup = asyncio.Event()
         self._run_events: asyncio.Queue = asyncio.Queue()
         self._current: Optional[str] = None
@@ -141,6 +155,7 @@ class JobManager:
         self._uploads_task: Optional[asyncio.Task] = None
         self._probe: dict[str, Any] = {"state": "pending"}
         self._music_probe: dict[str, Any] = {"state": "pending"}
+        self._speech_probes: dict[str, dict[str, Any]] = {}  # engine id -> the result of its start-up check (DESIGN.md §38.3)
         self._unload_at: Optional[float] = None
         # Starting and stopping the worker process happen one at a time: a run starting it, a Load, an Unload and the
         # idle timeout. Without this a click could meet a worker that is half stopped (DESIGN.md §25.3).
@@ -190,7 +205,22 @@ class JobManager:
     def model_id(self) -> str:
         return self.model_id_for("image")
 
+    def _make_client(self, key: str) -> WorkerClient:
+        """A worker client for a speech model key ("speech:<engine>:<variant>"), not yet remembered."""
+        _kind, engine, variant = key.split(":", 2)
+        return WorkerClient(self.settings, self._on_worker_event, SPEECH, engine, variant)
+
+    def _client_for(self, key: str) -> WorkerClient:
+        """The worker client for a model key; a speech engine's client is made, and remembered, the first time a worker is wanted for it."""
+        client = self._clients.get(key)
+        if client is None:
+            client = self._clients[key] = self._make_client(key)
+        return client
+
     def model_id_for(self, kind: str) -> str:
+        if key_kind(kind) == SPEECH:  # a model key "speech:<engine>:<variant>": the engine's model as the person set it, or its own
+            engine = kind.split(":")[1]
+            return self.settings.speech_model_for(engine) or speech_registry.info(engine).model_id
         if kind == "music":
             return FAKE_MUSIC_MODEL_ID if self.settings.pipeline == "fake" else self.settings.music_model
         return FAKE_MODEL_ID if self.settings.pipeline == "fake" else self.settings.model
@@ -202,7 +232,9 @@ class JobManager:
         return {
             **self._worker_state,
             "pipeline": self.settings.pipeline,
-            "model": self._model,
+            "model": key_kind(self._model),  # "image", "music" or "speech"
+            "engine": self._model.split(":")[1] if key_kind(self._model) == SPEECH else None,  # which speech engine and variant (DESIGN.md §38.3)
+            "variant": self._model.split(":")[2] if key_kind(self._model) == SPEECH else None,
             "pid": self._worker.pid,
             "unload_at": unload_at,
             "idle_timeout_min": self.settings.idle_timeout_min,
@@ -223,6 +255,7 @@ class JobManager:
     def memory_status(self) -> dict[str, Any]:
         mem = sysinfo.memory() or {}
         return {**mem, "min_free_gb": self.settings.min_free_gb, "music_min_free_gb": self.settings.music_min_free_gb,
+                "speech_min_free_gb": self.settings.speech_min_free_gb,
                 "worker_rss_gb": sysinfo.process_rss_gb(self._worker.pid)}
 
     def music_status(self) -> dict[str, Any]:
@@ -235,6 +268,31 @@ class JobManager:
             "reason": error.get("message"),
             "hint": error.get("hint"),
         }
+
+    def speech_status(self) -> dict[str, Any]:
+        """Whether the Speech tab can work here, and what each engine says (DESIGN.md §38.3): `capabilities.speech`. An engine is *checking* until its
+        start-up check has run, *ready* when it passed, *not_installed* when a library or file it needs is missing, *error* for any other failure, and
+        *needs_memory* when it would run but there is not enough free memory at this moment. The tab is available when at least one engine is usable."""
+        engines: list[dict[str, Any]] = []
+        for engine_id in speech_registry.engine_ids(self.settings.pipeline, self.settings.speech_engines):
+            try:
+                described = speech_registry.info(engine_id).as_dict()
+            except PipelineError as exc:  # its module could not even be imported
+                engines.append({"id": engine_id, "title": engine_id, "state": "not_installed", "reason": exc.message, "hint": exc.hint})
+                continue
+            probe = self._speech_probes.get(engine_id) or {"state": "checking"}
+            error = probe.get("error") or {}
+            state = {"done": "ready", "checking": "checking"}.get(probe.get("state", ""), "not_installed" if error.get("kind") == "unavailable" else "error")
+            reason, hint = error.get("message"), error.get("hint")
+            if state == "ready":
+                short = self._memory_shortfall(model_key(SPEECH, engine_id, described["preset_variant"]))
+                if short:
+                    state, reason, hint = "needs_memory", short, self._memory_hint()
+            engines.append({**described, "state": state, "reason": reason, "hint": hint})
+        usable = any(e["state"] in ("ready", "needs_memory") for e in engines)
+        reason = None if usable else ("The speech engines are still being checked." if any(e["state"] == "checking" for e in engines)
+                                      else "No speech engine can run here." if engines else "No speech engine is switched on.")
+        return {"available": usable, "reason": reason, "hint": None if usable else "Each engine's own reason is below.", "engines": engines}
 
     def vector_status(self) -> dict[str, Any]:
         """Whether the Vector tab can work here (DESIGN.md §31.12.7): `capabilities.vector`, as `music_status` is for music. It needs both halves: the
@@ -253,7 +311,7 @@ class JobManager:
 
     def modes(self) -> list[str]:
         return ["generate", *(["edit"] if self.supports().get("edit") else []), *(["music"] if self.music_status()["available"] else []),
-                *(["vector"] if self.vector_status()["available"] else [])]
+                *(["vector"] if self.vector_status()["available"] else []), *(["speech"] if self.speech_status()["available"] else [])]
 
     def supports(self) -> dict[str, bool]:
         found = self._supports_found()
@@ -1190,17 +1248,21 @@ class JobManager:
     # ------------------------------------------------------------ load and unload on request (DESIGN.md §25)
     @staticmethod
     def _kind_of(row: sqlite3.Row) -> str:
+        """The model key of the worker a run needs (`model_key`). A speech run says which engine and variant in its options (DESIGN.md §38.6)."""
+        if row["mode"] == SPEECH:
+            options = json.loads(row["options_json"])
+            return model_key(SPEECH, options["engine"], options["variant"])
         return "music" if row["mode"] == "music" else "image"
 
     async def _prepare_worker(self, kind: str) -> bool:
-        """Make `kind`'s worker the one that is running, starting it (and stopping the other model's, which is idle:
+        """Make the worker for model key `kind` the one that is running, starting it (and stopping the other model's, which is idle:
         nothing calls this while a run is using it) if need be. The caller holds the lifecycle lock. True if a process
         was started. Raises _MemoryShortfall, with the state already set to an error, if the model would not fit."""
         if self._worker.alive() and self._model != kind:
             log.info("unloading the %s model to make room for the %s model", self._model, kind)
             self._unload_at = None
             await self._worker.stop()  # its exit report sets the state to unloaded before this returns
-        self._worker = self._clients[kind]
+        self._worker = self._client_for(kind)
         if self._worker.alive():
             return False
         self._model = kind
@@ -1212,12 +1274,16 @@ class JobManager:
         await self._worker.start()
         return True
 
-    async def load_model(self, kind: str = "image") -> bool:
+    async def load_model(self, kind: str = "image", engine: str = "", variant: str = "") -> bool:
         """Start loading a model now, without a run. True if a load was started, False if there was nothing to do
         (it is loading or loaded already, or a run is using a model). Loading one model unloads the other first.
-        Raises ModelRefused."""
-        if kind not in KINDS:
-            raise ModelRefused(422, "unknown_model", f"There is no {kind!r} model; use one of: {', '.join(KINDS)}.")
+        For `kind` "speech" the engine (and, if it has several, the variant) must be named; the variant defaults to the one that speaks the preset
+        voices (DESIGN.md §38.3). Raises ModelRefused."""
+        if kind not in (*KINDS, SPEECH):
+            raise ModelRefused(422, "unknown_model", f"There is no {kind!r} model; use one of: {', '.join((*KINDS, SPEECH))}.")
+        key = kind
+        if kind == SPEECH:
+            key = self._speech_key(engine, variant)
         if self.settings.idle_timeout_min <= 0:
             raise ModelRefused(409, "no_idle_time",
                                "The model unloads as soon as it is idle (STUDIO_IDLE_TIMEOUT_MIN=0), so loading it ahead of "
@@ -1225,12 +1291,12 @@ class JobManager:
         async with self._lifecycle:
             if self._current is not None:
                 return False
-            if self._worker.alive() and self._model == kind and self._worker_state["state"] in ("loading", "ready", "busy"):
+            if self._worker.alive() and self._model == key and self._worker_state["state"] in ("loading", "ready", "busy"):
                 return False
             # else nothing is loaded, or the other model is (it is unloaded first), or this worker is running but has
             # no model (a load that failed, or a run canceled while it started): it is asked to load below
             try:
-                await self._prepare_worker(kind)
+                await self._prepare_worker(key)
             except _MemoryShortfall as short:
                 raise ModelRefused(409, "not_enough_memory", str(short), self._memory_hint()) from short
             except (WorkerGone, OSError) as exc:
@@ -1247,15 +1313,28 @@ class JobManager:
         self._wakeup.set()  # the job loop is waiting without a worker (or with a timer): let it look again
         return True
 
+    def _speech_key(self, engine: str, variant: str = "") -> str:
+        """The model key of a speech engine, checked: the engine must be one this setting offers and the variant one it has. Raises ModelRefused."""
+        if engine not in speech_registry.engine_ids(self.settings.pipeline, self.settings.speech_engines):
+            raise ModelRefused(422, "unknown_engine", f"There is no speech engine {engine!r} on this server.")
+        try:
+            described = speech_registry.info(engine)
+        except PipelineError as exc:
+            raise ModelRefused(409, "engine_unavailable", exc.message, exc.hint) from exc
+        variant = variant or described.preset_variant
+        if variant not in described.variants:
+            raise ModelRefused(422, "unknown_variant", f"The {described.title} engine has no variant {variant!r}; it has: {', '.join(described.variants)}.")
+        return model_key(SPEECH, engine, variant)
+
     async def unload_model(self, kind: Optional[str] = None) -> bool:
-        """Unload the model now (only `kind`'s, if one is named). True if a worker was stopped. Raises ModelRefused
-        while a run is running."""
-        if kind is not None and kind not in KINDS:
-            raise ModelRefused(422, "unknown_model", f"There is no {kind!r} model; use one of: {', '.join(KINDS)}.")
+        """Unload the model now (only `kind`'s, if one is named; "speech" means whichever speech engine is loaded). True if a worker was stopped.
+        Raises ModelRefused while a run is running."""
+        if kind is not None and kind not in (*KINDS, SPEECH):
+            raise ModelRefused(422, "unknown_model", f"There is no {kind!r} model; use one of: {', '.join((*KINDS, SPEECH))}.")
         async with self._lifecycle:
             if self._current is not None:
                 raise ModelRefused(409, "busy", "The model is working on a run. Cancel it or wait for it to finish.")
-            if not self._worker.alive() or (kind is not None and self._model != kind):
+            if not self._worker.alive() or (kind is not None and key_kind(self._model) != kind):
                 return False
             loading = self._worker_state["state"] == "loading"  # a worker that is loading hears no polite request
             self._unload_at = None
@@ -1267,9 +1346,29 @@ class JobManager:
         """The advice that goes with a refusal for too little free memory; it mentions Unload from memory when the Prompt builder is set up (criterion 249)."""
         return sysinfo.memory_hint(self.settings.builder_configured)
 
+    def _speech_needed_gb(self, engine_id: str) -> Optional[float]:
+        """The free memory a speech engine needs before it loads (DESIGN.md §38.6): the person's STUDIO_SPEECH_MIN_FREE_GB if set; else, for the
+        real engines, the engine's own estimate of what the loaded model takes plus 4 GB for what it works with and for the other programs; the fake
+        engines have no check unless the setting asks for one, so that a test never depends on how much memory the machine has."""
+        if self.settings.speech_min_free_gb is not None:
+            return self.settings.speech_min_free_gb
+        if self.settings.pipeline == "fake":
+            return None
+        try:
+            return speech_registry.info(engine_id).memory_gb + 4.0
+        except PipelineError:
+            return None
+
     def _memory_shortfall(self, kind: str = "image") -> Optional[str]:
-        """Fail fast (decision #19) instead of starting a load that can't fit next to Hermes."""
-        needed = self.settings.music_min_free_gb if kind == "music" else self.settings.min_free_gb
+        """Fail fast (decision #19) instead of starting a load that can't fit next to Hermes. `kind` is a model key."""
+        what = key_kind(kind)
+        if what == SPEECH:
+            engine_id = kind.split(":")[1]
+            needed = self._speech_needed_gb(engine_id)
+            setting, label = "STUDIO_SPEECH_MIN_FREE_GB", "speech "
+        else:
+            needed = self.settings.music_min_free_gb if what == "music" else self.settings.min_free_gb
+            setting, label = ("STUDIO_MUSIC_MIN_FREE_GB", "music ") if what == "music" else ("STUDIO_MIN_FREE_GB", "")
         if needed is None:
             return None
         mem = sysinfo.memory()
@@ -1277,19 +1376,20 @@ class JobManager:
             log.warning("could not read free memory; skipping the pre-load memory check")
             return None
         if mem["available_gb"] < needed:
-            setting = "STUDIO_MUSIC_MIN_FREE_GB" if kind == "music" else "STUDIO_MIN_FREE_GB"
-            return (f"Not enough free memory to load the {'music ' if kind == 'music' else ''}model: "
+            return (f"Not enough free memory to load the {label}model: "
                     f"{mem['available_gb']:.1f} GB available, {needed:g} GB required ({setting}).")
         return None
 
     async def _probe_subprocess(self, kind: str) -> dict[str, Any]:
-        """Run one model's start-up check in a worker process (`--probe`) and return its result."""
+        """Run one model's start-up check in a worker process (`--probe`) and return its result. `kind` is a model key."""
         result: dict[str, Any] = {}
         proc: Optional[asyncio.subprocess.Process] = None
+        # a start-up check only needs the command line, so it never makes a client the job manager would then keep (and show as a worker)
+        client = self._clients.get(kind) or self._make_client(kind)
         try:
             proc = await asyncio.create_subprocess_exec(
-                *self._clients[kind].command(probe=True), stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE, env=worker_env(self.settings, kind), limit=1 << 20)
+                *client.command(probe=True), stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE, env=worker_env(self.settings, client.kind, client.engine), limit=1 << 20)
             try:
                 out, _ = await asyncio.wait_for(proc.communicate(), PROBE_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
@@ -1321,7 +1421,18 @@ class JobManager:
         model's result sets the worker state when it failed; the music model's only says whether the Music tab can work."""
         self._probe = {"state": "running"}
         self._music_probe = {"state": "running"}
-        result, music = await asyncio.gather(self._probe_subprocess("image"), self._probe_subprocess("music"))
+        # Each speech engine is checked in a worker process of its own, with its own libraries first on the path (DESIGN.md §38.3); an engine whose module
+        # cannot even be imported is recorded without starting a process
+        engines = speech_registry.engine_ids(self.settings.pipeline, self.settings.speech_engines)
+        self._speech_probes = {engine_id: {"state": "checking"} for engine_id in engines}
+        result, music, *speech = await asyncio.gather(
+            self._probe_subprocess("image"), self._probe_subprocess("music"), *(self._probe_speech_engine(e) for e in engines))
+        for engine_id, outcome in zip(engines, speech):
+            if outcome.get("ok"):
+                self._speech_probes[engine_id] = {"state": "done", "device": outcome.get("device")}
+            else:
+                self._speech_probes[engine_id] = {"state": "failed", "error": outcome.get("error") or {}}
+                log.warning("speech engine %s: %s", engine_id, (outcome.get("error") or {}).get("message"))
         if result.get("ok"):
             self._probe = {"state": "done", "supports": result.get("supports") or {}, "device": result.get("device")}
             log.info("capability check passed: %s", result.get("device"))
@@ -1340,8 +1451,17 @@ class JobManager:
             self._music_probe = {"state": "failed", "error": error}
             log.warning("music capability check failed: %s", error.get("message"))
         self.bus.publish("capabilities.updated", {"supports": self.supports(), "modes": self.modes(), "music": self.music_status(),
-                                                  "vector": self.vector_status()})
+                                                  "vector": self.vector_status(), "speech": self.speech_status()})
         self.bus.publish("worker.state", self.worker_status())
+
+    async def _probe_speech_engine(self, engine_id: str) -> dict[str, Any]:
+        """One speech engine's start-up check, in a worker process of its own with its own libraries (DESIGN.md §38.3). An engine whose module cannot be
+        imported is reported as unavailable without starting a process."""
+        try:
+            variant = speech_registry.info(engine_id).preset_variant
+        except PipelineError as exc:
+            return {"ok": False, "error": exc.as_dict()}
+        return await self._probe_subprocess(model_key(SPEECH, engine_id, variant))
 
     def _with_partial(self, run_id: str, row: sqlite3.Row, message: str) -> str:
         music = row["mode"] == "music"

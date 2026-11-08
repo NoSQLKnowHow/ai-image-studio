@@ -28,6 +28,7 @@ from .builder.prompt_routes import add_prompt_routes as add_builder_prompt_route
 from .builder.routes import add_routes as add_builder_routes
 from .builder.service import BuilderService
 from .builder.store import BuilderStore
+from .speech import speech_limits
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
@@ -91,7 +92,9 @@ class ModelChoice(BaseModel):
     means whichever model is loaded."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    model: Literal["image", "music"]
+    model: Literal["image", "music", "speech"]
+    engine: Optional[str] = None  # a speech model is one engine in one variant (DESIGN.md §38.3); the variant defaults to the one that speaks the presets
+    variant: Optional[str] = None
 
 
 class RunPatch(BaseModel):
@@ -250,6 +253,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
                 "vector": vector_limits(),
                 "builder": builder_limits(),
+                "speech": speech_limits(settings),
                 "music": {
                     "duration": {"min": P.MUSIC_DURATION_MIN, "max": settings.music_max_seconds, "default": P.MUSIC_DEFAULT_SECONDS},
                     "tracks": {"min": 1, "max": settings.music_max_tracks},
@@ -261,6 +265,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             },
             "music": {**jobs.music_status(), "model": jobs.model_id_for("music")},
             "vector": jobs.vector_status(),  # the Vector tab (DESIGN.md §31.12.7): {available, reason, hint}, like `music`
+            "speech": jobs.speech_status(),  # the Speech tab (DESIGN.md §38.9): {available, reason, hint, engines: [...]}
             "upscaler": jobs.upscaler_status(),  # Enlarge (DESIGN.md §28.3): whether it can run here, and if not why
             "builder": request.app.state.builder.cached(),  # the Prompt builder (§37.4): set up? what is known of Ollama (null until something has looked)
             "queue_cap": settings.queue_cap,
@@ -272,7 +277,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """Start loading a model now, without a run (DESIGN.md §25.2, §26.3). The image model unless one is named."""
         jobs = jobs_of(request)
         try:
-            started = await jobs.load_model(body.model if body else "image")
+            started = await jobs.load_model(body.model if body else "image", (body.engine or "") if body else "", (body.variant or "") if body else "")
         except ModelRefused as exc:
             return _model_refused(exc)
         return JSONResponse(status_code=202 if started else 200, content=jobs.status())

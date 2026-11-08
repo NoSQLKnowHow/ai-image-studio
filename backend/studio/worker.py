@@ -6,13 +6,17 @@ progress bars and C libraries can never corrupt the protocol channel.
 
 Commands: {"cmd": "load"} | {"cmd": "run", "job": {...}} | {"cmd": "cancel", "run_id": "..."}
           | {"cmd": "shutdown"}
-Events:   hello, state, load_failed, run_started, progress, image_done, track_done,
+Events:   hello, state, load_failed, run_started, progress, image_done, track_done, piece_done,
           run_finished, run_failed, run_canceled, protocol_error, bye
 
 A worker holds one model (`--kind image` or `--kind music`, DESIGN.md §26.4). A music job is
 {"run_id", "mode": "music", "prompt", "lyrics", "duration", "steps", "seeds", "model_id"}; each finished track is
 reported with `track_done` (`idx`, `seed`, `path`, `seconds`, `sample_rate`, `channels`), and `progress` carries the
 `stage` (compose, render, finish) the pipeline is in.
+
+A speech worker (`--kind speech --engine <id> --variant <v>`, DESIGN.md §38.3) holds one engine and one of its variants. Its job is some pieces of text to
+speak (see `speech/job.py`); each finished piece is written as a WAV, with the pause that follows it already in the audio, and reported with
+`piece_done` (`key`, `path`, `frames`, `sample_rate`, `seconds`).
 
 Commands are read by a thread of their own, so a cancel is seen while a run is under way. It
 stops the run at the next step (or before the next image, or once a model load in progress has
@@ -163,6 +167,8 @@ class Worker:
         try:
             if self.kind == "music":
                 self._run_music(job_dict)
+            elif self.kind == "speech":
+                self._run_speech(job_dict)
             else:
                 self._run(job_dict)
         finally:
@@ -323,11 +329,78 @@ class Worker:
         self.emit("run_finished", run_id=job.run_id, completed=completed)
 
 
-def run_probe(pipeline: str, emit: Emitter, kind: str = "image") -> int:
+    # ------------------------------------------------------------------ speech
+    def _run_speech(self, job_dict: Any) -> None:
+        """Make the pieces of one speech job, in order, and report each as soon as its file is written (DESIGN.md §38.6)."""
+        from .pipelines import Canceled, PipelineError
+        from .speech.engine import PieceRequest
+        from .speech.job import SpeechJob
+
+        run_id = job_dict.get("run_id") if isinstance(job_dict, dict) else None
+        try:
+            job = SpeechJob.from_dict(job_dict, self.data_dir)
+        except ValueError as exc:
+            self.emit("run_failed", run_id=run_id, completed=0, error={"kind": "error", "message": f"Malformed job: {exc}", "hint": None})
+            return
+
+        if not self.loaded and not self.load():
+            self.emit("run_failed", run_id=job.run_id, completed=0, error=self.last_load_error)
+            return
+        if job.run_id in self._canceled:  # cancelled while the engine was loading
+            self.emit("run_canceled", run_id=job.run_id, completed=0)
+            return
+        self.emit("run_started", run_id=job.run_id)
+
+        def cancelled() -> bool:
+            return job.run_id in self._canceled
+
+        total = len(job.pieces)
+        completed = 0
+        for index, piece in enumerate(job.pieces):
+            if cancelled():
+                self.emit("run_canceled", run_id=job.run_id, completed=completed)
+                return
+            # "piece n of m" is the progress the page shows; the engine itself reports nothing finer (none of them can)
+            self.emit("progress", run_id=job.run_id, image=index + 1, of=total, step=index + 1, steps=total, stage="speak")
+            started = time.monotonic()
+            try:
+                request = PieceRequest(text=piece.text, voice=job.voice, ref=job.ref, style=job.style, language=job.language,
+                                       seed=piece.seed, design=job.design)
+                speech = self.pipeline.synthesize(request, cancelled)
+                # The pause after the piece is part of its audio, so that the pieces of a part, laid end to end, are the part (DESIGN.md §38.7).
+                silence = bytes(2 * (speech.sample_rate * piece.pause_ms // 1000))
+                wavfile.write_wav(self.data_dir / piece.out, speech.pcm + silence, speech.sample_rate, 1)
+                frames = (len(speech.pcm) + len(silence)) // 2
+            except Canceled:
+                log.info("run %s canceled during piece %d/%d", job.run_id, index + 1, total)
+                self.emit("run_canceled", run_id=job.run_id, completed=completed)
+                return
+            except PipelineError as exc:
+                self.emit("run_failed", run_id=job.run_id, completed=completed, error=exc.as_dict())
+                return
+            except OSError as exc:
+                message = ("The disk is full; the audio could not be saved." if exc.errno == errno.ENOSPC
+                           else f"The audio could not be saved: {exc.strerror or exc}")
+                self.emit("run_failed", run_id=job.run_id, completed=completed, error={"kind": "error", "message": message, "hint": None})
+                return
+            except Exception as exc:
+                log.exception("speech generation crashed")
+                self.emit("run_failed", run_id=job.run_id, completed=completed,
+                          error={"kind": "error", "message": f"{type(exc).__name__}: {exc}", "hint": None})
+                return
+            completed += 1
+            log.info("run %s piece %d/%d done in %.1fs (%d characters, %.1fs of audio)", job.run_id, index + 1, total,
+                     time.monotonic() - started, len(piece.text), frames / speech.sample_rate)
+            self.emit("piece_done", run_id=job.run_id, key=piece.key, path=piece.out, frames=frames, sample_rate=speech.sample_rate,
+                      seconds=round(frames / speech.sample_rate, 3), spoken_chars=len(piece.text), work_seconds=round(time.monotonic() - started, 3))
+        self.emit("run_finished", run_id=job.run_id, completed=completed)
+
+
+def run_probe(pipeline: str, emit: Emitter, kind: str = "image", engine: str = "") -> int:
     from .pipelines import PipelineError, probe_pipeline
 
     try:
-        result = probe_pipeline(pipeline, kind)
+        result = probe_pipeline(pipeline, kind, engine)
     except PipelineError as exc:
         if exc.__cause__ is not None:  # the full story, for `docker compose logs`
             log.error("capability check failed: %s", exc.message, exc_info=exc.__cause__)
@@ -390,7 +463,9 @@ def read_commands(lines: Iterable[str], commands: "queue.Queue[Optional[dict[str
 
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m studio.worker")
-    parser.add_argument("--kind", choices=["image", "music"], default="image", help="which model this worker holds")
+    parser.add_argument("--kind", choices=["image", "music", "speech"], default="image", help="which model this worker holds")
+    parser.add_argument("--engine", default="", help="speech workers only: which speech engine (DESIGN.md §38.3)")
+    parser.add_argument("--variant", default="", help="speech workers only: which variant of the engine; empty = its preset variant")
     parser.add_argument("--pipeline", choices=["fake", "real"], required=True)
     parser.add_argument("--data-dir", required=True)
     parser.add_argument("--model", required=True)
@@ -409,14 +484,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     emit = Emitter(protocol)
 
     if args.probe:
-        return run_probe(args.pipeline, emit, args.kind)
+        return run_probe(args.pipeline, emit, args.kind, args.engine)
 
     from .pipelines import make_pipeline
 
     pipeline = make_pipeline(args.pipeline, model=args.model, cpu_offload=args.cpu_offload,
-                             hub_mode=args.hub_mode, fake_step_delay_ms=args.fake_step_delay_ms, kind=args.kind)
+                             hub_mode=args.hub_mode, fake_step_delay_ms=args.fake_step_delay_ms, kind=args.kind,
+                             engine=args.engine, variant=args.variant)
     worker = Worker(pipeline, Path(args.data_dir), emit, kind=args.kind)
-    emit("hello", pid=os.getpid(), pipeline=args.pipeline, kind=args.kind, protocol=PROTOCOL_VERSION)
+    emit("hello", pid=os.getpid(), pipeline=args.pipeline, kind=args.kind, engine=args.engine or None, protocol=PROTOCOL_VERSION)
 
     commands: "queue.Queue[Optional[dict[str, Any]]]" = queue.Queue()
     threading.Thread(target=read_commands, args=(stdin_lines(), commands, worker, emit), name="commands", daemon=True).start()

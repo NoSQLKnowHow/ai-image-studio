@@ -8,6 +8,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from conftest import hold_speech_out
 from vector_server_support import CONTRACT, drain, libraries_import, subscribe, wait_for_capability, walk_types  # noqa: F401
 
 from studio import vector as V
@@ -25,7 +26,8 @@ def settle(client, timeout: float = 15.0) -> None:
 
 
 # ------------------------------------------------------------------ offered, and the contract's shape
-def test_vector_is_offered_when_the_libraries_import_and_the_image_pipeline_can_draw(client_factory, libraries_import):
+def test_vector_is_offered_when_the_libraries_import_and_the_image_pipeline_can_draw(client_factory, libraries_import, monkeypatch):
+    hold_speech_out(monkeypatch)  # the contract below is about Vector's tab; the Speech tab has its own tests
     client = client_factory()
     settle(client)
     caps = client.get("/api/capabilities").json()
@@ -73,6 +75,7 @@ def test_the_limits_do_not_change_with_the_server_settings_that_belong_to_pictur
 # ------------------------------------------------------------------ not offered, and why
 def test_vector_is_not_offered_without_the_libraries_and_the_page_is_told_why(client_factory, monkeypatch):
     monkeypatch.setattr("studio.vector.available", lambda: (False, "The Vector libraries are not installed here (vtracer).", "pip install vtracer"))
+    hold_speech_out(monkeypatch)
     client = client_factory()
     settle(client)
     caps = client.get("/api/capabilities").json()
@@ -118,7 +121,9 @@ def test_the_vector_status_for_each_combination(client_factory, monkeypatch, lib
     assert ("vector" in jobs.modes()) is expected["available"]
 
 
-def test_vector_comes_last_among_the_modes_and_the_others_are_as_they_were(client_factory, libraries_import):
+def test_vector_comes_last_among_the_modes_and_the_others_are_as_they_were(client_factory, libraries_import, monkeypatch):
+    """Vector comes last of the tabs that came before Speech; Speech, when it is offered, is listed after it (test_speech_server.py)."""
+    hold_speech_out(monkeypatch)
     client = client_factory()
     settle(client)
     jobs = client.app.state.jobs

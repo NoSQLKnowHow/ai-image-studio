@@ -21,14 +21,17 @@ class WorkerGone(Exception):
     pass
 
 
-def worker_env(settings: Optional[Settings] = None, kind: str = "image") -> dict[str, str]:
+def worker_env(settings: Optional[Settings] = None, kind: str = "image", engine: str = "") -> dict[str, str]:
     """The environment of a worker process. The music worker gets `STUDIO_MUSIC_LIBS` (the image's own copy of the
-    released diffusers) first on its Python path, so it never sees the pinned commit the image worker uses. Every worker
+    released diffusers) first on its Python path, so it never sees the pinned commit the image worker uses; a speech worker gets its own engine's
+    folder of libraries, `<STUDIO_SPEECH_LIBS>/<engine>` (DESIGN.md §38.3), for the same reason. Every worker
     gets `HF_HUB_DISABLE_TELEMETRY`, and with STUDIO_LOCAL_FILES_ONLY=true the hub libraries are told to stay offline."""
     env = dict(os.environ)
     paths = [str(BACKEND_ROOT), env.get("PYTHONPATH", "")]
     if kind == "music" and settings is not None and settings.music_libs is not None:
         paths.insert(0, str(settings.music_libs))
+    if kind == "speech" and engine and settings is not None and settings.speech_libs is not None:
+        paths.insert(0, str(settings.speech_libs / engine))
     env["PYTHONPATH"] = os.pathsep.join(p for p in paths if p)
     env["PYTHONUNBUFFERED"] = "1"
     env.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
@@ -39,8 +42,10 @@ def worker_env(settings: Optional[Settings] = None, kind: str = "image") -> dict
 
 
 class WorkerClient:
-    def __init__(self, settings: Settings, on_event: Callable[[dict[str, Any]], None], kind: str = "image"):
-        self.kind = kind  # "image" or "music": which model this worker process holds
+    def __init__(self, settings: Settings, on_event: Callable[[dict[str, Any]], None], kind: str = "image", engine: str = "", variant: str = ""):
+        self.kind = kind  # "image", "music" or "speech": which model this worker process holds
+        self.engine = engine  # a speech worker holds one engine in one of its variants (DESIGN.md §38.3); empty for the others
+        self.variant = variant
         self._settings = settings
         self._on_event = on_event
         self._proc: Optional[asyncio.subprocess.Process] = None
@@ -54,10 +59,12 @@ class WorkerClient:
             "--kind", self.kind,
             "--pipeline", s.pipeline,
             "--data-dir", str(s.data_dir),
-            "--model", s.music_model if self.kind == "music" else s.model,
+            "--model", s.music_model if self.kind == "music" else s.speech_model_for(self.engine) if self.kind == "speech" else s.model,
             "--hub-mode", s.hub_mode,
             "--fake-step-delay-ms", str(s.fake_step_delay_ms),
         ]
+        if self.kind == "speech":
+            cmd += ["--engine", self.engine, "--variant", self.variant]
         if s.cpu_offload:
             cmd.append("--cpu-offload")
         if probe:
@@ -74,7 +81,7 @@ class WorkerClient:
     async def start(self) -> None:
         if self.alive():
             return
-        env = worker_env(self._settings, self.kind)
+        env = worker_env(self._settings, self.kind, self.engine)
         self._stopping = False
         self._proc = await asyncio.create_subprocess_exec(
             *self.command(),

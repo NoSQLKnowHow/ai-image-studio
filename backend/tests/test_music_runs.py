@@ -12,7 +12,7 @@ import wave
 from pathlib import Path
 
 import pytest
-from conftest import close, create_run, wait_for, wait_for_worker_state
+from conftest import close, create_run, wait_for, wait_for_worker_state, hold_speech_out
 
 from studio import wavfile
 from studio.pipelines.fake_music import FRAMES, MAX_SECONDS, RENDER_STEPS, SAMPLE_RATE
@@ -70,6 +70,7 @@ def test_the_music_tab_is_offered_and_its_limits_are_published(client, monkeypat
     # libraries (vtracer, shapely) import, which is true in the container and on a machine that has installed them, and an exact list here
     # would then fail for a reason that has nothing to do with music. What `modes` says about Vector is tested in test_vector_server_caps.py.
     monkeypatch.setattr("studio.vector.available", lambda: (False, "held out: this test is about music", None))
+    hold_speech_out(monkeypatch)  # and so is the Speech tab, for the same reason
     caps = client.get("/api/capabilities").json()
     deadline = time.monotonic() + 15
     while "music" not in caps["modes"]:  # the start-up check of the music pipeline runs in the background
