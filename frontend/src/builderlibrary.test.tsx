@@ -127,6 +127,46 @@ describe("the prompts list", () => {
     await waitFor(() => expect(lastCall(api.listPrompts)[0]).toMatchObject({ favourite: false, deleted: true }));
   });
 
+  it("waits for the typing to pause: a word typed in two goes of less than the pause is asked for once, whole", async () => {
+    const api = makeApi({ listPrompts: vi.fn(async () => ({ prompts: [card()] })) });
+    setup(api);
+    await toPrompts();
+    await screen.findByText("Lighthouse");
+    const asked = () => api.listPrompts.mock.calls.length;
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "light" } });
+    await new Promise((resolve) => setTimeout(resolve, 100)); // less than the pause: nothing has been asked yet
+    expect((lastCall(api.listPrompts)[0] as { q?: string }).q).toBeUndefined();
+    const before = asked();
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "lighthouse" } });
+    await waitFor(() => expect(lastCall(api.listPrompts)[0]).toMatchObject({ q: "lighthouse" }));
+    expect(asked()).toBe(before + 1);
+  });
+
+  it("asks for the list once when it opens, not once for the list and once more for the search box", async () => {
+    const api = makeApi({ listPrompts: vi.fn(async () => ({ prompts: [card()] })) });
+    setup(api);
+    await screen.findByRole("radio", { name: "Prompts" });
+    await new Promise((resolve) => setTimeout(resolve, 400)); // longer than the search pause: a second ask would have been made by now
+    expect(api.listPrompts).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not say there are no prompts while it is still looking, and says what went wrong in the words it was given", async () => {
+    let answer: (value: { prompts: PromptCard[] }) => void = () => undefined;
+    const api = makeApi({ listPrompts: vi.fn(() => new Promise<{ prompts: PromptCard[] }>((resolve) => { answer = resolve; })) });
+    setup(api);
+    await toPrompts();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(screen.queryByText("No saved prompts yet. Save one from a chat.")).toBeNull(); // still looking
+    answer({ prompts: [] });
+    expect(await screen.findByText("No saved prompts yet. Save one from a chat.")).toBeTruthy();
+    cleanup();
+    const failing = makeApi({ listChats: vi.fn(async () => { throw new Error("network down"); }), listPreferences: vi.fn(async () => { throw "not an error"; }) });
+    setup(failing);
+    expect((await screen.findByRole("alert")).textContent).toBe("network down");
+    fireEvent.click(screen.getByRole("radio", { name: "Preferences" }));
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toBe("That did not work."));
+  });
+
   it("stars and unstars a prompt without opening it", async () => {
     const api = makeApi({ listPrompts: vi.fn(async () => ({ prompts: [card()] })), patchPrompt: vi.fn(async () => detail({ favourite: true })) });
     setup(api);

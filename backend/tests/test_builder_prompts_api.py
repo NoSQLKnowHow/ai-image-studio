@@ -418,3 +418,41 @@ def test_the_events_a_prompt_makes_are_ids_only(builder):
     changed = [data for event, data in seen if event == "builder.changed"]
     assert {"kind": "prompt", "id": prompt["id"]} in changed and any(d["kind"] == "preferences" for d in changed)
     assert all(set(d) == {"kind", "id"} for d in changed)
+
+
+# ------------------------------------------------------------------ what mutation checks showed the tests above did not pin down
+def test_the_most_tags_and_the_longest_words_are_accepted_and_one_more_is_not(builder):
+    """The limits are limits: exactly at each is fine (a prompt of 8000 characters, 12 tags, a note of 300), and one over is refused."""
+    prompt = make(builder, text="x" * 8000, negative="n" * 8000, tags=[f"t{n}" for n in range(12)])
+    assert len(prompt["text"]) == 8000 and len(prompt["negative"]) == 8000 and len(prompt["tags"]) == 12
+    url = f"{BASE}/{prompt['id']}"
+    assert builder.patch(url, json={"tags": [f"u{n}" for n in range(12)]}).status_code == 200
+    assert builder.patch(url, json={"tags": [f"u{n}" for n in range(13)]}).json()["code"] == "too_many_tags"
+    assert builder.post("/api/builder/preferences", json={"text": "p" * 300}).status_code == 201
+    assert builder.post("/api/builder/preferences", json={"text": "p" * 301}).json()["code"] == "too_long"
+
+
+def test_a_change_that_names_only_some_fields_changes_only_those(builder):
+    """A patch with just a title must leave the project, the tags and the star as they were: the fields not sent are not the fields set to nothing."""
+    project = builder.post("/api/projects", json={"name": "Logo"}).json()["id"]
+    prompt = make(builder, tags=["sea"], project_id=project, favourite=True)
+    url = f"{BASE}/{prompt['id']}"
+    after = builder.patch(url, json={"title": "Only the title"}).json()
+    assert (after["title"], after["project_id"], after["tags"], after["favourite"], after["for"]) == ("Only the title", project, ["sea"], True, "images")
+    assert builder.patch(url, json={"favourite": False}).json()["project_id"] == project
+    assert builder.patch(url, json={"tags": []}).json()["project_id"] == project
+
+
+def test_a_value_that_only_looks_like_the_right_type_is_refused(builder):
+    """Strict types: 1 is not a true, "3" is not a message number, "yes" is not a switch. A page that sent them would be saving something other than it means."""
+    base = {"title": "t", "text": "a fox"}
+    assert builder.post(BASE, json={**base, "favourite": 1}).status_code == 422
+    assert builder.post(BASE, json={**base, "message_seq": "3"}).status_code == 422
+    prompt = make(builder)
+    url = f"{BASE}/{prompt['id']}"
+    assert builder.patch(url, json={"favourite": 1}).status_code == 422
+    assert builder.post(f"{url}/versions", json={"text": "more", "message_seq": "3"}).status_code == 422
+    note = builder.post("/api/builder/preferences", json={"text": "soft light"}).json()
+    assert builder.patch(f"/api/builder/preferences/{note['id']}", json={"enabled": "yes"}).status_code == 422
+    assert builder.patch(f"/api/builder/preferences/{note['id']}", json={"enabled": 0}).status_code == 422
+    assert builder.get(url).json()["favourite"] is False and builder.get("/api/builder/preferences").json()["preferences"][0]["enabled"] is True  # nothing changed

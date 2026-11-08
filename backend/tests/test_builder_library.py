@@ -70,10 +70,21 @@ def test_each_setting_is_the_same_changed_added_or_removed():
 
 
 def test_a_long_text_keeps_its_unchanged_words_unchanged():
-    """The comparison must not give up on words that are common in a long prompt: 'the' is on every other line, and a long prompt is the one worth comparing."""
-    common = " ".join(["the"] * 150 + ["of"] * 150)
-    runs = word_diff(common + " dusk", common + " dawn")
-    assert runs == [{"op": "same", "text": common}, {"op": "del", "text": "dusk"}, {"op": "add", "text": "dawn"}]
+    """The comparison must not give up on words that are common in a long prompt. With nothing but common words on either side of the change, a matcher that treats common
+    words as noise (difflib's `autojunk`, on from 200 words) finds nothing in common and calls the whole text changed: a long prompt is the one most worth comparing."""
+    side = " ".join(["the"] * 150)
+    runs = word_diff(f"{side} dusk {side}", f"{side} dawn {side}")
+    assert runs == [{"op": "same", "text": side}, {"op": "del", "text": "dusk"}, {"op": "add", "text": "dawn"}, {"op": "same", "text": side}]
+
+
+def test_versions_that_differ_in_only_one_thing_are_changed_and_a_version_is_not_changed_from_itself(store, lib):
+    """`changed` is true if the words, the negative prompt or a setting differ, whichever one alone (the page says "No differences" only when none does)."""
+    prompt = store.create_prompt(now=T0, title="t", text="same words", negative="blur", settings={"shape": "16:9"})
+    assert lib.add_version(prompt, now=T1, text="other words", negative="blur", settings={"shape": "16:9"}, source="hand") == ("added", 2)   # the words only
+    assert lib.add_version(prompt, now=T2, text="same words", negative="sharp", settings={"shape": "16:9"}, source="hand") == ("added", 3)  # the negative prompt only
+    assert lib.add_version(prompt, now=T3, text="same words", negative="blur", settings={"shape": "1:1"}, source="hand") == ("added", 4)   # a setting only
+    assert [lib.compare(prompt, 1, n)["changed"] for n in (2, 3, 4)] == [True, True, True]
+    assert lib.compare(prompt, 1, 1)["changed"] is False
 
 
 # ------------------------------------------------------------------ versions are only ever added (rule 2, criterion 229)
@@ -242,7 +253,7 @@ def test_the_list_is_sorted_by_what_changed_last_by_when_it_was_made_or_by_title
     assert titles(lib.list_prompts(sort="updated")) == ["Red fox", "alpha owl", "Lighthouse"]
     assert titles(lib.list_prompts(sort="newest")) == ["alpha owl", "Lighthouse", "Red fox"]
     assert titles(lib.list_prompts(sort="title")) == ["alpha owl", "Lighthouse", "Red fox"]  # ignoring case
-    with pytest.raises(StoreError):
+    with pytest.raises(StoreError, match="sort 'random' is not one of"):
         lib.list_prompts(sort="random")
     assert len(lib.list_prompts(limit=2)) == 2
 

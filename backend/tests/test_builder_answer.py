@@ -414,5 +414,6 @@ def test_a_pair_of_escapes_is_one_character_and_a_lone_half_is_not_shown_as_one(
     assert reply_so_far('{"reply": "\\udc00 x') == "� x"          # a lone second half is not a character
     assert reply_so_far('{"reply": "\\ud800 and more') == "� and more"   # nor is a first half with nothing to pair with
     assert reply_so_far('{"reply": "\\ud800 x') == ""                    # (but with too little after it to tell, it waits)
+    assert reply_so_far('{"reply": "\\ud800\\ue000 more') == "� more"   # a first half followed by the character just above the second halves is not a pair
     assert reply_so_far('{"reply": "\\ue000x') == "x"        # the character after the surrogates is an ordinary one
     assert reply_so_far('{"reply": "\\ud7ffx') == "퟿x"        # and so is the one before them

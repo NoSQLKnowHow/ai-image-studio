@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  IDLE_REPLY, answersFor, canSend, changedIn, chatTitle, chipLine, chooseMode, isAnswer, lengthMeter, newestDraft, nextReplyState, openQuestions, overlayOptions, previousDraft,
+  IDLE_REPLY, answersFor, canSend, changedIn, chatTitle, chipLine, chooseMode, describeSettings, isAnswer, lengthMeter, newestDraft, nextReplyState, openQuestions, overlayOptions, previousDraft,
   promptRun, quickTryProblem, refLine, replying, settingChips, toggleChip, usedText, wordDiff, type Picks,
 } from "./builder";
 import { builderApi } from "./builderApi";
@@ -381,5 +381,95 @@ describe("where a run came from", () => {
 
   it("names the chip beside the Images prompt box", () => {
     expect(chipLine({ title: "Lighthouse", version: 3 })).toBe('From Prompt builder: "Lighthouse" v3');
+  });
+});
+
+
+// ------------------------------------------------------------------ what mutation checks showed the tests above did not pin down
+describe("the words that changed, in general (criterion 226)", () => {
+  /** The length of the longest common subsequence of two lists of words, worked out the plain way, to hold the page's diff to. */
+  const lcsLength = (a: string[], b: string[]): number => {
+    const t = Array.from({ length: a.length + 1 }, () => new Array<number>(b.length + 1).fill(0));
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) t[i][j] = a[i - 1] === b[j - 1] ? t[i - 1][j - 1] + 1 : Math.max(t[i - 1][j], t[i][j - 1]);
+    return t[a.length][b.length];
+  };
+  /** A small random generator that gives the same numbers every run, so that a failure can be reproduced. */
+  const generator = (seed: number) => () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;
+
+  it("for any two texts: what is kept and removed reads as the first, what is kept and added reads as the second, and as many words are kept as the two have in common", () => {
+    const next = generator(2026);
+    const vocabulary = ["a", "b", "c", "d", "e", "dusk", "dawn"];
+    for (let round = 0; round < 300; round++) {
+      const words = (count: number) => Array.from({ length: count }, () => vocabulary[Math.floor(next() * vocabulary.length)]);
+      const a = words(Math.floor(next() * 9));
+      const b = words(Math.floor(next() * 9));
+      const runs = wordDiff(a.join(" "), b.join(" "));
+      const split = (ops: string[]) => runs.filter((r) => ops.includes(r.op)).flatMap((r) => r.text.split(" "));
+      expect(split(["same", "del"]), `${a.join(" ")} -> ${b.join(" ")}`).toEqual(a);
+      expect(split(["same", "add"]), `${a.join(" ")} -> ${b.join(" ")}`).toEqual(b);
+      expect(split(["same"]).length, `${a.join(" ")} -> ${b.join(" ")}`).toBe(lcsLength(a, b));
+      // two runs of the same kind never touch, and a removal comes before the addition that replaces it
+      runs.forEach((r, i) => {
+        if (i > 0) expect(r.op === runs[i - 1].op && r.op !== "del" ? "joined" : "apart").toBe("apart");
+        if (r.op === "del" && runs[i + 1]) expect(runs[i + 1].op).not.toBe("del");
+      });
+    }
+  });
+
+  it("marks a change at the very start, at the very end, and a whole text replaced", () => {
+    expect(wordDiff("old start middle end", "new start middle end")).toEqual([{ op: "del", text: "old" }, { op: "add", text: "new" }, { op: "same", text: "start middle end" }]);
+    expect(wordDiff("start middle old", "start middle new")).toEqual([{ op: "same", text: "start middle" }, { op: "del", text: "old" }, { op: "add", text: "new" }]);
+    expect(wordDiff("one two", "three four")).toEqual([{ op: "del", text: "one two" }, { op: "add", text: "three four" }]);
+  });
+});
+
+describe("the state of a chat with no reply being written", () => {
+  it("is idle, with no image being made, nothing thought and nothing written", () => {
+    expect(IDLE_REPLY).toEqual({ phase: "idle", busyImages: false, thinking: "", seconds: 0, text: "", context: null });
+    expect(replying(IDLE_REPLY)).toBe(false);
+  });
+});
+
+describe("the settings that fit, exactly at the studio's limits (criteria 235, 242)", () => {
+  const { min, max } = CAPS.limits.cfg_scale;
+  const chips = (guidance: unknown) => settingChips("images", { negative: null, settings: { guidance } }, CAPS).map((c) => c.key);
+
+  it("takes a guidance at the lowest and the highest the studio allows and not a hair outside", () => {
+    expect(chips(min)).toEqual(["guidance"]);
+    expect(chips(max)).toEqual(["guidance"]);
+    expect(chips(min - 0.01)).toEqual([]);
+    expect(chips(max + 0.01)).toEqual([]);
+    expect(chips("4")).toEqual([]);
+  });
+
+  it("makes an Edit request with nothing of its own when it is given no pictures", () => {
+    const body = promptRun("edit", "put it in the snow", defaultOptions(CAPS), CAPS, null) as unknown as { mode: string; input_images: unknown[]; options: Record<string, unknown> };
+    expect(body.mode).toBe("edit");
+    expect(body.input_images).toEqual([]);
+    expect(body.options).not.toHaveProperty("shape_from");
+  });
+});
+
+describe("the settings of a Vector or Music prompt in words", () => {
+  it("names the kind, the colours, the inks and the size of a vector, with a question mark for a side that is missing", () => {
+    expect(describeSettings("vector", { settings: { kind: "flat", colours: 3, palette: ["#FF0000", "#00AA00"], width_mm: 120, height_mm: 80 } }))
+      .toEqual(["Kind flat", "3 colours", "Inks #FF0000, #00AA00", "120 × 80 mm"]);
+    expect(describeSettings("vector", { settings: { width_mm: 120 } })).toEqual(["120 × ? mm"]);
+    expect(describeSettings("vector", { settings: { height_mm: 80 } })).toEqual(["? × 80 mm"]);
+    expect(describeSettings("vector", { settings: { palette: [] } })).toEqual([]);
+    expect(describeSettings("vector", { settings: {} })).toEqual([]);
+  });
+
+  it("names each field of a piece of music (the tempo as the tempo), whether it has a voice, its length and that it has lyrics", () => {
+    expect(describeSettings("music", { settings: { fields: { genre: "folk", bpm: "72" }, instrumental: false, seconds: 90, lyrics: "Salt on the wind" } }))
+      .toEqual(["Genre: folk", "Tempo: 72", "With a voice", "90 seconds", "Lyrics written"]);
+    expect(describeSettings("music", { settings: { instrumental: true } })).toEqual(["Instrumental"]);
+    expect(describeSettings("music", { settings: { lyrics: "   " } })).toEqual([]);
+    expect(describeSettings("music", { settings: {} })).toEqual([]);
+  });
+
+  it("has nothing to say about the kinds that have switches instead", () => {
+    expect(describeSettings("images", { settings: { kind: "flat", fields: { genre: "x" }, instrumental: true } })).toEqual([]);
+    expect(describeSettings("edit", { settings: { seconds: 5 } })).toEqual([]);
   });
 });

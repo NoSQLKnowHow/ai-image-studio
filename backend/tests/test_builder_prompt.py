@@ -7,7 +7,7 @@ import re
 import pytest
 
 from studio.builder import CHIP_CHARS, CHIPS_MAX, CHIPS_MIN, QUESTIONS_MAX
-from studio.builder.context import PICTURE_TOKENS, Turn, build_messages, estimate_tokens, render_assistant, render_user, reply_room
+from studio.builder.context import CHARS_PER_TOKEN, PICTURE_TOKENS, Turn, build_messages, estimate_tokens, render_assistant, render_user, reply_room
 from studio.builder.instructions import DETAIL_TARGETS, DIRECTORY, FILES, INTENTS, Example, fill, pictures_note, render_draft, system_prompt, values
 from studio.builder.schema import DETAILS, FOR_KINDS
 from studio.config import Settings
@@ -242,3 +242,28 @@ def test_room_is_kept_for_the_reply_a_quarter_of_the_window_and_at_least_2048():
 
 def test_the_estimate_errs_on_the_side_of_dropping():
     assert estimate_tokens("") == 0 and estimate_tokens("a") == 1 and estimate_tokens("abc") == 1 and estimate_tokens("abcd") == 2 and estimate_tokens("x" * 300) == 100
+
+
+# ------------------------------------------------------------------ what mutation checks showed the tests above did not pin down
+def test_the_models_own_words_go_back_to_it_as_the_characters_they_are_not_as_escapes():
+    turn = Turn("assistant", "", {"reply": "Crépuscule ou aube ?", "questions": [{"id": "q1", "text": "Quelle lumière ?", "chips": ["Doré", "Gris"]}]})
+    sent = render_assistant(turn)
+    assert "Crépuscule" in sent and "Doré" in sent and "\\u" not in sent
+
+
+def test_an_earlier_turn_that_exactly_fills_what_is_left_is_kept_and_one_character_more_is_dropped():
+    num_ctx = 8192
+    room = num_ctx - reply_room(num_ctx) - estimate_tokens("S") - estimate_tokens("n")  # what the earlier turns may take together
+    just = build_messages("S", [Turn("user", "x" * (room * CHARS_PER_TOKEN)), Turn("user", "n")], intent_line="", num_ctx=num_ctx)
+    assert just.dropped == 0 and len(just.messages) == 3
+    over = build_messages("S", [Turn("user", "x" * (room * CHARS_PER_TOKEN + 1)), Turn("user", "n")], intent_line="", num_ctx=num_ctx)
+    assert over.dropped == 1 and len(over.messages) == 2
+
+
+def test_the_instruction_and_the_newest_turn_are_over_only_when_they_do_not_leave_the_replys_room():
+    num_ctx = 8192
+    limit = num_ctx - reply_room(num_ctx)
+    exact = build_messages("s" * ((limit - estimate_tokens("n")) * CHARS_PER_TOKEN), [Turn("user", "n")], intent_line="", num_ctx=num_ctx)
+    assert exact.over is False  # it fills the window up to the reply's room, and no further
+    one_more = build_messages("s" * ((limit - estimate_tokens("n") + 1) * CHARS_PER_TOKEN), [Turn("user", "n")], intent_line="", num_ctx=num_ctx)
+    assert one_more.over is True

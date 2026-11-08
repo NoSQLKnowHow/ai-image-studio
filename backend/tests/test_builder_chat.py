@@ -343,6 +343,7 @@ def test_stop_keeps_what_was_written_marked_stopped_and_changes_nothing_else(liv
     assert names(got)[-1] == "stopped"
     message = got[-1][1]["message"]
     assert message["content"]["stopped"] is True and message["content"]["draft"] is None and message["content"]["questions"] == []
+    assert message["content"]["done"] is False and message["content"]["plain"] is False  # a stopped reply is neither finished nor "plain text": it is a part
     assert message["text"] and message["text"].startswith("Thank")
     saved = server.http.get(f"/api/builder/chats/{chat}").json()
     assert saved["messages"][-1]["content"]["stopped"] is True and saved["draft"]["prompt"] == "a fox."  # the draft is as it was

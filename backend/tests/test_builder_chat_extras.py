@@ -279,3 +279,187 @@ def test_it_streams_its_answer_in_small_pieces_and_thinks_only_when_told_to():
     assert all(len(p.text) <= 14 for p in pieces if p.kind == "content")
     assert json.loads("".join(p.text for p in pieces if p.kind == "content"))["reply"]
     assert [p.kind for p in FakeModel().chat("m", conversation("idea"), think=False)][0] == "content"
+
+
+# ------------------------------------------------------------------ what mutation checks showed the tests above did not pin down
+@pytest.mark.parametrize("intent", ["flesh_out", "refine", "describe", "help_edit"])
+def test_each_thing_a_button_can_ask_for_reaches_the_model_in_words(builder, monkeypatch, intent):
+    """Flesh out, Refine, Describe and Help me write each have words of their own for the model, and a chat can ask for each: none is refused as something the builder cannot do."""
+    from studio.builder.instructions import INTENTS
+
+    spy = Spy(builder.app.state.builder, monkeypatch)
+    chat = new_chat(builder)
+    events = send(builder, chat, text="the roof looks wrong", intent=intent)
+    assert "result" in names(events) and INTENTS[intent] in spy.last_user
+
+
+def test_a_refine_tells_the_model_how_the_picture_was_made(builder, monkeypatch):
+    from conftest import create_run, wait_for
+
+    run = wait_for(builder, create_run(builder, "a red barn", seed=777, negative_prompt="blurry")["id"])
+    spy = Spy(builder.app.state.builder, monkeypatch)
+    send(builder, new_chat(builder), text="too dark", intent="refine", run_id=run["id"])
+    note = spy.system   # the run being discussed is told in the instruction, not in the person's turn
+    assert "The picture was made with: mode generate, size 256x256, steps 3" in note and "seed 777" in note
+    assert "Negative prompt used: blurry" in note and "The prompt used was:\na red barn" in note
+    # a run that is not there adds nothing, and does not stop the reply
+    send(builder, new_chat(builder), text="too dark", intent="refine", run_id="f" * 32)
+    assert "The picture was made with" not in spy.system
+
+
+def test_a_chat_is_deleted_for_good_at_once_when_there_is_no_bin_and_from_the_bin_otherwise(client_factory):
+    no_bin = client_factory(builder_llm="fake", bin_days=0)
+    chat = new_chat(no_bin)
+    assert no_bin.post(f"/api/builder/chats/{chat}/bin").json() == {"deleted": chat}
+    assert no_bin.get(f"/api/builder/chats/{chat}").status_code == 404 and no_bin.post(f"/api/builder/chats/{chat}/bin").status_code == 404
+    kept = client_factory(builder_llm="fake")
+    chat = new_chat(kept)
+    kept.post(f"/api/builder/chats/{chat}/bin")
+    assert kept.get(f"/api/builder/chats/{chat}").json()["chat"]["deleted_at"] is not None  # in the bin, not gone
+    assert kept.delete(f"/api/builder/chats/{chat}").json() == {"deleted": chat}
+    assert kept.get(f"/api/builder/chats/{chat}").status_code == 404 and kept.delete(f"/api/builder/chats/{chat}").status_code == 404
+
+
+def test_a_message_with_nothing_in_it_is_refused_in_words_and_the_draft_has_a_limit(builder):
+    chat = new_chat(builder)
+    empty = builder.post(f"/api/builder/chats/{chat}/messages", json={"text": "  "})
+    assert empty.status_code == 422 and empty.json()["code"] == "empty_message" and empty.json()["detail"] == "Write something, or choose an answer."
+    assert "result" in names(send(builder, chat, text="x", draft={"prompt": "d" * 8000}))   # exactly the studio's limit is fine
+    long = builder.post(f"/api/builder/chats/{chat}/messages", json={"text": "x", "draft": {"prompt": "d" * 8001}})
+    assert long.status_code == 422 and long.json()["code"] == "draft_too_long"
+
+
+def test_a_question_may_be_answered_with_its_chips_and_one_of_the_persons_own(builder):
+    from studio.builder import CHIPS_MAX
+
+    chat = new_chat(builder)
+    own = [f"c{n}" for n in range(CHIPS_MAX + 1)]   # the offered chips plus the person's own words
+    assert "result" in names(send(builder, chat, text="x", answers=[{"id": "q1", "chips": own}]))
+    too_many = builder.post(f"/api/builder/chats/{chat}/messages", json={"text": "x", "answers": [{"id": "q1", "chips": own + ["one more"]}]})
+    assert too_many.status_code == 422
+
+
+def test_a_value_that_only_looks_like_a_switch_is_refused(builder):
+    chat = new_chat(builder)
+    for body in ({"similar": 1}, {"think": "yes"}, {"retry": 1}, {"redo": 0}):
+        assert builder.post(f"/api/builder/chats/{chat}/messages", json={"text": "x", **body}).status_code == 422
+
+
+def test_only_the_pictures_waiting_to_be_sent_count_towards_the_most_a_message_may_carry(builder):
+    from studio.builder.files import MAX_PER_MESSAGE
+
+    chat = new_chat(builder)
+    url = f"/api/builder/chats/{chat}/attachments"
+    ids = [builder.post(url, content=png_bytes()).json()["id"] for _ in range(MAX_PER_MESSAGE)]
+    refused = builder.post(url, content=png_bytes())
+    assert refused.status_code == 422 and refused.json()["code"] == "too_many"
+    assert "result" in names(send(builder, chat, text="these", attachments=ids))
+    assert builder.post(url, content=png_bytes()).status_code == 201   # the ones already sent are no longer waiting
+
+
+def test_a_picture_may_be_exactly_as_large_as_the_limit_and_not_a_byte_larger(client_factory):
+    client = client_factory(builder_llm="fake", max_upload_mb=1)
+    chat = new_chat(client)
+    url = f"/api/builder/chats/{chat}/attachments"
+    limit = 1024 * 1024
+    at_limit = client.post(url, content=b"\0" * limit)
+    assert at_limit.status_code == 415   # it passed the size check (not a 413) and then was found not to be a picture
+    over = client.post(url, content=b"\0" * (limit + 1))
+    assert over.status_code == 413 and over.json()["code"] == "too_large"
+
+
+# ------------------------------------------------------------------ the engine: which draft the model is given, asking again, the name of a chat, Stop
+def test_a_job_keeps_what_was_written_when_it_is_stopped_unless_the_page_has_gone_and_the_first_stop_decides():
+    from studio.builder.engine import ReplyJob
+
+    job = ReplyJob()
+    assert job.keep is True and job.stopped is False
+    job.stop()
+    assert job.keep is True and job.stopped is True            # Stop: keep what was written
+    gone = ReplyJob()
+    gone.stop(keep=False)
+    assert gone.keep is False and gone.stopped is True           # the connection closed: keep nothing
+    # Stop and then the page closing (which always follows a Stop) must not throw away what Stop kept, and the other way round
+    first_stop = ReplyJob()
+    first_stop.stop()
+    first_stop.stop(keep=False)
+    assert first_stop.keep is True
+    first_close = ReplyJob()
+    first_close.stop(keep=False)
+    first_close.stop()
+    assert first_close.keep is False
+
+    class Call:
+        cancelled = 0
+
+        def cancel(self) -> None:
+            self.cancelled += 1
+
+    running = ReplyJob()
+    running.call = Call()
+    running.stop()
+    assert running.call.cancelled == 1
+
+
+def test_the_model_is_given_the_words_the_person_edited_then_the_last_it_wrote_and_a_retry_the_ones_that_message_carried(builder, monkeypatch):
+    from studio.builder.ollama import OllamaError
+
+    chat = new_chat(builder)
+    send(builder, chat, text="a lantern")                                   # the model writes the draft "a lantern."
+    spy = Spy(builder.app.state.builder, monkeypatch)
+    send(builder, chat, text="more")
+    assert "a lantern." in spy.system                                       # no words sent: the last it wrote
+    send(builder, chat, text="more", draft={"prompt": "MY OWN WORDS ABOUT A PIER"})
+    assert "MY OWN WORDS ABOUT A PIER" in spy.system and "a lantern." not in spy.system   # the person's edit comes before what the model wrote
+    failing = Spy(builder.app.state.builder, monkeypatch, fail_first=lambda: OllamaError("unreachable", "Can't reach it."))
+    events = send(builder, chat, text="again", draft={"prompt": "EDITED BEFORE THE FAILURE"})
+    assert events[-1][0] == "error"
+    send(builder, chat, retry=True)
+    assert "EDITED BEFORE THE FAILURE" in failing.system                    # the retry sends the message as it was, with the words it carried
+
+
+def test_asking_again_after_an_answer_that_could_not_be_read_still_gives_three_wordings_when_they_were_asked_for(builder):
+    events = send(builder, new_chat(builder), text="a fox [[bad]]", intent="variations")
+    assert names(events).count("retry") == 1
+    assert len(result_of(events)["variations"]) == 3
+
+
+class Written:
+    """What `service.chat` hands back for one scripted try: the pieces of the reply, and a cancel the engine can call."""
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+    def cancel(self) -> None:
+        pass
+
+    def __iter__(self):
+        from studio.builder.ollama import ChatPiece
+
+        if self.text:
+            yield ChatPiece("content", self.text)
+
+
+def test_when_both_tries_cannot_be_read_the_words_are_shown_as_written_and_when_both_are_empty_it_says_so(builder, monkeypatch):
+    service = builder.app.state.builder
+    tries = ["some words, not JSON", ""]            # the first try is words; the second, with thinking off, says nothing
+    monkeypatch.setattr(service, "chat", lambda model, messages, *, think, schema: Written(tries.pop(0)))
+    shown = result_of(send(builder, new_chat(builder), text="idea"))
+    assert shown["plain"] is True and shown["reply"] == "some words, not JSON"   # the first try's words are kept when the second has none
+    tries[:] = ["", ""]
+    events = send(builder, new_chat(builder), text="idea")
+    assert events[-1][0] == "error" and events[-1][1]["code"] == "ollama_bad_answer"
+    assert events[-1][1]["message"] == "The model gave an empty answer." and events[-1][1]["hint"] == "Try again, or turn Think off for this message."
+
+
+def test_a_chat_nobody_named_takes_the_models_title_a_named_one_keeps_its_name_and_plain_words_give_the_first_words(builder):
+    chat = new_chat(builder)
+    send(builder, chat, text="a lighthouse in a storm at dusk")
+    assert builder.get(f"/api/builder/chats/{chat}").json()["chat"]["title"] == "A lighthouse in a storm"      # the title the model gave
+    named = new_chat(builder, title="Mine")
+    send(builder, named, text="a lighthouse in a storm at dusk")
+    assert builder.get(f"/api/builder/chats/{named}").json()["chat"]["title"] == "Mine"
+    plain = new_chat(builder)
+    send(builder, plain, text="a fox in the snow [[bad-always]]")
+    title = builder.get(f"/api/builder/chats/{plain}").json()["chat"]["title"]
+    assert title.startswith("a fox in the snow") and title != "New chat"
