@@ -422,16 +422,28 @@ describe("tabs", () => {
     expect(readTab(store)).toBe("vector");
     expect(readTab(memoryStore({ [TAB_KEY]: "video" }))).toBe("images");
   });
-  it("arrow keys move between the three tabs and wrap, Home and End go to the ends, other keys do nothing", () => {
+  it("arrow keys move between the four tabs and wrap, Home and End go to the ends, other keys do nothing", () => {
     expect(tabAfterKey("images", "ArrowRight")).toBe("music");
     expect(tabAfterKey("music", "ArrowRight")).toBe("vector");
-    expect(tabAfterKey("vector", "ArrowRight")).toBe("images"); // wraps round
-    expect(tabAfterKey("images", "ArrowLeft")).toBe("vector"); // ...and the other way
+    expect(tabAfterKey("vector", "ArrowRight")).toBe("builder");
+    expect(tabAfterKey("builder", "ArrowRight")).toBe("images"); // wraps round
+    expect(tabAfterKey("images", "ArrowLeft")).toBe("builder"); // ...and the other way
+    expect(tabAfterKey("builder", "ArrowLeft")).toBe("vector");
     expect(tabAfterKey("vector", "ArrowLeft")).toBe("music");
     expect(tabAfterKey("music", "ArrowLeft")).toBe("images");
     expect(tabAfterKey("music", "Home")).toBe("images");
-    expect(tabAfterKey("images", "End")).toBe("vector");
+    expect(tabAfterKey("images", "End")).toBe("builder");
     expect(tabAfterKey("images", "Enter")).toBeNull();
     expect(tabAfterKey("images", "a")).toBeNull();
+  });
+
+  it("remembers the Prompt builder tab like the others, and starts on Images for anything else", () => {
+    const store = memoryStore();
+    saveTab("builder", store);
+    expect(readTab(store)).toBe("builder");
+    saveTab("vector", store);
+    expect(readTab(store)).toBe("vector");
+    store.set("studio.tab.v1", "nonsense");
+    expect(readTab(store)).toBe("images");
   });
 });

@@ -34,6 +34,7 @@ export interface BuilderStatus {
   reachable: boolean;
   model: string;
   vision: boolean;
+  think: "on" | "off" | "model"; // the setting a message's Think switch starts from (STUDIO_OLLAMA_THINK)
   message: string | null;
   hint: string | null;
 }
@@ -247,6 +248,7 @@ export interface MessageBody {
   similar?: boolean;
   exclude?: string[];
   retry?: boolean;
+  redo?: boolean; // with retry: throw away the model's last reply and answer again
   run_id?: string | null;
 }
 

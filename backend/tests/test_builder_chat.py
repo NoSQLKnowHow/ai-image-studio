@@ -68,6 +68,19 @@ def test_a_chat_is_renamed_refiled_and_changed_in_what_it_is_for(builder):
     assert builder.patch("/api/builder/chats/" + "f" * 32, json={"title": "x"}).status_code == 404
 
 
+def test_a_chat_is_linked_to_a_prompt_and_unlinked_again_and_only_to_one_that_can_be_used(builder):
+    chat = new_chat(builder)
+    store = builder.app.state.builder_store
+    prompt = store.create_prompt(now=NOW, title="t", text="x")
+    assert builder.patch(f"/api/builder/chats/{chat}", json={"prompt_id": prompt}).json()["prompt_id"] == prompt
+    assert builder.get(f"/api/builder/chats/{chat}").json()["chat"]["prompt_id"] == prompt
+    assert builder.patch(f"/api/builder/chats/{chat}", json={"title": "renamed"}).json()["prompt_id"] == prompt  # a change of something else leaves the link
+    assert builder.patch(f"/api/builder/chats/{chat}", json={"prompt_id": None}).json()["prompt_id"] is None
+    assert builder.patch(f"/api/builder/chats/{chat}", json={"prompt_id": "f" * 32}).status_code == 404
+    store.bin_item("prompt", prompt, NOW)
+    assert builder.patch(f"/api/builder/chats/{chat}", json={"prompt_id": prompt}).json()["code"] == "prompt_in_bin"
+
+
 def test_a_chat_goes_to_the_bin_comes_back_and_is_deleted_for_good_with_its_pictures(builder):
     chat = new_chat(builder)
     upload = builder.post(f"/api/builder/chats/{chat}/attachments", content=__import__("builder_support").png_bytes())
@@ -278,6 +291,29 @@ def test_retry_sends_the_same_message_again_and_adds_none(builder, monkeypatch):
     saved = builder.get(f"/api/builder/chats/{chat}").json()["messages"]
     assert [(m["seq"], m["role"], m["text"]) for m in saved][:2] == [(1, "user", "a lighthouse"), (2, "assistant", "Lovely idea. A few questions.")] and len(saved) == 2
     assert "a lighthouse" in spy.last_user
+
+
+def test_the_last_reply_can_be_thrown_away_and_written_again_leaving_a_saved_prompt_out(builder, monkeypatch):
+    spy = Spy(builder.app.state.builder, monkeypatch)
+    store = builder.app.state.builder_store
+    fox = store.create_prompt(now=NOW, title="Red fox", text="A red fox in snow")
+    chat = new_chat(builder)
+    first = dict(send(builder, chat, text="a red fox in snow"))
+    assert [e["id"] for e in first["context"]["examples"]] == [fox] and "Red fox" in spy.system
+    again = send(builder, chat, retry=True, redo=True, exclude=[fox])
+    assert dict(again)["context"]["examples"] == [] and "saved prompts" not in spy.system and names(again)[-1] == "result"
+    messages = builder.get(f"/api/builder/chats/{chat}").json()["messages"]
+    assert [(m["seq"], m["role"]) for m in messages] == [(1, "user"), (2, "assistant")]  # the first reply is gone, the second is in its place
+    assert messages[1]["content"]["context"]["examples"] == []
+
+
+def test_redo_only_goes_with_retry_and_does_nothing_when_the_persons_message_is_the_last(builder):
+    chat = new_chat(builder)
+    assert builder.post(f"/api/builder/chats/{chat}/messages", json={"text": "x", "redo": True}).json()["code"] == "bad_redo"
+    assert builder.post(f"/api/builder/chats/{chat}/messages", json={"retry": True, "redo": True}).json()["code"] == "nothing_to_retry"
+    send(builder, chat, text="idea [[error:timeout]]")
+    assert names(send(builder, chat, retry=True, redo=True))[-1] == "error"  # the message was the last: it is sent again, nothing is taken away
+    assert [m["role"] for m in builder.get(f"/api/builder/chats/{chat}").json()["messages"]] == ["user"]
 
 
 def test_retry_with_nothing_to_retry_is_refused(builder):

@@ -4,6 +4,7 @@ import type { Hello, Progress, Run, WorkerStatus } from "./types";
 
 interface Handlers {
   onCapabilitiesChanged: () => void;
+  onBuilderChanged?: () => void; // a prompt, chat or preference changed on another page (DESIGN.md §37.4); the event carries only an id
 }
 
 /** Live updates over server-sent events, reconnecting after any interruption. Every connection
@@ -57,6 +58,7 @@ export function useEventStream(dispatch: (action: Action) => void, handlers: Han
       source.addEventListener("projects.changed", () => dispatch({ type: "projectsChanged" }));
       source.addEventListener("worker.state", (e) => dispatch({ type: "worker", worker: parse(e) as WorkerStatus }));
       source.addEventListener("capabilities.updated", () => handlersRef.current.onCapabilitiesChanged());
+      source.addEventListener("builder.changed", () => handlersRef.current.onBuilderChanged?.());
       source.addEventListener("shutdown", () => dispatch({ type: "serverStopping" }));
       source.addEventListener("overflow", () => {
         // We fell behind; a fresh stream starts with a fresh snapshot, so nothing is missed.

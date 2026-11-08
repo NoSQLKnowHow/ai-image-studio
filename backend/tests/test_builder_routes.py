@@ -34,7 +34,7 @@ def assert_no_address(ollama: FakeOllama, *texts: str) -> None:
 def test_with_no_address_the_tab_says_it_is_not_set_up_and_how(client):
     body = client.get("/api/builder/status").json()
     assert body == {
-        "configured": False, "reachable": False, "model": "", "vision": False, "hint": None,
+        "configured": False, "reachable": False, "model": "", "vision": False, "think": "on", "hint": None,
         "message": "The Prompt builder needs an Ollama server. Set STUDIO_OLLAMA_URL and STUDIO_OLLAMA_MODEL in .env, then restart.",
     }
     for method, path in (("post", "/api/builder/test"), ("post", "/api/builder/unload")):
@@ -51,7 +51,7 @@ def test_an_address_without_a_model_is_not_set_up_either(client_factory, ollama)
 # ------------------------------------------------------------------ set up
 def test_status_when_all_is_well(builder_client, ollama):
     body = builder_client.get("/api/builder/status").json()
-    assert body == {"configured": True, "reachable": True, "model": MODEL, "vision": True, "message": None, "hint": None}  # vision from what Ollama says of the model
+    assert body == {"configured": True, "reachable": True, "model": MODEL, "vision": True, "think": "on", "message": None, "hint": None}  # vision from what Ollama says of the model
 
 
 def test_a_model_that_cannot_look_at_pictures_says_so(client_factory):
@@ -175,7 +175,7 @@ def test_the_limits_the_page_needs_are_in_the_capabilities(client):
 # ------------------------------------------------------------------ the scripted model of the tests
 def test_the_scripted_model_is_always_there(client_factory):
     client = client_factory(builder_llm="fake")
-    assert client.get("/api/builder/status").json() == {"configured": True, "reachable": True, "model": "fake-builder", "vision": True, "message": None, "hint": None}
+    assert client.get("/api/builder/status").json() == {"configured": True, "reachable": True, "model": "fake-builder", "vision": True, "think": "on", "message": None, "hint": None}
     assert client.get("/api/capabilities").json()["builder"]["available"] is True
     assert client.post("/api/builder/unload").json() == {"ok": True, "unloaded": ["fake-builder"]}
     assert client.post("/api/builder/test").json()["model_present"] is True
@@ -189,3 +189,10 @@ def test_the_scripted_model_is_always_there(client_factory):
 def test_the_think_setting_and_a_messages_own_switch(client_factory, setting, override, sent):
     client = client_factory(builder_llm="fake", ollama_think=setting)
     assert client.app.state.builder.think(override) is sent
+
+
+def test_the_status_tells_the_page_which_way_the_think_setting_goes(client_factory):
+    for setting in ("on", "off", "model"):
+        client = client_factory(builder_llm="fake", ollama_think=setting)
+        assert client.get("/api/builder/status").json()["think"] == setting
+    assert client_factory().get("/api/builder/status").json()["think"] == "on"  # (not set up: still says, since the switch is drawn before anything is)

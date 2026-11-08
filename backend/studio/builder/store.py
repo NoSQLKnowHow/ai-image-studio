@@ -63,6 +63,15 @@ class BuilderStore:
             c.execute("UPDATE chats SET updated_at=? WHERE id=?", (now, chat_id))
             return seq
 
+    def drop_last_reply(self, chat_id: str) -> bool:
+        """Take away the model's last message, when it is the chat's last, so that the person's message before it can be answered again. Returns whether there was one."""
+        with self.db.tx() as c:
+            last = c.execute("SELECT seq, role FROM chat_messages WHERE chat_id=? ORDER BY seq DESC LIMIT 1", (chat_id,)).fetchone()
+            if last is None or last["role"] != "assistant":
+                return False
+            c.execute("DELETE FROM chat_messages WHERE chat_id=? AND seq=?", (chat_id, last["seq"]))
+            return True
+
     def get_chat(self, chat_id: str) -> Optional[sqlite3.Row]:
         return self.db.read_one("SELECT * FROM chats WHERE id=?", (chat_id,))
 
@@ -94,10 +103,10 @@ class BuilderStore:
             f"FROM chats c WHERE {' AND '.join(where)} ORDER BY c.updated_at DESC, c.id LIMIT ?", (*args, limit))
         return [{**dict(r), "last_text": " ".join((r["last_text"] or "").split())[:120]} for r in rows]
 
-    _CHAT_FIELDS = {"title": "title", "for_kind": "for_kind", "project_id": "project_id", "detail": "detail"}
+    _CHAT_FIELDS = {"title": "title", "for_kind": "for_kind", "project_id": "project_id", "detail": "detail", "prompt_id": "prompt_id"}
 
     def update_chat(self, chat_id: str, *, now: str, **fields: Any) -> str:
-        """Change a chat's title, what it is for, its project or its detail level (only the fields given). Returns 'updated' or 'not_found'."""
+        """Change a chat's title, what it is for, its project, its detail level or the prompt it is about (only the fields given). Returns 'updated' or 'not_found'."""
         for name in fields:
             if name not in self._CHAT_FIELDS:
                 raise StoreError(f"a chat has no {name!r} to change")

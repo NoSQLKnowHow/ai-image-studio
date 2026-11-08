@@ -298,3 +298,16 @@ def test_the_app_has_the_store_and_rebuilds_an_index_that_is_behind_when_it_star
     close(first)
     second = client_factory()  # the same data folder
     assert find(second.app.state.db, "heron") == [prompt]
+
+
+def test_the_models_last_reply_can_be_taken_away_and_nothing_else(store):
+    chat = store.create_chat(now=T0, title="c")
+    assert store.drop_last_reply(chat) is False  # an empty chat
+    store.add_message(chat, now=T0, role="user", text="hi")
+    assert store.drop_last_reply(chat) is False  # the last message is the person's: kept
+    store.add_message(chat, now=T1, role="assistant", text="hello")
+    store.add_message(chat, now=T2, role="user", text="more")
+    assert store.drop_last_reply(chat) is False
+    store.add_message(chat, now=T3, role="assistant", text="again")
+    assert store.drop_last_reply(chat) is True and [m["text"] for m in store.messages(chat)] == ["hi", "hello", "more"]
+    assert store.add_message(chat, now=T3, role="assistant", text="new") == 4  # (the number it had is free again)

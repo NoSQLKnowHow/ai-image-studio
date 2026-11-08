@@ -20,6 +20,8 @@ export const UPSCALE_TITLE =
 
 /** The id of the prompt box: a picture pasted there is taken even when the clipboard has text as well (§36.2), as it always was. */
 export const PROMPT_ID = "prompt";
+/** The id of the Prompt builder's message box: as the prompt box on Images, a picture pasted there is taken even when the clipboard has text as well. */
+export const BUILDER_INPUT_ID = "builder-input";
 /** What marks the Upscale control as the place a paste goes when it has the focus. */
 export const UPSCALE_MARK = "data-upscale-drop";
 
@@ -63,13 +65,14 @@ export type PasteRoute =
   | { kind: "ignore" } // not ours: the browser does what it does
   | { kind: "tray"; files: File[] } // the Images tab's pictures (Edit's tray, or Generate, which switches to Edit)
   | { kind: "upscale"; files: File[] } // Upscale a picture…, which has the focus
+  | { kind: "builder"; files: File[] } // the Prompt builder tab: a picture for the chat (DESIGN.md §37.3 rule 13)
   | { kind: "wrong-tab" }; // Music or Vector: no pictures are used there, and the page says so
 
 export interface PasteFacts {
   files: File[]; // the pictures on the clipboard
   plainText: boolean; // and the clipboard also holds text
   target: Element | null; // where the cursor was: the element that has the focus
-  tab: "images" | "music" | "vector";
+  tab: "images" | "music" | "vector" | "builder";
   modalOpen: boolean; // a dialog, the Options drawer or a viewer is open
   ready: boolean; // the page knows what the server can do
 }
@@ -88,6 +91,7 @@ export function routePaste(facts: PasteFacts): PasteRoute {
   if (files.length === 0 || !ready) return IGNORE;
   if (modalOpen) return IGNORE;
   const inField = isTextField(target);
+  if (tab === "builder") return inField && plainText && target?.id !== BUILDER_INPUT_ID ? IGNORE : { kind: "builder", files };
   if (tab !== "images") return inField && plainText ? IGNORE : { kind: "wrong-tab" };
   if (inField && target?.id !== PROMPT_ID && plainText) return IGNORE;
   if (target?.closest(`[${UPSCALE_MARK}]`)) return { kind: "upscale", files };

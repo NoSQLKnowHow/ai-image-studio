@@ -247,3 +247,25 @@ export function chipLine(ref: { title: string; version: number }): string {
 
 /** A chat's title for the list: its name, or the first words. */
 export const chatTitle = (title: string): string => title.trim() || "New chat";
+
+// ------------------------------------------------------------------ the settings of a draft, in words
+/** A prompt's settings as short phrases for the page to list: what Vector or Music would be given. (Images and Edit have switches: `settingChips`.) */
+export function describeSettings(kind: ForKind, draft: Pick<Draft, "settings">): string[] {
+  const s = draft.settings;
+  const text = (v: unknown): string => String(v);
+  const out: string[] = [];
+  if (kind === "vector") {
+    if (s.kind) out.push(`Kind ${text(s.kind)}`);
+    if (s.colours) out.push(`${text(s.colours)} colours`);
+    if (Array.isArray(s.palette) && s.palette.length) out.push(`Inks ${s.palette.map(text).join(", ")}`);
+    if (s.width_mm || s.height_mm) out.push(`${text(s.width_mm ?? "?")} × ${text(s.height_mm ?? "?")} mm`);
+  } else if (kind === "music") {
+    const fields = (s.fields ?? {}) as Record<string, unknown>;
+    for (const [name, value] of Object.entries(fields)) out.push(`${name === "bpm" ? "Tempo" : name[0].toUpperCase() + name.slice(1)}: ${text(value)}`);
+    if (s.instrumental === true) out.push("Instrumental");
+    else if (s.instrumental === false) out.push("With a voice");
+    if (s.seconds) out.push(`${text(s.seconds)} seconds`);
+    if (typeof s.lyrics === "string" && s.lyrics.trim()) out.push("Lyrics written");
+  }
+  return out;
+}

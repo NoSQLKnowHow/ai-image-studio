@@ -62,7 +62,7 @@ export const builderApi = {
   listChats: (params: { project?: string; deleted?: boolean } = {}) => request<{ chats: ChatListItem[] }>(`/api/builder/chats${query(params)}`),
   createChat: (body: { title?: string; for?: ForKind; project_id?: string | null; detail?: Detail; prompt_id?: string | null }) => request<ChatInfo>("/api/builder/chats", post(body)),
   getChat: (id: string) => request<ChatFull>(`/api/builder/chats/${id}`),
-  patchChat: (id: string, body: { title?: string; for?: ForKind; project_id?: string | null; detail?: Detail }) => request<ChatInfo>(`/api/builder/chats/${id}`, patch(body)),
+  patchChat: (id: string, body: { title?: string; for?: ForKind; project_id?: string | null; detail?: Detail; prompt_id?: string | null }) => request<ChatInfo>(`/api/builder/chats/${id}`, patch(body)),
   binChat: (id: string) => request<ChatInfo | { deleted: string }>(`/api/builder/chats/${id}/bin`, post()),
   restoreChat: (id: string) => request<ChatInfo>(`/api/builder/chats/${id}/restore`, post()),
   deleteChat: (id: string) => request<{ deleted: string }>(`/api/builder/chats/${id}`, { method: "DELETE" }),

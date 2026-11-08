@@ -52,6 +52,7 @@ class ChatPatch(BaseModel):
     for_: Optional[Literal["images", "vector", "music", "edit"]] = Field(default=None, alias="for")
     project_id: Optional[str] = None
     detail: Optional[Literal["short", "normal", "rich"]] = None
+    prompt_id: Optional[str] = None  # the prompt the chat is about; null takes the link away
 
 
 class AnswerIn(BaseModel):
@@ -83,6 +84,7 @@ class MessageIn(BaseModel):
     similar: bool = True
     exclude: list[str] = Field(default_factory=list, max_length=20)
     retry: bool = False
+    redo: bool = False  # with retry: if the model's reply is the last message, throw it away and answer again (leaving a saved prompt out, for one)
     run_id: Optional[str] = None
 
 
@@ -200,6 +202,11 @@ def add_chat_routes(app: FastAPI) -> None:
             if problem is not None:
                 return problem
             fields["project_id"] = sent["project_id"]
+        if "prompt_id" in sent:  # a prompt that exists and is not in the bin, or none
+            problem = check_links(request, None, sent["prompt_id"])
+            if problem is not None:
+                return problem
+            fields["prompt_id"] = sent["prompt_id"]
         store.update_chat(chat_id, now=utcnow(), **fields)
         changed(request, chat_id)
         return chat_payload(store.get_chat(chat_id))
@@ -263,8 +270,13 @@ def add_chat_routes(app: FastAPI) -> None:
             return error(422, "That isn't something the builder can do.", "bad_intent")
         if body.draft is not None and len(body.draft.prompt) > request.app.state.settings.max_prompt_chars:
             return error(422, f"The draft is longer than the {request.app.state.settings.max_prompt_chars} characters the studio allows.", "draft_too_long")
+        if body.redo and not body.retry:
+            return error(422, "Redo goes with retry.", "bad_redo")
         if body.retry:
             last = store.messages(chat_id)
+            if body.redo and last and last[-1]["role"] == "assistant":
+                store.drop_last_reply(chat_id)
+                last = store.messages(chat_id)
             if not last or last[-1]["role"] != "user":
                 return error(409, "There is nothing to send again.", "nothing_to_retry")
         draft = None

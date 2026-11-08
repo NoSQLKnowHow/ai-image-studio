@@ -1511,25 +1511,36 @@ describe("the api client", () => {
 
 // ------------------------------------------------------------------ the parts the three tabs share
 describe("the tab bar", () => {
-  it("has Images, Music and Vector, with Vector last, and arrow keys that go round the three", () => {
+  it("has Images, Music, Vector and Prompt builder, in that order, and arrow keys that go round the four", () => {
     const onTab = vi.fn();
-    render(<Tabs tab="music" onTab={onTab} busy={{ images: false, music: false, vector: false }} />);
-    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Images", "Music", "Vector"]);
+    const idle = { images: false, music: false, vector: false, builder: false };
+    render(<Tabs tab="music" onTab={onTab} busy={idle} />);
+    expect(screen.getAllByRole("tab").map((tab) => tab.textContent)).toEqual(["Images", "Music", "Vector", "Prompt builder"]);
     expect(screen.getByRole("tab", { name: "Vector" }).getAttribute("aria-controls")).toBe("panel-vector");
+    expect(screen.getByRole("tab", { name: "Prompt builder" }).getAttribute("aria-controls")).toBe("panel-builder");
     fireEvent.keyDown(screen.getByRole("tab", { name: "Music" }), { key: "ArrowRight" });
     expect(onTab).toHaveBeenLastCalledWith("vector");
     cleanup();
-    render(<Tabs tab="vector" onTab={onTab} busy={{ images: false, music: false, vector: false }} />);
-    fireEvent.keyDown(screen.getByRole("tab", { name: "Vector" }), { key: "ArrowRight" });
+    render(<Tabs tab="builder" onTab={onTab} busy={idle} />);
+    fireEvent.keyDown(screen.getByRole("tab", { name: "Prompt builder" }), { key: "ArrowRight" });
     expect(onTab).toHaveBeenLastCalledWith("images");
-    expect(screen.getByRole("tab", { name: "Vector" }).getAttribute("tabindex")).toBe("0"); // one tab stop for the bar
+    expect(screen.getByRole("tab", { name: "Prompt builder" }).getAttribute("tabindex")).toBe("0"); // one tab stop for the bar
     expect(screen.getByRole("tab", { name: "Images" }).getAttribute("tabindex")).toBe("-1");
   });
 
   it("shows work going on in the Vector tab while another tab is open", () => {
-    render(<Tabs tab="images" onTab={nothing} busy={{ images: false, music: false, vector: true }} />);
+    render(<Tabs tab="images" onTab={nothing} busy={{ images: false, music: false, vector: true, builder: false }} />);
     expect(screen.getByRole("tab", { name: /Vector/ }).textContent).toContain("(working)");
     expect(screen.getByRole("tab", { name: /Images/ }).textContent).not.toContain("(working)");
+  });
+
+  it("shows a reply being written in the Prompt builder while another tab is open, and not on its own tab", () => {
+    const busy = { images: false, music: false, vector: false, builder: true };
+    render(<Tabs tab="images" onTab={nothing} busy={busy} />);
+    expect(screen.getByRole("tab", { name: /Prompt builder/ }).textContent).toContain("(working)");
+    cleanup();
+    render(<Tabs tab="builder" onTab={nothing} busy={busy} />);
+    expect(screen.getByRole("tab", { name: /Prompt builder/ }).textContent).not.toContain("(working)");
   });
 });
 

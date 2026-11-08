@@ -14,6 +14,7 @@ import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
+import { BuilderPanel } from "./components/BuilderPanel";
 import { VectorPanel } from "./components/VectorPanel";
 import { VectorViewer } from "./components/VectorViewer";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
@@ -103,7 +104,10 @@ export default function App() {
   const [upscaling, setUpscaling] = useState(false); // a picture from the computer is being upscaled (DESIGN.md §27.9)
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
-  const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music or Vector (DESIGN.md §26.1, §31.12.8), remembered
+  const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music, Vector or Prompt builder (DESIGN.md §26.1, §31.12.8, §37.2), remembered
+  const [builderWorking, setBuilderWorking] = useState(false); // a reply is being written: the dot on the Prompt builder tab
+  const [builderTick, setBuilderTick] = useState(0); // another page changed a prompt, chat or preference
+  const builderAttach = useRef<((files: File[]) => void) | null>(null); // the chat's way of taking pictures that are pasted
   const [filter, setFilter] = useState<HistoryFilter>(() => readFilter(store)); // All or Kept, for both tabs (DESIGN.md §29), remembered
   const [filterProblem, setFilterProblem] = useState<string | null>(null); // why the filtered list could not be loaded
   const [managingProjects, setManagingProjects] = useState(false); // the Manage projects dialog is open (DESIGN.md §32.1)
@@ -127,7 +131,7 @@ export default function App() {
   const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
   const vectorRuns = useMemo(() => visible.filter(isVectorRun), [visible]);
   // what the tab being looked at is called in the counts (`Counts` has a key for each)
-  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image";
+  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
   const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
   const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
@@ -172,6 +176,7 @@ export default function App() {
 
   useEventStream(dispatch, {
     onCapabilitiesChanged: () => void api.capabilities().then((c) => dispatch({ type: "caps", caps: c })).catch(() => undefined),
+    onBuilderChanged: () => setBuilderTick((n) => n + 1),
   });
 
   useEffect(() => {
@@ -425,7 +430,7 @@ export default function App() {
   };
 
   // One listener for pasted pictures on the whole page (§36.4): the prompt box, the bare page, a button, Upscale a picture… when it has the focus
-  usePicturePaste({ tab, ready: !!caps && !!options, onTray: handleFiles, onUpscale: upscaleFiles, onWrongTab: () => push("info", PICTURES_ON_IMAGES_TAB) });
+  usePicturePaste({ tab, ready: !!caps && !!options, onTray: handleFiles, onUpscale: upscaleFiles, onBuilder: (files) => builderAttach.current?.(files), onWrongTab: () => push("info", PICTURES_ON_IMAGES_TAB) });
 
   const applyStarter = () => {
     if (!options || prompt.trim()) return;
@@ -972,7 +977,7 @@ export default function App() {
           <p className="loading" role="status">Connecting to the studio…</p>
         ) : (
           <>
-            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working) }} />
+            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking }} />
             <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
             <PromptBar
               ref={promptRef}
@@ -1111,6 +1116,7 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
+            <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} />
             <VectorPanel
               hidden={tab !== "vector"}
               caps={caps}

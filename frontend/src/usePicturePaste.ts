@@ -8,10 +8,11 @@ import { hasPlainText, pastedPictures, routePaste } from "./paste";
 // does not also do something with it, and then handed to the page.
 
 export interface PasteHandlers {
-  tab: "images" | "music" | "vector";
+  tab: "images" | "music" | "vector" | "builder";
   ready: boolean; // the page knows what the server can do
   onTray: (files: File[]) => void; // pictures for the Images tab's prompt card (Edit's tray; Generate switches to Edit)
   onUpscale: (files: File[]) => void; // pictures for Upscale a picture…, which has the focus
+  onBuilder?: (files: File[]) => void; // pictures for the Prompt builder's chat
   onWrongTab: () => void; // a picture was given to the Music or Vector tab
 }
 
@@ -35,12 +36,13 @@ export function usePicturePaste(handlers: PasteHandlers): void {
       event.preventDefault();
       if (route.kind === "tray") now.onTray(route.files);
       else if (route.kind === "upscale") now.onUpscale(route.files);
+      else if (route.kind === "builder") now.onBuilder?.(route.files);
       else now.onWrongTab();
     };
     // A picture dropped on the Music or Vector tab: the window already stops the browser from opening it; this says where pictures are used.
     const onDrop = (event: DragEvent) => {
       const now = latest.current;
-      if (now.tab === "images" || !now.ready || modalIsOpen()) return;
+      if (now.tab === "images" || now.tab === "builder" || !now.ready || modalIsOpen()) return;
       if (event.dataTransfer?.types.includes("Files")) now.onWrongTab();
     };
     document.addEventListener("paste", onPaste);

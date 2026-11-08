@@ -128,10 +128,10 @@ class BuilderService:
     def status(self) -> dict[str, Any]:
         """`GET /api/builder/status`: {configured, reachable, model, vision, message, hint}."""
         if not self.configured:
-            return {"configured": False, "reachable": False, "model": self.settings.ollama_model, "vision": False, "message": NOT_SET_UP, "hint": None}
+            return {"configured": False, "reachable": False, "model": self.settings.ollama_model, "vision": False, "think": self.settings.ollama_think, "message": NOT_SET_UP, "hint": None}
         found = self.probe()
         message, hint = self._words(found)
-        return {"configured": True, "reachable": found.reachable, "model": self.model, "vision": found.vision, "message": message, "hint": hint}
+        return {"configured": True, "reachable": found.reachable, "model": self.model, "vision": found.vision, "think": self.settings.ollama_think, "message": message, "hint": hint}
 
     def test(self) -> dict[str, Any]:
         """`POST /api/builder/test` (Test connection): what a fresh look found. The address is not in it."""

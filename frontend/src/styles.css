@@ -744,3 +744,98 @@ fieldset.field { gap: 8px; }
   .vector-form .segmented { display: flex; flex-wrap: wrap; justify-self: stretch; }
   .vector-form .segmented button { flex: 1 1 auto; justify-content: center; }
 }
+
+/* ---- The Prompt builder (DESIGN.md §37.2) ----------------------------------------------------------------------------------------------------------------------------------- */
+/* The tab is wider than the others: a list, the chat and the prompt side by side. (:has is in every current browser; where it is missing the tab simply keeps the usual width.) */
+.app-main:has(.builder-panel:not([hidden])) { max-width: 1320px; }
+.builder-panel { display: grid; gap: 14px; }
+.builder-connection { display: grid; gap: 8px; padding: 10px 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.builder-connection-line { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--text-2); }
+.builder-connection-line.trouble { color: var(--danger); }
+.builder-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-3); flex: none; }
+.builder-connection-line.ready .builder-dot { background: var(--success); }
+.builder-connection-line.trouble .builder-dot { background: var(--danger); }
+.builder-connection-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.builder-test { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 0; font-size: 13px; }
+.builder-test dt { color: var(--text-3); font-weight: 600; }
+.builder-test dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.builder-not-set-up { border-style: solid; }
+
+.builder-columns { display: grid; grid-template-columns: 240px minmax(0, 1fr) minmax(0, 380px); gap: 14px; align-items: start; }
+.builder-columns.narrow { grid-template-columns: minmax(0, 1fr); }
+.builder-col { min-width: 0; }
+.builder-col[hidden] { display: none; }
+.builder-views { justify-self: stretch; }
+.builder-views button { flex: 1; }
+
+.builder-list { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.builder-list ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.builder-list li { display: flex; align-items: stretch; gap: 2px; border-radius: var(--radius-sm); }
+.builder-list li.current { background: var(--accent-soft); }
+.builder-list-open { flex: 1; min-width: 0; display: grid; gap: 1px; text-align: left; background: none; border: 0; padding: 8px; color: inherit; cursor: pointer; border-radius: var(--radius-sm); font: inherit; }
+.builder-list-open strong, .builder-list-open .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-button { background: none; border: 0; color: var(--text-3); cursor: pointer; padding: 0 8px; border-radius: var(--radius-sm); font: inherit; }
+.icon-button:hover { color: var(--danger); }
+
+.builder-chat, .builder-prompt { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: var(--shadow-sm); }
+.builder-heading { margin: 0; font-size: 15px; font-weight: 650; }
+.builder-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; align-content: start; max-height: min(62vh, 640px); min-height: 160px; overflow-y: auto; }
+.builder-message { display: grid; gap: 8px; padding: 10px 12px; border-radius: var(--radius); background: var(--surface-2); min-width: 0; }
+.builder-message.person { background: var(--accent-soft); justify-self: end; max-width: 92%; }
+.builder-message.working { background: var(--surface-2); border: 1px dashed var(--border-strong); }
+.builder-welcome { text-align: center; padding: 18px 8px; color: var(--text-3); list-style: none; }
+.builder-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.builder-answered { list-style: none; margin: 0; padding: 0; font-size: 13px; display: grid; gap: 2px; }
+.builder-notices { margin: 0; padding: 8px 10px 8px 26px; border-radius: var(--radius-sm); background: var(--warning-soft); color: var(--warning); font-size: 13px; font-weight: 550; }
+.builder-looked { margin: 0; font-size: 12px; }
+.builder-example .link-button { margin-left: 3px; }
+.builder-thinking summary { cursor: pointer; font-size: 13px; color: var(--text-2); }
+.builder-pictures { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.builder-pictures li { position: relative; width: 64px; height: 64px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border); background: var(--surface-3); }
+.builder-pictures img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.builder-pictures .tray-badge { top: 2px; left: 2px; min-width: 20px; height: 20px; font-size: 11px; border-radius: 10px; }
+.builder-pictures .tray-remove { top: 2px; right: 2px; width: 20px; height: 20px; }
+
+.builder-question { border: 1px solid var(--border-strong); border-radius: var(--radius); padding: 10px 12px; margin: 0; display: grid; gap: 8px; background: var(--surface); }
+.builder-question legend { padding: 0 6px; font-weight: 650; }
+.builder-chips, .builder-settings { display: flex; flex-wrap: wrap; gap: 6px; }
+.builder-chip {
+  border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 14px; cursor: pointer; min-height: 32px;
+}
+.builder-chip:hover { background: var(--surface-2); }
+.builder-chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.builder-question-extra { display: flex; flex-wrap: wrap; gap: 6px; }
+.builder-question-extra [aria-pressed="true"] { background: var(--accent-soft); color: var(--accent-text); }
+.builder-remember { margin: 0; font-size: 14px; }
+.builder-wordings { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.builder-wording { padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); display: grid; gap: 6px; }
+.builder-wording-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.builder-problem { padding: 10px 12px; border-radius: var(--radius); background: var(--danger-soft); display: grid; gap: 6px; justify-items: start; }
+.builder-composer { display: grid; gap: 8px; }
+.builder-start, .builder-composer-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; font-size: 14px; }
+.builder-start label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); }
+.builder-switch input { margin: 0; }
+.builder-composer select, .builder-save-form input, .builder-save-form select { font: inherit; padding: 6px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); }
+.builder-input { min-height: 84px; }
+.builder-composer-end { margin-left: auto; display: flex; flex-wrap: wrap; gap: 8px; }
+
+.builder-draft { min-height: 170px; }
+.builder-negative { min-height: 52px; }
+.builder-label { font-size: 13px; font-weight: 600; color: var(--text-2); }
+.builder-meter { margin: 0; text-align: right; }
+.builder-meter.over { color: var(--danger); }
+.builder-note { margin: 0; }
+.builder-settings-list { margin: 0; padding-left: 18px; font-size: 14px; color: var(--text-2); }
+.builder-changes summary { cursor: pointer; font-size: 13px; color: var(--text-2); }
+.builder-changes ins { text-decoration: underline; text-decoration-thickness: 2px; background: var(--success-soft); color: var(--success); }
+.builder-changes del { text-decoration: line-through; background: var(--danger-soft); color: var(--danger); }
+.builder-prompt-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.builder-save { max-width: 460px; }
+.builder-save-form { display: grid; gap: 10px; margin-top: 10px; }
+.builder-save-form label { display: grid; gap: 4px; font-size: 14px; color: var(--text-2); }
+
+@media (max-width: 900px) {
+  .builder-columns:not(.narrow) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .builder-col-list { grid-column: 1 / -1; }
+}
