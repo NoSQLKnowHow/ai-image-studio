@@ -64,6 +64,16 @@ def test_each_setting_is_the_same_changed_added_or_removed():
     assert rows == [{"key": "guidance", "before": 4, "after": 4.0, "status": "same"}, {"key": "seed_note", "before": None, "after": "x", "status": "added"},
                     {"key": "shape", "before": "16:9", "after": "1:1", "status": "changed"}, {"key": "steps", "before": 8, "after": None, "status": "removed"}]
     assert settings_diff(None, None) == [] and settings_diff({"a": {"x": 1, "y": 2}}, {"a": {"y": 2, "x": 1}})[0]["status"] == "same"
+    # the order of an object's keys is not a change, whichever version has them out of order
+    assert settings_diff({"fields": {"mood": "warm", "genre": "jazz"}}, {"fields": {"genre": "jazz", "mood": "warm"}})[0]["status"] == "same"
+    assert settings_diff({"fields": {"genre": "jazz", "mood": "warm"}}, {"fields": {"mood": "warm", "genre": "jazz"}})[0]["status"] == "same"
+
+
+def test_a_long_text_keeps_its_unchanged_words_unchanged():
+    """The comparison must not give up on words that are common in a long prompt: 'the' is on every other line, and a long prompt is the one worth comparing."""
+    common = " ".join(["the"] * 150 + ["of"] * 150)
+    runs = word_diff(common + " dusk", common + " dawn")
+    assert runs == [{"op": "same", "text": common}, {"op": "del", "text": "dusk"}, {"op": "add", "text": "dawn"}]
 
 
 # ------------------------------------------------------------------ versions are only ever added (rule 2, criterion 229)

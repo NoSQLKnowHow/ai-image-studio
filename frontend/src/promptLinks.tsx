@@ -29,15 +29,16 @@ export function RunFrom({ run }: { run: Run }) {
   );
 }
 
-/** Refine in Prompt builder, for a finished picture. Not shown when the builder is not set up. */
-export function RefineButton({ run, image, className = "button small ghost" }: { run: ImageRun; image: ImageInfo | null; className?: string }) {
+/** Refine in Prompt builder, for a finished picture. Not shown when the builder is not set up. `compact` is for the viewer's row of buttons on a phone, where there is no room for the
+ *  whole name: it shows "Refine" and keeps the whole name for a screen reader and the tooltip. */
+export function RefineButton({ run, image, className = "button small ghost", compact = false }: { run: ImageRun; image: ImageInfo | null; className?: string; compact?: boolean }) {
   const links = usePromptLinks();
   if (!links?.refine || run.status !== "done" || !image) return null;
   const refine = links.refine;
   return (
-    <button type="button" className={className} data-action="refine" onClick={() => refine(run, image)}
+    <button type="button" className={className} data-action="refine" onClick={() => refine(run, image)} aria-label={compact ? "Refine in Prompt builder" : undefined}
       title="Open a chat in the Prompt builder about this picture, to say what is wrong and get a better version of the prompt">
-      Refine in Prompt builder
+      {compact ? "Refine" : "Refine in Prompt builder"}
     </button>
   );
 }

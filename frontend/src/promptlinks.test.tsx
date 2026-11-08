@@ -63,6 +63,15 @@ describe("Refine in Prompt builder", () => {
     expect(l.refine).toHaveBeenCalledWith(done, done.images[0]);
   });
 
+  it("can be short where the row of buttons is narrow, and is still named in full", () => {
+    const l = links();
+    within(l, <RefineButton run={done} image={done.images[0]} compact />);
+    const button = screen.getByRole("button", { name: "Refine in Prompt builder" });
+    expect(button.textContent).toBe("Refine");
+    fireEvent.click(button);
+    expect(l.refine).toHaveBeenCalledWith(done, done.images[0]);
+  });
+
   it("is not offered when the builder is not set up, for a run that has not finished, or without a picture", () => {
     within(links({ refine: null }), <RefineButton run={done} image={done.images[0]} />);
     expect(screen.queryByRole("button")).toBeNull();

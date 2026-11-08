@@ -80,7 +80,7 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
                       <EditIcon /> Edit this
                     </button>
                   )}
-                  {result && !readOnly && <RefineButton run={run} image={result} className="button small" />}
+                  {result && !readOnly && <RefineButton run={run} image={result} className="button small" compact />}
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
                   {/* Delete picture (DESIGN.md §33.1): on a RESULT of a finished run that is not in the bin; never on an edit's source, which is the run's
                       input, and never while Make 4K or Enlarge is working on this picture (the copy being written would be left behind) */}

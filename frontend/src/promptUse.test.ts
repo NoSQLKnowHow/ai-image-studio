@@ -36,6 +36,17 @@ describe("the Vector form from a prompt", () => {
     expect(skipped).toEqual(["kind sculpture", `${vlimits.colours.max + 1} colours`, "the size"]);
   });
 
+  it("takes the colours, the sides and the sheet at exactly the limits, and says one ink as one ink", () => {
+    const { colours, size_mm: size } = vlimits;
+    const top = fillVector(vform(), draft("x", { colours: colours.max, width_mm: size.max, height_mm: size.min }), CAPS);
+    expect(top.form).toMatchObject({ colours: colours.max, widthMm: size.max, heightMm: size.min });
+    expect(top.skipped).toEqual([]);
+    const bottom = fillVector(vform(), draft("x", { colours: colours.min, width_mm: size.min, height_mm: size.max }), CAPS);
+    expect(bottom.form).toMatchObject({ colours: colours.min, widthMm: size.min, heightMm: size.max });
+    const one = fillVector(vform(), draft("x", { colours: 3, palette: ["#FF0000"] }), CAPS);
+    expect(one.applied).toEqual(["3 colours", "1 ink"]);
+  });
+
   it("will not take inks that break the palette rules: white, the same twice, too many for the colours, or not colours", () => {
     for (const palette of [["#FFFFFF"], ["#FF0000", "#ff0000"], ["#FF0000", "#00AA00", "#0000FF"], ["red"]]) {
       const { form, skipped } = fillVector(vform(), draft("x", { colours: 3, palette }), CAPS);
@@ -110,6 +121,35 @@ describe("the Music fields from a prompt", () => {
     expect(form.fields.mood).toBe("calm");
     expect(form.edited).toBe(false);
     expect(skipped).toEqual(["the genre", "the lyrics", "the description", `${m.duration.max + 1} seconds`]);
+  });
+
+  it("takes a field, the lyrics, the description and the length at exactly their limits", () => {
+    const m = CAPS.limits.music;
+    const { form, applied, skipped } = fillMusic(mform(), draft("d".repeat(m.description_chars), {
+      seconds: m.duration.max, lyrics: "y".repeat(m.lyrics_chars), fields: { genre: "g".repeat(m.field_chars) },
+    }), CAPS);
+    expect(skipped).toEqual([]);
+    expect(form.duration).toBe(m.duration.max);
+    expect(form.lyrics).toHaveLength(m.lyrics_chars);
+    expect(form.fields.genre).toHaveLength(m.field_chars);
+    expect(form).toMatchObject({ edited: true, lyricsOn: true });
+    expect(form.text).toHaveLength(m.description_chars);
+    expect(applied).toContain(`${m.duration.max} seconds`);
+    expect(fillMusic(mform(), draft("x", { seconds: m.duration.min }), CAPS).form.duration).toBe(m.duration.min);
+  });
+
+  it("names the tempo as the tempo when it is too long, and leaves out what it cannot take", () => {
+    const m = CAPS.limits.music;
+    const { form, skipped } = fillMusic(mform(), draft("x", { fields: { bpm: "9".repeat(m.field_chars + 1), key: "C major" } }), CAPS);
+    expect(skipped).toEqual(["the tempo"]);
+    expect(form.fields).toMatchObject({ bpm: "", key: "C major" });
+  });
+
+  it("says nothing was left out when the prompt has nothing the form could refuse", () => {
+    const { skipped, applied } = fillMusic(mform(), draft("calm piano", { instrumental: true }), CAPS);
+    expect(skipped).toEqual([]);
+    expect(applied).toEqual(["instrumental"]);
+    expect(fillMusic(mform(), draft("calm piano"), CAPS)).toMatchObject({ applied: [], skipped: [] });
   });
 
   it("ignores a length that is not a whole number of seconds", () => {
