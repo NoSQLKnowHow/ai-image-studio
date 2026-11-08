@@ -213,7 +213,7 @@ describe("a reply being written", () => {
     state.emit(result(reply(2, { reply: "Lovely idea." })));
     state.finish();
     await waitFor(() => expect(screen.queryByRole("button", { name: /Stop/ })).toBeNull());
-    expect(onWorking).toHaveBeenLastCalledWith(false);
+    await waitFor(() => expect(onWorking).toHaveBeenLastCalledWith(false)); // (told from an effect, a beat after the card changes)
     expect(screen.queryByText("Show thinking")).toBeNull(); // the reasoning is not kept
   });
 

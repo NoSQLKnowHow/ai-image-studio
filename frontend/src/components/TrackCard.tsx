@@ -2,6 +2,7 @@ import { useState } from "react";
 import { binNote, duration, expiryText, keepLockedTitle, timeAgo, canceledText, workingNote, type ViewScope } from "../format";
 import { musicMeta, musicPhases, musicProgressText, musicTitle, trackLabel } from "../music";
 import type { MusicRun, TrackInfo, WorkerState } from "../types";
+import { RunFrom } from "../promptLinks";
 import { CopyIcon, DownloadIcon, FolderIcon, NoteIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 
@@ -115,6 +116,7 @@ export function TrackCard({ run, now, workerState, transient, viewScope, project
           </details>
         )}
         <p className="run-meta">{musicMeta(run, took).join(" · ")}</p>
+        <RunFrom run={run} />
 
         {run.status === "running" && <MusicProgress run={run} workerState={workerState} />}
 

@@ -901,3 +901,11 @@ fieldset.field { gap: 8px; }
 .from-chip .link-button { color: inherit; }
 .from-chip .icon-button { padding: 0 6px; }
 .run-from { margin: 0; font-size: 13px; color: var(--text-2); }
+
+/* Pictures from the history, attached to a chat (DESIGN.md §37.2) */
+.builder-history { max-width: min(640px, 94vw); }
+.builder-history-grid { list-style: none; margin: 12px 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; max-height: 50vh; overflow-y: auto; }
+.builder-history-grid button { padding: 0; border: 2px solid transparent; border-radius: 8px; background: var(--surface-3); cursor: pointer; display: block; width: 100%; overflow: hidden; }
+.builder-history-grid button:hover, .builder-history-grid button:focus-visible { border-color: var(--accent); }
+.builder-history-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
+.builder-primed { margin: 0; }

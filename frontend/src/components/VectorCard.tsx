@@ -2,6 +2,7 @@ import { useState } from "react";
 import { binNote, canceledText, deleteRunTitle, duration, expiryText, keepLockedTitle, timeAgo, workingNote, type ViewScope } from "../format";
 import type { VectorItem, VectorRun, WorkerState } from "../types";
 import { bytesText, kindLabel, layersCount, placeLabel, vectorMeta, vectorPhases, vectorProgressText, vectorTitle } from "../vector";
+import { RunFrom } from "../promptLinks";
 import { AlertIcon, CopyIcon, DownloadIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon, VectorIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 import { VersionFacts } from "./VersionFacts";
@@ -179,6 +180,7 @@ export function VectorCard({ run, now, workerState, transient, viewScope, projec
           </button>
         )}
         <p className="run-meta">{vectorMeta(run, took).join(" · ")}</p>
+        <RunFrom run={run} />
 
         {run.status === "running" && <VectorProgress run={run} workerState={workerState} />}
 

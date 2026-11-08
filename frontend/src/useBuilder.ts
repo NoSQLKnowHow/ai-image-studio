@@ -52,7 +52,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
   const [testing, setTesting] = useState(false);
   const [unloading, setUnloading] = useState(false);
 
-  const [chat, setChat] = useState<ChatInfo | null>(null); // null: a new chat that has not been made yet (it is made with its first message)
+  const [chat, setChatState] = useState<ChatInfo | null>(null); // null: a new chat that has not been made yet (it is made with its first message)
   const [blank, setBlank] = useState<Blank>(BLANK);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [pending, setPending] = useState<Attachment[]>([]);
@@ -67,7 +67,10 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
   const [edited, setEdited] = useState<Draft | null>(null); // the prompt so far, as the person has changed it by hand and not yet sent
 
   const viewing = useRef<string | null>(null);
+  const current = useRef<ChatInfo | null>(null); // the open chat as of now, not as of the last drawing: a loop that attaches several pictures must see the chat the first one made
+  const [primed, setPrimed] = useState<{ intent: Intent; runId: string | null } | null>(null); // what the next message is: a Refine or a Help me write, until it is sent
   const abort = useRef<AbortController | null>(null);
+  const setChat = useCallback((next: ChatInfo | null) => { current.current = next; setChatState(next); }, []);
   const changed = useRef(onChanged);
   changed.current = onChanged;
 
@@ -113,6 +116,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
   const startNew = useCallback((over: Partial<Blank> = {}) => {
     viewing.current = null;
     setChat(null);
+    setPrimed(null);
     setBlank({ ...BLANK, ...over });
     setMessages([]);
     setPending([]);
@@ -120,7 +124,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
     setOpenProblem(null);
     setProblem(null);
     setEdited(null);
-  }, []);
+  }, [setChat]);
 
   const open = useCallback(async (id: string) => {
     setOpening(true);
@@ -129,6 +133,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
       const full = await api.getChat(id);
       viewing.current = id;
       setChat(full.chat);
+      setPrimed(null);
       setMessages(full.messages);
       setPending(full.pending);
       setPreferences(full.preferences);
@@ -143,13 +148,13 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
 
   /** The chat to write in: the open one, or a new one made now from what the blank chat has chosen. */
   const ensureChat = useCallback(async (title: string): Promise<ChatInfo> => {
-    if (chat) return chat;
+    if (current.current) return current.current;
     const made = await api.createChat({ title, for: blank.for, detail: blank.detail, project_id: blank.project_id, prompt_id: blank.prompt_id });
     viewing.current = made.id;
     setChat(made);
     changed.current();
     return made;
-  }, [api, blank, chat]);
+  }, [api, blank, setChat]);
 
   // ------------------------------------------------------------------ a reply
   const send = useCallback(async (input: SendInput = {}) => {
@@ -163,12 +168,18 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
     }
     const questions = input.questions ?? [];
     const answers = answersFor(input.picks ?? {}, questions);
+    // a chat opened by Refine or Help me write: its first plain message is that (the person's words are what is wrong, or what should change)
+    // (the run it is about goes with whatever the first message is; the intent is replaced only when the person left it a plain message)
+    const via = !input.retry && (input.intent ?? "message") === "message" ? primed : null;
+    const intent = via?.intent ?? input.intent ?? "message";
+    const runId = input.runId ?? (input.retry ? null : primed?.runId) ?? null;
     const body: MessageBody = input.retry
       ? { retry: true, ...(input.redo ? { redo: true } : {}), ...(input.exclude ? { exclude: input.exclude } : {}) }
       : {
-          text, answers, intent: input.intent ?? "message", think: input.think ?? null, attachments: pending.map((a) => a.id), similar: input.similar ?? true,
-          exclude: input.exclude ?? [], ...(input.draft ? { draft: input.draft } : {}), ...(input.runId ? { run_id: input.runId } : {}),
+          text, answers, intent, think: input.think ?? null, attachments: pending.map((a) => a.id), similar: input.similar ?? true,
+          exclude: input.exclude ?? [], ...(input.draft ? { draft: input.draft } : {}), ...(runId ? { run_id: runId } : {}),
         };
+    if (!input.retry) setPrimed(null);
     setEdited(null); // what was edited goes with this message, and the model's answer is the new draft
     if (input.retry) {
       setProblem(null);
@@ -178,7 +189,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
       const questionOf = new Map(questions.map((q) => [q.id, q.text]));
       const shown: ChatMessage = {
         seq: -1, role: "user", text, model: null, created_at: new Date().toISOString(), attachments: pending,
-        content: { answers: answers.map((a) => ({ id: a.id, question: questionOf.get(a.id) ?? a.id, mode: a.mode, chips: a.chips ?? [] })), intent: input.intent ?? "message", draft: input.draft ?? null, think: input.think ?? null },
+        content: { answers: answers.map((a) => ({ id: a.id, question: questionOf.get(a.id) ?? a.id, mode: a.mode, chips: a.chips ?? [] })), intent, draft: input.draft ?? null, think: input.think ?? null },
       };
       setMessages((all) => [...all, shown]);
       setPending([]);
@@ -225,7 +236,9 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
       setReply(IDLE_REPLY);
       setReplyChat(null);
     }
-  }, [api, ensureChat, open, pending]);
+  }, [api, ensureChat, open, pending, primed]);
+
+  const prime = useCallback((intent: Intent, runId: string | null = null) => setPrimed({ intent, runId }), []);
 
   const retry = useCallback(() => send({ retry: true }), [send]);
 
@@ -289,7 +302,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
     status, statusProblem, refreshStatus, test, testing, runTest, unloading, unload,
     chat, blank, messages, pending, preferences, opening, openProblem, draft,
     reply: replyHere, replying: replying(replyHere), writing: replyChat !== null, problem, picking,
-    editedDraft: edited, setEdited, startNew, open, send, retry, stop, attach, unattach, change, setProblem,
+    editedDraft: edited, setEdited, startNew, open, send, retry, stop, attach, unattach, change, setProblem, primed, prime,
   };
 }
 

@@ -1,6 +1,8 @@
+import * as Dialog from "@radix-ui/react-dialog";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { DETAILS, DETAIL_LABELS, FOR_KINDS, FOR_LABELS, WORDS, canSend, chooseMode, isAnswer, openQuestions, toggleChip, type Picks } from "../builder";
 import type { AnswerContent, Attachment, BuilderStatus, ChatInfo, ChatMessage, Detail, ForKind, Question, Wording } from "../builderTypes";
+import { useReturnFocus } from "../hooks";
 import type { BuilderState } from "../useBuilder";
 import { CloseIcon, DiceIcon, SparkleIcon, StopIcon } from "./icons";
 
@@ -161,6 +163,34 @@ function Progress({ state, onStop }: { state: BuilderState["reply"]; onStop: () 
   );
 }
 
+/** A picture the studio already has, offered to attach to a chat (DESIGN.md §37.2, criterion 244). */
+export interface HistoryPicture {
+  id: string;
+  thumbUrl: string;
+  label: string;
+}
+
+function HistoryPicker({ open, pictures, onPick, onClose }: { open: boolean; pictures: HistoryPicture[]; onPick: (id: string) => void; onClose: () => void }) {
+  const { props: returnFocus } = useReturnFocus();
+  return (
+    <Dialog.Root open={open} onOpenChange={(next) => !next && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="overlay" />
+        <Dialog.Content className="confirm builder-history" {...returnFocus}>
+          <Dialog.Title>Pick from my history</Dialog.Title>
+          <Dialog.Description>{pictures.length ? "Choose a picture to attach. A copy goes with the chat." : "There are no pictures in the history yet."}</Dialog.Description>
+          <ul className="builder-history-grid" aria-label="Pictures in the history">
+            {pictures.map((p) => (
+              <li key={p.id}><button type="button" onClick={() => onPick(p.id)} aria-label={p.label}><img src={p.thumbUrl} alt="" width={96} height={96} loading="lazy" /></button></li>
+            ))}
+          </ul>
+          <div className="confirm-actions"><Dialog.Close className="button">Close</Dialog.Close></div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
 export interface ChatActions {
   useLabel: string; // where "Use in …" goes for what this chat is for: Images, Vector or Music
   onKeepWording?: (w: Wording) => void;
@@ -168,10 +198,11 @@ export interface ChatActions {
   onRemember: (text: string) => Promise<void>;
 }
 
-export function BuilderChat({ builder, status, actions, composerRef, extra }: {
+export function BuilderChat({ builder, status, actions, composerRef, extra, history = [] }: {
   builder: BuilderState;
   status: BuilderStatus | null;
   actions: ChatActions;
+  history?: HistoryPicture[]; // pictures from the studio's history that can be attached
   composerRef?: React.RefObject<HTMLTextAreaElement | null>;
   extra?: ReactNode;
 }) {
@@ -182,6 +213,7 @@ export function BuilderChat({ builder, status, actions, composerRef, extra }: {
   const [exclude, setExclude] = useState<string[]>([]);
   const [similar, setSimilar] = useState(true);
   const [note, setNote] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false); // the history picker is open
   const fileInput = useRef<HTMLInputElement>(null);
   const log = useRef<HTMLOListElement>(null);
   const questions = openQuestions(messages);
@@ -205,7 +237,7 @@ export function BuilderChat({ builder, status, actions, composerRef, extra }: {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, reply.text, reply.phase]);
 
-  const send = async (intent: "message" | "write_now" | "variations" = "message") => {
+  const send = async (intent: "message" | "write_now" | "variations" | "describe" = "message") => {
     const body = { text, picks, questions, intent, think: thinkValue(think), similar, exclude, draft: builder.editedDraft };
     setText("");
     setPicks({});
@@ -223,6 +255,14 @@ export function BuilderChat({ builder, status, actions, composerRef, extra }: {
       }
     }
   };
+
+  const pickFromHistory = async (imageId: string) => {
+    setPicking(false);
+    const problemText = await builder.attach({ imageId });
+    if (problemText) setNote(problemText);
+  };
+  const primedHint = builder.primed?.intent === "refine" ? "Say what is wrong with this picture, and the builder proposes a new version."
+    : builder.primed?.intent === "help_edit" ? "Say what should change in these pictures, in your own words. They are numbered in order: image 1, image 2…" : null;
 
   return (
     <section className="builder-chat" aria-label="Chat"
@@ -272,6 +312,7 @@ export function BuilderChat({ builder, status, actions, composerRef, extra }: {
           </div>
         )}
         <Pictures pictures={pending} onRemove={(id) => void builder.unattach(id)} />
+        {primedHint && <p className="hint builder-primed" role="status">{primedHint}</p>}
         {note && <p className="form-error" role="alert">{note}</p>}
         <label htmlFor="builder-input" className="sr-only">{first ? "What's the idea?" : "Your reply"}</label>
         <textarea id="builder-input" ref={composerRef} className="prompt-input builder-input" value={text} maxLength={4000} 
@@ -281,6 +322,8 @@ export function BuilderChat({ builder, status, actions, composerRef, extra }: {
         <div className="builder-composer-row">
           <button type="button" className="button small ghost" onClick={() => fileInput.current?.click()} disabled={!canLook || builder.picking} aria-label="Attach a picture"
             title={canLook ? "Attach a picture (or paste or drop one)" : WORDS.noVision}>{builder.picking ? "Attaching…" : "Attach"}</button>
+          <button type="button" className="button small ghost" onClick={() => setPicking(true)} disabled={!canLook || builder.picking || history.length === 0}
+            title={!canLook ? WORDS.noVision : history.length === 0 ? "There are no pictures in the history yet." : "Attach a picture the studio already made or was given"}>Pick from my history</button>
           <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" multiple className="sr-only" tabIndex={-1} aria-hidden="true" data-testid="builder-file-input"
             onChange={(e) => { void attach(e.target.files); e.target.value = ""; }} />
           <select value={think} onChange={(e) => setThink(e.target.value as ThinkChoice)} aria-label="Think">
@@ -289,6 +332,10 @@ export function BuilderChat({ builder, status, actions, composerRef, extra }: {
             <option value="off">{thinkLabel("off", status?.think)}</option>
           </select>
           <span className="builder-composer-end">
+            {pending.length > 0 && canLook && (
+              <button type="button" className="button small" onClick={() => void send("describe")} disabled={busy}
+                title="Write a prompt that describes the attached picture">Describe as a prompt</button>
+            )}
             {!first && builder.draft && (
               <button type="button" className="button small" onClick={() => void send("variations")} disabled={busy}>Try 3 wordings</button>
             )}
@@ -299,6 +346,7 @@ export function BuilderChat({ builder, status, actions, composerRef, extra }: {
           </span>
         </div>
       </form>
+      <HistoryPicker open={picking} pictures={history} onPick={(id) => void pickFromHistory(id)} onClose={() => setPicking(false)} />
     </section>
   );
 }

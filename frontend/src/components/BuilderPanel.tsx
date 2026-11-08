@@ -2,12 +2,12 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from "react";
 import { WORDS, previousDraft, quickTryProblem, type SettingKey } from "../builder";
 import { builderApi } from "../builderApi";
-import type { ChatListItem, Draft, ForKind, PromptCard, PromptDetail, PromptVersion, VersionRun, Wording } from "../builderTypes";
+import type { ChatListItem, Draft, ForKind, Intent, PromptCard, PromptDetail, PromptVersion, Wording } from "../builderTypes";
 import { useNarrow, useReturnFocus, type ToastAction, type ToastKind } from "../hooks";
 import type { Capabilities, Project } from "../types";
 import { useBuilder, type Api } from "../useBuilder";
 import { useLibrary, type ListView } from "../useLibrary";
-import { BuilderChat } from "./BuilderChat";
+import { BuilderChat, type HistoryPicture } from "./BuilderChat";
 import { ConnectionBar } from "./BuilderConnection";
 import { BuilderLibrary } from "./BuilderLibrary";
 import { ChatHeader } from "./ChatHeader";
@@ -29,8 +29,25 @@ export interface Integration {
   onUse?: (using: Using) => void;
   onGenerate?: (using: Using) => void;
   onQuick?: (using: Using) => void;
-  onRefine?: (run: VersionRun, version: PromptVersion, prompt: PromptDetail) => void;
 }
+
+/** A picture that was made, and what to say about it, for a chat that is to refine it (DESIGN.md §37.2, "Revise from a result"). */
+export interface RefineTarget {
+  runId: string;
+  kind: ForKind;
+  text: string; // the words the run used
+  negative: string | null;
+  imageId: string | null; // the picture, attached when the model can look at pictures
+  prompt: { id: string; project_id: string | null } | null; // the saved prompt it was made from, if there still is one: the chat is linked to it
+}
+
+/** What another part of the page asks the Prompt builder to do: open a saved prompt, refine a result, or help write an edit of these pictures. A new `seq` each time. */
+export type BuilderCommand =
+  | { seq: number; kind: "open-prompt"; id: string }
+  | { seq: number; kind: "refine"; target: RefineTarget }
+  | { seq: number; kind: "help-edit"; pictures: string[] }; // the ids of the pictures in the Edit tray, in order
+
+export type { HistoryPicture };
 
 type Push = (kind: ToastKind, text: string, action?: ToastAction) => void;
 
@@ -44,6 +61,8 @@ export interface BuilderPanelProps {
   api?: Api;
   tick?: number; // changes when another page changed something (builder.changed)
   attachRef?: MutableRefObject<((files: File[]) => void) | null>; // set to the way pictures that are pasted anywhere on the page reach the chat
+  command?: BuilderCommand | null;
+  history?: HistoryPicture[]; // pictures the studio already has, to attach
 }
 
 interface Ask {
@@ -75,7 +94,7 @@ function Confirm({ ask, onCancel }: { ask: Ask | null; onCancel: () => void }) {
 const daysWord = (n: number) => `${n} ${n === 1 ? "day" : "days"}`;
 const whyNot = (error: unknown, fallback: string) => (error instanceof Error ? error.message : fallback);
 
-export function BuilderPanel({ hidden, caps, projects, push, onWorking, integration = {}, api = builderApi, tick = 0, attachRef }: BuilderPanelProps) {
+export function BuilderPanel({ hidden, caps, projects, push, onWorking, integration = {}, api = builderApi, tick = 0, attachRef, command = null, history = [] }: BuilderPanelProps) {
   const [listView, setListView] = useState<ListView>("chats");
   const lib = useLibrary(api, tick, listView);
   const builder = useBuilder(api, lib.everything);
@@ -262,6 +281,47 @@ export function BuilderPanel({ hidden, caps, projects, push, onWorking, integrat
     void builder.send({ intent: "flesh_out", text: "", draft: { prompt: newest.text, negative: newest.negative, settings: newest.settings, note: "" } });
   }, [flesh, chat, builder]);
 
+  // A chat that starts from something else (DESIGN.md §37.2): Refine a result, or Help me write an edit. The chat is made when its first message is sent; what it starts with is put in
+  // the prompt box, the next message is told what it is, and the pictures are attached once the new chat is the one on screen.
+  const [after, setAfter] = useState<{ pictures: string[] } | null>(null);
+  const startFrom = (start: { kind: ForKind; prompt: { id: string; project_id: string | null } | null; draft: Draft | null; intent: Intent; runId: string | null; pictures: string[] }) => {
+    lib.closePrompt();
+    setListView("chats");
+    setView("chat");
+    builder.startNew({ for: start.kind, prompt_id: start.prompt?.id ?? null, project_id: start.prompt?.project_id ?? null });
+    builder.setEdited(start.draft);
+    builder.prime(start.intent, start.runId);
+    setAfter({ pictures: start.pictures });
+  };
+  const { attach: attachPicture } = builder;
+  useEffect(() => {
+    if (!after || chat !== null) return;
+    const { pictures } = after;
+    setAfter(null);
+    void (async () => {
+      for (const id of pictures) {
+        const problem = await attachPicture({ imageId: id });
+        if (problem) { push("info", problem); break; }
+      }
+      composer.current?.focus();
+    })();
+  }, [after, chat, attachPicture, push]);
+
+  const refine = (target: RefineTarget) => startFrom({
+    kind: target.kind, prompt: target.prompt, draft: { prompt: target.text, negative: target.negative, settings: {}, note: "" }, intent: "refine", runId: target.runId,
+    pictures: target.imageId && status?.vision ? [target.imageId] : [],
+  });
+
+  // another part of the page asked for something
+  const lastCommand = useRef(command?.seq ?? 0);
+  useEffect(() => {
+    if (!command || command.seq === lastCommand.current) return;
+    lastCommand.current = command.seq;
+    if (command.kind === "open-prompt") { setListView("prompts"); void lib.openPrompt(command.id); setView("chat"); }
+    else if (command.kind === "refine") refine(command.target);
+    else startFrom({ kind: "edit", prompt: null, draft: null, intent: "help_edit", runId: null, pictures: command.pictures });
+  }, [command?.seq]);
+
   const versionUsing = (prompt: PromptDetail, v: PromptVersion): Using => ({
     kind: prompt.for, draft: { prompt: v.text, negative: v.negative, settings: v.settings, note: "" }, off: new Set(), from: { promptId: prompt.id, version: v.n, title: prompt.title },
   });
@@ -305,7 +365,9 @@ export function BuilderPanel({ hidden, caps, projects, push, onWorking, integrat
               onUse={integration.onUse ? (v) => integration.onUse!(versionUsing(lib.detail!, v)) : undefined}
               onGenerate={integration.onGenerate ? (v) => integration.onGenerate!(versionUsing(lib.detail!, v)) : undefined}
               onQuick={integration.onQuick ? (v) => integration.onQuick!(versionUsing(lib.detail!, v)) : undefined}
-              onRefine={integration.onRefine ? (run, v) => integration.onRefine!(run, v, lib.detail!) : undefined} />
+              onRefine={(run, v) => refine({
+                runId: run.run_id, kind: lib.detail!.for, text: v.text, negative: v.negative, imageId: run.images[0]?.id ?? null, prompt: { id: lib.detail!.id, project_id: lib.detail!.project_id },
+              })} />
           )}
           {center === "prompt" && !lib.detail && lib.detailProblem && <p className="form-error" role="alert">{lib.detailProblem}</p>}
           {center === "chat" && (
@@ -314,7 +376,7 @@ export function BuilderPanel({ hidden, caps, projects, push, onWorking, integrat
             ) : (
               <>
                 {builder.openProblem && <p className="form-error" role="alert">{builder.openProblem}</p>}
-                <BuilderChat builder={builder} status={status} composerRef={composer}
+                <BuilderChat builder={builder} status={status} composerRef={composer} history={history}
                   extra={chat ? <ChatHeader chat={chat} projects={projects} onChange={builder.change} /> : null}
                   actions={{
                     useLabel, onRemember: remember,
