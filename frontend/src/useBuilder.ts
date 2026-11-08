@@ -67,6 +67,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
   const [reply, setReply] = useState<ReplyState>(IDLE_REPLY);
   const [replyChat, setReplyChat] = useState<string | null>(null); // the chat the reply is being written in
   const [problem, setProblem] = useState<ReplyProblem | null>(null);
+  const [stoppedEmpty, setStoppedEmpty] = useState(false); // Stop was pressed before anything had been written: there is nothing to keep, and the chat says so
   const [picking, setPicking] = useState(false); // a picture is on its way up
   const [edited, setEdited] = useState<Draft | null>(null); // the prompt so far, as the person has changed it by hand and not yet sent
 
@@ -121,6 +122,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
     viewing.current = null;
     setChat(null);
     setPrimed(null);
+    setStoppedEmpty(false);
     setBlank({ ...BLANK, ...over });
     setMessages([]);
     setPending([]);
@@ -138,6 +140,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
       viewing.current = id;
       setChat(full.chat);
       setPrimed(null);
+      setStoppedEmpty(false);
       setMessages(full.messages);
       setPending(full.pending);
       setPreferences(full.preferences);
@@ -184,6 +187,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
           exclude: input.exclude ?? [], ...(input.draft ? { draft: input.draft } : {}), ...(runId ? { run_id: runId } : {}),
         };
     if (!input.retry) setPrimed(null);
+    setStoppedEmpty(false);
     setEdited(null); // what was edited goes with this message, and the model's answer is the new draft
     if (input.retry) {
       setProblem(null);
@@ -211,6 +215,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
         if (here()) {
           const message = event.message;
           if (message) setMessages((all) => [...all.filter((m) => m.seq !== message.seq), message]);
+          setStoppedEmpty(event.name === "stopped" && !message);
           if (event.chat) setChat(event.chat);
         }
         changed.current();
@@ -312,7 +317,7 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
 
   return {
     status, statusProblem, refreshStatus, test, testing, runTest, unloading, unload,
-    chat, blank, messages, pending, preferences, opening, openProblem, draft,
+    chat, blank, messages, pending, preferences, opening, openProblem, draft, stoppedEmpty,
     reply: replyHere, replying: replying(replyHere), writing: replyChat !== null, problem, picking,
     editedDraft: edited, setEdited, startNew, open, send, retry, stop, attach, unattach, change, setProblem, primed, prime,
   };

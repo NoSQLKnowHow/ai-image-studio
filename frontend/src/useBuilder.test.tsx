@@ -152,3 +152,27 @@ describe("Stop (criterion 224)", () => {
     expect(other.stopReply).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("Stop before anything was written", () => {
+  it("is said, once, and forgotten when the next message is sent or another chat is opened", async () => {
+    const api = makeApi({ send: sends({ name: "start", seq: 1 }, { name: "stopped", message: null, chat: info() }), getChat: vi.fn(async () => ({ chat: info({ id: "c9" }), messages: [], draft: null, pending: [], preferences: 0 })) });
+    const { result: hook } = renderHook(() => useBuilder(api));
+    expect(hook.current.stoppedEmpty).toBe(false);
+    await act(async () => hook.current.send({ text: "idea" }));
+    expect(hook.current.stoppedEmpty).toBe(true);
+    await act(async () => hook.current.open("c9"));
+    expect(hook.current.stoppedEmpty).toBe(false);
+    await act(async () => hook.current.send({ text: "idea again" }));
+    expect(hook.current.stoppedEmpty).toBe(true);
+    api.send.mockImplementationOnce(sends({ name: "start", seq: 3 }, result(reply(4))));
+    await act(async () => hook.current.send({ text: "and again" }));
+    expect(hook.current.stoppedEmpty).toBe(false);
+  });
+
+  it("is not said when what was written is kept", async () => {
+    const api = makeApi({ send: sends({ name: "start", seq: 1 }, { name: "stopped", message: reply(2, { reply: "Lovely" }), chat: info() }) });
+    const { result: hook } = renderHook(() => useBuilder(api));
+    await act(async () => hook.current.send({ text: "idea" }));
+    expect(hook.current.stoppedEmpty).toBe(false);
+  });
+});

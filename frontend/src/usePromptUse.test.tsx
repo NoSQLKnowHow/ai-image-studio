@@ -37,6 +37,18 @@ function setup(over: { options?: Options; prompt?: string; from?: FromPrompt | n
 const toast = (push: ReturnType<typeof vi.fn>) => push.mock.calls[push.mock.calls.length - 1] as [string, string, { label: string; run: () => void } | undefined];
 const said = (push: ReturnType<typeof vi.fn>) => toast(push).slice(0, 2);
 
+/** The hook as the page has it before the studio has answered (no capabilities or no options yet), or with a pipeline that cannot edit. */
+function bare(over: { caps?: typeof CAPS | null; options?: Options | null; items?: TrayItem[] } = {}) {
+  const calls = { prompt: vi.fn(), options: vi.fn(), push: vi.fn(), tab: vi.fn(), upsert: vi.fn(), addFiles: vi.fn() };
+  const caps = "caps" in over ? over.caps ?? null : CAPS;
+  const options = "options" in over ? over.options ?? null : defaultOptions(CAPS);
+  const hook = renderHook(() => usePromptUse({
+    from: null, setFrom: vi.fn(), caps, options, setOptions: calls.options, prompt: "", setPrompt: calls.prompt, clearProblem: vi.fn(),
+    tray: { items: over.items ?? [], shapeKey: null, adoptRun: vi.fn(), addFiles: calls.addFiles }, store: memoryStore(), push: calls.push, showTab: calls.tab, upsert: calls.upsert, focusPrompt: vi.fn(),
+  }));
+  return { ...calls, hook };
+}
+
 let create: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   create = vi.spyOn(api, "createRun").mockResolvedValue(makeRun({ id: "made" }));
@@ -132,6 +144,17 @@ describe("Use in Edit puts the chat's pictures in the tray (criterion 243)", () 
     await waitFor(() => expect(toast(s.push)[1]).toBe("Put the chat's 2 pictures in the tray, in order."));
     expect(s.tab).toHaveBeenCalledWith("images");
     expect(s.options.mock.calls[0][0]).toMatchObject({ mode: "edit" });
+  });
+
+  it("gives a picture the server sent without a type the type of a picture, and says it in the singular for one", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, status: 200, blob: async () => new Blob(["x"]) })));
+    const s = setup();
+    act(() => s.hook.result.current.useIn(using({ kind: "edit", pictures: [{ url: "/api/builder/attachments/a1", name: null }] })));
+    await waitFor(() => expect(s.addFiles).toHaveBeenCalledTimes(1));
+    const [file] = s.addFiles.mock.calls[0][0] as File[];
+    expect(file.type).toBe("image/png");
+    expect(file.name).toBe("picture 1");
+    await waitFor(() => expect(toast(s.push)[1]).toBe("Put the chat's picture in the tray, in order."));
   });
 
   it("leaves a tray that has pictures in it alone, and says why", () => {
@@ -247,6 +270,53 @@ describe("Generate now (criterion 236)", () => {
     await act(() => s.hook.result.current.generate(using({ kind: "edit" }), false));
     expect(create).not.toHaveBeenCalled();
     expect(toast(s.push)[0]).toBe("error");
+  });
+});
+
+describe("before the studio has answered, and when it cannot edit", () => {
+  it("does nothing, and says nothing, until the page has its capabilities and its options", async () => {
+    for (const missing of [{ caps: null }, { options: null }] as const) {
+      const s = bare(missing);
+      act(() => s.hook.result.current.useIn(using()));
+      act(() => s.hook.result.current.useIn(using({ kind: "vector" })));
+      await act(() => s.hook.result.current.generate(using(), false));
+      await act(() => s.hook.result.current.generate(using({ kind: "music" }), true));
+      expect(create).not.toHaveBeenCalled();
+      expect(s.prompt).not.toHaveBeenCalled();
+      expect(s.options).not.toHaveBeenCalled();
+      expect(s.tab).not.toHaveBeenCalled();
+      expect(s.push).not.toHaveBeenCalled();
+      expect(s.hook.result.current.vectorFill).toBeNull();
+      cleanup();
+    }
+  });
+
+  it("will not queue an edit when the pipeline cannot edit", async () => {
+    const s = bare({ caps: { ...CAPS, modes: ["generate"] } });
+    await act(() => s.hook.result.current.generate(using({ kind: "edit" }), false));
+    expect(s.push).toHaveBeenCalledWith("error", "Edit isn't available: the loaded pipeline can't edit images.");
+    expect(create).not.toHaveBeenCalled();
+    await act(() => s.hook.result.current.generate(using({ kind: "images" }), false)); // an Images prompt does not need it
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks an edit's own size, not the Generate size", async () => {
+    const s = bare({ options: { ...defaultOptions(CAPS), mode: "edit", editAspect: CUSTOM, customWidth: 33, customHeight: 33 }, items: [readyItem(1)] });
+    await act(() => s.hook.result.current.generate(using({ kind: "edit" }), false));
+    expect(s.push.mock.calls.at(-1)?.[1]).toMatch(/^Check the options on the Images tab: /);
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("what the server says when it refuses", () => {
+  it("is shown as it is when the queue is full, and with what was being done when anything else went wrong", async () => {
+    create.mockRejectedValueOnce(new ApiError("The queue is full: 3 runs are waiting.", 429, "queue_full"));
+    const s = setup();
+    await act(() => s.hook.result.current.generate(using(), false));
+    expect(said(s.push)).toEqual(["error", "The queue is full: 3 runs are waiting."]);
+    create.mockRejectedValueOnce(new Error("network down"));
+    await act(() => s.hook.result.current.generate(using(), false));
+    expect(said(s.push)).toEqual(["error", "Couldn't start the run."]);
   });
 });
 

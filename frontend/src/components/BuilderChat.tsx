@@ -284,6 +284,7 @@ export function BuilderChat({ builder, status, actions, composerRef, extra, hist
           : <PersonMessage key={`${m.seq}-${i}`} message={m} />))}
         {busy && <Progress state={reply} onStop={() => void builder.stop()} />}
       </ol>
+      {builder.stoppedEmpty && !busy && <p className="hint builder-primed" role="status">Stopped before anything was written, so nothing was kept. Your message is still there.</p>}
       {problem && (
         <div className="builder-problem" role="alert">
           <p className="form-error">{problem.message}</p>

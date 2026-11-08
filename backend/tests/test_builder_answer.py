@@ -329,3 +329,90 @@ def test_the_reply_only_ever_grows_as_the_answer_arrives():
         assert now.startswith(seen), (i, seen, now)
         seen = now
     assert seen == 'Café "quoted" \n line two 😀 end'
+
+
+# ------------------------------------------------------------------ what mutation checks showed the tests above did not pin down
+def test_the_numbers_an_answer_is_checked_against_cannot_be_changed_by_what_reads_it():
+    import dataclasses
+
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        LIMITS.prompt_chars = 1
+
+
+def test_an_answer_that_says_nothing_about_being_done_is_not_done():
+    from studio.builder.answer import Answer
+
+    assert Answer().done is False and Answer().plain is False and Answer().draft is None
+    assert Answer().to_content()["draft"] is None and Answer().to_content()["done"] is False
+
+
+def test_the_message_as_stored_carries_the_draft_exactly():
+    answer = answer_of({"reply": "x", "draft": {"prompt": "A pier", "negative": "blur", "settings": {"shape": "3:2"}, "note": "first"}})
+    assert answer.to_content()["draft"] == {"prompt": "A pier", "negative": "blur", "settings": {"shape": "3:2"}, "note": "first"}
+    assert answer_of({"reply": "x"}).to_content()["draft"] is None
+
+
+def test_a_plain_text_reply_is_shortened_only_past_the_limit():
+    assert plain_answer("y" * REPLY_CHARS).notices == [] and plain_answer("y" * REPLY_CHARS).reply == "y" * REPLY_CHARS
+    longer = plain_answer("y" * (REPLY_CHARS + 1))
+    assert longer.reply == "y" * REPLY_CHARS + "…" and longer.notices == [f"The reply was shortened to {REPLY_CHARS} characters."]
+
+
+def test_text_is_cut_only_when_it_is_longer_than_the_limit():
+    assert clean("abcde", 5) == "abcde" and clean("abcdef", 5) == "abcde" and clean("abcd ef", 5) == "abcd"
+
+
+def test_the_object_is_found_even_when_it_is_the_first_thing_and_something_follows_it():
+    assert read_answer('{"reply": "ok"} and thanks', "images", LIMITS).reply == "ok"
+    assert read_answer('{"reply": "ok"}\n\nLet me know!', "images", LIMITS).reply == "ok"
+
+
+def test_what_is_not_an_answer_is_said_in_words():
+    with pytest.raises(BadAnswer, match="The answer is not JSON."):
+        read_answer("just some words", "images", LIMITS)
+    with pytest.raises(BadAnswer, match="The answer is not an object."):
+        read_answer("[1, 2]", "images", LIMITS)
+
+
+def test_questions_with_no_ids_are_numbered_from_one_in_order():
+    answer = answer_of({"reply": "x", "questions": [{"text": "First?", "chips": ["a", "b", "c"]}, {"text": "Second?", "chips": ["a", "b", "c"]}]})
+    assert [q.id for q in answer.questions] == ["q1", "q2"]
+
+
+def test_inks_that_are_not_colours_or_are_too_many_are_left_out_with_the_reason():
+    bad = answer_of({"reply": "x", "draft": {"prompt": "A fox", "settings": {"colours": 3, "palette": ["red", "#00AA00"]}}}, kind="vector")
+    assert bad.notices == ["The builder suggested inks that are not #RRGGBB colours, so they were left out."]
+    assert "palette" not in bad.draft.settings
+    many = answer_of({"reply": "x", "draft": {"prompt": "A fox", "settings": {"colours": 3, "palette": ["#FF0000", "#00AA00", "#0000FF"]}}}, kind="vector")
+    assert many.notices == ["The builder suggested 3 inks for 3 colours; white is the bare material and counts, so at most 2 are allowed and the inks were left out."]
+    good = answer_of({"reply": "x", "draft": {"prompt": "A fox", "settings": {"colours": 3, "palette": ["#ff0000", " #00aa00 "]}}}, kind="vector")
+    assert good.notices == [] and good.draft.settings["palette"] == ["#FF0000", "#00AA00"]
+
+
+def test_lyrics_are_kept_up_to_exactly_the_studios_limit():
+    from studio import presets as P
+
+    at_limit = answer_of({"reply": "x", "draft": {"prompt": "A song", "settings": {"lyrics": "l" * P.MUSIC_LYRICS_MAX}}}, kind="music")
+    assert at_limit.notices == [] and len(at_limit.draft.settings["lyrics"]) == P.MUSIC_LYRICS_MAX
+    over = answer_of({"reply": "x", "draft": {"prompt": "A song", "settings": {"lyrics": "l" * (P.MUSIC_LYRICS_MAX + 1)}}}, kind="music")
+    assert "lyrics" not in over.draft.settings and len(over.notices) == 1 and "lyrics" in over.notices[0]
+
+
+# ------------------------------------------------------------------ the reply as it is being written
+def test_an_escape_that_has_arrived_whole_is_shown_and_one_that_has_not_waits():
+    assert reply_so_far('{"reply": "caf\\u00e9') == "café"       # the last six characters are the whole escape: nothing to wait for
+    assert reply_so_far('{"reply": "caf\\u00e') == "caf"         # one digit short: wait for it
+    assert reply_so_far('{"reply": "caf\\u00') == "caf" and reply_so_far('{"reply": "caf\\') == "caf"
+    assert reply_so_far('{"reply": "a\\nb') == "a\nb" and reply_so_far('{"reply": "q\\"x') == 'q"x'
+
+
+def test_a_pair_of_escapes_is_one_character_and_a_lone_half_is_not_shown_as_one():
+    assert reply_so_far('{"reply": "\\ud83d\\ude00') == "😀"       # the pair is complete exactly at the end
+    assert reply_so_far('{"reply": "\\ud83d\\ude0') == ""          # the second half has not all arrived: wait, show nothing of the pair
+    assert reply_so_far('{"reply": "\\ud83d') == ""
+    assert reply_so_far('{"reply": "\\ud800\\udc00') == "\U00010000" and reply_so_far('{"reply": "\\udbff\\udfff') == "\U0010ffff"   # the ends of the two ranges
+    assert reply_so_far('{"reply": "\\udc00 x') == "� x"          # a lone second half is not a character
+    assert reply_so_far('{"reply": "\\ud800 and more') == "� and more"   # nor is a first half with nothing to pair with
+    assert reply_so_far('{"reply": "\\ud800 x') == ""                    # (but with too little after it to tell, it waits)
+    assert reply_so_far('{"reply": "\\ue000x') == "x"        # the character after the surrogates is an ordinary one
+    assert reply_so_far('{"reply": "\\ud7ffx') == "퟿x"        # and so is the one before them
