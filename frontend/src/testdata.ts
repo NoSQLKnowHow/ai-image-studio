@@ -44,9 +44,14 @@ export const CAPS: Capabilities = {
       field_chars: 400,
     },
     vector: structuredClone(contract.capabilities.limits_vector) as unknown as VectorLimits, // the contract's own limits
+    builder: {
+      questions_max: 3, chips: { min: 3, max: 5 }, chip_chars: 60, reply_chars: 2000, title_chars: 120, note_chars: 300, tags_max: 12, tag_chars: 30,
+      preferences_max: 50, preference_chars: 300,
+    },
   },
   music: { available: true, state: "done", reason: null, hint: null, model: "fake-music" },
   vector: structuredClone(contract.capabilities.vector), // available: the libraries import and the image pipeline can generate
+  builder: { available: true, configured: true, reachable: true, model: "fake-builder", vision: true },
   upscaler: { available: true, model: "fake", reason: null, hint: null, max_enlargement: 4 },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },

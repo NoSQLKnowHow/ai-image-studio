@@ -47,7 +47,7 @@ export function toApiError(status: number, body: unknown): ApiError {
   return new ApiError(`The server answered ${status}.`, status, code);
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const method = (init.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = { Accept: "application/json" };
   if (init.body !== undefined) headers["Content-Type"] = "application/json";

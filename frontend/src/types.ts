@@ -1,3 +1,4 @@
+import type { BuilderCaps, BuilderLimits } from "./builderTypes";
 // JSON shapes returned by the backend (backend/studio/serialize.py, api.py, jobs.py).
 
 /** Pictures are made in one of two modes; music (DESIGN.md §26) and vector (§31) are two more kinds of run, each on its own tab. */
@@ -124,6 +125,15 @@ export interface PromptRef {
   deleted: boolean;
   edited: boolean;
 }
+
+/** What a run is asked to be made from (DESIGN.md §37.4). */
+export interface PromptRunRef {
+  prompt_id: string;
+  version: number;
+}
+
+/** Any create body, with the saved prompt it is made from (DESIGN.md §37.4). A wrapper and not a field of the three bodies, which the contract pins key for key. */
+export type WithPromptRef<T> = T & { prompt_ref?: PromptRunRef };
 
 /** What every run has, pictures or music. */
 interface RunBase {
@@ -446,9 +456,11 @@ export interface Capabilities {
     project_name_max: number; // the longest a project's name may be, in characters (DESIGN.md §32.4)
     music: MusicLimits;
     vector: VectorLimits;
+    builder: BuilderLimits; // DESIGN.md §37.4
   };
   music: MusicAvailability;
   vector: VectorAvailability;
+  builder: BuilderCaps; // the Prompt builder: set up? what is known of Ollama (§37.4)
   upscaler: UpscalerStatus;
   queue_cap: number;
   device: WorkerStatus["device"];
