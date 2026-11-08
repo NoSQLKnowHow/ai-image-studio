@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { vi } from "vitest";
-import type { AnswerContent, ChatFull, ChatInfo, ChatListItem, ChatMessage, Draft, ReplyEvent } from "./builderTypes";
+import type { AnswerContent, BuilderCounts, ChatFull, ChatInfo, ChatListItem, ChatMessage, Draft, ReplyEvent } from "./builderTypes";
 import { BuilderPanel, type BuilderPanelProps } from "./components/BuilderPanel";
 import { CAPS } from "./testdata";
 import type { Api } from "./useBuilder";
@@ -17,6 +17,10 @@ export const draft = (prompt: string, over: Partial<Draft> = {}): Draft => ({ pr
 export const full = (messages: ChatMessage[], over: Partial<ChatFull> = {}): ChatFull => ({ chat: info(), messages, draft: null, pending: [], preferences: 0, ...over });
 export const QUESTIONS = [{ id: "q1", text: "What time of day?", chips: ["Dusk", "Midnight", "Dawn"] }, { id: "q2", text: "What style?", chips: ["Photograph", "Watercolour", "Flat"] }];
 
+export const ZERO_COUNTS: BuilderCounts = {
+  prompts: { all: 0, favourites: 0, deleted: 0, no_project: 0, projects: {}, tags: {} }, chats: { all: 0, deleted: 0, no_project: 0, projects: {} }, preferences: { all: 0, enabled: 0, orphaned: 0 },
+};
+
 export type Mock = { [K in keyof Api]: ReturnType<typeof vi.fn> };
 export const STATUS = { configured: true, reachable: true, model: "qwen3.8:27b", vision: true, think: "on" as const, message: null, hint: null };
 
@@ -25,7 +29,7 @@ export function makeApi(over: Partial<Record<keyof Api, unknown>> = {}): Mock & 
     status: vi.fn(async () => STATUS),
     test: vi.fn(async () => ({ reachable: true, version: "0.99.0", models: ["qwen3.8:27b", "llama3:8b"], model: "qwen3.8:27b", model_present: true, vision: true, vision_model: "", vision_model_present: false, context_length: 262144, message: null, hint: null })),
     unload: vi.fn(async () => ({ ok: true, unloaded: ["qwen3.8:27b"] })),
-    counts: vi.fn(async () => ({})),
+    counts: vi.fn(async () => ZERO_COUNTS),
     listChats: vi.fn(async () => ({ chats: [] as ChatListItem[] })),
     createChat: vi.fn(async (body: { title?: string }) => info({ title: body.title ?? "New chat" })),
     getChat: vi.fn(async () => full([])),
