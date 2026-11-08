@@ -952,7 +952,7 @@ say so and suggest 1K or fewer pictures, and the server should stay up). **Send 
 
 ```bash
 cd ~/ai-image-studio                                  # your checkout
-./scripts/backup.sh                                   # first: the first start of 1.19 upgrades the database to schema 9
+mkdir -p ~/backups && scripts/backup.sh --no-model ~/backups   # first: the first start of 1.19 upgrades the database to schema 9 (without the models: about 10 GB, and a minute or two)
 git fetch origin && git checkout prompt-builder && git pull     # (after the merge: git checkout main && git pull)
 ```
 
@@ -1007,7 +1007,7 @@ For **Vector** and **Music**: make a chat **For Vector** and one **For Music**, 
 **j) Memory with everything loaded** (Ollama is on the Spark): run `free -h`, `nvidia-smi` and `ollama ps` with Ollama's model (about 18 GB) **and** Qwen-Image both loaded. **Good:** both fit; if the image model's pre-flight refuses, its message now also says to press **Unload from memory** on the Prompt builder tab.
 Press **Unload from memory**: **good:** `ollama ps` shows nothing loaded and `MemAvailable` rises. **Write down** `MemAvailable` before and after, and whether `STUDIO_OLLAMA_NUM_CTX=32768` fits next to Qwen-Image (if not, how much `16384` saves), and what `STUDIO_OLLAMA_KEEP_ALIVE` you want (`5m` ships).
 
-**k) The bin and the backup.** Delete a chat and a prompt; **good:** each asks, moves to **Deleted** (30 days), and **Restore** brings it back; the pictures made from a deleted prompt say *From "title" v1, deleted*. Run `./scripts/backup.sh` and check that it says it is packing your history, images, prompts and chats; `tar -tzf` the data piece and look for `data/builder/` (a chat's pictures).
+**k) The bin and the backup.** Delete a chat and a prompt; **good:** each asks, moves to **Deleted** (30 days), and **Restore** brings it back; the pictures made from a deleted prompt say *From "title" v1, deleted*. Run `scripts/backup.sh --no-model ~/backups` and check that it says it is packing your history, images, prompts and chats; `tar -tzf` the data piece and look for `data/builder/` (a chat's pictures).
 
 **l) On a phone.** Open the tab on your phone. **Good:** the tab bar does not scroll sideways, *Prompt builder* wraps onto two lines, and a switch (*Chat | Prompt | Library*) shows one column at a time. Send a message, and switch away to *Library* while it is being written: **good:** the reply carries on.
 
