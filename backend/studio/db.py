@@ -380,6 +380,28 @@ class Database:
         except _AlreadyClaimed as gone:
             return f"claimed:{gone.args[0]}"
 
+    def prompt_refs_for_runs(self, rows: Sequence[sqlite3.Row]) -> dict[str, dict[str, Any]]:
+        """Where each run that was made from a saved prompt came from (DESIGN.md §37.3 rule 3), by run id: {id, title, version, deleted, edited}. `deleted` is true for a
+        prompt in the bin and for one deleted for good (whose title is then gone: None). `edited` is true when the words the run sent are not those of the version (white
+        space aside); it is only judged for a run whose prompt is the version's text, which is every kind but music, whose description is built from fields."""
+        wanted = sorted({r["prompt_id"] for r in rows if r["prompt_id"]})
+        if not wanted:
+            return {}
+        marks = ",".join("?" * len(wanted))
+        prompts = {r["id"]: r for r in self._all(f"SELECT id, title, deleted_at FROM prompts WHERE id IN ({marks})", tuple(wanted))}
+        texts = {(r["prompt_id"], r["n"]): r["text"] for r in self._all(f"SELECT prompt_id, n, text FROM prompt_versions WHERE prompt_id IN ({marks})", tuple(wanted))}
+        found: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            if not r["prompt_id"]:
+                continue
+            prompt, text = prompts.get(r["prompt_id"]), texts.get((r["prompt_id"], r["prompt_version"]))
+            found[r["id"]] = {
+                "id": r["prompt_id"], "title": prompt["title"] if prompt is not None else None, "version": r["prompt_version"],
+                "deleted": prompt is None or prompt["deleted_at"] is not None,
+                "edited": r["mode"] != "music" and text is not None and " ".join(r["prompt"].split()) != " ".join(text.split()),
+            }
+        return found
+
     def get_run(self, run_id: str) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM runs WHERE id=?", (run_id,))
 

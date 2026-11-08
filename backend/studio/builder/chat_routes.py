@@ -206,7 +206,15 @@ def add_chat_routes(app: FastAPI) -> None:
 
     @app.post("/api/builder/chats/{chat_id}/bin")
     async def bin_chat(chat_id: str, request: Request) -> Any:
-        _, store, *_ = parts(request)
+        _, store, _, storage, _ = parts(request)
+        if request.app.state.settings.bin_days <= 0:  # no bin: Delete is for good, as for a picture
+            if chat_id in request.app.state.builder_jobs:
+                return error(409, "A reply is being written in that chat. Stop it first.", "reply_in_progress")
+            if store.delete_item("chat", chat_id) == "not_found":
+                return error(404, "That chat doesn't exist.", "not_found")
+            await asyncio.to_thread(remove_chat_files, storage, chat_id)
+            changed(request, chat_id)
+            return {"deleted": chat_id}
         if store.bin_item("chat", chat_id, utcnow()) == "not_found":
             return error(404, "That chat doesn't exist.", "not_found")
         changed(request, chat_id)

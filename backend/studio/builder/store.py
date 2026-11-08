@@ -18,6 +18,7 @@ import sqlite3
 from typing import Any, Mapping, Optional, Sequence
 
 from ..db import Database
+from .diff import encoded
 from .schema import DETAILS, FOR_KINDS, ROLES, SOURCES
 
 # The two things that can be in the bin, and the table of each
@@ -207,7 +208,7 @@ class BuilderStore:
             c.execute(
                 "INSERT INTO prompt_versions (id, prompt_id, n, text, negative, settings, note, source, chat_id, message_seq, created_at) "
                 "VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (secrets.token_hex(16), prompt_id, text, negative, json.dumps(settings or {}, sort_keys=True), note, _check(source, SOURCES, "source"),
+                (secrets.token_hex(16), prompt_id, text, negative, encoded(settings), note, _check(source, SOURCES, "source"),
                  chat_id, message_seq, now))
             for tag in dict.fromkeys(tags):  # in order, once each
                 c.execute("INSERT INTO prompt_tags (prompt_id, tag) VALUES (?, ?)", (prompt_id, tag))

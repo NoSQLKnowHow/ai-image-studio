@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -78,6 +78,15 @@ class InputRef(BaseModel):
     role: Literal["reference", "marked", "mask"] = "reference"
 
 
+class PromptRef(BaseModel):
+    """Which saved prompt, and which of its versions, a run is made from (DESIGN.md §37.3 rule 3, §37.4). The server checks that they exist when the run is queued."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    prompt_id: str = Field(pattern=_ID.pattern)
+    version: int = Field(ge=1)
+
+
 class RunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -86,6 +95,7 @@ class RunCreate(BaseModel):
     options: RunOptions = Field(default_factory=RunOptions)
     input_images: Optional[list[InputRef]] = None  # Edit only, in the order the model sees them
     lyrics: Optional[str] = None  # Music only: absent, empty or blank means instrumental (DESIGN.md §26.1)
+    prompt_ref: Optional[PromptRef] = None  # all kinds: the saved prompt this run is made from (§37.4)
 
 
 class RunRequestError(Exception):
@@ -124,6 +134,7 @@ class ResolvedRun:
     # Vector: what the clean-up is asked for. For a vector run `prompt` is the user's idea, `effective_prompt` the recipe sent to the model,
     # `negative_prompt` the fixed negative, `width` and `height` the drawing's pixel size and `cfg_scale` the guidance (§31.12.6).
     vector: Optional[V.VectorOptions] = None
+    prompt_ref: Optional[PromptRef] = None  # the saved prompt and version this run is made from (§37.4); checked and recorded when it is queued
 
     @property
     def instrumental(self) -> bool:
@@ -381,6 +392,11 @@ def _resolve_vector(req: RunCreate, settings: Settings) -> ResolvedRun:
 
 
 def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
+    resolved = _resolve_run(req, settings)
+    return replace(resolved, prompt_ref=req.prompt_ref) if req.prompt_ref is not None else resolved
+
+
+def _resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
     if req.mode == "music":
         return _resolve_music(req, settings)
     if req.mode == "vector":
