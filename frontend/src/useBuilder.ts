@@ -43,6 +43,10 @@ const problemOf = (error: unknown): ReplyProblem => {
   return { message: "Something went wrong.", hint: null, code: null };
 };
 
+/** How often, and how far apart, an early Stop is tried again: about a second in all. */
+export const STOP_TRIES = 8;
+export const STOP_RETRY_MS = 150;
+
 const firstWords = (text: string): string => text.split(/\s+/).filter(Boolean).slice(0, 12).join(" ").slice(0, 60);
 
 export function useBuilder(api: Api = builderApi, onChanged: () => void = () => undefined) {
@@ -242,14 +246,22 @@ export function useBuilder(api: Api = builderApi, onChanged: () => void = () => 
 
   const retry = useCallback(() => send({ retry: true }), [send]);
 
+  // Stop is on screen from the moment Send is pressed, a little before the server has the reply on its list: a Stop in that gap is answered "no reply", and is tried again
+  // for a moment while the reply is still being waited for, rather than lost (the reply would go on to the end).
   const stop = useCallback(async () => {
-    if (!chat) return;
-    try {
-      await api.stopReply(chat.id);
-    } catch {
-      /* nothing was being written any more */
+    const target = current.current;
+    if (!target) return;
+    for (let attempt = 0; attempt < STOP_TRIES; attempt++) {
+      try {
+        await api.stopReply(target.id);
+        return;
+      } catch (error) {
+        const tooEarly = error instanceof ApiError && error.code === "no_reply";
+        if (!tooEarly || !abort.current) return; // nothing was being written any more, or something else is wrong: there is nothing more to do
+        await new Promise((resolve) => setTimeout(resolve, STOP_RETRY_MS));
+      }
     }
-  }, [api, chat]);
+  }, [api]);
 
   // a page that is closed (or an app that goes away) closes the connection, which stops the reply and keeps none of it
   useEffect(() => () => abort.current?.abort(), []);

@@ -1,7 +1,8 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { ApiError } from "./api";
 import { info, makeApi, reply, result, sends } from "./builderTestSupport";
-import { useBuilder } from "./useBuilder";
+import { STOP_RETRY_MS, STOP_TRIES, useBuilder } from "./useBuilder";
 
 // The builder's state as a hook: pictures attached to a chat that does not exist yet, and a chat opened by Refine or Help me write (DESIGN.md §37.2; criteria 241, 243, 244).
 
@@ -92,5 +93,62 @@ describe("a chat opened by Refine or Help me write", () => {
     await act(async () => hook.current.send({ retry: true }));
     expect(bodyOf(api, 1)).toEqual({ retry: true });
     expect(hook.current.primed).not.toBeNull(); // a retry sends nothing new, so the priming waits for the next message
+  });
+});
+
+describe("Stop (criterion 224)", () => {
+  const early = () => new ApiError("No reply is being written in this chat.", 409, "no_reply");
+  /** A reply that is still being waited for until `release()`. */
+  const held = () => {
+    const state = { release: () => undefined as void };
+    const send = vi.fn((_c: string, _b: unknown, _on: unknown) => new Promise<void>((done) => { state.release = done; }));
+    return { state, send };
+  };
+
+  it("asks once when the reply is being written", async () => {
+    const { state, send } = held();
+    const api = makeApi({ send, stopReply: vi.fn(async () => ({ stopping: true })) });
+    const { result: hook } = renderHook(() => useBuilder(api));
+    act(() => { void hook.current.send({ text: "idea" }); });
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    await act(async () => hook.current.stop());
+    expect(api.stopReply).toHaveBeenCalledTimes(1);
+    state.release();
+  });
+
+  it("tries again when the server does not have the reply on its list yet, and stops it once it does", async () => {
+    const { state, send } = held();
+    const api = makeApi({ send, stopReply: vi.fn().mockRejectedValueOnce(early()).mockRejectedValueOnce(early()).mockResolvedValue({ stopping: true }) });
+    const { result: hook } = renderHook(() => useBuilder(api));
+    act(() => { void hook.current.send({ text: "idea" }); });
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    await act(async () => hook.current.stop());
+    expect(api.stopReply).toHaveBeenCalledTimes(3);
+    state.release();
+  });
+
+  it("gives up after a second or so rather than for ever", async () => {
+    const { state, send } = held();
+    const api = makeApi({ send, stopReply: vi.fn(async () => { throw early(); }) });
+    const { result: hook } = renderHook(() => useBuilder(api));
+    act(() => { void hook.current.send({ text: "idea" }); });
+    await waitFor(() => expect(send).toHaveBeenCalled());
+    await act(async () => hook.current.stop());
+    expect(api.stopReply).toHaveBeenCalledTimes(STOP_TRIES);
+    expect(STOP_TRIES * STOP_RETRY_MS).toBeLessThanOrEqual(1500);
+    state.release();
+  });
+
+  it("does not keep asking when the reply is over, or the server refuses for another reason", async () => {
+    const api = makeApi({ send: sends({ name: "start", seq: 1 }, result(reply(2))), stopReply: vi.fn(async () => { throw early(); }) });
+    const { result: hook } = renderHook(() => useBuilder(api));
+    await act(async () => hook.current.send({ text: "idea" })); // finished
+    await act(async () => hook.current.stop());
+    expect(api.stopReply).toHaveBeenCalledTimes(1);
+    const other = makeApi({ stopReply: vi.fn(async () => { throw new ApiError("Nope.", 500, "server_error"); }) });
+    const { result: second } = renderHook(() => useBuilder(other));
+    await act(async () => { await second.current.attach({ file: new Blob(["x"]), name: "x.png" }); }); // a chat now exists
+    await act(async () => second.current.stop());
+    expect(other.stopReply).toHaveBeenCalledTimes(1);
   });
 });

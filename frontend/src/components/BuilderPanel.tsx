@@ -239,7 +239,7 @@ export function BuilderPanel({ hidden, caps, projects, push, onWorking, integrat
       lib.setDetail(updated);
       lib.everything();
       if (updated.unfiled_runs && updated.unfiled_runs > 0) {
-        push("info", `Filed in a project. ${updated.unfiled_runs} earlier ${updated.unfiled_runs === 1 ? "picture's run is" : "pictures' runs are"} where they were.`, {
+        push("info", `Filed in a project. ${updated.unfiled_runs} earlier ${updated.unfiled_runs === 1 ? "picture's run is where it was" : "pictures' runs are where they were"}.`, {
           label: `Also file its ${updated.unfiled_runs} ${updated.unfiled_runs === 1 ? "picture's run" : "pictures' runs"}`,
           run: () => void api.fileRuns(open.id).then((r) => { push("success", `Filed ${r.filed.length} ${r.filed.length === 1 ? "run" : "runs"} in the project.`); lib.everything(); }).catch((e) => push("error", whyNot(e, "They could not be filed."))),
         });

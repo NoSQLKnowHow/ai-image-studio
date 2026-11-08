@@ -74,3 +74,16 @@ export async function clearHistory(page: Page) {
   for (const project of projects) await page.request.delete(`/api/projects/${project.id}`, { headers: asked });
 }
 
+
+/** Delete every prompt, chat and preference of the Prompt builder over the API, and empty its bin (DESIGN.md §37): they live in the server's database, so one left by a test
+ *  would be in the next test's lists. */
+export async function clearBuilder(page: Page) {
+  const asked = { "X-Studio-Client": "1" };
+  const { prompts } = (await (await page.request.get("/api/builder/prompts")).json()) as { prompts: { id: string }[] };
+  for (const p of prompts) await page.request.post(`/api/builder/prompts/${p.id}/bin`, { headers: asked });
+  const { chats } = (await (await page.request.get("/api/builder/chats")).json()) as { chats: { id: string }[] };
+  for (const c of chats) await page.request.post(`/api/builder/chats/${c.id}/bin`, { headers: asked });
+  await page.request.post("/api/builder/bin/empty", { headers: asked });
+  const { preferences } = (await (await page.request.get("/api/builder/preferences")).json()) as { preferences: { id: string }[] };
+  for (const f of preferences) await page.request.delete(`/api/builder/preferences/${f.id}`, { headers: asked });
+}

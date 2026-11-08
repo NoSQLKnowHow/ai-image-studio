@@ -5,7 +5,7 @@
 #
 # Makes DESTINATION_FOLDER/ai-image-studio-backup-<date>-<time>.tar, a single file you can copy to a
 # NAS or anywhere else. Inside it (an ordinary tar, nothing proprietary):
-#   data.tar.gz      your history and images (the ./data folder)           always
+#   data.tar.gz      your history, images, prompts and chats (the ./data folder)           always
 #   image.tar.gz     the Docker image, exactly as built                    unless --no-image
 #   env.backup       your .env settings (may hold a token)                 unless --no-env
 #   model-cache.tar  the studio's models from the Hugging Face cache       unless --no-model
@@ -20,7 +20,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/backup.sh [options] DESTINATION_FOLDER
 
-Backs up your history and images (./data), the Docker image, your .env settings and the studio's models
+Backs up your history, images, prompts and chats (./data), the Docker image, your .env settings and the studio's models
 into a single .tar file, named ai-image-studio-backup-<date>-<time>.tar, inside DESTINATION_FOLDER. The studio
 is stopped for the few seconds it takes to copy the data, then started again; the image and models are
 copied while it runs. The finished .tar is re-read and every checksum checked before it gets its name.
@@ -245,7 +245,7 @@ if (( WAS_RUNNING )); then
   STOPPED_BY_US=1
   docker compose stop "$SERVICE" >/dev/null
 fi
-say "Packing your history and images..."
+say "Packing your history, images, prompts and chats..."
 tar -czf "$STAGE/data.tar.gz" -C "$REPO" data
 if (( STOPPED_BY_US )); then
   docker compose start "$SERVICE" >/dev/null

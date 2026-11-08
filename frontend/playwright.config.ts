@@ -37,6 +37,7 @@ export default defineConfig({
       STUDIO_FAKE_STEP_DELAY_MS: "10",
       STUDIO_FAKE_LOAD_DELAY_MS: "1200", // long enough for a test to see "Loading model…" (§25)
       STUDIO_QUEUE_CAP: "3",
+      STUDIO_BUILDER_LLM: "fake", // the Prompt builder talks to a scripted model, not an Ollama server (DESIGN.md §37.4)
     },
   },
 });

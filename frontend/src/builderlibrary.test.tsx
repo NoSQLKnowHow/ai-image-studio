@@ -290,6 +290,19 @@ describe("a prompt opened", () => {
     await waitFor(() => expect(push).toHaveBeenLastCalledWith("success", "Filed 3 runs in the project."));
   });
 
+  it("says it in the singular for one earlier run", async () => {
+    const api = openedApi({ patchPrompt: vi.fn(async () => detail({ project_id: "pr1", unfiled_runs: 1 })) });
+    const { push } = setup(api, { projects: PROJECTS });
+    await toPrompts();
+    await openCard();
+    await screen.findByRole("list", { name: "Versions" });
+    fireEvent.change(screen.getByLabelText("Project of this prompt"), { target: { value: "pr1" } });
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    const [, text, action] = lastCall(push) as ["info", string, { label: string }];
+    expect(text).toBe("Filed in a project. 1 earlier picture's run is where it was.");
+    expect(action.label).toBe("Also file its 1 picture's run");
+  });
+
   it("says why a change could not be made, beside the prompt", async () => {
     const api = openedApi({ patchPrompt: vi.fn(async () => { throw new ApiError("That title is too long.", 422, "bad"); }) });
     setup(api);

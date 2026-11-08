@@ -16,7 +16,7 @@ Usage: scripts/restore.sh [options] BACKUP
 
 BACKUP is a .tar file made by scripts/backup.sh (it can sit on a mounted NAS share), or a folder
 holding the same files (what you get by unpacking that .tar). It is read in place: nothing needs
-unpacking first. Restores your history and images (./data), the Docker image, your .env settings and,
+unpacking first. Restores your history, images, prompts and chats (./data), the Docker image, your .env settings and,
 if they were included, the studio's models (each one that isn't already in the Hugging Face cache). The
 studio is stopped while it works.
 
@@ -232,7 +232,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 mkdir -- "$TMP"
 
-say "Unpacking your history and images..."
+say "Unpacking your history, images, prompts and chats..."
 member_cat data.tar.gz | tar -xzf - -C "$TMP"
 [[ -d $TMP/data ]] || die "The data archive didn't contain a data folder."
 if [[ -e data ]]; then

@@ -174,7 +174,7 @@ check_listing_paths() {
 # files (what you get by unpacking that .tar). Pieces are read straight out of the .tar with
 # `tar -xO`, so nothing needs unpacking first, which matters when the backup is tens of GB.
 #
-#   data.tar.gz      your history and images
+#   data.tar.gz      your history, images, prompts and chats
 #   image.tar.gz     the Docker image (docker save, gzipped)
 #   env.backup       your .env
 #   model-cache.tar  the studio's models from the Hugging Face cache (hub/models--… folders, the upscaler file)
