@@ -163,7 +163,7 @@ describe("a chat", () => {
     await waitFor(() => expect(api.send).toHaveBeenCalledTimes(1));
   });
 
-  it("asks for three wordings when there is a draft, and shows them with what can be done with each", async () => {
+  it("asks for three wordings when there is a draft, and shows them with what can be done with each; nothing is saved until Keep as version (criterion 240)", async () => {
     const wordings = [{ label: "simpler", prompt: "A lighthouse.", negative: null }, { label: "more cinematic", prompt: "A lighthouse, dramatic light.", negative: null }, { label: "more detailed", prompt: "A tall lighthouse on a cliff.", negative: null }];
     const api = makeApi({ getChat: vi.fn(async () => full([person(1, "idea"), reply(2, { draft: draft("a lighthouse") })])), listChats: vi.fn(async () => ({ chats: [{ ...info(), last_text: "", message_count: 2 }] })),
       send: sends({ name: "start", seq: 3 }, result(reply(4, { reply: "Three takes.", variations: wordings }))) });
