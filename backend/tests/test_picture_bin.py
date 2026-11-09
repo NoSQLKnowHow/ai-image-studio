@@ -695,8 +695,8 @@ def test_a_track_of_a_run_that_has_not_finished_is_refused(client):
 
 
 # ------------------------------------------------------------------ schema 6
-def test_the_schema_is_8():
-    assert SCHEMA_VERSION == 8  # 1.15 made it 6 (this file's columns); 1.17's Vector made it 7 and 1.18's versions in the bin made it 8; both keep them
+def test_the_schema_is_9():
+    assert SCHEMA_VERSION == 9  # 1.15 made it 6 (this file's columns); 1.17's Vector made it 7, 1.18's versions in the bin 8 and 1.19's Prompt builder 9; all keep them
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:

@@ -106,9 +106,9 @@ def test_projects_are_listed_a_to_z_ignoring_case_with_their_runs_counted_by_tab
     listed = db.list_projects()
     assert [p["name"] for p in listed] == ["Apple", "banana", "Cherry"]
     assert {p["name"]: p["counts"] for p in listed} == {
-        "Apple": {"image": 2, "music": 1, "vector": 0},  # `binned` is in Apple but in the bin, so it is not counted
-        "banana": {"image": 1, "music": 0, "vector": 0},
-        "Cherry": {"image": 0, "music": 0, "vector": 0},  # empty, and still listed
+        "Apple": {"image": 2, "music": 1, "vector": 0, "prompts": 0, "chats": 0},  # `binned` is in Apple but in the bin, so it is not counted
+        "banana": {"image": 1, "music": 0, "vector": 0, "prompts": 0, "chats": 0},
+        "Cherry": {"image": 0, "music": 0, "vector": 0, "prompts": 0, "chats": 0},  # empty, and still listed
     }
     assert [p["id"] for p in db.list_projects(apple)] == [apple] and db.list_projects(NO_SUCH) == []
     assert cherry  # made, never filed in
@@ -264,7 +264,7 @@ def project_names(client) -> list[str]:
 def test_making_a_project_answers_201_with_the_project_and_tells_every_page(client):
     with captured(client) as events:
         project = new_project(client, "  Logo   mark ")
-    assert project["name"] == "Logo mark" and len(project["id"]) == 32 and project["counts"] == {"image": 0, "music": 0, "vector": 0}
+    assert project["name"] == "Logo mark" and len(project["id"]) == 32 and project["counts"] == {"image": 0, "music": 0, "vector": 0, "prompts": 0, "chats": 0}
     assert set(project) == {"id", "name", "created_at", "counts"}
     assert client.get("/api/projects").json() == {"projects": [project]}
     assert [name for name, _ in events] == ["projects.changed"]
@@ -323,7 +323,7 @@ def test_filing_a_run_keeps_it_and_tells_every_page(client):
     assert (body["project_id"], body["pinned"], body["expires_at"]) == (project["id"], True, None)  # kept: it will never expire
     assert [data["id"] for name, data in events if name == "run.updated"] == [run["id"]]
     assert [name for name, _ in events].count("projects.changed") == 1
-    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 1, "music": 0, "vector": 0}
+    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 1, "music": 0, "vector": 0, "prompts": 0, "chats": 0}
     assert client.get(f"/api/runs/{run['id']}").json()["project_id"] == project["id"]
 
 
@@ -342,7 +342,7 @@ def test_a_music_run_is_filed_in_the_same_projects(client):
     track = wait_for(client, client.post("/api/runs", json={"mode": "music", "prompt": "Genre: ambient. A slow piano.", "options": {"duration": 30}}).json()["id"])
     project = new_project(client)
     assert file_it(client, track["id"], project["id"]).json()["pinned"] is True
-    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 0, "music": 1, "vector": 0}
+    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 0, "music": 1, "vector": 0, "prompts": 0, "chats": 0}
 
 
 def test_filing_names_what_is_missing(client):
@@ -441,10 +441,10 @@ def test_a_filed_run_goes_to_the_bin_with_its_project_and_comes_back_to_it(clien
     assert file_it(client, run["id"], project["id"]).status_code == 200
     binned = bin_it(client, run["id"]).json()
     assert (binned["project_id"], binned["pinned"]) == (project["id"], True) and binned["deleted_at"] is not None
-    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 0, "music": 0, "vector": 0}  # not on show: not counted
+    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 0, "music": 0, "vector": 0, "prompts": 0, "chats": 0}  # not on show: not counted
     restored = client.post(f"/api/runs/{run['id']}/restore").json()
     assert (restored["project_id"], restored["pinned"], restored["deleted_at"]) == (project["id"], True, None)
-    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 1, "music": 0, "vector": 0}
+    assert client.get("/api/projects").json()["projects"][0]["counts"] == {"image": 1, "music": 0, "vector": 0, "prompts": 0, "chats": 0}
 
 
 # `?project=` on the list and the counts (criterion 153, 158): a project's id, `none`, or nothing; paging within the project; the counts follow it.
@@ -519,8 +519,8 @@ def test_the_daily_clean_up_leaves_a_filed_run_alone(seeded, client_factory):
 # The current schema is 8 (1.18's vectors.deleted_at, which lets one version of a Vector run go to the bin; 1.17 made it 7, the mode 'vector' and the vectors
 # table; 1.15 made it 6, images.deleted_at and tracks.deleted_at; 1.14 made it 5, the projects table and runs.project_id). When the next release changes it,
 # this is the line to move.
-def test_the_schema_is_8():
-    assert SCHEMA_VERSION == 8
+def test_the_schema_is_9():
+    assert SCHEMA_VERSION == 9  # 1.19's Prompt builder made it 9: its tables and runs.prompt_id, runs.prompt_version
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:

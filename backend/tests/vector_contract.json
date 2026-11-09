@@ -78,6 +78,7 @@
     "deleted_at": null,
     "purge_at": null,
     "project_id": null,
+    "prompt_ref": null,
     "queue_position": null,
     "progress": null,
     "canceling": false,

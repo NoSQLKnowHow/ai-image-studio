@@ -19,6 +19,14 @@ MEMORY_HINT = (
     "sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'"
 )
 
+# Said as well when the Prompt builder is set up (DESIGN.md §37.4, criterion 249): its model may be holding some of that memory, and the tab can ask Ollama to let it go.
+UNLOAD_HINT = " If the Prompt builder's model is in memory too, press Unload from memory on its tab: it asks Ollama to free it."
+
+
+def memory_hint(builder_set_up: bool) -> str:
+    """What to do about too little free memory: the Hermes advice, and (with the Prompt builder set up) the Unload button."""
+    return MEMORY_HINT + (UNLOAD_HINT if builder_set_up else "")
+
 
 def _kib_fields(path: Path, wanted: set[str]) -> dict[str, int]:
     values: dict[str, int] = {}

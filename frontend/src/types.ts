@@ -1,3 +1,4 @@
+import type { BuilderCaps, BuilderLimits } from "./builderTypes";
 // JSON shapes returned by the backend (backend/studio/serialize.py, api.py, jobs.py).
 
 /** Pictures are made in one of two modes; music (DESIGN.md §26) and vector (§31) are two more kinds of run, each on its own tab. */
@@ -112,8 +113,27 @@ export interface Project {
   created_at: string;
   // `vector` is optional because the list of projects was written before Vector (§32.4) and §31.12 does not say whether it counts them: the page
   // treats a missing number as "not known" and never shows it as 0 (see FilterBar and `projectContents`).
-  counts: { image: number; music: number; vector?: number };
+  counts: { image: number; music: number; vector?: number; prompts?: number; chats?: number };
 }
+
+/** Where a run came from when it was made from a saved prompt (DESIGN.md §37.3 rule 3): the prompt, the version, whether the prompt is in the bin or gone (then `title` may be null),
+ *  and whether the words the run sent are not those of the version. */
+export interface PromptRef {
+  id: string;
+  title: string | null;
+  version: number;
+  deleted: boolean;
+  edited: boolean;
+}
+
+/** What a run is asked to be made from (DESIGN.md §37.4). */
+export interface PromptRunRef {
+  prompt_id: string;
+  version: number;
+}
+
+/** Any create body, with the saved prompt it is made from (DESIGN.md §37.4). A wrapper and not a field of the three bodies, which the contract pins key for key. */
+export type WithPromptRef<T> = T & { prompt_ref?: PromptRunRef };
 
 /** What every run has, pictures or music. */
 interface RunBase {
@@ -131,6 +151,7 @@ interface RunBase {
   deleted_at: string | null; // when it went to the bin (DESIGN.md §30); null if it is not there
   purge_at: string | null; // when it will be deleted for good; null if it is not in the bin
   project_id: string | null; // the project it is filed in (DESIGN.md §32); null if it is in none. A filed run is always kept.
+  prompt_ref: PromptRef | null; // the saved prompt and version it was made from (DESIGN.md §37.3 rule 3), else null
   queue_position: number | null;
   progress: Progress | null;
   canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
@@ -435,9 +456,11 @@ export interface Capabilities {
     project_name_max: number; // the longest a project's name may be, in characters (DESIGN.md §32.4)
     music: MusicLimits;
     vector: VectorLimits;
+    builder: BuilderLimits; // DESIGN.md §37.4
   };
   music: MusicAvailability;
   vector: VectorAvailability;
+  builder: BuilderCaps; // the Prompt builder: set up? what is known of Ollama (§37.4)
   upscaler: UpscalerStatus;
   queue_cap: number;
   device: WorkerStatus["device"];

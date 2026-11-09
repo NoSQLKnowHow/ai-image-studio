@@ -138,7 +138,7 @@ describe("the types match the contract file", () => {
   it("the run, its options, its versions and their check", () => {
     const run: Record<keyof VectorRun, true> = {
       id: true, status: true, prompt: true, effective_prompt: true, model_id: true, created_at: true, started_at: true, finished_at: true, error: true, pinned: true,
-      expires_at: true, deleted_at: true, purge_at: true, project_id: true, queue_position: true, progress: true, canceling: true, mode: true, options: true,
+      expires_at: true, deleted_at: true, purge_at: true, project_id: true, prompt_ref: true, queue_position: true, progress: true, canceling: true, mode: true, options: true,
       lyrics: true, inputs: true, images: true, binned_images: true, tracks: true, binned_tracks: true, vectors: true, binned_vectors: true,
     };
     same(run, c.run);

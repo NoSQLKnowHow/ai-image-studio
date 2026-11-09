@@ -36,6 +36,7 @@ class RunFilter:
     kept: Optional[bool] = None  # True: only runs that are kept; False: only runs that are not; None: either
     deleted: Optional[bool] = False  # False: the history (runs not in the bin); True: only the bin (§30, §33); None: either
     project: Optional[str] = None  # None: any project or none; NO_PROJECT: only runs in no project; a project's id: only that project (§32.4)
+    prompt: Optional[str] = None  # None: any run; a saved prompt's id: only the runs made from it (`GET /api/runs?prompt=`, DESIGN.md §37.4)
 
     def conditions(self) -> tuple[list[str], list[Any]]:
         """The SQL conditions (to be joined with AND) and the values bound to their placeholders."""
@@ -61,6 +62,9 @@ class RunFilter:
             else:
                 clauses.append("project_id = ?")
                 values.append(self.project)
+        if self.prompt is not None:
+            clauses.append("prompt_id = ?")
+            values.append(self.prompt)
         return clauses, values
 
 

@@ -110,8 +110,8 @@ OLD_DATABASES = [(make_v2, "1.7 (schema 2)"), (v3_database, "1.12 (schema 3)"), 
 
 
 # ------------------------------------------------------------------ the number
-def test_the_schema_is_8():
-    assert SCHEMA_VERSION == 8  # 1.17's Vector made it 7 and 1.18's versions in the bin made it 8: when the next release changes the schema, this is the line to move
+def test_the_schema_is_9():
+    assert SCHEMA_VERSION == 9  # 1.17's Vector made it 7, 1.18's versions in the bin 8 and 1.19's Prompt builder 9: when the next release changes the schema, this is the line to move
 
 
 # ------------------------------------------------------------------ migrating 1.16 (schema 6), losing nothing

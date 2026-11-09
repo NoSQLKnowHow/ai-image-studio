@@ -14,6 +14,7 @@ import { PromptBar } from "./components/PromptBar";
 import { RunCard } from "./components/RunCard";
 import { UpscalePicture } from "./components/UpscalePicture";
 import { Tray } from "./components/Tray";
+import { BuilderPanel, type BuilderCommand, type HistoryPicture } from "./components/BuilderPanel";
 import { VectorPanel } from "./components/VectorPanel";
 import { VectorViewer } from "./components/VectorViewer";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
@@ -56,6 +57,8 @@ import {
 import { VECTOR_PNG_RANGE, pngRange } from "./vector";
 import { useEventStream } from "./useEvents";
 import { useTray } from "./useTray";
+import { PromptLinksContext, type PromptLinks } from "./promptLinks";
+import { refOf, usePromptUse, type FromPrompt } from "./usePromptUse";
 import { viewerItems, viewerKnown } from "./viewer";
 
 const NO_PROJECTS: Project[] = []; // the list of projects before it has arrived: one array, so nothing re-renders for a new empty one
@@ -103,7 +106,12 @@ export default function App() {
   const [upscaling, setUpscaling] = useState(false); // a picture from the computer is being upscaled (DESIGN.md §27.9)
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
-  const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music or Vector (DESIGN.md §26.1, §31.12.8), remembered
+  const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music, Vector or Prompt builder (DESIGN.md §26.1, §31.12.8, §37.2), remembered
+  const [builderWorking, setBuilderWorking] = useState(false); // a reply is being written: the dot on the Prompt builder tab
+  const [builderTick, setBuilderTick] = useState(0); // another page changed a prompt, chat or preference
+  const [builderCommand, setBuilderCommand] = useState<BuilderCommand | null>(null); // something for the Prompt builder to do: open a prompt, refine a picture, help write an edit
+  const [fromPrompt, setFromPrompt] = useState<FromPrompt | null>(null); // the saved prompt the Images prompt box came from: the next Generate carries it (DESIGN.md §37.3 rule 3)
+  const builderAttach = useRef<((files: File[]) => void) | null>(null); // the chat's way of taking pictures that are pasted
   const [filter, setFilter] = useState<HistoryFilter>(() => readFilter(store)); // All or Kept, for both tabs (DESIGN.md §29), remembered
   const [filterProblem, setFilterProblem] = useState<string | null>(null); // why the filtered list could not be loaded
   const [managingProjects, setManagingProjects] = useState(false); // the Manage projects dialog is open (DESIGN.md §32.1)
@@ -127,7 +135,7 @@ export default function App() {
   const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
   const vectorRuns = useMemo(() => visible.filter(isVectorRun), [visible]);
   // what the tab being looked at is called in the counts (`Counts` has a key for each)
-  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image";
+  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
   const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
   const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
@@ -172,6 +180,7 @@ export default function App() {
 
   useEventStream(dispatch, {
     onCapabilitiesChanged: () => void api.capabilities().then((c) => dispatch({ type: "caps", caps: c })).catch(() => undefined),
+    onBuilderChanged: () => setBuilderTick((n) => n + 1),
   });
 
   useEffect(() => {
@@ -204,7 +213,9 @@ export default function App() {
     setSubmitting(true);
     setFormProblem(null);
     try {
-      const run = await api.createRun(build(prompt, options, caps));
+      const body = build(prompt, options, caps);
+      const ref = refOf(fromPrompt);
+      const run = await api.createRun(ref ? { ...body, prompt_ref: ref } : body);
       dispatch({ type: "runUpsert", run });
       return run;
     } catch (error) {
@@ -215,7 +226,7 @@ export default function App() {
     } finally {
       setSubmitting(false);
     }
-  }, [caps, options, prompt, submitting, push]);
+  }, [caps, options, prompt, submitting, push, fromPrompt]);
 
   // Generate sends the size and scale; Edit sends the tray's images in order. Once an edit is sent the server owns
   // copies of them, so the tray now points at those and stays usable for the next try.
@@ -259,8 +270,59 @@ export default function App() {
     saveTab(next, store);
   };
 
+  // Generate now, Quick try and Use in … from the Prompt builder (DESIGN.md §37.2): they fill the Images form (with an Undo), the Vector and Music forms, or queue a run at once
+  const promptUse = usePromptUse({
+    from: fromPrompt, setFrom: setFromPrompt, caps, options, setOptions, prompt, setPrompt, clearProblem: () => setFormProblem(null), tray, store, push, showTab: changeTab,
+    upsert: (run) => dispatch({ type: "runUpsert", run }), focusPrompt: () => promptRef.current?.focus({ preventScroll: true }),
+  });
+
+  // a prompt's versions show the pictures made from them: read the prompt again when a run made from one appears or finishes (a quick try shows its thumbnail on the version)
+  const madeFromPrompts = useMemo(() => Object.values(state.runs).filter((run) => run.prompt_ref !== null).map((run) => `${run.id}:${run.status}`).sort().join(","), [state.runs]);
+  const sawPromptRuns = useRef(madeFromPrompts);
+  useEffect(() => {
+    if (sawPromptRuns.current === madeFromPrompts) return;
+    sawPromptRuns.current = madeFromPrompts;
+    setBuilderTick((n) => n + 1);
+  }, [madeFromPrompts]);
+
+  // asking the Prompt builder for something: it is told once (a new seq), and the tab is shown
+  const askBuilder = (command: (seq: number) => BuilderCommand) => {
+    setBuilderCommand((current) => command((current?.seq ?? 0) + 1));
+    changeTab("builder");
+  };
+  const builderSetUp = !!caps?.builder.configured;
+  const promptLinks = useMemo<PromptLinks>(() => ({
+    open: (promptId) => askBuilder((seq) => ({ seq, kind: "open-prompt", id: promptId })),
+    refine: builderSetUp ? (run, image) => {
+      const ref = run.prompt_ref && !run.prompt_ref.deleted && run.prompt_ref.title !== null ? run.prompt_ref : null;
+      setLightbox(null);
+      askBuilder((seq) => ({ seq, kind: "refine", target: {
+        runId: run.id, kind: run.mode === "edit" ? "edit" : "images", text: run.prompt, negative: run.options.negative_prompt ?? null, imageId: image?.id ?? null,
+        prompt: ref ? { id: ref.id, project_id: run.project_id } : null,
+      } }));
+    } : null,
+    // (only whether the builder is set up changes what these do; everything else they use is stable)
+  }), [builderSetUp]);
+  // the pictures that can be attached to a chat from the history: results of finished runs, newest first
+  const historyPictures = useMemo<HistoryPicture[]>(() => {
+    const pictures: HistoryPicture[] = [];
+    for (const run of imageRuns) {
+      if (run.deleted_at !== null) continue;
+      run.images.forEach((image, i) => {
+        if (image.thumb_url && pictures.length < 60) pictures.push({ id: image.id, thumbUrl: image.thumb_url, label: `${run.prompt.slice(0, 80)}${run.images.length > 1 ? `, picture ${i + 1}` : ""}` });
+      });
+    }
+    return pictures;
+  }, [imageRuns]);
+  // Help me write this (Edit): the builder opens with the tray's pictures, in the tray's order
+  const trayPictures = tray.items.flatMap((item) => (item.state === "ready" && item.ref ? ["upload_id" in item.ref ? item.ref.upload_id : item.ref.image_id] : []));
+  const helpWriteProblem = !builderSetUp ? "The Prompt builder is not set up (see its tab)." : trayPictures.length === 0 ? "Add the pictures to edit first: the builder is given them, in order." : null;
+
   const reuse = (run: ImageRun) => {
     if (!caps || !options) return;
+    // a run made from a saved prompt brings its chip back, if the prompt is still there; any other run takes the chip away (rule 3)
+    const ref = run.prompt_ref;
+    setFromPrompt(ref && !ref.deleted && ref.title !== null ? { promptId: ref.id, version: ref.version, title: ref.title } : null);
     setPrompt(run.prompt);
     setOptions(optionsFromRun(run, caps, options));
     setFormProblem(null);
@@ -425,7 +487,7 @@ export default function App() {
   };
 
   // One listener for pasted pictures on the whole page (§36.4): the prompt box, the bare page, a button, Upscale a picture… when it has the focus
-  usePicturePaste({ tab, ready: !!caps && !!options, onTray: handleFiles, onUpscale: upscaleFiles, onWrongTab: () => push("info", PICTURES_ON_IMAGES_TAB) });
+  usePicturePaste({ tab, ready: !!caps && !!options, onTray: handleFiles, onUpscale: upscaleFiles, onBuilder: (files) => builderAttach.current?.(files), onWrongTab: () => push("info", PICTURES_ON_IMAGES_TAB) });
 
   const applyStarter = () => {
     if (!options || prompt.trim()) return;
@@ -963,7 +1025,7 @@ export default function App() {
   const cost = caps && options ? editCost(tray.items.length, options.resolution, caps.limits.edit_warn_units) : null;
 
   return (
-    <>
+    <PromptLinksContext.Provider value={promptLinks}>
       <a className="skip-link" href="#prompt">Skip to the prompt</a>
       <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : "image"} musicAvailable={musicAvailable} onModel={changeModel} />
       <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
@@ -972,7 +1034,7 @@ export default function App() {
           <p className="loading" role="status">Connecting to the studio…</p>
         ) : (
           <>
-            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working) }} />
+            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking }} />
             <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
             <PromptBar
               ref={promptRef}
@@ -1002,6 +1064,11 @@ export default function App() {
               }
               blockReason={editing ? submitBlock(tray.items) : null}
               starterAvailable={!prompt.trim()}
+              fromPrompt={fromPrompt}
+              onClearFrom={() => setFromPrompt(null)}
+              onOpenFrom={fromPrompt ? () => promptLinks.open(fromPrompt.promptId) : undefined}
+              onHelpWrite={() => askBuilder((seq) => ({ seq, kind: "help-edit", pictures: trayPictures }))}
+              helpWriteProblem={helpWriteProblem}
               onFiles={handleFiles}
               onStarter={applyStarter}
               onPromptFocus={() => {
@@ -1102,6 +1169,7 @@ export default function App() {
               loadingOlder={loadingOlder}
               now={now}
               push={push}
+              fill={promptUse.musicFill}
               onRun={(run: MusicRun) => dispatch({ type: "runUpsert", run })}
               onLoadOlder={() => void loadOlder()}
               onCancel={requestCancel}
@@ -1111,6 +1179,8 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
+            <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
+              integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
             <VectorPanel
               hidden={tab !== "vector"}
               caps={caps}
@@ -1130,6 +1200,7 @@ export default function App() {
               loadingOlder={loadingOlder}
               now={now}
               push={push}
+              fill={promptUse.vectorFill}
               onRun={(run) => dispatch({ type: "runUpsert", run })}
               onLoadOlder={() => void loadOlder()}
               onOpenVersion={(run, index) => setVectorView({ runId: run.id, index })}
@@ -1179,6 +1250,6 @@ export default function App() {
       <ProjectsDialog open={managingProjects} projects={projects} nameMax={projectNameMax} onClose={() => setManagingProjects(false)}
         onCreate={createProject} onRename={renameProject} onDelete={deleteProject} />
       <Toasts toasts={toasts} onDismiss={dismiss} />
-    </>
+    </PromptLinksContext.Provider>
   );
 }

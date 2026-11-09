@@ -946,6 +946,73 @@ say so and suggest 1K or fewer pictures, and the server should stay up). **Send 
 **Send back:** the `ls -l data/studio.sqlite*` line; from (b) your judgement of the trace; from (d) the three back-sheet results and your verdict; from (e) what the laser software showed; from (g) to (j) anything that did not match
 "Good" and which browser and device; from (k) the times, memory and the numbers you suggest.
 
+## 30. The Prompt builder, with your Ollama (new in 1.19)
+
+**Load it.** Until 1.19 is merged it is on the branch `prompt-builder`; once it is merged (`main`), `git pull` is all you need.
+
+```bash
+cd ~/ai-image-studio                                  # your checkout
+mkdir -p ~/backups && scripts/backup.sh --no-model ~/backups   # first: the first start of 1.19 upgrades the database to schema 9 (without the models: about 10 GB, and a minute or two)
+git fetch origin && git checkout prompt-builder && git pull     # (after the merge: git checkout main && git pull)
+```
+
+Then put your Ollama in `.env` (the address stays in this file and nowhere else: the page, the logs and every message leave it out):
+
+```bash
+STUDIO_OLLAMA_URL=http://host.docker.internal:11434   # Ollama on the Spark itself; or its address, if it is on another machine
+STUDIO_OLLAMA_MODEL=qwen3.8:27b
+# leave the rest at their defaults for now: KEEP_ALIVE 5m, NUM_CTX 32768, THINK on, TIMEOUT 120 s, MAX_REPLY 900 s, AT_ONCE 1
+```
+
+For a container to reach an Ollama on the same machine, Ollama must listen beyond `127.0.0.1`: on the Spark, `OLLAMA_HOST=0.0.0.0` in Ollama's service (then restart Ollama), and the model must be pulled (`ollama pull qwen3.8:27b`).
+`compose.yaml` already maps `host.docker.internal` to the Spark. Then:
+
+```bash
+docker compose up -d --build                          # builds 1.19 and reads .env; reload the page with Ctrl+Shift+R: the title reads v1.19
+ls -l data/studio.sqlite*                             # note the line: studio.sqlite.before-schema-9 is the copy made before the upgrade
+docker compose logs studio | grep -i "schema\|builder" | head
+```
+
+**a) The connection.** Open **Prompt builder** (the fourth tab). **Good:** *Ollama is ready: qwen3.8:27b*. Press **Test connection**. **Good:** it lists Ollama's version and its models, says yours is among them, and says whether it can look at pictures
+(Ollama's library says `qwen3.8:27b` can). **Check** that the address appears nowhere on the page, and that `curl -s http://localhost:8080/api/capabilities | grep -c -e host.docker.internal -e 11434` (use the port in your `.env`) prints `0`; the capabilities say only whether the builder is `configured`, `reachable` and which `model`.
+With `STUDIO_OLLAMA_URL` empty, **good:** the tab says *The Prompt builder needs an Ollama server…* and Saved prompts, Preferences and Projects still work.
+
+**b) A first chat.** Type **a lighthouse in a storm** and Send. **Good:** the chat is in the list at once; a card says *Thinking…* with the seconds and a **Show thinking** fold; then the reply streams, with at most **three questions**, each with 3 to 5 chips.
+Tap two chips, add a few words of your own, press Send. Press **Write it now**. **Good:** **The prompt so far** (right) shows the words with the changed ones marked, an editable box, a length meter, the negative prompt, and the settings that fit as chips you can switch off.
+Press **Stop** in the middle of a reply: **good:** what was written stays, marked *stopped*, and the prompt so far does not change. **Write down** the time to the first word, the words per second, and how long the thinking took for a plain, a vague and a detailed idea.
+
+**c) Speed while an image is being made.** Start an image run, and while it works send a message. **Good:** the reply card says *An image is being made, so replies may be slower.* and it still arrives. **Write down** the times with the image model loaded and idle, and while it works.
+Open a second chat and send while the first is writing: **good:** *Waiting for another reply…*, then it goes.
+
+**d) Does the model keep to the structure?** Put twenty different ideas through the builder (new chat each). For each, note whether the reply came at once, showed *Asking again…* (the studio asked a second time, with thinking off), or came as plain words with no questions and no change to the prompt
+(the plain-text fallback). Do ten with **Think: On** (the default) and ten with **Think: Off** (the switch beside Send). **Check** that with Off no *Show thinking* appears. **Send me** the counts. A model that falls back often is the first thing to change.
+
+**e) Do the questions help?** With ten ideas, a plain one, a vague one and a detailed one, judge: are the questions the right ones, are the chips different from each other, is the finished prompt better than what you would have typed? **Send me** what you would change; this decides how much the instruction files (`backend/studio/builder/instructions/*.md`, written by me as a first draft) need.
+
+**f) Save, versions, compare.** Press **Save as prompt**, accept or change the title and the tags, choose a project. Ask for a change (*make it moodier*) and press **Save as new version**; press it again without changing anything. **Good:** version 2, then *Nothing changed.*
+Open it in **Prompts**: **good:** both versions, newest first; tick two and **Compare**: the changed words are marked as removed (struck through) and added (underlined), the settings table says what changed; **Make this the current one** on version 1 adds version 3, a copy.
+**Flesh out**: **good:** a chat linked to the prompt whose first reply says what it has and what is missing.
+
+**g) Use it in the other tabs.** On a saved prompt (and on The prompt so far): **Use in Images** fills the prompt box, goes to Images, and says what it set (*Filled the prompt, set 16:9, guidance 4 and a negative prompt.*) with **Undo**; the chip *From Prompt builder: "title" v1* shows beside the box.
+**Generate now** queues a run at once without changing the Images form; **Quick try** makes a Draft and its picture appears on the version, without leaving the tab. **Good:** the run's card says *From "title" v1* and the line opens the prompt; **Reuse** brings the chip back.
+**Send me** whether prompts the builder wrote give pictures you like better than your own (use the Draft quick try, side by side), and what the quick try costs in time.
+For **Vector** and **Music**: make a chat **For Vector** and one **For Music**, then **Use in Vector** / **Use in Music**: **good:** the idea, kind, colours, inks and size, or the fields, lyrics and length, are filled, and what the form cannot take is named in the toast.
+
+**h) Pictures.** Attach a photo to a chat (choose, drop, paste on the tab, or **Pick from my history**) and press **Describe as a prompt**. **Good:** a prompt for Images that describes it. **Send me** whether it is sensible. On a finished picture press **Refine in Prompt builder**
+(on its card and in the viewer): **good:** a chat opens with the words in the prompt box and the picture attached; say what is wrong (*too dark*) and the reply proposes a new version. In **Edit**, with two pictures in the tray, press **Help me write this**: **good:** the builder opens
+*For Edit* with both pictures, numbered, and writes a prompt that refers to *image 1* and *image 2*.
+
+**i) Preferences.** Add *photographic, natural light* in **Preferences**, start a chat. **Good:** the chat says *Using 1 preference* and the prompts follow it; switch it off and it stops. A suggestion (*Remember "…"?*) is added only when you press **Add**.
+
+**j) Memory with everything loaded** (Ollama is on the Spark): run `free -h`, `nvidia-smi` and `ollama ps` with Ollama's model (about 18 GB) **and** Qwen-Image both loaded. **Good:** both fit; if the image model's pre-flight refuses, its message now also says to press **Unload from memory** on the Prompt builder tab.
+Press **Unload from memory**: **good:** `ollama ps` shows nothing loaded and `MemAvailable` rises. **Write down** `MemAvailable` before and after, and whether `STUDIO_OLLAMA_NUM_CTX=32768` fits next to Qwen-Image (if not, how much `16384` saves), and what `STUDIO_OLLAMA_KEEP_ALIVE` you want (`5m` ships).
+
+**k) The bin and the backup.** Delete a chat and a prompt; **good:** each asks, moves to **Deleted** (30 days), and **Restore** brings it back; the pictures made from a deleted prompt say *From "title" v1, deleted*. Run `scripts/backup.sh --no-model ~/backups` and check that it says it is packing your history, images, prompts and chats; `tar -tzf` the data piece and look for `data/builder/` (a chat's pictures).
+
+**l) On a phone.** Open the tab on your phone. **Good:** the tab bar does not scroll sideways, *Prompt builder* wraps onto two lines, and a switch (*Chat | Prompt | Library*) shows one column at a time. Send a message, and switch away to *Library* while it is being written: **good:** the reply carries on.
+
+**Send back:** the `ls -l data/studio.sqlite*` line; from (a) what Test connection showed; from (b) and (c) the times; from (d) the counts; from (e) your judgement of the questions; from (g) your verdict on the pictures and from (h) on the description; from (j) the memory numbers; and anything that did not match "Good", with the browser and device.
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -972,3 +1039,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 20. From step 27 (the default size): the time and the memory numbers (A, B, `worker_rss_gb`) for one run at 2752 × 1536 and one at 2048 × 2048 from (c), whether the note in (b) appeared, and anything that did not match "Good".
 21. From step 28 (Vector): the `Vector:` line from (a), the seconds of the drawing and of the tracing and the memory numbers from (b), the notes from (c) with a screenshot if the drawing had shading or gradients, what XCS and LightBurn showed in (e) (and the laser test sheet's six answers, `DESIGN.md` §31.9 item 1), your verdict on side by side against stacked in (f), and anything that did not match "Good".
 22. From step 29 (Vector versions, the stack view, pictures by paste): the `ls -l data/studio.sqlite*` line, your judgement of the trace against the drawing in (b), the three back-sheet results and your verdict in (d), what XCS and LightBurn showed of the stacked layers in (e), which browsers and devices did and did not take a pasted picture in (g) to (j), and from (k) the times, the memory numbers, whether eight pictures ran, whether the model follows "image 7" and "image 8", and the numbers you suggest for the limit and the cost warning.
+23. From step 30 (the Prompt builder): the `ls -l data/studio.sqlite*` line, what Test connection showed, the times to the first word and the thinking times from (b) and (c), the counts from (d) (first time, asked again, plain text; thinking on and off), your judgement of the questions from (e), your verdict on the Quick try pictures from (g) and on the description from (h), the memory numbers and the settings you suggest from (j), and anything that did not match "Good".

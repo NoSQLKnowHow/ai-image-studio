@@ -4,7 +4,10 @@ import {
   MUSIC_MODEL_NAME, MUSIC_MODEL_URL, SECTION_TAGS, buildMusicRequest, chipsFor, descriptionOf, durationText, hasDescription,
   insertTag, loadMusicForm, musicFormFromRun, musicModelNote, musicProblem, musicRetryRequest, saveMusicForm, type FieldName, type MusicForm,
 } from "../music";
+import { usedText } from "../builder";
 import type { KeyValueStore } from "../options";
+import { fillMusic, skippedText } from "../promptUse";
+import type { FillRequest } from "../usePromptUse";
 import type { Capabilities, MusicRun, Status, TrackInfo } from "../types";
 import type { ViewScope } from "../format";
 import { BinnedItemsCard, type BinnedItemHandlers } from "./BinnedItemsCard";
@@ -14,7 +17,7 @@ import { panelId, tabId } from "./Tabs";
 import { projectOf, type ProjectControls } from "./ProjectMenu";
 import { TrackCard } from "./TrackCard";
 import { NoteIcon } from "./icons";
-import type { ToastKind } from "../hooks";
+import type { ToastAction, ToastKind } from "../hooks";
 
 interface Props {
   hidden: boolean;
@@ -34,7 +37,8 @@ interface Props {
   more: boolean; // older runs can be loaded
   loadingOlder: boolean;
   now: number;
-  push: (kind: ToastKind, text: string) => void;
+  push: (kind: ToastKind, text: string, action?: ToastAction) => void;
+  fill?: FillRequest | null; // a prompt from the Prompt builder to put in the fields (DESIGN.md §37.2): a new request each time
   onRun: (run: MusicRun) => void; // a run was made (or retried): the page adds it to its list
   onLoadOlder: () => void;
   onCancel: (run: MusicRun) => void;
@@ -85,7 +89,7 @@ const LABELS: Record<FieldName, { label: string; placeholder: string; hint?: str
 };
 
 /** The Music tab (DESIGN.md §26): the form that builds the description, and the tracks made so far. */
-export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, deletedView, binned, more, loadingOlder, now, push, onRun, onLoadOlder, onCancel, onToggleKeep, onRestore, onDelete, onDeleteTrack, onCopy }: Props) {
+export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filterBar, loadProblem, empty, isTransient, viewScope, projects, deletedView, binned, more, loadingOlder, now, push, fill = null, onRun, onLoadOlder, onCancel, onToggleKeep, onRestore, onDelete, onDeleteTrack, onCopy }: Props) {
   const ids = useId();
   const idOf = (name: string) => `${ids}-${name}`;
   const root = useRef<HTMLDivElement>(null);
@@ -117,6 +121,18 @@ export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filte
     setProblem(null);
   }, []);
   const setField = (name: FieldName, value: string) => update({ fields: { ...form.fields, [name]: value } });
+
+  // Use in Music (criterion 242): the description, the fields, the lyrics and the length go in, with an Undo that puts the form back
+  const lastFill = useRef(fill?.seq ?? 0);
+  useEffect(() => {
+    if (!fill || fill.seq === lastFill.current) return;
+    lastFill.current = fill.seq;
+    const before = form;
+    const { form: next, applied, skipped } = fillMusic(form, fill.using.draft, caps);
+    setForm(next);
+    setProblem(null);
+    push(skipped.length ? "info" : "success", usedText(applied, "description") + skippedText(skipped), { label: "Undo", run: () => { setForm(before); setProblem(null); } });
+  }, [fill?.seq]);
 
   const description = descriptionOf(form);
   const ready = hasDescription(form);

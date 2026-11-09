@@ -36,6 +36,14 @@ describe("the words about projects", () => {
     expect(projectContents({ image: 0, music: 0 })).toBe("no runs");
   });
 
+  it("counts the prompts and chats of the Prompt builder beside the runs (criterion 247)", () => {
+    expect(projectContents({ image: 4, music: 1, vector: 2, prompts: 3, chats: 2 })).toBe("4 pictures, 1 track, 2 vectors, 3 prompts, 2 chats");
+    expect(projectContents({ image: 1, music: 0, prompts: 1, chats: 1 })).toBe("1 picture, 1 prompt, 1 chat");
+    expect(projectContents({ image: 0, music: 0, prompts: 2 })).toBe("2 prompts");
+    expect(projectContents({ image: 0, music: 0, prompts: 0, chats: 0 })).toBe("no runs"); // nothing counted is nothing said
+    expect(projectContents({ image: 3, music: 0, prompts: undefined })).toBe("3 pictures"); // a count the server did not send is not said as 0
+  });
+
   it("says what each filing did, and that the run is kept", () => {
     const run = { prompt: "a red fox in the snow" };
     expect(filedText(run, "Logo")).toBe("Filed “a red fox in the snow” in Logo. It is kept.");
@@ -56,6 +64,17 @@ describe("the words about projects", () => {
     expect(deleteProjectQuestion(LOGO)).toBe("Delete the project “Logo”? Its 4 runs (3 pictures, 1 track) are not deleted: they stay kept and are no longer in a project.");
     expect(deleteProjectQuestion({ name: "One", counts: { image: 1, music: 0 } })).toBe("Delete the project “One”? Its 1 run (1 picture) is not deleted: it stays kept and is no longer in a project.");
     expect(deleteProjectQuestion(PITCH)).toBe("Delete the project “Pitch deck”? It has no runs.");
+  });
+
+  it("says that its prompts and chats stay too, when it has any (criterion 247)", () => {
+    expect(deleteProjectQuestion({ name: "Logo", counts: { image: 3, music: 1, prompts: 3, chats: 2 } })).toBe(
+      "Delete the project “Logo”? Its 4 runs (3 pictures, 1 track) are not deleted: they stay kept and are no longer in a project. Its 3 prompts and 2 chats stay too, no longer in a project.");
+    expect(deleteProjectQuestion({ name: "Notes", counts: { image: 0, music: 0, prompts: 2, chats: 1 } })).toBe(
+      "Delete the project “Notes”? Its 2 prompts and 1 chat are not deleted: they stay and are no longer in a project.");
+    expect(deleteProjectQuestion({ name: "Notes", counts: { image: 0, music: 0, chats: 1 } })).toBe(
+      "Delete the project “Notes”? Its 1 chat is not deleted: it stays and is no longer in a project.");
+    expect(deleteProjectQuestion({ name: "Plain", counts: { image: 1, music: 0, prompts: 0, chats: 0 } })).toBe(
+      "Delete the project “Plain”? Its 1 run (1 picture) is not deleted: it stays kept and is no longer in a project."); // nothing to add when there are none
   });
 
   it("says what keeps a card in a view while it works: Keep it, or add it to the project", () => {

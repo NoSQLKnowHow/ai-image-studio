@@ -19,13 +19,14 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
+from .builder.schema import BUILDER_SCHEMA, PROMPT_SEARCH_SQL
 from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
 
-# 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
+# 9: the Prompt builder's tables and runs.prompt_id, runs.prompt_version (§37.4); 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
 # 5: the projects table and runs.project_id, for project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
 # 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 log = logging.getLogger("studio.db")
 
 # A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
@@ -65,7 +66,9 @@ CREATE TABLE IF NOT EXISTS runs (
     lyrics           TEXT,
     deleted_at       TEXT,
     restored_at      TEXT,
-    project_id       TEXT
+    project_id       TEXT,
+    prompt_id        TEXT,
+    prompt_version   INTEGER
 );
 -- Project folders (DESIGN.md §32.4): a name that runs are filed under. A project is a label in this table, not a folder on the disk, so filing a
 -- run moves no file. `name_key` is the name with its case folded away (see projects.py) and is unique, so "Logo" and "logo" are one project.
@@ -145,7 +148,7 @@ CREATE TABLE IF NOT EXISTS run_inputs (
     role      TEXT NOT NULL DEFAULT 'reference' CHECK (role IN ('reference','marked','mask')),
     PRIMARY KEY (run_id, position)
 );
-"""
+""" + BUILDER_SCHEMA
 
 INTERRUPTED_MESSAGE = "Interrupted by a server restart."
 
@@ -184,6 +187,8 @@ class Database:
             self._add_bin_columns()
             self._add_project_column()
             self._add_picture_bin_columns()
+            self._add_prompt_columns()
+            self.has_fts5 = self._add_prompt_search()
             self._record_version(previous)
             self._queue_order = self._choose_queue_order()
 
@@ -286,6 +291,27 @@ class Database:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN deleted_at TEXT")
             self._conn.execute(f"CREATE INDEX IF NOT EXISTS idx_{table}_deleted ON {table}(deleted_at)")
 
+    def _add_prompt_columns(self) -> None:
+        """Schema 9: the two columns that say which prompt, and which of its versions, a run was made from (DESIGN.md §37.3 rule 3), added to a table that lacks
+        them. They are plain columns and not foreign keys, like `project_id`: deleting a prompt for good leaves them. They are the last columns of `runs`, in
+        the order `_SCHEMA` has them, so that ALTER TABLE gives the same table as CREATE TABLE does; the index cannot be made before the column exists, so
+        it is not in `_SCHEMA`."""
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
+        for column, kind in (("prompt_id", "TEXT"), ("prompt_version", "INTEGER")):
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {kind}")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_prompt ON runs(prompt_id)")
+
+    def _add_prompt_search(self) -> bool:
+        """Schema 9: the word index over prompts (DESIGN.md §37.4). Returns whether this SQLite has FTS5; where it has not, the studio keeps working and
+        searching falls back to a plain match (`has_fts5` is False)."""
+        try:
+            self._conn.execute(PROMPT_SEARCH_SQL)
+        except sqlite3.OperationalError as error:
+            log.warning("this SQLite has no FTS5 (%s): searching prompts will use a plain match", error)
+            return False
+        return True
+
     def _record_version(self, previous: Optional[int]) -> None:
         with self.tx() as c:
             if previous is None:
@@ -304,6 +330,14 @@ class Database:
                 raise
             else:
                 self._conn.execute("COMMIT")
+
+    def read_one(self, sql: str, args: tuple = ()) -> Optional[sqlite3.Row]:
+        """One row of a SELECT, read under the connection's lock (for the Prompt builder's store, which keeps its own SQL in its own module)."""
+        return self._one(sql, args)
+
+    def read_all(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
+        """All the rows of a SELECT, read under the connection's lock."""
+        return self._all(sql, args)
 
     def _one(self, sql: str, args: tuple = ()) -> Optional[sqlite3.Row]:
         with self._lock:
@@ -345,6 +379,28 @@ class Database:
                 return "ok"
         except _AlreadyClaimed as gone:
             return f"claimed:{gone.args[0]}"
+
+    def prompt_refs_for_runs(self, rows: Sequence[sqlite3.Row]) -> dict[str, dict[str, Any]]:
+        """Where each run that was made from a saved prompt came from (DESIGN.md §37.3 rule 3), by run id: {id, title, version, deleted, edited}. `deleted` is true for a
+        prompt in the bin and for one deleted for good (whose title is then gone: None). `edited` is true when the words the run sent are not those of the version (white
+        space aside); it is only judged for a run whose prompt is the version's text, which is every kind but music, whose description is built from fields."""
+        wanted = sorted({r["prompt_id"] for r in rows if r["prompt_id"]})
+        if not wanted:
+            return {}
+        marks = ",".join("?" * len(wanted))
+        prompts = {r["id"]: r for r in self._all(f"SELECT id, title, deleted_at FROM prompts WHERE id IN ({marks})", tuple(wanted))}
+        texts = {(r["prompt_id"], r["n"]): r["text"] for r in self._all(f"SELECT prompt_id, n, text FROM prompt_versions WHERE prompt_id IN ({marks})", tuple(wanted))}
+        found: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            if not r["prompt_id"]:
+                continue
+            prompt, text = prompts.get(r["prompt_id"]), texts.get((r["prompt_id"], r["prompt_version"]))
+            found[r["id"]] = {
+                "id": r["prompt_id"], "title": prompt["title"] if prompt is not None else None, "version": r["prompt_version"],
+                "deleted": prompt is None or prompt["deleted_at"] is not None,
+                "edited": r["mode"] != "music" and text is not None and " ".join(r["prompt"].split()) != " ".join(text.split()),
+            }
+        return found
 
     def get_run(self, run_id: str) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM runs WHERE id=?", (run_id,))
@@ -635,15 +691,22 @@ class Database:
 
     # ---------------------------------------------------------------- projects (DESIGN.md §32)
     def list_projects(self, project_id: Optional[str] = None) -> list[dict[str, Any]]:
-        """The projects, A to Z (ignoring case), each with how many runs of each tab it holds: {id, name, created_at, counts: {image, music, vector}}.
-        The counts are of runs in the history; a run in the bin is not counted (it is not on show). With `project_id`, only that project (a
+        """The projects, A to Z (ignoring case), each with how many runs of each tab it holds, and how many prompts and chats: {id, name, created_at,
+        counts: {image, music, vector, prompts, chats}}. The counts are of what is on show; a run, prompt or chat in the bin is not counted. With `project_id`, only that project (a
         list of one, or empty)."""
         with self._lock:
             where, args = ("WHERE id=?", (project_id,)) if project_id is not None else ("", ())
             projects = self._all(f"SELECT id, name, created_at FROM projects {where} ORDER BY name_key, id", args)
-            found = {p["id"]: {"id": p["id"], "name": p["name"], "created_at": p["created_at"], "counts": {kind: 0 for kind in KINDS}} for p in projects}
+            found = {p["id"]: {"id": p["id"], "name": p["name"], "created_at": p["created_at"], "counts": {**{kind: 0 for kind in KINDS}, "prompts": 0, "chats": 0}} for p in projects}
             # one grouped query for all the counts: runs by project and mode, then each mode is added to its tab
             rows = self._all("SELECT project_id, mode, COUNT(*) AS n FROM runs WHERE project_id IS NOT NULL AND deleted_at IS NULL GROUP BY project_id, mode")
+            # prompts and chats are counted in their own words (DESIGN.md §37.3 rule 5); those in the bin are not on show, so they are not counted
+            builder = {table: self._all(f"SELECT project_id, COUNT(*) AS n FROM {table} WHERE project_id IS NOT NULL AND deleted_at IS NULL GROUP BY project_id")
+                       for table in ("prompts", "chats")}
+        for table, counted in builder.items():
+            for row in counted:
+                if row["project_id"] in found:
+                    found[row["project_id"]]["counts"][table] = row["n"]
         for row in rows:
             project = found.get(row["project_id"])
             if project is None:
@@ -682,6 +745,12 @@ class Database:
                 return None
             ids = [r["id"] for r in c.execute("SELECT id FROM runs WHERE project_id=? ORDER BY seq", (project_id,)).fetchall()]
             c.execute("UPDATE runs SET project_id=NULL WHERE project_id=?", (project_id,))
+            # The Prompt builder's side (DESIGN.md §37.3 rule 5): no prompt or chat is deleted, in the bin or not, and none is left pointing at a project that is
+            # gone; a preference of the project is turned OFF and keeps its project_id, so it is listed as no longer in a project and never starts applying
+            # everywhere
+            c.execute("UPDATE prompts SET project_id=NULL WHERE project_id=?", (project_id,))
+            c.execute("UPDATE chats SET project_id=NULL WHERE project_id=?", (project_id,))
+            c.execute("UPDATE preferences SET enabled=0 WHERE project_id=?", (project_id,))
             c.execute("DELETE FROM projects WHERE id=?", (project_id,))
             return ids
 

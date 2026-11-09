@@ -307,13 +307,27 @@ export function itemRestoredText(run: { prompt: string }, item: ItemRef): string
 }
 
 // ------------------------------------------------------------------ project folders (DESIGN.md §32)
-/** What a project holds, in words: "3 pictures, 1 track, 2 vectors", or "no runs". The numbers are of runs in the history, each tab counted on its own.
+/** What a project holds, as the server counts it: the runs of each tab and, since 1.19, the prompts and chats of the Prompt builder (DESIGN.md §37.3 rule 5). Any may be missing:
+ *  a number that is not known is left out, never said as 0. */
+export interface ProjectCounts {
+  image: number;
+  music: number;
+  vector?: number;
+  prompts?: number;
+  chats?: number;
+}
+
+const many = (n: number, one: string, other: string): string => `${n} ${n === 1 ? one : other}`;
+
+/** What a project holds, in words: "3 pictures, 1 track, 2 vectors, 3 prompts, 2 chats", or "no runs". The numbers of runs are of runs in the history, each tab counted on its own.
  *  `vector` may be missing (the server's list of projects may not count Vector runs): then it says nothing about them, rather than "0". */
-export function projectContents(counts: { image: number; music: number; vector?: number }): string {
+export function projectContents(counts: ProjectCounts): string {
   const parts = [
-    counts.image ? `${counts.image} ${counts.image === 1 ? "picture" : "pictures"}` : "",
-    counts.music ? `${counts.music} ${counts.music === 1 ? "track" : "tracks"}` : "",
-    counts.vector ? `${counts.vector} ${counts.vector === 1 ? "vector" : "vectors"}` : "",
+    counts.image ? many(counts.image, "picture", "pictures") : "",
+    counts.music ? many(counts.music, "track", "tracks") : "",
+    counts.vector ? many(counts.vector, "vector", "vectors") : "",
+    counts.prompts ? many(counts.prompts, "prompt", "prompts") : "",
+    counts.chats ? many(counts.chats, "chat", "chats") : "",
   ].filter(Boolean);
   return parts.length ? parts.join(", ") : "no runs";
 }
@@ -339,10 +353,14 @@ export function keepLockedTitle(projectName: string | null): string {
   return `Kept because it is in ${projectName === null ? "a project" : `the project “${projectName}”`}. Take it out of the project first.`;
 }
 
-/** The question when a project is deleted (§32.1): its runs are not deleted, and it says how many and of what. */
-export function deleteProjectQuestion(project: { name: string; counts: { image: number; music: number; vector?: number } }): string {
+/** The question when a project is deleted (§32.1, §37.3 rule 5): nothing in it is deleted, and it says how many runs, prompts and chats there are and that they stay. */
+export function deleteProjectQuestion(project: { name: string; counts: ProjectCounts }): string {
   const runs = project.counts.image + project.counts.music + (project.counts.vector ?? 0);
+  const builder = (project.counts.prompts ?? 0) + (project.counts.chats ?? 0);
   const lead = `Delete the project “${project.name}”?`;
-  if (runs === 0) return `${lead} It has no runs.`;
-  return `${lead} Its ${runs} ${runs === 1 ? "run" : "runs"} (${projectContents(project.counts)}) ${runs === 1 ? "is" : "are"} not deleted: ${runs === 1 ? "it stays" : "they stay"} kept and ${runs === 1 ? "is" : "are"} no longer in a project.`;
+  const others = [project.counts.prompts ? many(project.counts.prompts, "prompt", "prompts") : "", project.counts.chats ? many(project.counts.chats, "chat", "chats") : ""].filter(Boolean).join(" and ");
+  if (runs === 0 && builder === 0) return `${lead} It has no runs.`;
+  if (runs === 0) return `${lead} Its ${others} ${builder === 1 ? "is" : "are"} not deleted: ${builder === 1 ? "it stays" : "they stay"} and ${builder === 1 ? "is" : "are"} no longer in a project.`;
+  const runsPart = `Its ${many(runs, "run", "runs")} (${projectContents({ image: project.counts.image, music: project.counts.music, vector: project.counts.vector })}) ${runs === 1 ? "is" : "are"} not deleted: ${runs === 1 ? "it stays" : "they stay"} kept and ${runs === 1 ? "is" : "are"} no longer in a project.`;
+  return builder === 0 ? `${lead} ${runsPart}` : `${lead} ${runsPart} Its ${others} stay too, no longer in a project.`;
 }

@@ -3,6 +3,7 @@ import { binNote, canceledText, duration, expiryText, keepLockedTitle, seedText,
 import { largerTarget, resolutionLabel } from "../options";
 import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState } from "../types";
 import { FourKButton } from "./FourKButton";
+import { RefineButton, RunFrom } from "../promptLinks";
 import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 
@@ -165,6 +166,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
           <p className="run-negative"><span>Negative:</span> {run.options.negative_prompt}</p>
         )}
         <p className="run-meta">{meta.join(" · ")}</p>
+        <RunFrom run={run} />
 
         {run.status === "running" && <ProgressBlock run={run} workerState={workerState} />}
 
@@ -218,6 +220,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
             title="Load this prompt and its options, with the seed locked">
             <ReuseIcon /> Reuse
           </button>
+          <RefineButton run={run} image={run.images[0] ?? null} />
           {target && (
             <button type="button" className="button small ghost" data-action="regenerate-larger" onClick={onRegenerateLarger}
               aria-label={`Regenerate larger: ${target.width}×${target.height}, ${target.steps} steps`}

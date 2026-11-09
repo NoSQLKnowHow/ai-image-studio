@@ -466,7 +466,7 @@ def test_a_1_17_database_gets_the_column_keeps_its_versions_and_is_the_same_as_a
     """Schema 8 adds `vectors.deleted_at` (criterion 251). A database as 1.17 left it opens, keeps every version (none of them in the bin), makes a copy
     of itself first, and then has exactly the columns, in the same order, that a new one has: the column is the last one so that ALTER TABLE gives the
     same table as CREATE TABLE does."""
-    assert SCHEMA_VERSION == 8
+    assert SCHEMA_VERSION >= 8  # (not == 8: a later release changes the number, and this test is about what schema 8 added)
     path = tmp_path / "studio.sqlite"
     fresh = tmp_path / "fresh.sqlite"
     Database(fresh).close()
@@ -491,4 +491,4 @@ def test_a_1_17_database_gets_the_column_keeps_its_versions_and_is_the_same_as_a
         migrated.close()
     copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"
     assert copy.exists() and "deleted_at" not in dict(columns(copy, "vectors"))  # the copy is the database as 1.17 left it, a way back
-    assert sqlite3.connect(path).execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == "8"
+    assert sqlite3.connect(path).execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()[0] == str(SCHEMA_VERSION)

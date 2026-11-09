@@ -20,6 +20,14 @@ from starlette.types import Scope
 
 from . import __version__
 from . import presets as P
+from .builder import builder_limits
+from .builder.chat_routes import add_chat_routes as add_builder_chat_routes
+from .builder.engine import BuilderEngine
+from .builder.library import Library
+from .builder.prompt_routes import add_prompt_routes as add_builder_prompt_routes
+from .builder.routes import add_routes as add_builder_routes
+from .builder.service import BuilderService
+from .builder.store import BuilderStore
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
@@ -28,7 +36,7 @@ from . import vector as vector_mod
 from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import (
-    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, QueueFull, RunConflict, RunNotFound,
+    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, RunConflict, RunNotFound,
 )
 from .naming import (
     content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename, vector_filename,
@@ -165,6 +173,14 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         await jobs.start()
         app.state.settings, app.state.db, app.state.storage, app.state.bus, app.state.jobs = (
             settings, db, storage, bus, jobs)
+        app.state.builder = BuilderService(settings)  # the Prompt builder's view of Ollama (DESIGN.md §37.4)
+        app.state.builder_store = BuilderStore(db)  # its prompts, versions and chats (§37.4)
+        app.state.builder_library = Library(app.state.builder_store)
+        app.state.builder_engine = BuilderEngine(settings, app.state.builder, app.state.builder_store, storage)
+        app.state.builder_slots = asyncio.Semaphore(settings.builder_at_once)  # one reply is written at a time (§37.3 rule 9)
+        app.state.builder_jobs = {}  # chat id -> the reply being written in it
+        if app.state.builder_store.ensure_search_in_step():
+            log.info("the prompts' word index was not in step with the prompts and has been rebuilt")
         app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
         app.state.vector_png_slots = asyncio.Semaphore(VECTOR_PNG_AT_ONCE)
         log.info("AI Image Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
@@ -233,6 +249,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "cfg_scale": {"min": P.CFG_MIN, "max": P.CFG_MAX},
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
                 "vector": vector_limits(),
+                "builder": builder_limits(),
                 "music": {
                     "duration": {"min": P.MUSIC_DURATION_MIN, "max": settings.music_max_seconds, "default": P.MUSIC_DEFAULT_SECONDS},
                     "tracks": {"min": 1, "max": settings.music_max_tracks},
@@ -245,6 +262,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "music": {**jobs.music_status(), "model": jobs.model_id_for("music")},
             "vector": jobs.vector_status(),  # the Vector tab (DESIGN.md §31.12.7): {available, reason, hint}, like `music`
             "upscaler": jobs.upscaler_status(),  # Enlarge (DESIGN.md §28.3): whether it can run here, and if not why
+            "builder": request.app.state.builder.cached(),  # the Prompt builder (§37.4): set up? what is known of Ollama (null until something has looked)
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
         }
@@ -280,6 +298,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _error(429, str(exc), "queue_full")
         except InputStorageError as exc:
             return _error(507, str(exc), "storage_full")
+        except PromptRefRefused as exc:
+            return _error(exc.status, exc.message, exc.code)
 
     async def read_limited_body(request: Request) -> Any:
         """The request body as bytes, or the 413 response when it is larger than STUDIO_MAX_UPLOAD_MB (refused from the declared
@@ -331,9 +351,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         deleted: Optional[bool] = Query(None, description="true: only the bin; false or absent: the history, without the bin"),
         project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a project's id: only its runs; 'none': only runs in no project; absent: any"),
         kind: Optional[Literal["image", "music", "vector"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
+        prompt: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a saved prompt's id: only the runs made from it (DESIGN.md §37.4)"),
     ) -> Any:
         try:
-            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project), kind)
+            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project, prompt=prompt), kind)
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
 
@@ -860,6 +881,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    add_builder_routes(app)  # /api/builder/... (registered before the page below, which takes every other path)
+    add_builder_chat_routes(app)
+    add_builder_prompt_routes(app)
 
     static_dir = settings.static_dir or DEFAULT_STATIC_DIR
     if (static_dir / "index.html").is_file():

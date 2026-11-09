@@ -59,6 +59,14 @@ class RunNotFound(Exception):
     pass
 
 
+class PromptRefRefused(Exception):
+    """A run was asked for from a saved prompt that is not there, or is in the bin (DESIGN.md §37.4). `status` and `code` are the response's."""
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
+
+
 class RunConflict(Exception):
     pass
 
@@ -275,10 +283,11 @@ class JobManager:
         binned_vectors = self.db.binned_vectors_for_runs(ids)  # and the versions (§35.4)
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *binned_images[run_id], *inputs[run_id])])
+        prompt_refs = self.db.prompt_refs_for_runs(rows)  # the saved prompt each run was made from, if any (§37.3 rule 3)
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
                         r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r),
-                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]], binned_vectors[r["id"]])
+                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]], binned_vectors[r["id"]], prompt_refs.get(r["id"]))
             for r in rows
         ]
 
@@ -324,6 +333,7 @@ class JobManager:
         width, height = run.width, run.height
         owned: list[dict[str, Any]] = []
         claims: list[str] = []
+        filed_in, keep = self._check_prompt_ref(run)
         if run.mode == "edit":
             sources, problems = inputs_mod.resolve_refs(self.db, self.storage, list(run.inputs))
             if problems:
@@ -356,6 +366,10 @@ class JobManager:
             "options_json": json.dumps(run.options_snapshot()),
             "lyrics": run.lyrics,
         }
+        if run.prompt_ref is not None:
+            row["prompt_id"], row["prompt_version"] = run.prompt_ref.prompt_id, run.prompt_ref.version
+            if filed_in is not None:  # made from a prompt that is in a project: filed there, and so kept (rule 4); a quick try is neither
+                row["project_id"], row["pinned"] = filed_in, int(keep)
         try:
             outcome = self.db.insert_run(row, self.settings.queue_cap, owned, claims)
         except BaseException:
@@ -381,9 +395,26 @@ class JobManager:
         payload = self.payload(run_id)
         assert payload is not None
         self.bus.publish("run.created", payload)
+        if filed_in is not None:
+            self._publish_projects()  # a project now holds one more
         self._publish_queue()
         self._wakeup.set()
         return payload
+
+    def _check_prompt_ref(self, run: ResolvedRun) -> tuple[Optional[str], bool]:
+        """A run made from a saved prompt (DESIGN.md §37.4): the prompt must be there and not in the bin (404, 409) and so must the version (422). Returns the project the run
+        is filed in, and whether it is kept: the prompt's project and yes, unless it is a quick try (a draft), which is linked to the prompt but neither filed nor kept (rule 4)."""
+        ref = run.prompt_ref
+        if ref is None:
+            return None, False
+        prompt = self.db.read_one("SELECT project_id, deleted_at FROM prompts WHERE id=?", (ref.prompt_id,))
+        if prompt is None:
+            raise PromptRefRefused(404, "prompt_not_found", "That prompt doesn't exist.")
+        if prompt["deleted_at"] is not None:
+            raise PromptRefRefused(409, "prompt_in_bin", "That prompt is in the bin. Restore it first.")
+        if self.db.read_one("SELECT 1 FROM prompt_versions WHERE prompt_id=? AND n=?", (ref.prompt_id, ref.version)) is None:
+            raise RunRequestError([(("prompt_ref", "version"), f"That prompt has no version {ref.version}.")])
+        return (None, False) if run.draft else (prompt["project_id"], True)
 
     @staticmethod
     def _shape_for(run: ResolvedRun, sources: list[inputs_mod.SourceImage]) -> tuple[Optional[int], Optional[int]]:
@@ -771,6 +802,25 @@ class JobManager:
         return removed
 
     # ------------------------------------------------------------ expiry
+    async def purge_builder_bin(self, cutoff: Optional[str]) -> int:
+        """Delete for good the prompts and chats that went to the bin before `cutoff` (all of them for None: Empty bin, or no bin), and the folders of those chats
+        (DESIGN.md §37.3 rule 1). The pictures made from a deleted prompt are not touched. Every open page is told."""
+        from .builder.files import remove_chat_files
+        from .builder.store import BuilderStore
+
+        store, removed = BuilderStore(self.db), 0
+        while True:
+            gone = store.purge(cutoff, SWEEP_BATCH)
+            if not (gone["prompt"] or gone["chat"]):
+                return removed
+            await asyncio.to_thread(lambda: [remove_chat_files(self.storage, chat_id) for chat_id in gone["chat"]])
+            for kind, ids in gone.items():
+                for item_id in ids:
+                    self.bus.publish("builder.changed", {"kind": kind, "id": item_id})
+            removed += len(gone["prompt"]) + len(gone["chat"])
+            if gone["prompt"]:
+                self._publish_projects()
+
     async def sweep_expired(self) -> int:
         """The daily clean-up. First the runs whose time in the bin is over are deleted for good (everything in the bin when there is
         no bin); then finished runs older than the retention period are moved to the bin, or deleted if there is none. Kept runs, and
@@ -786,6 +836,9 @@ class JobManager:
         pictures = await self._purge_binned_items(bin_cutoff)
         if pictures:
             log.info("deleted %d picture(s) and track(s) that had been in the bin for %d day(s) (STUDIO_BIN_DAYS)", pictures, bin_days)
+        built = await self.purge_builder_bin(bin_cutoff)  # and the Prompt builder's prompts and chats, on the same clock (§37.3 rule 1)
+        if built:
+            log.info("deleted %d prompt(s) and chat(s) that had been in the bin for %d day(s) (STUDIO_BIN_DAYS)", built, bin_days)
         days = self.settings.retention_days
         if days <= 0:
             return removed
@@ -876,7 +929,7 @@ class JobManager:
                     try:
                         started_worker = await self._prepare_worker(self._kind_of(row))
                     except _MemoryShortfall as short:
-                        self._finish(run_id, "failed", str(short), sysinfo.MEMORY_HINT)
+                        self._finish(run_id, "failed", str(short), self._memory_hint())
                         return
                     # Anything stale goes, and only now: a worker that was being stopped (by an Unload this run waited
                     # for, or by `_prepare_worker` making room for the other model) reports its exit as the run's
@@ -1153,7 +1206,7 @@ class JobManager:
         self._model = kind
         shortfall = self._memory_shortfall(kind)
         if shortfall:
-            self._set_worker_state("error", shortfall, sysinfo.MEMORY_HINT)
+            self._set_worker_state("error", shortfall, self._memory_hint())
             raise _MemoryShortfall(shortfall)
         self._set_worker_state("loading")
         await self._worker.start()
@@ -1179,7 +1232,7 @@ class JobManager:
             try:
                 await self._prepare_worker(kind)
             except _MemoryShortfall as short:
-                raise ModelRefused(409, "not_enough_memory", str(short), sysinfo.MEMORY_HINT) from short
+                raise ModelRefused(409, "not_enough_memory", str(short), self._memory_hint()) from short
             except (WorkerGone, OSError) as exc:
                 message = f"Could not start the {kind} worker: {exc}"
                 self._set_worker_state("error", message, "See the server log for details.")
@@ -1209,6 +1262,10 @@ class JobManager:
             await self._worker.stop(busy=loading)
         self._wakeup.set()  # drop the idle timer that was running for the worker that is gone
         return True
+
+    def _memory_hint(self) -> str:
+        """The advice that goes with a refusal for too little free memory; it mentions Unload from memory when the Prompt builder is set up (criterion 249)."""
+        return sysinfo.memory_hint(self.settings.builder_configured)
 
     def _memory_shortfall(self, kind: str = "image") -> Optional[str]:
         """Fail fast (decision #19) instead of starting a load that can't fit next to Hermes."""
