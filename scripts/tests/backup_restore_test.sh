@@ -147,6 +147,21 @@ add_models() {
   head -c 200000 /dev/urandom > "$OTHER/blobs/zzz"
   PRISTINE_MUSIC=$(tree_hash "$MUSIC"); PRISTINE_UP=$(sha256sum "$UPSCALER" | cut -d' ' -f1); PRISTINE_OTHER=$(tree_hash "$OTHER")
 }
+# The speech engines' models (DESIGN.md section 38.18, item 70), as the Hugging Face cache holds them: six repositories, three of them the Qwen3-TTS checkpoints.
+# add_speech_models [REPO...] adds the given ones (as "Org--Name"), or all six; each has the same blobs-and-symlinks layout as the other models.
+SPEECH_REPOS=(Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice Qwen--Qwen3-TTS-12Hz-1.7B-VoiceDesign Qwen--Qwen3-TTS-12Hz-1.7B-Base hexgrad--Kokoro-82M rhasspy--piper-voices mistralai--Voxtral-4B-TTS-2603)
+add_speech_models() {
+  local repos=("$@") r d
+  (( ${#repos[@]} )) || repos=("${SPEECH_REPOS[@]}")
+  for r in "${repos[@]}"; do
+    d="$HFDIR/hub/models--$r"; mkdir -p "$d/blobs" "$d/snapshots/rev5/x" "$d/refs"
+    head -c 20000 /dev/urandom > "$d/blobs/b-$r"
+    ln -s "../../../blobs/b-$r" "$d/snapshots/rev5/x/model.bin"
+    echo rev5 > "$d/refs/main"
+  done
+}
+# the manifest's model_paths of the backup in $B, as a list of cache paths one to a line
+model_paths_of() { member MANIFEST.txt | grep '^model_paths=' | cut -d= -f2- | tr ',' '\n'; }
 reset_stub() {   # container exists and runs; the image exists
   rm -rf "$STUB_STATE"; mkdir -p "$STUB_STATE"
   : > "$STUB_STATE/container"; echo true > "$STUB_STATE/running"
@@ -387,6 +402,120 @@ equals "an upscaler file that is itself a link: exits 0" "$rc" 0
 equals "it is stored as the file, not as a link that would point nowhere" "$(member model-cache.tar | tar -tvf - upscalers/RealESRGAN_x2plus.pth | cut -c1-1)" "-"
 equals "with the file's own bytes" "$(member model-cache.tar | tar -xOf - upscalers/RealESRGAN_x2plus.pth | sha256sum | cut -d' ' -f1)" "$(sha256sum "$T/real-upscaler.pth" | cut -d' ' -f1)"
 rm -f "$T/real-upscaler.pth"
+
+# ------------------------------------------------------------------ the speech models (DESIGN.md section 38.18, item 70)
+# The speech engines' models are in the cache once an engine has been used. A backup holds those that are there, of the engines the studio offers.
+IMG=hub/models--Qwen--Qwen-Image-2.1; MUS=hub/models--MiniMaxAI--MiniMax-Music3; UPS=upscalers/RealESRGAN_x2plus.pth
+section "the speech models are in the backup, in a fixed order, and nothing else from the cache"
+fresh; add_models; add_speech_models
+out=$(bk "$DEST" 2>&1); rc=$?
+equals "exits 0" "$rc" 0
+B=$(latest)
+equals "the manifest lists the three older models, then Qwen3-TTS's three checkpoints, Kokoro, Piper and Voxtral" "$(model_paths_of | tr '\n' ' ')" \
+  "$IMG $MUS $UPS hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-VoiceDesign hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-Base hub/models--hexgrad--Kokoro-82M hub/models--rhasspy--piper-voices hub/models--mistralai--Voxtral-4B-TTS-2603 "
+listing=$(member model-cache.tar | tar -tf -)
+for r in "${SPEECH_REPOS[@]}"; do contains "the blob of $r is in model-cache.tar" "$listing" "hub/models--$r/blobs/b-$r"; done
+equals "nothing else is: every entry is under one of the nine" "$(grep -Evc "^($IMG|$MUS|$UPS|$(printf 'hub/models--%s|' "${SPEECH_REPOS[@]}" | sed 's/|$//'))(/|\$)" <<< "$listing" || true)" 0
+equals "another tool's model in the same cache is still not in it" "$(grep -c 'hermes' <<< "$listing" || true)" 0
+verbose=$(member model-cache.tar | tar -tvf -)
+contains "a speech model's symlinks are kept as symlinks" "$verbose" "model.bin -> ../../../blobs/b-hexgrad--Kokoro-82M"
+equals "each speech blob is stored once" "$(grep -c 'blobs/b-hexgrad--Kokoro-82M$' <<< "$listing")" 1
+equals "no warning, and no note about a missing model" "$(grep -c 'Leaving\|not in the cache yet' <<< "$out" || true)" 0
+contains "the summary names them" "$out" "Qwen3-TTS VoiceDesign: hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-VoiceDesign"
+contains "and Voxtral" "$out" "Voxtral: hub/models--mistralai--Voxtral-4B-TTS-2603"
+bytes=$(( $(du -sb "$MODEL" | cut -f1) + $(du -sb "$MUSIC" | cut -f1) + $(du -sbL "$UPSCALER" | cut -f1) ))
+for r in "${SPEECH_REPOS[@]}"; do bytes=$(( bytes + $(du -sb "$HFDIR/hub/models--$r" | cut -f1) )); done
+contains "and the total size counts them" "$out" "models:  yes ($(human_of "$bytes"))"
+check "the checksums verify" bash -c "tar -xf '$B' -C '$T' --one-top-level=cks && cd '$T/cks' && sha256sum -c --quiet SHA256SUMS"; rm -rf "$T/cks"
+check "it is a good backup as far as restore.sh can tell" bash -c "'$REPO/scripts/restore.sh' --allow-root --verify '$B'"
+
+section "--no-model leaves the speech models out with the others"
+fresh; add_models; add_speech_models
+out=$(bk --no-model "$DEST" 2>&1); rc=$?
+B=$(latest)
+equals "exits 0" "$rc" 0
+equals "no model piece at all" "$(tar -tf "$B" | grep -c model-cache.tar || true)" 0
+
+# Most people use one or two engines, so most of the six are not in the cache. That is not a warning (it would be six on every backup):
+# the summary says which are missing, in one line, and the manifest lists only what is inside.
+section "a speech model that has not been downloaded is a note in the summary, not a warning"
+fresh; add_models; add_speech_models Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice hexgrad--Kokoro-82M
+out=$(bk "$DEST" 2>&1); rc=$?
+B=$(latest)
+equals "exits 0" "$rc" 0
+equals "only what is in the cache is in the backup" "$(model_paths_of | tr '\n' ' ')" "$IMG $MUS $UPS hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice hub/models--hexgrad--Kokoro-82M "
+equals "no WARNING for a speech model" "$(grep -c '^WARNING' <<< "$out" || true)" 0
+contains "the summary says which are missing" "$out" "not in the cache yet, so not in it; each downloads the first time its engine is used: Qwen3-TTS VoiceDesign, Qwen3-TTS Base, Piper voices, Voxtral"
+# an image or music model that is missing is still a warning, as it always was
+fresh; add_speech_models Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice
+rm -rf "$MUSIC"
+out=$(bk "$DEST" 2>&1); rc=$?
+equals "(the other models) a missing music model is still a warning" "$(grep -c 'Leaving the music model out of the backup' <<< "$out" || true)" 1
+# and a backup that has ONLY a speech model is a backup with a model, not "none was found"
+fresh; rm -rf "$MODEL"; add_speech_models hexgrad--Kokoro-82M
+out=$(bk "$DEST" 2>&1); rc=$?
+B=$(latest)
+equals "only a speech model in the cache: exits 0" "$rc" 0
+equals "the backup holds it" "$(model_paths_of | tr '\n' ' ')" "hub/models--hexgrad--Kokoro-82M "
+equals "and is a format 2 backup" "$(member MANIFEST.txt | grep '^format=')" "format=2"
+equals "it does not say that none was found" "$(grep -c 'None of the studio' <<< "$out" || true)" 0
+
+# STUDIO_SPEECH_ENGINES says which engines the studio offers (a comma list, case and spaces do not matter, empty = all). A backup holds exactly the models
+# the studio would use, so an engine that is switched off has none in it, even if its model is in the cache.
+section "only the speech engines the studio offers are backed up"
+fresh; add_models; add_speech_models
+printf 'STUDIO_SPEECH_ENGINES= Qwen3-TTS , piper\n' > "$REPO/.env"
+out=$(bk "$DEST" 2>&1); rc=$?
+B=$(latest)
+equals "exits 0" "$rc" 0
+equals "Qwen3-TTS's three and Piper are in; Kokoro and Voxtral are not (though they are in the cache)" "$(model_paths_of | tr '\n' ' ')" \
+  "$IMG $MUS $UPS hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-VoiceDesign hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-Base hub/models--rhasspy--piper-voices "
+equals "no warning, and no note about an engine that is off" "$(grep -c 'Leaving\|not in the cache yet' <<< "$out" || true)" 0
+fresh; add_models; printf 'STUDIO_SPEECH_ENGINES=kokoro\n' > "$REPO/.env"   # one engine, and its model is not there yet
+out=$(bk "$DEST" 2>&1)
+contains "an engine that is on and has no model yet is named in the summary" "$out" "not in the cache yet, so not in it; each downloads the first time its engine is used: Kokoro"
+equals "the others are not named" "$(grep -c 'Voxtral\|Piper\|Qwen3-TTS' <<< "$out" || true)" 0
+fresh; add_models; add_speech_models; printf 'STUDIO_SPEECH_ENGINES=\n' > "$REPO/.env"   # empty means all of them
+out=$(bk "$DEST" 2>&1); B=$(latest)
+equals "an empty STUDIO_SPEECH_ENGINES offers all of them" "$(model_paths_of | wc -l | tr -d ' ')" 9
+
+# The same odd settings as for the image model: a place on disk is not in the cache, so it is a warning that names the setting, and the others are still
+# backed up. A name in the cache that is not the default's is followed (STUDIO_SPEECH_<ID>_MODEL: the id in capitals, its hyphens underscores).
+section "speech settings that point somewhere unusual"
+fresh; add_models; add_speech_models
+printf 'STUDIO_SPEECH_QWEN3_TTS_MODEL=/models/my-qwen\n' > "$REPO/.env"
+out=$(bk "$DEST" 2>&1); rc=$?
+B=$(latest)
+equals "Qwen3-TTS as a folder on disk: exits 0" "$rc" 0
+contains "it warns, naming the setting" "$out" "STUDIO_SPEECH_QWEN3_TTS_MODEL is a folder on disk"
+equals "no Qwen3-TTS checkpoint is in the backup (though the default ones are in the cache), and the rest still are" "$(model_paths_of | grep -c Qwen3-TTS || true)" 0
+equals "Kokoro, Piper and Voxtral are still in" "$(model_paths_of | grep -c 'Kokoro\|piper\|Voxtral' || true)" 3
+fresh; add_models; add_speech_models myorg--Qwen3-TTS-12Hz-1.7B-CustomVoice Qwen--Qwen3-TTS-12Hz-1.7B-Base
+printf 'STUDIO_SPEECH_QWEN3_TTS_MODEL=myorg/\n' > "$REPO/.env"   # a namespace of one's own copies (a trailing slash is allowed, as the engine allows it)
+out=$(bk "$DEST" 2>&1); B=$(latest)
+equals "Qwen3-TTS under another namespace: that one is followed, not the default one" "$(model_paths_of | grep Qwen3-TTS | tr '\n' ' ')" "hub/models--myorg--Qwen3-TTS-12Hz-1.7B-CustomVoice "
+fresh; add_models; add_speech_models hexgrad--Kokoro-82M someone--kokoro-fork
+printf 'STUDIO_SPEECH_KOKORO_MODEL=someone/kokoro-fork\n' > "$REPO/.env"
+out=$(bk "$DEST" 2>&1); B=$(latest)
+equals "Kokoro as another repository: that one is followed, not the default" "$(model_paths_of | grep -i kokoro | tr '\n' ' ')" "hub/models--someone--kokoro-fork "
+fresh; add_models; add_speech_models
+printf 'STUDIO_SPEECH_KOKORO_MODEL=./kokoro\nSTUDIO_SPEECH_PIPER_MODEL=/voices/jenny.onnx\nSTUDIO_SPEECH_VOXTRAL_MODEL=~/voxtral\n' > "$REPO/.env"
+out=$(bk "$DEST" 2>&1); rc=$?
+B=$(latest)
+equals "Kokoro, Piper and Voxtral all on disk: exits 0" "$rc" 0
+contains "Kokoro's folder is named" "$out" "STUDIO_SPEECH_KOKORO_MODEL is a folder on disk"
+contains "Piper's voice file is named" "$out" "STUDIO_SPEECH_PIPER_MODEL is a file on disk"
+contains "Voxtral's folder is named, even written with a ~" "$out" "STUDIO_SPEECH_VOXTRAL_MODEL is a folder on disk"
+equals "so only the three older models and Qwen3-TTS's three are in" "$(model_paths_of | wc -l | tr -d ' ')" 6
+fresh; add_models; add_speech_models
+printf 'STUDIO_SPEECH_PIPER_MODEL=en_GB-jenny\n' > "$REPO/.env"   # not a .onnx file: the engine ignores it and uses its own voice, so the backup does too
+out=$(bk "$DEST" 2>&1); B=$(latest)
+equals "a Piper setting that is not a file is ignored, as the engine ignores it" "$(model_paths_of | grep -c piper-voices || true)" 1
+fresh; add_models; add_speech_models
+printf 'STUDIO_SPEECH_KOKORO_MODEL=bad name/with space\n' > "$REPO/.env"
+out=$(bk "$DEST" 2>&1); rc=$?
+equals "a speech model name a restore would refuse: exits 0" "$rc" 0
+contains "and says so" "$out" "Leaving Kokoro out of the backup: 'hub/models--bad name--with space' has a name that a restore would refuse"
 
 section "a studio that was already stopped stays stopped"
 fresh; echo false > "$STUB_STATE/running"
@@ -699,6 +828,30 @@ check "another tool's model is not there: it was never in the backup" test ! -e 
 equals "the music model's symlinks are symlinks" "$(readlink "$MUSIC/snapshots/rev9/audio/model.safetensors")" "../../../blobs/def456"
 contains "it said which models it was restoring" "$out" "restore the model $HFDIR/hub/models--MiniMaxAI--MiniMax-Music3"
 check "no temp folder left behind" bash -c "! ls -A '$REPO' | grep -q '^\.restore-tmp'"
+
+# The speech models come back as the others do: restore.sh reads the model_paths of the manifest and checks each against the same rule for a name, so
+# nothing in it is specific to them; this proves it, with real bytes and the symlinks.
+section "restore: the speech models, on a 'new machine'"
+fresh; add_models; add_speech_models
+declare -A SPEECH_HASH=(); for r in "${SPEECH_REPOS[@]}"; do SPEECH_HASH[$r]=$(tree_hash "$HFDIR/hub/models--$r"); done
+bk "$DEST" >/dev/null 2>&1; B=$(latest)
+rm -rf "$REPO/data" "$HFDIR"; rm -f "$REPO/.env"; echo false > "$STUB_STATE/running"
+out=$(rs "$B" 2>&1); rc=$?
+equals "exits 0" "$rc" 0
+for r in "${SPEECH_REPOS[@]}"; do equals "$r is identical" "$(tree_hash "$HFDIR/hub/models--$r")" "${SPEECH_HASH[$r]}"; done
+equals "a speech model's symlinks are symlinks" "$(readlink "$HFDIR/hub/models--hexgrad--Kokoro-82M/snapshots/rev5/x/model.bin")" "../../../blobs/b-hexgrad--Kokoro-82M"
+equals "the image model came back with them" "$(tree_hash "$MODEL")" "$PRISTINE_MODEL"
+contains "it said it was restoring a speech model" "$out" "restore the model $HFDIR/hub/models--mistralai--Voxtral-4B-TTS-2603"
+
+# a speech model that is already in the cache is left alone, as any model is (here Kokoro, with a file of its own that must survive)
+section "restore: a speech model already in the cache is left alone"
+fresh; add_models; add_speech_models hexgrad--Kokoro-82M rhasspy--piper-voices
+bk "$DEST" >/dev/null 2>&1; B=$(latest)
+rm -rf "$REPO/data" "$HFDIR/hub/models--rhasspy--piper-voices"; echo mine > "$HFDIR/hub/models--hexgrad--Kokoro-82M/MINE"; echo false > "$STUB_STATE/running"
+out=$(rs "$B" 2>&1); rc=$?
+equals "exits 0" "$rc" 0
+check "Kokoro was left alone: the file of its own is still there" test -f "$HFDIR/hub/models--hexgrad--Kokoro-82M/MINE"
+check "Piper's voices, which were missing, were restored" test -d "$HFDIR/hub/models--rhasspy--piper-voices/blobs"
 
 # Restore decides model by model. One already in the cache is left alone (the extra file in it must survive), the missing one is
 # restored, and only the missing one is even unpacked: the tar stub's log shows which names restore.sh asked tar to extract.

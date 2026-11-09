@@ -9,7 +9,7 @@
 #   image.tar.gz     the Docker image, exactly as built                    unless --no-image
 #   env.backup       your .env settings (may hold a token)                 unless --no-env
 #   model-cache.tar  the studio's models from the Hugging Face cache       unless --no-model
-#                    (the image model, the music model, the Enlarge upscaler file; nothing else in the cache)
+#                    (the image model, the music model, the Enlarge upscaler file, and the speech models that have been downloaded; nothing else in the cache)
 #   MANIFEST.txt     what this is, and which git commit and image it came from
 #   SHA256SUMS       a checksum for every other piece
 set -euo pipefail
@@ -25,10 +25,14 @@ into a single .tar file, named ai-image-studio-backup-<date>-<time>.tar, inside 
 is stopped for the few seconds it takes to copy the data, then started again; the image and models are
 copied while it runs. The finished .tar is re-read and every checksum checked before it gets its name.
 
-The studio's models are the three it uses, found from your .env settings: the image model (STUDIO_MODEL),
-the music model (STUDIO_MUSIC_MODEL) and the Enlarge upscaler file (STUDIO_UPSCALER_MODEL), all in the
-Hugging Face cache; about 60 GiB with the defaults. Nothing else in that cache is touched. One that isn't
-there (never downloaded, or not in the cache at all) is skipped with a warning that names it.
+The studio's models are the ones it uses, found from your .env settings: the image model (STUDIO_MODEL),
+the music model (STUDIO_MUSIC_MODEL), the Enlarge upscaler file (STUDIO_UPSCALER_MODEL) and the speech
+models of the engines it offers (STUDIO_SPEECH_ENGINES): Qwen3-TTS's three checkpoints, Kokoro, Piper's
+voices and Voxtral, all in the Hugging Face cache; about 60 GiB with the defaults, and each speech model that
+has been downloaded adds its own size. Nothing else in that cache is touched. An image, music or upscaler
+model that isn't there (never downloaded, or not in the cache at all) is skipped with a warning that names
+it. A speech model that has not been downloaded yet (each is fetched the first time its engine is used) is
+only noted in the summary, since few people use all of them.
 
 Options:
   --no-model     leave out the models (they are included by default)
@@ -116,6 +120,13 @@ want_model() {
     warn "Leaving the $label out of the backup: it isn't in the model cache yet ($HF_DIR/$path). It downloads the first time it is used."
   fi
 }
+# want_speech_model LABEL PATH: as want_model, for a speech model. One that is not in the cache yet is not a warning: it is remembered, and the summary says so.
+SPEECH_MISSING=()
+want_speech_model() {
+  local label=$1 path=$2
+  if ! valid_model_path "$path"; then warn "Leaving $label out of the backup: '$path' has a name that a restore would refuse."; return 0; fi
+  if [[ -d $HF_DIR/$path ]]; then MODEL_PATHS+=("$path"); MODEL_LABELS+=("$label"); else SPEECH_MISSING+=("$label"); fi
+}
 if (( WITH_MODEL )); then
   # Look for the three models in the order they are packed and listed: the image model first, then the music model, then
   # the upscaler. PATH is left empty when a setting can't name a cached model, and want_model explains and skips that one.
@@ -126,6 +137,30 @@ if (( WITH_MODEL )); then
   want_model "music model" "$path" "STUDIO_MUSIC_MODEL is a folder on disk, not a model in the Hugging Face cache. Back that folder up yourself."
   path=$(upscaler_path) || path=""
   want_model "Enlarge upscaler" "$path" "STUDIO_UPSCALER_MODEL is outside the model cache (/models in the container). Back that file up yourself."
+  # The speech engines' models (DESIGN.md section 38.18, item 70): those of the engines the studio offers, in a fixed order. An engine's model is only
+  # in the cache once the engine has been used, and nobody uses all four, so one that is not there yet is NOT a warning (that would be six of
+  # them on every backup): the summary notes which are missing. A setting that names a place on disk is a warning, as for the models above.
+  for engine in $SPEECH_ENGINES; do
+    speech_engine_on "$engine" || continue
+    setting=$(speech_setting "$engine")
+    case $engine in
+      qwen3-tts)   # three checkpoints under one namespace (or one folder) that the setting may change
+        if on_disk "$setting"; then warn "Leaving Qwen3-TTS out of the backup: STUDIO_SPEECH_QWEN3_TTS_MODEL is a folder on disk, not a namespace in the Hugging Face cache. Back that folder up yourself."
+        else
+          base=${setting:-$SPEECH_QWEN3_NAMESPACE}; base=${base%/}
+          for name in $SPEECH_QWEN3_CHECKPOINTS; do want_speech_model "Qwen3-TTS ${name##*-}" "$(hub_path "$base/$name")"; done
+        fi ;;
+      kokoro)      # a Hugging Face repository, or a folder
+        if on_disk "$setting"; then warn "Leaving Kokoro out of the backup: STUDIO_SPEECH_KOKORO_MODEL is a folder on disk, not a model in the Hugging Face cache. Back that folder up yourself."
+        else want_speech_model "Kokoro" "$(hub_path "${setting:-$DEFAULT_SPEECH_KOKORO}")"; fi ;;
+      piper)       # the setting is a voice FILE (.onnx) on disk; anything else is ignored and the engine's own voice is used
+        if [[ $setting == *.onnx ]]; then warn "Leaving Piper's voice out of the backup: STUDIO_SPEECH_PIPER_MODEL is a file on disk, not a voice in the Hugging Face cache. Back that file up yourself."
+        else want_speech_model "Piper voices" "$(hub_path "$DEFAULT_SPEECH_PIPER")"; fi ;;
+      voxtral)     # a Hugging Face model id, or a folder
+        if on_disk "$setting"; then warn "Leaving Voxtral out of the backup: STUDIO_SPEECH_VOXTRAL_MODEL is a folder on disk, not a model in the Hugging Face cache. Back that folder up yourself."
+        else want_speech_model "Voxtral" "$(hub_path "${setting:-$DEFAULT_SPEECH_VOXTRAL}")"; fi ;;
+    esac
+  done
   # If none was found there is no model piece at all: switch the models off, so the file list, the manifest and the format all say so
   if (( ${#MODEL_PATHS[@]} == 0 )); then
     warn "None of the studio's models was found in the cache, so this backup holds no model."
@@ -171,6 +206,10 @@ if (( WITH_MODEL )); then
   # The summary: the models' total size, then one line each so you can see exactly what will be packed
   say "  models:  yes ($(human "$model_bytes"))"
   for (( i = 0; i < ${#MODEL_PATHS[@]}; i++ )); do say "             - ${MODEL_LABELS[i]}: ${MODEL_PATHS[i]}"; done
+  if (( ${#SPEECH_MISSING[@]} )); then
+    printf -v missing '%s, ' "${SPEECH_MISSING[@]}"
+    say "             (not in the cache yet, so not in it; each downloads the first time its engine is used: ${missing%, })"
+  fi
 else
   say "  models:  $MODELS_NOTE"
 fi

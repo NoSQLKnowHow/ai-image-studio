@@ -10,6 +10,14 @@ BACKUP_PREFIX="ai-image-studio-backup-"
 DEFAULT_MODEL="Qwen/Qwen-Image-2.1"
 DEFAULT_MUSIC_MODEL="MiniMaxAI/MiniMax-Music3"
 DEFAULT_UPSCALER="upscalers/RealESRGAN_x2plus.pth"   # inside the model cache folder
+# The speech engines' models (DESIGN.md section 38.18, item 70). Like the three above they must stay in step with the code, here the engines in
+# backend/studio/speech/engines/; backend/tests/test_backup_speech_models.py compares the two, so a change on one side only fails a test.
+SPEECH_ENGINES="qwen3-tts kokoro piper voxtral"      # the order they are packed and listed in
+SPEECH_QWEN3_NAMESPACE="Qwen"                        # Qwen3-TTS is three checkpoints, one for each kind of voice: the presets, a designed one, a cloned one
+SPEECH_QWEN3_CHECKPOINTS="Qwen3-TTS-12Hz-1.7B-CustomVoice Qwen3-TTS-12Hz-1.7B-VoiceDesign Qwen3-TTS-12Hz-1.7B-Base"
+DEFAULT_SPEECH_KOKORO="hexgrad/Kokoro-82M"
+DEFAULT_SPEECH_PIPER="rhasspy/piper-voices"          # the repository the voice (Jenny) is one file of
+DEFAULT_SPEECH_VOXTRAL="mistralai/Voxtral-4B-TTS-2603"
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 REPO=$(cd -- "$SCRIPT_DIR/.." && pwd)
@@ -80,6 +88,28 @@ hf_model_path() {
   model=$(env_value "$1" "$2")
   case $model in /*|./*|../*) return 1;; esac
   printf 'hub/models--%s' "${model//\//--}"
+}
+
+# hub_path REPO_ID: where a Hugging Face repository lives inside the cache folder ("Qwen/Qwen-Image-2.1" -> "hub/models--Qwen--Qwen-Image-2.1").
+hub_path() { printf 'hub/models--%s' "${1//\//--}"; }
+
+# on_disk VALUE: is a model setting a place on disk (so not a name in the Hugging Face cache)? The same test as hf_model_path makes, and "~", which the engines expand.
+on_disk() { case $1 in /*|./*|../*|"~"*) return 0;; esac; return 1; }
+
+# speech_engine_on ID: does the studio offer this speech engine? STUDIO_SPEECH_ENGINES is a comma list of ids (empty = all of them), compared without
+# regard to case and spaces, as the server reads it. A backup holds exactly the models the studio would use, so an engine that is switched off has none.
+speech_engine_on() {
+  local list
+  list=$(env_value STUDIO_SPEECH_ENGINES "")
+  list=${list,,}; list=${list//[[:space:]]/}
+  [[ -z $list || ",$list," == *",$1,"* ]]
+}
+
+# speech_setting ID: what STUDIO_SPEECH_<ID>_MODEL says, the id in capitals with its hyphens as underscores (qwen3-tts -> STUDIO_SPEECH_QWEN3_TTS_MODEL).
+# Empty when it is not set, which means the engine's own model.
+speech_setting() {
+  local id=${1^^}
+  env_value "STUDIO_SPEECH_${id//-/_}_MODEL" ""
 }
 
 # upscaler_path: where Enlarge's model file lives inside the cache folder. STUDIO_UPSCALER_MODEL is a path as the
