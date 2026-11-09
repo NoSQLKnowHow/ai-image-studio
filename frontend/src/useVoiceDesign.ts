@@ -73,7 +73,7 @@ export function useVoiceDesign({ engine, jobs, api = speechApi, pollMs = 2000 }:
         const waiting = waitForJob(first, { jobs, api, pollMs, wanted: () => mine === turn.current });
         cancel.current = waiting.cancel;
         const finished = await waiting.done;
-        if (mine !== turn.current || !finished) return;
+        if (!finished) return; // (a wait that was given up, because another description was asked for or the dialog was left, resolves with nothing)
         const made = finished.status === "done" ? candidateClips(finished) : [];
         if (made.length === 0) {
           setProblem({ message: finished.error?.message ?? "The samples could not be made.", hint: finished.error?.hint ?? null });

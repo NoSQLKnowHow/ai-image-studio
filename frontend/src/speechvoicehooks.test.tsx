@@ -529,3 +529,93 @@ describe("adding a voice from a recording", () => {
     expect(signal?.aborted).toBe(true);
   });
 });
+
+
+// ------------------------------------------------------------------ what comes late, from an earlier asking
+describe("answers that come late, from an earlier asking", () => {
+  it("takes the answer of the latest asking for the passage, and not a late one of an earlier asking", async () => {
+    const held: Array<{ resolve: (p: Passage) => void; reject: (e: unknown) => void }> = [];
+    const api = { passage: vi.fn(() => new Promise<Passage>((resolve, reject) => void held.push({ resolve, reject }))) };
+    const view = renderHook(() => usePassage(true, api));
+    act(() => view.result.current.retry()); // asked again while the first is still out
+    await act(settle);
+    expect(api.passage).toHaveBeenCalledTimes(2);
+    held[1].resolve(PASSAGE);
+    await act(settle);
+    held[0].resolve({ ...PASSAGE, name_max: 1 }); // the first, late, and different
+    await act(settle);
+    expect(view.result.current.passage).toEqual(PASSAGE);
+  });
+
+  it("does not show the failure of an earlier asking over a passage that has come", async () => {
+    const held: Array<{ resolve: (p: Passage) => void; reject: (e: unknown) => void }> = [];
+    const api = { passage: vi.fn(() => new Promise<Passage>((resolve, reject) => void held.push({ resolve, reject }))) };
+    const view = renderHook(() => usePassage(true, api));
+    act(() => view.result.current.retry());
+    await act(settle);
+    held[1].resolve(PASSAGE);
+    await act(settle);
+    held[0].reject(new ApiError("The studio is busy.", 503, "busy"));
+    await act(settle);
+    expect(view.result.current.problem).toBeNull();
+    expect(view.result.current.passage).toEqual(PASSAGE);
+  });
+
+  it("is told nothing of the job of an earlier description once another is asked: only the latest one's samples are taken", async () => {
+    const jobs = createEmitter<SpeechJob>();
+    const api = {
+      design: vi.fn(async (_d: string, _e?: string) => designJob("queued", { id: "j1" })),
+      job: vi.fn(async (_id: string) => designJob("queued")),
+      saveVoice: vi.fn(async (_b: unknown) => DESIGNED),
+    };
+    api.design.mockResolvedValueOnce(designJob("queued", { id: "j1" })).mockResolvedValueOnce(designJob("queued", { id: "j2" }));
+    const view = renderHook(() => useVoiceDesign({ engine: "fake", jobs, api, pollMs: 2000 }));
+    act(() => view.result.current.start("first"));
+    await act(settle);
+    act(() => view.result.current.start("second"));
+    await act(settle);
+    act(() => jobs.emit(designJob("done", { id: "j1" }))); // the first description's samples, made after another was asked for
+    await act(settle);
+    expect(view.result.current.phase).toBe("working");
+    act(() => jobs.emit(designJob("done", { id: "j2", files: [{ index: 0, key: "c0", url: "/second/0.wav" }] })));
+    await act(settle);
+    expect(view.result.current.phase).toBe("done");
+    expect(view.result.current.clips.map((c) => c.url)).toEqual(["/second/0.wav"]);
+  });
+
+  it("takes a design that failed for a failure even if its job still lists files", async () => {
+    const jobs = createEmitter<SpeechJob>();
+    const api = { design: vi.fn(async () => designJob("queued")), job: vi.fn(async () => designJob("queued")), saveVoice: vi.fn(async () => DESIGNED) };
+    const view = renderHook(() => useVoiceDesign({ engine: "fake", jobs, api, pollMs: 2000 }));
+    act(() => view.result.current.start("a warm voice"));
+    await act(settle);
+    act(() => jobs.emit(designJob("failed", { error: { message: "The engine ran out of memory.", hint: null } }))); // (its files are still listed)
+    await act(settle);
+    expect(view.result.current).toMatchObject({ phase: "failed", clips: [], problem: { message: "The engine ran out of memory." } });
+  });
+
+  it("does not show the refusal of a description that was given up", async () => {
+    const jobs = createEmitter<SpeechJob>();
+    let refuse: (error: unknown) => void = () => undefined;
+    const api = {
+      design: vi.fn(() => new Promise<SpeechJob>((_, reject) => (refuse = reject))),
+      job: vi.fn(async () => designJob("queued")),
+      saveVoice: vi.fn(async () => DESIGNED),
+    };
+    const view = renderHook(() => useVoiceDesign({ engine: "fake", jobs, api, pollMs: 2000 }));
+    act(() => view.result.current.start("a warm voice"));
+    act(() => view.result.current.reset());
+    refuse(new ApiError("The queue is full.", 429, "queue_full"));
+    await act(settle);
+    expect(view.result.current).toMatchObject({ phase: "idle", problem: null });
+  });
+
+  it("forgets why a recording was refused when it is put away", async () => {
+    const api = { uploadRecording: vi.fn(async () => STAGED), saveVoice: vi.fn(async () => CLONED) };
+    const view = renderHook(() => useRecordedVoice({ engine: "fake", limits: { recording_mb: 25 }, api }));
+    act(() => view.result.current.choose(new File([new Uint8Array(10)], "notes.txt")));
+    expect(view.result.current.problem).not.toBeNull();
+    act(() => view.result.current.discard());
+    expect(view.result.current.problem).toBeNull();
+  });
+});

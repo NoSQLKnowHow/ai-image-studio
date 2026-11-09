@@ -268,6 +268,7 @@ describe("Add my voice", () => {
     await flush();
     const upload = t.calls.find((c) => c.url === "/api/speech/recordings") as Call;
     expect(upload.init.method).toBe("POST");
+    expect((document.querySelector('input[type="file"]') as HTMLInputElement).value).toBe(""); // let go of, so that the same file chosen again is a change
     expect(screen.getByText("10 s long")).toBeTruthy();
     expect(screen.getByText("Choose another recording")).toBeTruthy();
     expect(screen.queryByRole("status")).toBeNull();
@@ -727,5 +728,139 @@ describe("the Speech tab with the person's own voices", () => {
     press("Keep it"); // and the question can be put away, and asked again with nothing left over
     press("Delete My own voice");
     expect(within(screen.getByRole("alertdialog")).queryByRole("alert")).toBeNull();
+  });
+});
+
+
+// ------------------------------------------------------------------ more of what the dialogs and the list do
+describe("the details of the dialogs and the list", () => {
+  const designed = async (answer: (call: Call) => Answer) => {
+    server(answer);
+    const jobs = createEmitter<SpeechJob>();
+    const onSaved = vi.fn();
+    render(<DesignVoiceDialog open onOpenChange={vi.fn()} engine={ENGINE} passage={loaded} jobs={jobs} onSaved={onSaved} />);
+    fireEvent.change(screen.getByRole("textbox", { name: "Describe the voice" }), { target: { value: "a warm voice" } });
+    press("Make three samples");
+    await flush();
+    act(() => jobs.emit(queued("done")));
+    await flush();
+    return { onSaved };
+  };
+  const basic = (call: Call) => (call.url === "/api/speech/voices" ? { body: DESIGNED } : { body: queued() });
+
+  it("does not nag about an empty name, only keeps Save off", async () => {
+    await designed(basic);
+    fireEvent.click(screen.getByRole("radio", { name: "Sample 1" }));
+    expect(screen.queryByText("Give the voice a name.")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Name this voice"), { target: { value: "a" } });
+    fireEvent.change(screen.getByLabelText("Name this voice"), { target: { value: "" } });
+    expect(screen.queryByText("Give the voice a name.")).toBeNull();
+    expect(button("Save this voice").disabled).toBe(true);
+  });
+
+  it("keeps Save off when a name is given but no sample is chosen", async () => {
+    await designed(basic);
+    fireEvent.change(screen.getByLabelText("Name this voice"), { target: { value: "Warm narrator" } });
+    expect(button("Save this voice").disabled).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: "Sample 3" }));
+    expect(button("Save this voice").disabled).toBe(false);
+  });
+
+  it("says it is saving, and cannot be pressed again or have its name changed meanwhile", async () => {
+    let release: (r: { body: unknown }) => void = () => undefined;
+    const held = new Promise<{ body: unknown }>((resolve) => (release = resolve));
+    const t = await designed((call) => (call.url === "/api/speech/voices" ? held : { body: queued() }));
+    fireEvent.click(screen.getByRole("radio", { name: "Sample 1" }));
+    fireEvent.change(screen.getByLabelText("Name this voice"), { target: { value: "Warm narrator" } });
+    press("Save this voice");
+    await flush();
+    expect(button("Saving…").disabled).toBe(true);
+    expect((screen.getByLabelText("Name this voice") as HTMLInputElement).disabled).toBe(true);
+    release({ body: DESIGNED });
+    await flush();
+    expect(t.onSaved).toHaveBeenCalledWith(DESIGNED);
+  });
+
+  it("has each sample's own Play and Stop: pressing one does not make another say Stop", async () => {
+    await designed(basic);
+    press("Play sample 2");
+    await flush();
+    expect(button("Stop sample 2")).toBeTruthy();
+    expect(button("Play sample 1")).toBeTruthy();
+    expect(button("Play sample 3")).toBeTruthy();
+    press("Play sample 3");
+    await flush();
+    expect(button("Play sample 2")).toBeTruthy();
+    expect(button("Stop sample 3")).toBeTruthy();
+  });
+});
+
+describe("the list's details", () => {
+  const sampler = { phase: () => "idle" as const, problem: null, play: vi.fn(), stop: vi.fn() };
+  const base = { engine: "fake", presets: PRESETS, saved: SAVED, chosen: null, onChoose: vi.fn(), filter: NO_VOICE_FILTER, onFilter: vi.fn(), sampler, loading: false, problem: null, idle: null };
+
+  it("shows no row of tools when the engine can do neither", () => {
+    render(<SpeechVoices {...base} tools={{ design: null, clone: null }} />);
+    expect(document.querySelector(".speech-voice-tools")).toBeNull();
+  });
+
+  it("does not send a name again when Enter is pressed while it is being saved", async () => {
+    let release: (p: null) => void = () => undefined;
+    const onRename = vi.fn(() => new Promise<null>((resolve) => (release = resolve)));
+    render(<SpeechVoices {...base} onRename={onRename} onDelete={vi.fn()} />);
+    press("Rename My own voice");
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Kirk" } });
+    const form = screen.getByRole("textbox").closest("form") as HTMLFormElement;
+    await act(async () => void fireEvent.submit(form));
+    await act(async () => void fireEvent.submit(form)); // Enter again, while the first is out
+    expect(onRename).toHaveBeenCalledTimes(1);
+    await act(async () => release(null));
+  });
+});
+
+describe("the tab, in the details of deleting", () => {
+  const tabWith = (deleteAnswer: (call: Call) => Answer) => {
+    server((call) => {
+      if (call.url === "/api/speech/samples") return { body: { ready: true, url: "/api/speech/samples/a.wav", job: null } };
+      if (call.init.method === "DELETE") return deleteAnswer(call);
+      return { status: 404, body: { detail: "n/a", code: "not_found" } };
+    });
+    render(<SpeechPanel hidden={false} caps={CAPS} store={memoryStore()} jobs={createEmitter()} />);
+  };
+
+  it("stops the sample of a voice that is deleted while it plays", async () => {
+    tabWith(() => ({ status: 204, body: null }));
+    await flush();
+    press("Play sample of My own voice");
+    await flush();
+    const audio = document.querySelector("audio") as HTMLAudioElement;
+    expect(audio.getAttribute("src")).toBe("/api/speech/samples/a.wav");
+    press("Delete My own voice");
+    press("Delete voice");
+    await flush();
+    expect(audio.hasAttribute("src")).toBe(false);
+  });
+
+  it("forgets why the last attempt failed when it is tried again", async () => {
+    let release: (r: { status: number; body: unknown }) => void = () => undefined;
+    let first = true;
+    tabWith(() => {
+      if (first) {
+        first = false;
+        return { status: 409, body: { detail: "That voice is being used by a reading.", code: "in_use" } };
+      }
+      return new Promise((resolve) => (release = resolve));
+    });
+    await flush();
+    press("Delete My own voice");
+    press("Delete voice");
+    await flush();
+    expect(within(screen.getByRole("alertdialog")).getByRole("alert")).toBeTruthy();
+    press("Delete voice"); // again: the second attempt is held
+    await flush();
+    expect(within(screen.getByRole("alertdialog")).queryByRole("alert")).toBeNull();
+    expect(button("Deleting…")).toBeTruthy();
+    release({ status: 204, body: null });
+    await flush();
   });
 });
