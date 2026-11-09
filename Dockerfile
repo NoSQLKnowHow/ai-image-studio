@@ -62,6 +62,39 @@ COPY backend/requirements-music.txt /app/backend/
 RUN pip install --no-deps --target /opt/music-libs -r /app/backend/requirements-music.txt
 ENV STUDIO_MUSIC_LIBS=/opt/music-libs
 
+# Speech (DESIGN.md sections 38.3 and 38.18). EVERY piece of it is optional and in a step of its own: a failure prints a note, the engine is then shown as "not installed"
+# with its reason on the Speech tab, and docker/check_image.py prints a line for each ("Speech: ..."). None of it can fail the build, and none of it replaces NVIDIA's builds
+# (the pins protect them, and check_image.py fails the build if one was replaced).
+#
+# ffmpeg reads a voice recording that is not a plain WAV (MP3, M4A, OGG, FLAC, WebM).
+# hadolint ignore=DL3008
+RUN (apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*) \
+    || echo "NOTE: ffmpeg could not be installed; a voice recording that is not a plain WAV file will be refused (DESIGN.md section 38.4)"
+COPY backend/requirements-speech-kokoro.txt backend/requirements-speech-piper.txt backend/requirements-speech-qwen3-extras.txt \
+     backend/requirements-speech-qwen3.txt backend/requirements-speech-voxtral.txt /app/backend/
+# Kokoro, Piper and what Qwen3-TTS imports besides torch and transformers do not conflict with anything in the image, so they are installed with it, under its pins.
+RUN (pip install -c /app/ngc-pins.txt -r /app/backend/requirements-speech-kokoro.txt \
+        || echo "NOTE: Kokoro could not be installed; its engine will say so (DESIGN.md section 38.1)") \
+    && pip freeze > /app/pip-freeze.txt
+RUN (pip install -c /app/ngc-pins.txt -r /app/backend/requirements-speech-piper.txt \
+        || echo "NOTE: Piper could not be installed; its engine will say so (DESIGN.md section 38.1)") \
+    && pip freeze > /app/pip-freeze.txt
+RUN (pip install -c /app/ngc-pins.txt -r /app/backend/requirements-speech-qwen3-extras.txt \
+        || echo "NOTE: librosa, soundfile, einops, sox and onnxruntime could not be installed; Qwen3-TTS will say so (DESIGN.md section 38.1)") \
+    && pip freeze > /app/pip-freeze.txt
+# Qwen3-TTS's own transformers 4.57.3, accelerate, huggingface-hub and tokenizers (it pins them exactly; the image has others), without dependencies, in a folder that only its
+# worker puts first on its Python path: the way the music model has its own diffusers above.
+RUN pip install --no-deps --target /opt/speech-libs/qwen3-tts -r /app/backend/requirements-speech-qwen3.txt \
+    || echo "NOTE: Qwen3-TTS's libraries could not be installed; its engine will say so (DESIGN.md section 38.1)"
+# Voxtral runs as a vLLM-Omni server of its own, in a virtual environment of its own (vLLM brings its own PyTorch). Off unless asked for:
+#   docker compose build --build-arg SPEECH_VOXTRAL=1
+ARG SPEECH_VOXTRAL=0
+RUN if [ "$SPEECH_VOXTRAL" = "1" ]; then \
+        (python -m venv /opt/speech-libs/voxtral && /opt/speech-libs/voxtral/bin/pip install -r /app/backend/requirements-speech-voxtral.txt) \
+        || echo "NOTE: Voxtral's server could not be installed; its engine will say so (DESIGN.md section 38.1)"; \
+    else echo "NOTE: Voxtral is not built into this image (add --build-arg SPEECH_VOXTRAL=1 to build it); its engine will say so"; fi
+ENV STUDIO_SPEECH_LIBS=/opt/speech-libs
+
 COPY backend/studio /app/backend/studio
 COPY docker/ /app/docker/
 COPY scripts/minimax_music.py /app/scripts/minimax_music.py

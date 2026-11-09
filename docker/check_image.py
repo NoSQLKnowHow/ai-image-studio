@@ -8,14 +8,17 @@ Fails (exit 1) when:
   (studio.pipelines.real.import_runtime, which also catches diffusers' placeholder classes),
 - the music worker can't import the MiniMax-Music3 pipeline with its own copy of diffusers (STUDIO_MUSIC_LIBS),
 - the built web page is missing.
-Not fatal (a note): spandrel for Enlarge and vtracer + shapely for Vector cannot be imported or used.
+Not fatal (a note): spandrel for Enlarge and vtracer + shapely for Vector cannot be imported or used, and each speech engine (Qwen3-TTS, Voxtral, Kokoro, Piper)
+and ffmpeg: an engine that cannot run is reported with its reason, and the Speech tab shows the same reason on its pill (DESIGN.md section 38.3).
 No GPU is needed: builds don't get one, so whether CUDA can see a GPU is reported, not required.
 """
 
 from __future__ import annotations
 
 import importlib.metadata as md
+import json
 import os
+import shutil
 import subprocess
 import sys
 import traceback
@@ -37,6 +40,54 @@ def installed_versions() -> str:
         except md.PackageNotFoundError:
             pass
     return ", ".join(found)
+
+
+# What a subprocess runs to ask one speech engine whether it can run here: the same check the server makes at start-up (studio.speech.registry.probe_engine),
+# printed as one line of JSON. A PipelineError (the engine says why it cannot) is an answer; anything else is a crash and is reported as one.
+SPEECH_PROBE = """
+import json, sys
+from studio.pipelines.base import PipelineError
+from studio.speech.registry import probe_engine
+try:
+    print(json.dumps({"ok": probe_engine(sys.argv[1])}))
+except PipelineError as exc:
+    print(json.dumps({"no": exc.message, "hint": exc.hint}))
+"""
+
+
+def speech_notes() -> list[str]:
+    """One line for ffmpeg and one for each real speech engine, as notes. An engine is probed in a process with its own folder of libraries first on the path, as the
+    speech worker will have it (studio.worker_client.worker_env), so that Qwen3-TTS's transformers is checked where it will be used. A probe that gets as far as
+    asking for a GPU has already imported the engine's libraries, which is what a build can check; there is no GPU in a build."""
+    notes: list[str] = []
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        notes.append("Speech: ffmpeg is not installed; a voice recording that is not a plain WAV will be refused (DESIGN.md section 38.4)")
+    else:
+        version = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True).stdout.splitlines()
+        notes.append("Speech: " + (version[0] if version else "ffmpeg is installed"))
+    try:
+        from studio.config import Settings
+        from studio.speech import registry
+        from studio.worker_client import worker_env
+
+        settings = Settings.from_env()
+        engines = registry.engine_ids("real")
+    except Exception as exc:  # noqa: BLE001 - only a note
+        return notes + [f"Speech: the engines could not be listed ({type(exc).__name__}: {exc})"]
+    for engine_id in engines:
+        try:
+            run = subprocess.run([sys.executable, "-c", SPEECH_PROBE, engine_id], capture_output=True, text=True, env=worker_env(settings, "speech", engine_id),
+                                 timeout=300)
+            answer = json.loads(run.stdout.strip().splitlines()[-1])
+        except (subprocess.TimeoutExpired, ValueError, IndexError) as exc:
+            notes.append(f"Speech: {engine_id}: the check itself failed ({type(exc).__name__}); see the build log")
+            continue
+        if "ok" in answer:
+            notes.append(f"Speech: {engine_id}: can run ({answer['ok'].get('device', 'device not stated')})")
+        else:
+            notes.append(f"Speech: {engine_id}: not available here: {answer['no']}" + (f" ({answer['hint']})" if answer.get("hint") else ""))
+    return notes
 
 
 def main() -> int:
@@ -131,6 +182,9 @@ def main() -> int:
                          f"a {len(made.layers)}-layer SVG from a test picture")
     except Exception as exc:  # noqa: BLE001 - whatever went wrong, it is only a note
         notes.append(f"Vector: cannot make a test file here ({type(exc).__name__}: {exc}); the Vector tab will say it is unavailable")
+
+    # Speech (DESIGN.md section 38.3). Every engine and ffmpeg are optional: what cannot run is a note, and the Speech tab says why on the engine's pill.
+    notes.extend(speech_notes())
 
     static = Path(os.environ.get("STUDIO_STATIC_DIR", "/app/static")) / "index.html"
     if not static.is_file():

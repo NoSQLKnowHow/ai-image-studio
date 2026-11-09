@@ -1,0 +1,15 @@
+# Qwen3-TTS's own libraries (DESIGN.md section 38.3), the way the music model has its own diffusers (requirements-music.txt).
+#
+# qwen-tts 0.1.1 pins transformers==4.57.3 and accelerate==1.12.0 exactly, and NVIDIA's image has transformers 5.x, which needs a newer huggingface-hub than
+# transformers 4.57.3 allows (it wants huggingface-hub below 1.0 and tokenizers 0.22). So these five are installed WITHOUT dependencies into /opt/speech-libs/qwen3-tts,
+# which only the Qwen3-TTS speech worker puts first on its Python path (STUDIO_SPEECH_LIBS); the image worker, the music worker and the other engines never see them.
+# Everything else they need (torch, numpy, safetensors, requests, tqdm, regex, pyyaml, packaging, filelock, psutil) is the image's own.
+#
+# Read from PyPI on 2026-11-09: transformers 4.57.3 requires huggingface-hub>=0.34.0,<1.0 and tokenizers>=0.22.0,<=0.23.0; 0.36.2 is the newest 0.x of huggingface-hub
+# and 0.22.2 the newest 0.22.x of tokenizers. qwen-tts and transformers are pure Python; huggingface-hub is; tokenizers has wheels for aarch64.
+# NOT confirmed: that they import and run in NVIDIA's image on the Spark. The build prints a line for each engine (docker/check_image.py: "Speech: ...").
+qwen-tts==0.1.1
+transformers==4.57.3
+accelerate==1.12.0
+huggingface-hub==0.36.2
+tokenizers==0.22.2
