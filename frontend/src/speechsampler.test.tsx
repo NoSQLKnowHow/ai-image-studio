@@ -154,6 +154,20 @@ describe("a sample that has to be made", () => {
     expect(api.job).not.toHaveBeenCalled();
   });
 
+  it("stops listening for the job the moment it is stopped, without waiting for the next poll", async () => {
+    const unsubscribe = vi.fn();
+    const subscribe = vi.fn(() => unsubscribe);
+    const audio = document.createElement("audio");
+    Object.assign(audio, { play: vi.fn(async () => undefined), pause: vi.fn() });
+    const api = { sample: vi.fn(async () => QUEUED), job: vi.fn(async () => jobOf("job1", { status: "running", files: [] })) };
+    const { result } = renderHook(() => useSampler({ audio: { current: audio }, jobs: { subscribe }, api, pollMs: 1000 }));
+    await act(async () => result.current.play("preset:anna", BODY));
+    expect(subscribe).toHaveBeenCalledTimes(1);
+    expect(unsubscribe).not.toHaveBeenCalled();
+    act(() => result.current.stop());
+    expect(unsubscribe).toHaveBeenCalledTimes(1); // at once: not a second later, when a poll would have found it was not wanted
+  });
+
   it("ignores the answer to an earlier press when another voice has been asked for since", async () => {
     const waiting: ((answer: SampleAnswer) => void)[] = [];
     const { result, audio } = setup({ sample: () => new Promise<SampleAnswer>((resolve) => { waiting.push(resolve); }) });
@@ -258,6 +272,34 @@ describe("an engine's voices", () => {
     await act(async () => waiting.get("fake-basic")?.(voicesOf("fake-basic")));
     await act(async () => waiting.get("fake")?.(voicesOf("fake"))); // the late answer for the engine that was left
     expect(result.current.voices?.engine).toBe("fake-basic");
+  });
+
+  it("never takes the failure of the engine that was left as the trouble of the one that is shown", async () => {
+    const waiting = new Map<string, { resolve: (voices: EngineVoices) => void; reject: (error: unknown) => void }>();
+    const api = { voices: vi.fn((engine: string) => new Promise<EngineVoices>((resolve, reject) => { waiting.set(engine, { resolve, reject }); })) };
+    const { result, rerender } = renderHook(({ engine }: { engine: string }) => useEngineVoices(engine, api), { initialProps: { engine: "fake" } });
+    rerender({ engine: "fake-basic" });
+    await act(async () => waiting.get("fake-basic")?.resolve(voicesOf("fake-basic")));
+    await act(async () => waiting.get("fake")?.reject(new ApiError("Fake speech cannot run here.", 409))); // the late failure of the engine that was left
+    expect(result.current.problem).toBeNull();
+    expect(result.current.voices?.engine).toBe("fake-basic");
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("shows no voices while the next engine's are on their way, and none when there is no engine, and not the last engine's when it comes back", async () => {
+    const waiting = new Map<string, (voices: EngineVoices) => void>();
+    const api = { voices: vi.fn((engine: string) => new Promise<EngineVoices>((resolve) => { waiting.set(engine, resolve); })) };
+    const { result, rerender } = renderHook(({ engine }: { engine: string | null }) => useEngineVoices(engine, api), { initialProps: { engine: "fake" as string | null } });
+    await act(async () => waiting.get("fake")?.(voicesOf("fake")));
+    expect(result.current.voices?.engine).toBe("fake");
+    rerender({ engine: "fake-basic" });
+    expect(result.current.voices).toBeNull(); // the engine changed: the old engine's voices are not the new one's, even for a moment
+    await act(async () => waiting.get("fake-basic")?.(voicesOf("fake-basic")));
+    rerender({ engine: null });
+    expect(result.current.voices).toBeNull();
+    rerender({ engine: "fake-basic" });
+    expect(result.current.voices).toBeNull(); // ... and what was read before is not shown as if it were current while it is read again
+    expect(result.current.loading).toBe(true);
   });
 
   it("says the server's words when they cannot be read, and reads them again when asked", async () => {

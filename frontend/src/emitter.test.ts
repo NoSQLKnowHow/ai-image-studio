@@ -43,6 +43,22 @@ describe("an emitter", () => {
     reported.mockRestore();
   });
 
+  it("tells the listeners there were when the telling began: one added or taken away meanwhile is heard (or not) from the next time", () => {
+    const emitter = createEmitter<string>();
+    const heard: string[] = [];
+    const stopLater = emitter.subscribe(() => heard.push("later"));
+    emitter.subscribe(() => {
+      heard.push("first");
+      stopLater(); // taken away while being told: it was there when the telling began, so it is told this once
+      emitter.subscribe(() => heard.push("added")); // added while being told: not told this once
+    });
+    emitter.emit("x");
+    expect(heard).toEqual(["later", "first"]);
+    heard.length = 0;
+    emitter.emit("y");
+    expect(heard).toEqual(["first", "added"]);
+  });
+
   it("lets a listener stop listening while it is being told, without the others missing it", () => {
     const emitter = createEmitter<string>();
     const heard: string[] = [];

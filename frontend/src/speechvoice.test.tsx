@@ -55,6 +55,12 @@ describe("the engines", () => {
     expect(screen.getByText("A stand-in that makes tones, for tests.")).toBeTruthy(); // what the engine says of itself
   });
 
+  it("say nothing of a reason for an engine that is ready or being checked", () => {
+    const caps = inCaps((engines) => [{ ...engines[0], state: "ready", reason: "A leftover reason that should not be shown.", hint: "A leftover hint." }, { ...engines[1], state: "checking", reason: "Another leftover." }]);
+    show(caps);
+    expect(screen.queryByText(/leftover/i)).toBeNull();
+  });
+
   it("say why one cannot be used, and what to do, in words and not only in colour (criterion 259)", () => {
     const caps = inCaps((engines) => [
       engines[0],
@@ -137,6 +143,7 @@ describe("the voices", () => {
     expect(voiceNames("My voices")).toEqual(SPEECH_CONTRACT.engine_voices.saved.map((v) => v.name));
     expect(voiceNames("Voices")).toEqual(["Anna", "Bea", "Carl", "Dan"]);
     expect(screen.getByRole("heading", { name: "My voices" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Voices" })).toBeTruthy(); // two groups, so each is named
   });
 
   it("are another engine's when another engine is chosen, and an engine that cannot clone has none of the person's", async () => {
@@ -149,6 +156,7 @@ describe("the voices", () => {
     expect(screen.queryByRole("list", { name: "My voices" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "My voices" })).toBeNull();
     expect(voiceNames("Voices")).toEqual(["Basic One", "Basic Two"]); // one list, so no 'Voices' heading to tell it from another
+    expect(screen.queryByRole("heading", { name: "Voices" })).toBeNull();
     expect(screen.queryByRole("radio", { name: /^Anna$/ })).toBeNull();
   });
 
@@ -229,9 +237,23 @@ describe("the chips", () => {
     expect(voiceNames("Voices")).toEqual(["Carl", "Dan"]);
     fireEvent.click(chip("English"));
     expect(voiceNames("Voices")).toEqual(["Carl"]);
+    fireEvent.click(chip("English")); // English can be taken off again too
+    expect(chip("English").getAttribute("aria-pressed")).toBe("false");
+    expect(voiceNames("Voices")).toEqual(["Carl", "Dan"]);
+    fireEvent.click(chip("English"));
     fireEvent.click(chip("Female")); // one gender at a time: Female replaces Male
     expect(chip("Male").getAttribute("aria-pressed")).toBe("false");
     expect(voiceNames("Voices")).toEqual(["Anna", "Bea"]);
+  });
+
+  it("offer 'Show every voice' only while some chip is on", async () => {
+    show();
+    await screen.findByRole("radio", { name: /^Anna$/ });
+    expect(screen.queryByRole("button", { name: "Show every voice" })).toBeNull();
+    fireEvent.click(chip("English"));
+    expect(screen.getByRole("button", { name: "Show every voice" })).toBeTruthy();
+    fireEvent.click(chip("English"));
+    expect(screen.queryByRole("button", { name: "Show every voice" })).toBeNull();
   });
 
   it("do not touch the person's own voices", async () => {
@@ -578,6 +600,22 @@ describe("Make reading", () => {
     await screen.findByRole("radio", { name: /^Anna$/ });
     press("Make reading");
     expect((await screen.findByRole("alert")).textContent).toContain("Can't reach the studio server.");
+  });
+
+  it("takes down what was said of the last one while the next is on its way", async () => {
+    let hold: (value: { status: number; body: unknown }) => void = () => undefined;
+    let n = 0;
+    server((call) => (call.url === "/api/speech/prepare" ? { body: BOOK } : call.url === "/api/readings" ? (n++ === 0 ? { status: 201, body: READING } : new Promise((resolve) => { hold = resolve; })) : NOTHING));
+    show();
+    await prepareBook();
+    await screen.findByRole("radio", { name: /^Anna$/ });
+    press("Make reading");
+    await screen.findByText(/^Queued /);
+    press("Make reading");
+    await waitFor(() => expect(make().textContent).toBe("Queuing…"));
+    expect(screen.queryByText(/^Queued /)).toBeNull(); // the line about the last one is not left standing over the next
+    hold({ status: 201, body: READING });
+    await screen.findByText(/^Queued /);
   });
 
   it("forgets the last answer when it is pressed again", async () => {
