@@ -547,6 +547,8 @@ fieldset.field { gap: 8px; }
 .phase { display: grid; gap: 4px; }
 .phase-label { font-size: 12px; font-weight: 600; color: var(--text-3); }
 @media (max-width: 520px) { .phases { grid-template-columns: minmax(0, 1fr); } .tab { flex: 1 1 0; justify-content: center; } }
+/* Five tabs on a 360 px phone: each gets a fifth of the bar and its label wraps ("Prompt builder" on two lines) rather than the bar scrolling sideways (DESIGN.md §38.2) */
+@media (max-width: 520px) { .tab { min-width: 0; padding: 0 4px; font-size: 14px; line-height: 1.15; text-align: center; white-space: normal; overflow-wrap: anywhere; } }
 
 
 /* ------------------------------------------------------------------ project folders (DESIGN.md §32) */
@@ -909,3 +911,55 @@ fieldset.field { gap: 8px; }
 .builder-history-grid button:hover, .builder-history-grid button:focus-visible { border-color: var(--accent); }
 .builder-history-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
 .builder-primed { margin: 0; }
+
+/* ------------------------------------------------------------------ the Speech tab (DESIGN.md §38.2) */
+.speech-panel h2 { margin: 0; font-size: 18px; }
+.speech-source, .speech-review, .speech-unavailable { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); min-width: 0; }
+.speech-text { width: 100%; min-height: 9em; resize: vertical; font: inherit; line-height: 1.5; }
+.speech-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.speech-url-row { display: flex; gap: 8px; align-items: stretch; }
+.speech-url-row input { flex: 1 1 auto; min-width: 0; }
+.speech-drop {
+  display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 18px 16px; border: 2px dashed var(--border-strong, var(--border)); border-radius: 12px;
+  background: var(--surface-2); min-width: 0;
+}
+.speech-drop.dragging { border-color: var(--accent); background: var(--surface); }
+.speech-drop:has(input:focus-visible) label.button { outline: 2px solid var(--accent); outline-offset: 2px; }
+.speech-drop label.button.disabled { opacity: 0.55; pointer-events: none; }
+.speech-drop-text { color: var(--text-2); }
+.speech-file-name { font-weight: 600; overflow-wrap: anywhere; }
+.speech-switches { display: grid; gap: 6px; }
+.speech-switches .choice { display: flex; gap: 8px; align-items: flex-start; }
+.speech-switches .choice input { margin-top: 4px; flex: none; }
+.speech-working { display: flex; gap: 12px; align-items: baseline; margin: 0; color: var(--text-2); }
+.speech-problem p { margin: 0; }
+.speech-problem p + p { margin-top: 4px; }
+.speech-replace { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--accent); border-radius: 10px; background: var(--surface-2); }
+.speech-replace p { margin: 0; }
+.speech-unavailable p { margin: 0; }
+
+.speech-warnings { margin: 0; padding: 10px 12px 10px 28px; border-radius: 10px; background: var(--surface-2); }
+.speech-stale { margin: 0; }
+.speech-review-line { margin: 0; color: var(--text-2); font-weight: 600; }
+.speech-cleaning summary { cursor: pointer; }
+.speech-cleaning ul { margin: 6px 0 0; padding-left: 22px; color: var(--text-2); }
+
+.speech-parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.speech-part { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); min-width: 0; }
+/* a part that is left out is greyed, and says so in words as well (colour is never the only sign) */
+.speech-part.left-out { background: var(--surface-2); }
+.speech-part.left-out .speech-part-title { color: var(--text-3); text-decoration: line-through; }
+.speech-part-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; min-width: 0; }
+.speech-include { display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.speech-part-title { font-weight: 600; overflow-wrap: anywhere; min-width: 0; flex: 1 1 12em; }
+.speech-part-rename { flex: 1 1 12em; min-width: 0; font: inherit; }
+.speech-part-meta { display: inline-flex; gap: 6px; align-items: center; color: var(--text-2); font-size: 14px; flex: none; }
+.speech-part-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.speech-part-actions [aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.speech-paragraphs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.speech-paragraph textarea { width: 100%; font: inherit; line-height: 1.45; resize: vertical; }
+.speech-paragraph.heading textarea { font-weight: 700; }
+.speech-paragraph.skipped { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-3); }
+.speech-skipped-text { margin: 0; flex: 1 1 14em; max-height: 6em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.speech-more { list-style: none; }
+@media (max-width: 520px) { .speech-source, .speech-review, .speech-unavailable { padding: 12px; } .speech-url-row { flex-wrap: wrap; } .speech-url-row button { flex: 1 1 100%; } }

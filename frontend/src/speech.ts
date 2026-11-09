@@ -33,6 +33,12 @@ export function lengthText(seconds: number): string {
   return m === 0 ? `${h} h` : `${h} h ${String(m).padStart(2, "0")} min`;
 }
 
+/** "about 20 min", but "less than a minute" and not "about less than a minute": an estimate of a length, said as a phrase that reads on its own. */
+export function aboutLength(seconds: number): string {
+  const text = lengthText(seconds);
+  return text === "less than a minute" ? text : `about ${text}`;
+}
+
 /** "35 MB", "2 GB": what a reading will take on disk. One significant place is enough for an estimate; a gigabyte is a thousand megabytes, as on the disk's own
  *  figure in the server's refusal. */
 export function audioSizeText(bytes: number): string {
@@ -116,6 +122,95 @@ export const editParagraph = (parts: readonly DraftPart[], index: number, paragr
 /** The parts that will be read: included, and with something in them to say. */
 export const partsToRead = (parts: readonly DraftPart[]): DraftPart[] => parts.filter((p) => p.include && partChars(p) > 0);
 
+// ------------------------------------------------------------------ the source (§38.2, §38.5): what is checked before the server is asked
+/** The kinds of file the server reads, by their extension (its `FILE_KINDS`): the page offers these and says so when another is chosen. */
+export const FILE_EXTENSIONS = [".txt", ".text", ".md", ".markdown", ".pdf", ".epub", ".docx"] as const;
+export const FILE_ACCEPT = FILE_EXTENSIONS.join(",");
+const FILE_KINDS_WORDS = "Choose a .txt, .md, .pdf, .epub or .docx file.";
+
+/** Why a file cannot be read, in words, or null when it may be sent. These are the cheap checks the server makes first, made here as well so that a book of 50 MB is not
+ *  uploaded only to be refused for its name. The limit is megabytes of 1,048,576 bytes, as the server counts them. */
+export function fileProblem(file: { name: string; size: number }, limits: Pick<SpeechLimits, "upload_mb">): string | null {
+  const dot = file.name.lastIndexOf(".");
+  const extension = dot === -1 ? "" : file.name.slice(dot).toLowerCase();
+  const shown = file.name || "That file";
+  if (!(FILE_EXTENSIONS as readonly string[]).includes(extension)) return `${shown} is not a kind of file that can be read. ${FILE_KINDS_WORDS}`;
+  if (file.size === 0) return `${shown} is empty.`;
+  if (file.size > limits.upload_mb * 1024 * 1024) return `${shown} is ${Math.ceil(file.size / (1024 * 1024))} MB; a file can be at most ${limits.upload_mb} MB.`;
+  return null;
+}
+
+/** The address as it will be sent: trimmed, and `https://` put in front of one typed without a scheme ("example.org/page"). */
+export function normalizeUrl(text: string): string {
+  const trimmed = text.trim();
+  return trimmed && !/^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? `https://${trimmed}` : trimmed;
+}
+
+/** Why an address cannot be fetched, or null. Only the shape is judged here: which addresses are allowed (public sites, ports 80 and 443) is the server's to decide
+ *  and it says why in its own words. */
+export function urlProblem(text: string): string | null {
+  const url = normalizeUrl(text);
+  if (!url) return "Give the web address of the page to read.";
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "A web address starts with http:// or https://.";
+    return parsed.hostname ? null : "That is not a web address.";
+  } catch {
+    return "That is not a web address.";
+  }
+}
+
+/** "12,345 characters, about 14 min to speak": what the box under the pasted text says. */
+export function pastedTextLine(text: string, limits: Pick<SpeechLimits, "chars_per_second">): string {
+  const chars = text.length;
+  if (!chars) return "";
+  const about = limits.chars_per_second > 0 ? `, ${aboutLength(chars / limits.chars_per_second)} to speak` : "";
+  return `${chars.toLocaleString("en-US")} ${chars === 1 ? "character" : "characters"}${about}`;
+}
+
+// ------------------------------------------------------------------ the review: what has been changed
+/** Whether the person has changed the review since the server made it: a part left out or put back, renamed, joined or edited. Pressing Prepare again replaces the review,
+ *  and this is what decides whether the page asks first. */
+export function reviewChanged(parts: readonly DraftPart[], prepared: Prepared): boolean {
+  if (parts.length !== prepared.parts.length) return true;
+  return parts.some((part, i) => {
+    const original = prepared.parts[i];
+    return part.title !== original.title || part.include !== original.include || part.paragraphs.some((p) => p.edited) || part.paragraphs.length !== original.paragraphs.length;
+  });
+}
+
+/** The two switches of a text: clean it up, and read code and tables too. */
+export interface Switches {
+  clean: boolean;
+  readExtras: boolean;
+}
+
+/** Whether the switches now differ from the ones the review was asked for with: the review does not change by itself, and the page says to prepare again. The
+ *  page compares with what it asked, not with the `options` the server sends back, so that it does not depend on the server repeating them. */
+export const switchesChanged = (made: Switches, now: Switches): boolean => made.clean !== now.clean || made.readExtras !== now.readExtras;
+
+/** "5 of 6 parts included · about 1 h 20 min of audio": the line above the parts. */
+export function reviewLine(parts: readonly DraftPart[], limits: Pick<SpeechLimits, "chars_per_second">): string {
+  const totals = readingTotals(parts, limits, 0);
+  return `${totals.parts} of ${plural(parts.length, "part")} included · ${aboutLength(totals.seconds)} of audio`;
+}
+
+/** How long one part will take to speak, for its row: "about 12 min". */
+export const partLengthText = (part: DraftPart, limits: Pick<SpeechLimits, "chars_per_second">): string =>
+  limits.chars_per_second > 0 ? aboutLength(partChars(part) / limits.chars_per_second) : "";
+
+/** What a paragraph that will not be read says, from the reason the server gave. */
+export function skippedText(reason: string): string {
+  switch (reason) {
+    case "code":
+      return "Not read: code";
+    case "table":
+      return "Not read: table";
+    default:
+      return `Not read: ${reason}`;
+  }
+}
+
 // ------------------------------------------------------------------ what a reading will take (§38.2 "Make reading")
 export interface ReadingTotals {
   parts: number;
@@ -135,7 +230,7 @@ export function readingTotals(parts: readonly DraftPart[], limits: Pick<SpeechLi
 
 /** "12 parts, about 11 h 20 min of audio, about 2 GB. Kokoro-82M, Heart." */
 export function totalsLine(totals: ReadingTotals, engineTitle: string, voiceLabel: string): string {
-  const what = `${plural(totals.parts, "part")}, about ${lengthText(totals.seconds)} of audio, about ${audioSizeText(totals.bytes)}.`;
+  const what = `${plural(totals.parts, "part")}, ${aboutLength(totals.seconds)} of audio, about ${audioSizeText(totals.bytes)}.`;
   return voiceLabel ? `${what} ${engineTitle}, ${voiceLabel}.` : `${what} ${engineTitle}.`;
 }
 
@@ -315,7 +410,7 @@ export const canceledLine = (reading: ReadingInfo): string => `Canceled · ${rea
 
 /** How long is left, when the server can say: "about 14 min to go". */
 export function toGoText(reading: ReadingInfo): string | null {
-  return reading.seconds_to_go ? `about ${lengthText(reading.seconds_to_go)} to go` : null;
+  return reading.seconds_to_go ? `${aboutLength(reading.seconds_to_go)} to go` : null;
 }
 
 /** Whether there is something to play: at least one part is finished, or a piece of an unfinished one is (a piece plays as soon as it exists, §38.7). */

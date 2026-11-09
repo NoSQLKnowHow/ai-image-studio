@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   DURATION_CHIPS, MUSIC_FORM_KEY, SECTION_TAGS, TAB_KEY, buildDescription, buildMusicRequest, chipsFor, clock, defaultMusicForm, descriptionOf,
   durationText, emptyFields, hasDescription, insertTag, keySentence, loadMusicForm, musicFormFromRun, musicMeta, musicModelNote, musicPhases,
-  musicProblem, musicProgressText, musicRetryRequest, musicSeedText, musicTitle, readTab, sanitizeMusicForm, saveMusicForm, saveTab, tabAfterKey,
+  TABS, musicProblem, musicProgressText, musicRetryRequest, musicSeedText, musicTitle, readTab, sanitizeMusicForm, saveMusicForm, saveTab, tabAfterKey,
   trackLabel, type MusicForm,
 } from "./music";
 import type { KeyValueStore } from "./options";
@@ -422,17 +422,19 @@ describe("tabs", () => {
     expect(readTab(store)).toBe("vector");
     expect(readTab(memoryStore({ [TAB_KEY]: "video" }))).toBe("images");
   });
-  it("arrow keys move between the four tabs and wrap, Home and End go to the ends, other keys do nothing", () => {
+  it("arrow keys move between the five tabs and wrap, Home and End go to the ends, other keys do nothing", () => {
     expect(tabAfterKey("images", "ArrowRight")).toBe("music");
     expect(tabAfterKey("music", "ArrowRight")).toBe("vector");
     expect(tabAfterKey("vector", "ArrowRight")).toBe("builder");
-    expect(tabAfterKey("builder", "ArrowRight")).toBe("images"); // wraps round
-    expect(tabAfterKey("images", "ArrowLeft")).toBe("builder"); // ...and the other way
+    expect(tabAfterKey("builder", "ArrowRight")).toBe("speech");
+    expect(tabAfterKey("speech", "ArrowRight")).toBe("images"); // wraps round
+    expect(tabAfterKey("images", "ArrowLeft")).toBe("speech"); // ...and the other way
+    expect(tabAfterKey("speech", "ArrowLeft")).toBe("builder");
     expect(tabAfterKey("builder", "ArrowLeft")).toBe("vector");
     expect(tabAfterKey("vector", "ArrowLeft")).toBe("music");
     expect(tabAfterKey("music", "ArrowLeft")).toBe("images");
     expect(tabAfterKey("music", "Home")).toBe("images");
-    expect(tabAfterKey("images", "End")).toBe("builder");
+    expect(tabAfterKey("images", "End")).toBe("speech");
     expect(tabAfterKey("images", "Enter")).toBeNull();
     expect(tabAfterKey("images", "a")).toBeNull();
   });
@@ -445,5 +447,14 @@ describe("tabs", () => {
     expect(readTab(store)).toBe("vector");
     store.set("studio.tab.v1", "nonsense");
     expect(readTab(store)).toBe("images");
+  });
+
+  it("remembers the Speech tab (DESIGN.md §38.2, criterion 258), which is the fifth, after the Prompt builder", () => {
+    const store = memoryStore();
+    saveTab("speech", store);
+    expect(store.data[TAB_KEY]).toBe("speech");
+    expect(readTab(store)).toBe("speech");
+    expect(TABS.map((tab) => tab.id)).toEqual(["images", "music", "vector", "builder", "speech"]);
+    expect(TABS[4].label).toBe("Speech");
   });
 });

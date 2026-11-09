@@ -29,6 +29,8 @@ import { useCopyVectorSvg } from "./useCopyVectorSvg";
 import { usePicturePaste } from "./usePicturePaste";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
+import { SpeechPanel } from "./components/SpeechPanel";
+import { speechApi } from "./speechApi";
 import {
   MOVED_NOTE,
   PROMPT_KEY,
@@ -51,7 +53,7 @@ import {
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
 import {
-  isImageRun, isMusicRun, isVectorRun, type BinnedImage, type BinnedTrack, type BinnedVectorItem, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun,
+  isImageRun, isMusicRun, isSpeechRun, isVectorRun, type BinnedImage, type BinnedTrack, type BinnedVectorItem, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun,
   type Project, type Run,
 } from "./types";
 import { VECTOR_PNG_RANGE, pngRange } from "./vector";
@@ -134,6 +136,7 @@ export default function App() {
   const imageRuns = useMemo(() => visible.filter(isImageRun), [visible]);
   const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
   const vectorRuns = useMemo(() => visible.filter(isVectorRun), [visible]);
+  const speechRuns = useMemo(() => visible.filter(isSpeechRun).filter((run) => !run.hidden), [visible]); // readings (a sample or a design is never in a list, DESIGN.md §38.4)
   // what the tab being looked at is called in the counts (`Counts` has a key for each)
   const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
   const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : imageRuns;
@@ -246,13 +249,15 @@ export default function App() {
 
   // Load or unload the model from the header. The new state arrives over the event stream like every other change, so
   // the answer is not used to move the pill: it could overtake a later event and make the pill go backwards.
-  const changeModel = useCallback(async ({ kind, model }: ModelAction) => {
+  const changeModel = useCallback(async ({ kind, model, engine }: ModelAction) => {
     setModelBusy(true);
     try {
-      await (kind === "load" ? api.loadModel(model) : api.unloadModel(model));
+      // the speech model is one engine: Load names it (DESIGN.md §38.3); Unload stops whichever speech engine is loaded
+      if (model === "speech") await (kind === "load" ? speechApi.loadEngine(engine ?? "") : speechApi.unloadEngine());
+      else await (kind === "load" ? api.loadModel(model) : api.unloadModel(model));
       return true;
     } catch (error) {
-      push("error", `Couldn't ${kind} the ${model === "music" ? "music model" : "model"}: ${(error as ApiError).message}`);
+      push("error", `Couldn't ${kind} the ${model === "music" ? "music model" : model === "speech" ? "speech model" : "model"}: ${(error as ApiError).message}`);
       return false;
     } finally {
       setModelBusy(false);
@@ -1027,14 +1032,14 @@ export default function App() {
   return (
     <PromptLinksContext.Provider value={promptLinks}>
       <a className="skip-link" href="#prompt">Skip to the prompt</a>
-      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : "image"} musicAvailable={musicAvailable} onModel={changeModel} />
+      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : tab === "speech" ? "speech" : "image"} musicAvailable={musicAvailable} onModel={changeModel} />
       <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
       <main className="app-main">
         {!caps || !options ? (
           <p className="loading" role="status">Connecting to the studio…</p>
         ) : (
           <>
-            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking }} />
+            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking, speech: speechRuns.some(working) }} />
             <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
             <PromptBar
               ref={promptRef}
@@ -1179,6 +1184,7 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
+            <SpeechPanel hidden={tab !== "speech"} caps={caps} />
             <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
               integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
             <VectorPanel

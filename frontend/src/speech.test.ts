@@ -6,6 +6,7 @@ import {
   partChars, partsToRead, pieceAt, pieceStart, playerAction, positionFor, progressLine, readChoice, readPlayerPrefs, readingFacts, readingProblem, readingTitle,
   readingTotals, renamePart, resumeTime, saveChoice, savePlayerPrefs, savedVoiceFacts, seekedTime, setInclude, sourceText, speedText, startingPart, stepSpeed,
   styleControl, styleToSend, toGoText, totalsLine, voiceFacts, voiceMatches, voiceName,
+  FILE_ACCEPT, FILE_EXTENSIONS, aboutLength, fileProblem, normalizeUrl, partLengthText, pastedTextLine, reviewChanged, reviewLine, skippedText, switchesChanged, urlProblem,
 } from "./speech";
 import type { DraftPart } from "./speech";
 import type { KeyValueStore } from "./options";
@@ -679,5 +680,151 @@ describe("the note on a canceled reading", () => {
     const reading = run.reading as ReadingInfo;
     expect(canceledText({ ...run, reading: { ...reading, parts_done: 3, parts_total: 12 } })).toBe("Canceled · 3 of 12 parts");
     expect(canceledText({ ...run, reading: null })).toBe("Canceled.");
+  });
+});
+
+// ------------------------------------------------------------------ the source (§38.2): what is checked before the server is asked
+describe("choosing a file", () => {
+  const limits = { upload_mb: 50 };
+  const MB = 1024 * 1024;
+
+  it("offers the kinds the server reads, and says so in the accept list", () => {
+    expect([...FILE_EXTENSIONS]).toEqual([".txt", ".text", ".md", ".markdown", ".pdf", ".epub", ".docx"]);
+    expect(FILE_ACCEPT).toBe(".txt,.text,.md,.markdown,.pdf,.epub,.docx");
+  });
+
+  it.each(["book.txt", "notes.TEXT", "README.md", "a.markdown", "paper.PDF", "novel.epub", "letter.docx", "my.file.name.txt"])("%s may be sent", (name) => {
+    expect(fileProblem({ name, size: 1000 }, limits)).toBeNull();
+  });
+
+  it.each(["picture.png", "old.doc", "sheet.xlsx", "noextension", "archive.zip", "page.html", ".txt.exe", ""])("%j is refused, naming what to choose", (name) => {
+    expect(fileProblem({ name, size: 1000 }, limits)).toMatch(/is not a kind of file that can be read\. Choose a \.txt, \.md, \.pdf, \.epub or \.docx file\.$/);
+  });
+
+  it("names the file in the refusal, or says 'That file' when it has no name", () => {
+    expect(fileProblem({ name: "picture.png", size: 5 }, limits)).toMatch(/^picture\.png is not/);
+    expect(fileProblem({ name: "", size: 5 }, limits)).toMatch(/^That file is not/);
+  });
+
+  it("refuses an empty file, and one over the limit, naming the limit in megabytes as the server counts them", () => {
+    expect(fileProblem({ name: "a.txt", size: 0 }, limits)).toBe("a.txt is empty.");
+    expect(fileProblem({ name: "a.txt", size: 50 * MB }, limits)).toBeNull(); // exactly the limit is allowed
+    expect(fileProblem({ name: "a.txt", size: 50 * MB + 1 }, limits)).toBe("a.txt is 51 MB; a file can be at most 50 MB.");
+    expect(fileProblem({ name: "big.epub", size: 83.4 * MB }, limits)).toBe("big.epub is 84 MB; a file can be at most 50 MB.");
+  });
+
+  it("judges the extension before the size, so a huge picture is told it is a picture", () => {
+    expect(fileProblem({ name: "huge.png", size: 900 * MB }, limits)).toMatch(/not a kind of file/);
+  });
+});
+
+describe("a web address", () => {
+  it("is trimmed, and given https:// when it has no scheme", () => {
+    expect(normalizeUrl("  example.org/page  ")).toBe("https://example.org/page");
+    expect(normalizeUrl("http://example.org")).toBe("http://example.org");
+    expect(normalizeUrl("HTTPS://Example.org")).toBe("HTTPS://Example.org");
+    expect(normalizeUrl("   ")).toBe("");
+  });
+
+  it.each(["https://example.org/a", "http://example.org", "example.org/page", "https://sub.example.co.uk/a?b=c#d", "https://93.184.216.34/"])("%s is a web address", (text) => {
+    expect(urlProblem(text)).toBeNull();
+  });
+
+  it("asks for one when there is none", () => {
+    expect(urlProblem("")).toBe("Give the web address of the page to read.");
+    expect(urlProblem("   ")).toBe("Give the web address of the page to read.");
+  });
+
+  it.each(["ftp://example.org/file", "file:///etc/passwd", "javascript:alert(1)", "mailto:a@b.c", "localhost:8000/x"])("%s is not one the page will send", (text) => {
+    expect(urlProblem(text)).toBe("A web address starts with http:// or https://.");
+  });
+
+  it.each(["https://", "http://:80", "https:// spaces in it"])("%s is not a web address", (text) => {
+    expect(urlProblem(text)).toBe("That is not a web address.");
+  });
+});
+
+describe("the line under pasted text", () => {
+  const limits = { chars_per_second: 14 };
+  it("counts the characters and says how long they take to speak", () => {
+    expect(pastedTextLine("x".repeat(12345), limits)).toBe("12,345 characters, about 15 min to speak");
+    expect(pastedTextLine("x", limits)).toBe("1 character, less than a minute to speak"); // (not "about less than a minute")
+  });
+  it("says nothing for nothing", () => {
+    expect(pastedTextLine("", limits)).toBe("");
+  });
+  it("gives only the count when the speaking rate is not known", () => {
+    expect(pastedTextLine("x".repeat(1500), { chars_per_second: 0 })).toBe("1,500 characters");
+  });
+});
+
+// ------------------------------------------------------------------ the review: what has been changed
+describe("whether the review has been changed", () => {
+  const prepared = makePrepared();
+
+  it("has not, as it came from the server", () => {
+    expect(reviewChanged(draftFromPrepared(prepared), prepared)).toBe(false);
+  });
+
+  it("has, once a part is left out, put back, renamed, edited or joined", () => {
+    const parts = draftFromPrepared(prepared);
+    expect(reviewChanged(setInclude(parts, 0, false), prepared)).toBe(true);
+    expect(reviewChanged(renamePart(parts, 0, "Another"), prepared)).toBe(true);
+    expect(reviewChanged(editParagraph(parts, 0, 0, "other words"), prepared)).toBe(true);
+    const two = makePrepared({ parts: [prepared.parts[0], { ...prepared.parts[0], title: "Second" }] });
+    expect(reviewChanged(mergeWithNext(draftFromPrepared(two), 0), two)).toBe(true);
+  });
+
+  it("has not, when a part is renamed and then given its own title again", () => {
+    const parts = draftFromPrepared(prepared);
+    expect(reviewChanged(renamePart(renamePart(parts, 0, "Another"), 0, prepared.parts[0].title), prepared)).toBe(false);
+  });
+
+  it("has, if the server's own exclusion is overruled", () => {
+    const left = makePrepared({ parts: [{ ...prepared.parts[0], include: false }] });
+    expect(reviewChanged(setInclude(draftFromPrepared(left), 0, true), left)).toBe(true);
+  });
+});
+
+describe("the switches", () => {
+  const made = { clean: true, readExtras: false };
+  it("are the same as the ones the review was asked for with, or have changed since", () => {
+    expect(switchesChanged(made, { clean: true, readExtras: false })).toBe(false);
+    expect(switchesChanged(made, { clean: false, readExtras: false })).toBe(true);
+    expect(switchesChanged(made, { clean: true, readExtras: true })).toBe(true);
+    expect(switchesChanged(made, { clean: false, readExtras: true })).toBe(true);
+  });
+});
+
+describe("the lines of the review", () => {
+  const limits = { chars_per_second: 14 };
+
+  it("says how many parts are included and how long they take", () => {
+    const parts = draft(["One", ["x".repeat(14 * 60 * 30)]], ["Two", ["y".repeat(14 * 60 * 50)]], ["Three", ["z".repeat(100)], false]);
+    expect(reviewLine(parts, limits)).toBe("2 of 3 parts included · about 1 h 20 min of audio");
+    expect(reviewLine(draft(["One", ["x".repeat(14 * 60 * 5)]]), limits)).toBe("1 of 1 part included · about 5 min of audio");
+    expect(reviewLine(setInclude(draft(["One", ["x"]]), 0, false), limits)).toBe("0 of 1 part included · less than a minute of audio");
+  });
+
+  it("says an estimate as a phrase that reads on its own: 'about 12 min', but 'less than a minute' and never 'about less than a minute'", () => {
+    expect(aboutLength(12 * 60)).toBe("about 12 min");
+    expect(aboutLength(3600)).toBe("about 1 h");
+    expect(aboutLength(20)).toBe("less than a minute");
+    expect(aboutLength(0)).toBe("less than a minute");
+    expect(totalsLine({ parts: 1, chars: 10, seconds: 5, bytes: 240_000 }, "Piper", "Jenny")).toBe("1 part, less than a minute of audio, about 240 KB. Piper, Jenny.");
+    expect(toGoText({ ...(makeSpeechRun().reading as ReadingInfo), seconds_to_go: 20 })).toBe("less than a minute to go");
+    expect(partLengthText(draft(["One", ["x".repeat(14)]])[0], { chars_per_second: 14 })).toBe("less than a minute");
+  });
+
+  it("says how long one part takes, and nothing without a speaking rate", () => {
+    const part = draft(["One", ["x".repeat(14 * 60 * 12)]])[0];
+    expect(partLengthText(part, limits)).toBe("about 12 min");
+    expect(partLengthText(part, { chars_per_second: 0 })).toBe("");
+  });
+
+  it("says why a paragraph is not read", () => {
+    expect(skippedText("code")).toBe("Not read: code");
+    expect(skippedText("table")).toBe("Not read: table");
+    expect(skippedText("footnote")).toBe("Not read: footnote");
   });
 });

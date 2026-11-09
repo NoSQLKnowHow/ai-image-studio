@@ -125,8 +125,8 @@ describe("where a pasted picture goes (DESIGN.md §36.2, §36.3; criteria 211, 2
     expect(kind({ target: prompt, ready: false })).toBe("ignore");
   });
 
-  it("does not take a picture on the Music or Vector tab, and says where pictures are used; text beside it goes into a text field without a word", () => {
-    for (const tab of ["music", "vector"] as const) {
+  it("does not take a picture on the Music, Vector or Speech tab, and says where pictures are used; text beside it goes into a text field without a word", () => {
+    for (const tab of ["music", "vector", "speech"] as const) {
       expect(kind({ tab, target: document.body })).toBe("wrong-tab");
       expect(kind({ tab, target: button })).toBe("wrong-tab");
       expect(kind({ tab, target: prompt })).toBe("wrong-tab"); // (a picture alone in a text box: nothing to paste but the note)
@@ -447,6 +447,18 @@ describe("the page's one paste listener (criteria 211, 212, 216, 217)", () => {
       unmount();
     }
     expect(PICTURES_ON_IMAGES_TAB).toBe("Pictures are used on the Images tab.");
+  });
+
+  it("says where pictures are used when one is pasted on the Speech tab, but says nothing of a file dropped there: its own file box takes .txt, .epub and the rest", () => {
+    const handlers = { onTray: vi.fn(), onUpscale: vi.fn(), onWrongTab: vi.fn() };
+    render(<Harness tab="speech" {...handlers} />);
+    expect(paste(document.body, clip({ files: [png()] }))).toBe(true);
+    expect(handlers.onWrongTab).toHaveBeenCalledTimes(1);
+    const drop = new Event("drop", { bubbles: true, cancelable: true });
+    Object.defineProperty(drop, "dataTransfer", { value: { types: ["Files"] } });
+    window.dispatchEvent(drop);
+    expect(handlers.onWrongTab).toHaveBeenCalledTimes(1); // not told "Pictures are used on the Images tab" for an e-book
+    expect(handlers.onTray).not.toHaveBeenCalled();
   });
 
   it("says nothing about a drop on the Music or Vector tab while a dialog is open, or before the page is ready", () => {
