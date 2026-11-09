@@ -1,8 +1,13 @@
-# ai-image-studio
+# AI Studio
 
-Generate and edit images with Qwen-Image-2.1 on an NVIDIA DGX Spark: a web page on your LAN with
-a prompt box, an Options drawer that remembers your settings, and a history of every run so you
-can reuse and tweak prompts.
+Make images, music, vector drawings and spoken readings on an NVIDIA DGX Spark, with prompts you can
+write with a local LLM: a web page on your LAN with a tab for each, an Options drawer that remembers your
+settings, and a history of every run so you can reuse and tweak prompts.
+
+> **The name.** The app is called **AI Studio** (it was "AI Image Studio" while it only made images). Its
+> technical names are unchanged, so nothing you have set up breaks: the repository, the Docker image
+> (`ai-image-studio:local`), the container, the backup files (`ai-image-studio-backup-*.tar`) and the
+> `ai-image-studio` note written inside the files it makes.
 
 ## Status
 
@@ -48,7 +53,7 @@ mkdir -p data
 docker compose up -d --build        # builds the image, then starts it
 ```
 
-Then open `http://<spark-address>:8080` from any device on your network. The rest of this section
+Then open `http://<spark-address>:8081` from any device on your network. The rest of this section
 explains each step and what to do when one fails.
 
 ### Before you start
@@ -122,7 +127,7 @@ In the log, look for `serving the web UI`, `ready (pipeline=real …)` and
 `capability check passed: {… 'name': 'NVIDIA GB10' …}`. That last line means PyTorch inside the
 container can see and use the GPU.
 
-Open `http://<spark-address>:8080` from any device on your network (`hostname -I` on the Spark lists
+Open `http://<spark-address>:8081` from any device on your network (`hostname -I` on the Spark lists
 its addresses). **The first image you generate downloads the model** (31 GiB), so it takes much longer
 than later ones. After that it is read from the cache.
 
@@ -140,7 +145,7 @@ and changing `NGC_TAG`, which pulls another multi-GB base image. A rebuild never
 cache or your history.
 
 **Which build am I running?** The page title and the browser tab show the version, for example
-`AI Image Studio v1.1`. The same number comes from `curl -s localhost:8080/api/health`. If the page
+`AI Studio v1.1`. The same number comes from `curl -s localhost:8081/api/health`. If the page
 shows no version, or an older one than `git log` suggests, the page is stale: reload it with
 Ctrl+Shift+R (Cmd+Shift+R on a Mac) and check that `docker compose up -d --build` ran to the end.
 (Since v1.1 the server tells the browser to revalidate the page on every load, so a plain reload is

@@ -94,7 +94,7 @@ docker compose logs -f studio          # Ctrl+C stops following; the server keep
 Good, in the log:
 
 - `serving the web UI from /app/static`
-- `AI Image Studio 0.1.0 ready (pipeline=real, data=/data)`
+- `AI Studio 0.1.0 ready (pipeline=real, data=/data)`
 - `capability check passed: {... 'name': 'NVIDIA GB10', 'capability': '12.1' ...}` (this can take
   a minute: it imports PyTorch and diffusers in a separate process)
 
@@ -102,7 +102,7 @@ If it says `capability check failed: ...` instead, the message says why; see Tro
 
 ## 7. Open the page
 
-From your laptop or phone on the same network: `http://<spark-address>:8080` (on the Spark,
+From your laptop or phone on the same network: `http://<spark-address>:8081` (on the Spark,
 `hostname -I` shows its addresses).
 
 Good: the page loads with the light or dark theme following your system. The model pill in the
@@ -138,7 +138,7 @@ Note:
 - `MemAvailable` before you click (the model not loaded): **A**
 - the lowest `MemAvailable` while it generates: **B**
 - the worker's own memory while loaded:
-  `curl -s localhost:8080/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'`
+  `curl -s localhost:8081/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'`
   (`worker_rss_gb`)
 
 The footprint is about **A − B**. Set `STUDIO_MIN_FREE_GB` in `.env` to that plus 10–20% headroom,
@@ -164,7 +164,7 @@ Generate one image, then wait. The pill says **Model ready · unloads in 2 minut
 not loaded**.
 
 Good: `MemAvailable` rises by about the footprint from step 9, and
-`curl -s localhost:8080/api/status | python3 -m json.tool` shows the worker `"state": "unloaded"`.
+`curl -s localhost:8081/api/status | python3 -m json.tool` shows the worker `"state": "unloaded"`.
 The next Generate loads it again (faster this time: the files are cached).
 
 Put the timeout back afterwards (`30` is the default, or whatever suits you) and `docker compose up -d`.
@@ -227,7 +227,7 @@ the page, then `docker compose down && docker compose up -d`: it is still kept.
 throwaway. It ages the newest run by 27 days:
 
 ```bash
-RUN=$(curl -s 'localhost:8080/api/runs?limit=1' | python3 -c 'import sys, json; print(json.load(sys.stdin)["runs"][0]["id"])')
+RUN=$(curl -s 'localhost:8081/api/runs?limit=1' | python3 -c 'import sys, json; print(json.load(sys.stdin)["runs"][0]["id"])')
 docker compose exec -T studio python - "$RUN" 27 <<'PY'
 import datetime as d, sqlite3, sys
 t = (d.datetime.now(d.timezone.utc) - d.timedelta(days=float(sys.argv[2]))).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -262,7 +262,7 @@ database written by the real 1.1 code. A backup (`scripts/backup.sh`) first is s
 ```bash
 git pull && docker compose up -d --build
 docker compose logs studio | grep -i "schema"        # "upgrading the database from schema 1 to 2 ..."
-curl -s localhost:8080/api/health                    # "version":"1.2"
+curl -s localhost:8081/api/health                    # "version":"1.2"
 ```
 
 **a) A first edit** (the first run after a quiet spell loads the model, which takes a while):
@@ -355,9 +355,9 @@ run's JSON has an `options.full`; the second command is refused with a 422 becau
 larger:
 
 ```sh
-curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
+curl -s -X POST localhost:8081/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
   -d '{"prompt": "a lighthouse", "options": {"width": 512, "height": 512, "steps": 20, "full": {"width": 1024, "height": 1024, "steps": 40}}}'
-curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
+curl -s -X POST localhost:8081/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
   -d '{"prompt": "a lighthouse", "options": {"width": 1024, "height": 1024, "steps": 20, "full": {"width": 512, "height": 512, "steps": 40}}}'
 ```
 
@@ -529,12 +529,12 @@ can, watch `docker compose logs studio` for anything that looks like a download.
 **h) Through the studio's API (the Music tab does exactly this).**
 
 ```bash
-curl -s -X POST localhost:8080/api/model/load -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' -d '{"model":"music"}'
-curl -s localhost:8080/api/status | python3 -m json.tool | grep -E '"state"|"model"|"detail"'   # until state is "ready", model "music"
-curl -s -X POST localhost:8080/api/runs -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8081/api/model/load -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' -d '{"model":"music"}'
+curl -s localhost:8081/api/status | python3 -m json.tool | grep -E '"state"|"model"|"detail"'   # until state is "ready", model "music"
+curl -s -X POST localhost:8081/api/runs -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' \
   -d '{"mode":"music","prompt":"Global Metadata\nBasic Attributes: ambient.\nInstrumental, no vocals.","options":{"duration":15,"tracks":1}}'
-# then poll   curl -s localhost:8080/api/runs/<id>   until "status" is "done", and fetch the track:
-curl -s -o /tmp/api.wav 'localhost:8080/api/audio/<track id>?download=1' && strings /tmp/api.wav | grep machine-generated
+# then poll   curl -s localhost:8081/api/runs/<id>   until "status" is "done", and fetch the track:
+curl -s -o /tmp/api.wav 'localhost:8081/api/audio/<track id>?download=1' && strings /tmp/api.wav | grep machine-generated
 ```
 
 Good: the music model loads, the image model is **not** loaded at the same time (`free -h` shows only one), the run
@@ -708,7 +708,7 @@ the model, the settings (`--dtype bf16`, the tile overlap) or the whole idea nee
 | Download fails with 401/403 or "gated" | Accept the model's terms on Hugging Face if it asks, then set `HF_TOKEN` in `.env` and `docker compose up -d`. |
 | `Not enough free memory to load the model` | Hermes' vLLM probably holds the memory: lower its `--gpu-memory-utilization` or stop it, then flush the page cache: `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`. Then **Retry**. |
 | Out of memory while loading or generating | Same as above; also try a smaller size or fewer images per click. |
-| `port is already allocated` | Something else uses 8080: set `STUDIO_PORT` in `.env`. |
+| `port is already allocated` | Something else uses 8081 (the studio's port on the Spark since 1.20; it was 8080): set another `STUDIO_PORT` in `.env`, and if your `.env` still says `STUDIO_PORT=8080`, change it to 8081. |
 | The page loads but never updates live | Check `docker compose logs studio`; the connection banner at the top says if the live stream is down. |
 
 To update later: `git pull && docker compose up -d --build`.
@@ -841,7 +841,7 @@ then choose **1:1** (2048 × 2048) and generate one more. If the model has to lo
 
 - the time on the card (the seconds of the run, without the model load);
 - `MemAvailable` before you click (**A**) and the lowest it reached while the run was going (**B**), so the footprint is **A − B**;
-- the worker's own memory while it was loaded: `curl -s localhost:8080/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'` (`worker_rss_gb`).
+- the worker's own memory while it was loaded: `curl -s localhost:8081/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'` (`worker_rss_gb`).
 
 **Good:** the 16:9 run takes about as long as the square (it has 0.9% more pixels: 4.23 MP against 4.19) and its **A − B** is no more than the square's, within the noise between two runs.
 **If it is larger, send me both sets of numbers:** the default would have to be thought about again, and `STUDIO_MIN_FREE_GB` (step 9) may need raising.
@@ -853,7 +853,7 @@ then choose **1:1** (2048 × 2048) and generate one more. If the model has to lo
 (`file` on the downloaded PNG, or the size on the card). A request that names a size (`"width": 1024, "height": 1024`) gets that size.
 
 ```bash
-curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' -d '{"prompt": "a lighthouse at dusk", "options": {"steps": 20}}'
+curl -s -X POST localhost:8081/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' -d '{"prompt": "a lighthouse at dusk", "options": {"steps": 20}}'
 ```
 
 **f) What does not change.** Turn **Edit** on: Size is still **Auto** (*from your images*), and **Reset to defaults** leaves it there. Press **Reuse** on a card made before the update (a square):
@@ -974,7 +974,7 @@ docker compose logs studio | grep -i "schema\|builder" | head
 ```
 
 **a) The connection.** Open **Prompt builder** (the fourth tab). **Good:** *Ollama is ready: qwen3.8:27b*. Press **Test connection**. **Good:** it lists Ollama's version and its models, says yours is among them, and says whether it can look at pictures
-(Ollama's library says `qwen3.8:27b` can). **Check** that the address appears nowhere on the page, and that `curl -s http://localhost:8080/api/capabilities | grep -c -e host.docker.internal -e 11434` (use the port in your `.env`) prints `0`; the capabilities say only whether the builder is `configured`, `reachable` and which `model`.
+(Ollama's library says `qwen3.8:27b` can). **Check** that the address appears nowhere on the page, and that `curl -s http://localhost:8081/api/capabilities | grep -c -e host.docker.internal -e 11434` (use the port in your `.env`) prints `0`; the capabilities say only whether the builder is `configured`, `reachable` and which `model`.
 With `STUDIO_OLLAMA_URL` empty, **good:** the tab says *The Prompt builder needs an Ollama server…* and Saved prompts, Preferences and Projects still work.
 
 **b) A first chat.** Type **a lighthouse in a storm** and Send. **Good:** the chat is in the list at once; a card says *Thinking…* with the seconds and a **Show thinking** fold; then the reply streams, with at most **three questions**, each with 3 to 5 chips.
