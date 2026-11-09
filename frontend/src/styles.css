@@ -963,3 +963,45 @@ fieldset.field { gap: 8px; }
 .speech-skipped-text { margin: 0; flex: 1 1 14em; max-height: 6em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .speech-more { list-style: none; }
 @media (max-width: 520px) { .speech-source, .speech-review, .speech-unavailable { padding: 12px; } .speech-url-row { flex-wrap: wrap; } .speech-url-row button { flex: 1 1 100%; } }
+
+/* the engine and the voice (DESIGN.md §38.2) */
+.speech-voice-section { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); min-width: 0; }
+.speech-voice-section fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 8px; }
+.speech-voice-section legend { font-size: 14px; font-weight: 600; padding: 0; margin-bottom: 4px; }
+.speech-engines ul, .speech-voice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.speech-engine { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.speech-engine.chosen { border-color: var(--accent); background: var(--surface-2); }
+.speech-engine-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.speech-engine-label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.speech-engine-title { font-weight: 600; }
+.speech-engine p { margin: 0; }
+.speech-engine-reason { color: var(--text-2); font-size: 14px; }
+/* the state of an engine is a word, drawn in a colour: the colour is never the only sign */
+.engine-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--text-2); }
+.engine-pill.good { background: var(--success-soft); color: var(--success); }
+.engine-pill.bad { background: var(--danger-soft); color: var(--danger); }
+.engine-pill.warn { background: var(--accent-soft); color: var(--accent-text); }
+.speech-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* the chips themselves (.chip, with its pressed state) are the Music tab's; the Speech tab uses them as they are */
+.speech-voices-heading { margin: 6px 0 0; font-size: 14px; color: var(--text-2); }
+.speech-voice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.speech-voice.chosen { border-color: var(--accent); background: var(--surface-2); }
+.speech-voice-label { display: grid; gap: 2px; min-width: 0; }
+.speech-voice-label label { display: inline-flex; gap: 8px; align-items: baseline; cursor: pointer; }
+.speech-voice-name { font-weight: 600; }
+.speech-voice-facts { color: var(--text-2); font-size: 14px; padding-left: 24px; }
+.speech-voice-label .field-hint { padding-left: 24px; }
+.speech-sample { align-self: center; white-space: nowrap; }
+.speech-sample-problem { grid-column: 1 / -1; margin: 0; }
+.speech-style { display: grid; gap: 12px; }
+.speech-style textarea { width: 100%; font: inherit; resize: vertical; }
+.speech-style-line { margin: 0; }
+.speech-make { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.speech-summary { margin: 0; font-weight: 600; }
+.speech-make .hint { margin: 0; }
+.speech-queued { margin: 0; color: var(--success); font-weight: 600; }
+@media (max-width: 520px) {
+  .speech-voice-section, .speech-make { padding: 12px; }
+  .speech-voice { grid-template-columns: minmax(0, 1fr); }
+  .speech-sample { justify-self: start; }
+}

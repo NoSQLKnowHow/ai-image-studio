@@ -30,7 +30,9 @@ import { usePicturePaste } from "./usePicturePaste";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
 import { SpeechPanel } from "./components/SpeechPanel";
+import { createEmitter } from "./emitter";
 import { speechApi } from "./speechApi";
+import type { SpeechJob } from "./speechTypes";
 import {
   MOVED_NOTE,
   PROMPT_KEY,
@@ -110,6 +112,8 @@ export default function App() {
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
   const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music, Vector or Prompt builder (DESIGN.md §26.1, §31.12.8, §37.2), remembered
   const [builderWorking, setBuilderWorking] = useState(false); // a reply is being written: the dot on the Prompt builder tab
+  const [speechEngine, setSpeechEngine] = useState<string | null>(null); // the engine the Speech tab shows: the header's Load and Unload act on it (DESIGN.md §38.2)
+  const speechJobs = useRef(createEmitter<SpeechJob>()).current; // `speech.job` events, for the Speech tab to hear when a sample is made
   const [builderTick, setBuilderTick] = useState(0); // another page changed a prompt, chat or preference
   const [builderCommand, setBuilderCommand] = useState<BuilderCommand | null>(null); // something for the Prompt builder to do: open a prompt, refine a picture, help write an edit
   const [fromPrompt, setFromPrompt] = useState<FromPrompt | null>(null); // the saved prompt the Images prompt box came from: the next Generate carries it (DESIGN.md §37.3 rule 3)
@@ -184,6 +188,7 @@ export default function App() {
   useEventStream(dispatch, {
     onCapabilitiesChanged: () => void api.capabilities().then((c) => dispatch({ type: "caps", caps: c })).catch(() => undefined),
     onBuilderChanged: () => setBuilderTick((n) => n + 1),
+    onSpeechJob: speechJobs.emit,
   });
 
   useEffect(() => {
@@ -1032,7 +1037,8 @@ export default function App() {
   return (
     <PromptLinksContext.Provider value={promptLinks}>
       <a className="skip-link" href="#prompt">Skip to the prompt</a>
-      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : tab === "speech" ? "speech" : "image"} musicAvailable={musicAvailable} onModel={changeModel} />
+      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : tab === "speech" ? "speech" : "image"} musicAvailable={musicAvailable}
+        speech={{ available: !!caps?.speech.available, engine: speechEngine }} onModel={changeModel} />
       <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
       <main className="app-main">
         {!caps || !options ? (
@@ -1184,7 +1190,7 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
-            <SpeechPanel hidden={tab !== "speech"} caps={caps} />
+            <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} onQueued={(run) => dispatch({ type: "runUpsert", run })} />
             <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
               integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
             <VectorPanel

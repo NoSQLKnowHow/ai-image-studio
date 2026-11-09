@@ -1,9 +1,8 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
-import { SpeechPanel } from "./components/SpeechPanel";
-import type { Prepared, PreparedPart } from "./speechTypes";
-import { CAPS, makePrepared } from "./testdata";
-import type { Capabilities } from "./types";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Prepared } from "./speechTypes";
+import { BOOK, part, parts, jsonBody, press, prepared, server, show, typeText } from "./speechTestSupport";
+import { CAPS } from "./testdata";
 
 // The Speech tab's first half (DESIGN.md §38.2): whether speech works here at all, the three ways to give a text, and the review of its parts. `fetch` is replaced by
 // a table of answers, so what the page sends is looked at and nothing leaves the test.
@@ -13,40 +12,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-interface Call {
-  url: string;
-  init: RequestInit & { headers: Record<string, string> };
-}
-type Answer = { status?: number; body: unknown } | Promise<{ status?: number; body: unknown }>;
-
-/** Answer every call with `answer(url, init)`; the calls are returned for the test to look at. */
-function server(answer: (call: Call) => Answer): Call[] {
-  const calls: Call[] = [];
-  vi.stubGlobal("fetch", vi.fn(async (url: string, init: Call["init"]) => {
-    const call = { url, init };
-    calls.push(call);
-    const { status = 200, body } = await answer(call);
-    return new Response(JSON.stringify(body), { status });
-  }));
-  return calls;
-}
-
-const part = (title: string, paragraphs: [string, string, (string | null)?][], extra: Partial<PreparedPart> = {}): PreparedPart => ({
-  title, chars: paragraphs.filter((p) => !p[2]).reduce((n, p) => n + p[1].length, 0), minutes: 1, include: true, note: null,
-  paragraphs: paragraphs.map(([kind, text, skipped = null]) => ({ kind: kind as "heading" | "paragraph", text, skipped })), ...extra,
-});
-const prepared = (parts: PreparedPart[], extra: Partial<Prepared> = {}): Prepared => makePrepared({ title: "A short book", parts, warnings: [], cleaning: [], ...extra });
-const BOOK = prepared([
-  part("Chapter one", [["heading", "Chapter one"], ["paragraph", "It was a bright cold day in April."]]),
-  part("Chapter two", [["paragraph", "The second chapter begins here, with some words."]]),
-  part("Chapter three", [["paragraph", "And the third."]]),
-]);
-
-const show = (caps: Capabilities = CAPS, hidden = false) => render(<SpeechPanel hidden={hidden} caps={caps} />);
-const typeText = (text: string) => fireEvent.change(screen.getByLabelText("Paste the text"), { target: { value: text } });
-const press = (name: string | RegExp) => fireEvent.click(screen.getByRole("button", { name }));
-const parts = () => within(screen.getByRole("list", { name: "Parts" })).getAllByRole("listitem", { name: "" }).filter((li) => li.classList.contains("speech-part"));
-const jsonBody = (call: Call) => JSON.parse(call.init.body as string);
+// nothing the test does not answer is answered: a call it did not expect is a 404 and not a hang
+beforeEach(() => void server(() => ({ status: 404, body: { detail: "Not expected here.", code: "not_found" } })));
 
 // ------------------------------------------------------------------ the frame
 describe("the tab", () => {
@@ -117,7 +84,7 @@ describe("pasted text", () => {
     show();
     typeText("Some words to read, enough to be a text.");
     press("Prepare text");
-    expect((await screen.findByRole("status")).textContent).toMatch(/Preparing the text/);
+    expect((await screen.findByText(/Preparing the text/)).textContent).toMatch(/Preparing the text/);
     expect((screen.getByLabelText("Paste the text") as HTMLTextAreaElement).disabled).toBe(true);
     expect((screen.getByRole("button", { name: "Prepare text" }) as HTMLButtonElement).disabled).toBe(true);
     release({ body: BOOK });
@@ -149,7 +116,7 @@ describe("pasted text", () => {
   });
 
   it("says when the studio cannot be reached", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("network"); }));
+    server(() => { throw new TypeError("network"); });
     show();
     typeText("Some words to read, enough to be a text.");
     press("Prepare text");
@@ -350,10 +317,10 @@ describe("a file", () => {
 
   it("can be stopped while it is being read, and that is not reported as a failure", async () => {
     let signal: AbortSignal | null | undefined;
-    vi.stubGlobal("fetch", vi.fn((_url: string, init: RequestInit) => new Promise((_resolve, reject) => {
-      signal = init.signal;
-      init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
-    })));
+    server((call) => new Promise((_resolve, reject) => {
+      signal = call.init.signal;
+      call.init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+    }));
     openFile();
     choose(file("long.epub"));
     press("Stop");

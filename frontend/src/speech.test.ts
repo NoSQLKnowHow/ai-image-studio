@@ -6,7 +6,7 @@ import {
   partChars, partsToRead, pieceAt, pieceStart, playerAction, positionFor, progressLine, readChoice, readPlayerPrefs, readingFacts, readingProblem, readingTitle,
   readingTotals, renamePart, resumeTime, saveChoice, savePlayerPrefs, savedVoiceFacts, seekedTime, setInclude, sourceText, speedText, startingPart, stepSpeed,
   styleControl, styleToSend, toGoText, totalsLine, voiceFacts, voiceMatches, voiceName,
-  FILE_ACCEPT, FILE_EXTENSIONS, aboutLength, fileProblem, normalizeUrl, partLengthText, pastedTextLine, reviewChanged, reviewLine, skippedText, switchesChanged, urlProblem,
+  FILE_ACCEPT, FILE_EXTENSIONS, aboutLength, fileProblem, queuedText, sampleBody, sampleKey, sampleLabel, sampleWords, normalizeUrl, partLengthText, pastedTextLine, reviewChanged, reviewLine, skippedText, switchesChanged, urlProblem,
 } from "./speech";
 import type { DraftPart } from "./speech";
 import type { KeyValueStore } from "./options";
@@ -826,5 +826,46 @@ describe("the lines of the review", () => {
     expect(skippedText("code")).toBe("Not read: code");
     expect(skippedText("table")).toBe("Not read: table");
     expect(skippedText("footnote")).toBe("Not read: footnote");
+  });
+});
+
+// ------------------------------------------------------------------ Play sample
+describe("asking for a sample", () => {
+  it("names a preset by its id, and a voice the person made by its id, never both", () => {
+    expect(sampleBody(FULL, ANNA)).toEqual({ engine: "fake", voice: "anna" });
+    expect(sampleBody(FULL, saved({ id: "s1" }))).toEqual({ engine: "fake", saved_voice: "s1" });
+    expect(Object.keys(sampleBody(FULL, ANNA))).not.toContain("saved_voice");
+    expect(Object.keys(sampleBody(FULL, saved()))).not.toContain("voice");
+  });
+
+  it("keeps the state of a sample under a key that tells a preset from a saved voice with the same id", () => {
+    expect(sampleKey(ANNA)).toBe("preset:anna");
+    expect(sampleKey(saved({ id: "anna" }))).toBe("saved:anna");
+    expect(sampleKey(ANNA)).not.toBe(sampleKey(saved({ id: "anna" })));
+  });
+
+  it("names its button for what pressing it does now", () => {
+    expect(sampleLabel("Anna", "idle")).toBe("Play sample of Anna");
+    expect(sampleLabel("Anna", "ready")).toBe("Play sample of Anna");
+    expect(sampleLabel("Anna", "waiting")).toBe("Making the sample of Anna…");
+    expect(sampleLabel("Anna", "playing")).toBe("Stop the sample of Anna");
+    expect([sampleWords("idle"), sampleWords("waiting"), sampleWords("playing"), sampleWords("ready")]).toEqual(["Play sample", "Making…", "Stop", "Hear it"]);
+  });
+});
+
+describe("what is said when a reading is queued", () => {
+  it("has its title, its parts and about how long", () => {
+    const run = makeSpeechRun();
+    expect(queuedText(run)).toBe("Queued “A test reading”: 2 parts, less than a minute.");
+    const long = makeSpeechRun({ reading: { ...(run.reading as ReadingInfo), parts_total: 12, seconds_total: 40800 } });
+    expect(queuedText(long)).toBe("Queued “A test reading”: 12 parts, about 11 h 20 min.");
+    expect(queuedText(makeSpeechRun({ reading: { ...(run.reading as ReadingInfo), parts_total: 1 } }))).toMatch(/: 1 part, /);
+  });
+
+  it("falls back to the title in the options, then the prompt, and says only that it is queued for a run with no reading", () => {
+    const run = makeSpeechRun();
+    expect(queuedText({ ...run, reading: null })).toBe("Queued “A test reading”.");
+    expect(queuedText({ ...run, reading: { ...(run.reading as ReadingInfo), title: null } })).toMatch(/^Queued “A test reading”: /);
+    expect(queuedText({ ...run, reading: null, options: { ...run.options, title: null }, prompt: "From the prompt" })).toBe("Queued “From the prompt”.");
   });
 });

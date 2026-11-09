@@ -7,7 +7,7 @@
 import type { KeyValueStore } from "./options";
 import type {
   EngineState, PartDetail, PartPiece, PositionBody, PresetVoice, Prepared, ReadingBody, ReadingInfo, ReadingPosition, SavedVoice, SourceInfo, SpeechCaps, SpeechEngine,
-  SpeechJob, SpeechLimits,
+  SampleBody, SpeechJob, SpeechLimits,
 } from "./speechTypes";
 import type { SpeechRun } from "./types";
 
@@ -383,6 +383,34 @@ export function buildReadingBody(
   };
 }
 
+// ------------------------------------------------------------------ Play sample (§38.4, criterion 262)
+/** Where a voice's sample button is: nothing happening, waiting for the sample to be made (a short job that goes ahead of waiting readings), playing it, or ready to be
+ *  played by a press (the browser would not let it start by itself). A sample that could not be made or played is `idle` again, with its reason beside the voice. */
+export type SamplePhase = "idle" | "waiting" | "playing" | "ready";
+
+/** What "Play sample" asks for: a preset by its id, a voice the person made by its id, never both. */
+export function sampleBody(engine: Pick<SpeechEngine, "id">, voice: PresetVoice | SavedVoice): SampleBody {
+  return isSaved(voice) ? { engine: engine.id, saved_voice: voice.id } : { engine: engine.id, voice: voice.id };
+}
+
+/** The key a voice's sample state is kept under: a preset and a saved voice may have the same id, so the kind is part of it. */
+export const sampleKey = (voice: PresetVoice | SavedVoice): string => `${isSaved(voice) ? "saved" : "preset"}:${voice.id}`;
+
+/** The name of the sample button, which says what pressing it does now. */
+export function sampleLabel(name: string, phase: SamplePhase): string {
+  switch (phase) {
+    case "waiting":
+      return `Making the sample of ${name}…`;
+    case "playing":
+      return `Stop the sample of ${name}`;
+    default:
+      return `Play sample of ${name}`;
+  }
+}
+
+/** The words on the button itself. */
+export const sampleWords = (phase: SamplePhase): string => (phase === "waiting" ? "Making…" : phase === "playing" ? "Stop" : phase === "ready" ? "Hear it" : "Play sample");
+
 // ------------------------------------------------------------------ a reading's card (§38.2)
 /** Where the text came from, in a few words: "Pasted", a host name, a file name. */
 export function sourceText(source: SourceInfo | Record<string, unknown> | null | undefined): string {
@@ -426,6 +454,14 @@ export const listenLabel = (reading: ReadingInfo | null): string => (reading && 
 export function continueText(reading: ReadingInfo | null): string | null {
   if (!reading || !hasPlace(reading.position)) return null;
   return `Continue listening from ${clockText(reading.position.offset_ms / 1000)} in part ${reading.position.part + 1}`;
+}
+
+/** What is said when a reading has been queued: its title, how many parts, and about how long. The card for it is in the history. */
+export function queuedText(run: SpeechRun): string {
+  const r = run.reading;
+  const title = r?.title || run.options.title || run.prompt;
+  if (!r) return `Queued “${title}”.`;
+  return `Queued “${title}”: ${plural(r.parts_total, "part")}, ${aboutLength(r.seconds_total)}.`;
 }
 
 /** The facts under a card's title: where the text came from, the engine and the voice. */
