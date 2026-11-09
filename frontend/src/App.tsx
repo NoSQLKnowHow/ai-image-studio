@@ -176,7 +176,7 @@ export default function App() {
 
   // The tab says which build the server is running, too.
   useEffect(() => {
-    document.title = version ? `AI Image Studio v${version}` : "AI Image Studio";
+    document.title = version ? `AI Studio v${version}` : "AI Studio";
   }, [version]);
 
   const start = useCallback(async () => {

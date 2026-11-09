@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape" version="1.1" width="100mm" height="100mm" viewBox="0 0 100 100">
-  <title>AI Image Studio laser test sheet</title>
+  <title>AI Studio laser test sheet</title>
   <desc>DESIGN.md section 31.9. 100 x 100 mm, one unit is one millimetre. Four layers in four exact colours; each holds a filled square, an outline square, a ring (a filled circle with a hole), an outline circle and a 10 x 2 mm scale bar. Layer 1 also has an outline frame of the whole sheet.</desc>
   <g id="layer-1-black" inkscape:groupmode="layer" inkscape:label="Layer 1 (black)">
     <path id="frame" d="M0 0 L100 0 L100 100 L0 100 Z" fill="none" stroke="#000000" stroke-width="0.1"/>

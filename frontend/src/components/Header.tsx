@@ -193,7 +193,7 @@ export function Header({ status, now, busy, tab, musicAvailable, speech, onModel
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><SparkleIcon /></span>
           <h1>
-            AI Image Studio
+            AI Studio
             {status && <span className="brand-version"> v{status.version}</span>}
           </h1>
         </div>

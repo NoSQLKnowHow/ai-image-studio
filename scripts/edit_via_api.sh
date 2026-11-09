@@ -12,7 +12,7 @@ usage() {
   cat <<'EOF'
 Usage: scripts/edit_via_api.sh [options] "PROMPT" IMAGE [IMAGE...]
 
-  --url URL          the studio (default http://127.0.0.1:8080)
+  --url URL          the studio (default http://127.0.0.1:8081)
   --resolution N     1024 (default) or 2048: sizes every input and, on Auto, the result
   --size WxH         an explicit result size, e.g. 1024x768 (default: Auto, shaped like the last image)
   --shape-from N     with Auto size, make the result follow image N instead of the last one
@@ -30,7 +30,7 @@ EOF
 
 die() { printf 'ERROR: %s\n' "$1" >&2; exit "${2:-2}"; }
 
-URL="http://127.0.0.1:8080"; RESOLUTION=""; SIZE=""; SHAPE_FROM=""; STEPS=""; SEED=""; IMAGES=""; TRANSPARENT=0; OUT="."
+URL="http://127.0.0.1:8081"; RESOLUTION=""; SIZE=""; SHAPE_FROM=""; STEPS=""; SEED=""; IMAGES=""; TRANSPARENT=0; OUT="."
 while [[ $# -gt 0 ]]; do
   case $1 in
     --url) URL=${2:?--url needs a value}; shift 2;;

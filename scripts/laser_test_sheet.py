@@ -113,7 +113,7 @@ def build_svg() -> str:
         '<?xml version="1.0" encoding="UTF-8"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" xmlns:inkscape="{INKSCAPE}" version="1.1" '
         f'width="{SIZE_MM}mm" height="{SIZE_MM}mm" viewBox="0 0 {SIZE_MM} {SIZE_MM}">',
-        "  <title>AI Image Studio laser test sheet</title>",
+        "  <title>AI Studio laser test sheet</title>",
         f"  <desc>DESIGN.md section 31.9. {SIZE_MM} x {SIZE_MM} mm, one unit is one millimetre. Four layers in four exact colours; "
         "each holds a filled square, an outline square, a ring (a filled circle with a hole), an outline circle and a 10 x 2 mm "
         "scale bar. Layer 1 also has an outline frame of the whole sheet.</desc>",

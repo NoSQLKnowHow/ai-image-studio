@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Back up AI Image Studio into ONE .tar file. See README "Backing up and restoring".
+# Back up AI Studio into ONE .tar file. See README "Backing up and restoring".
 #
 #   scripts/backup.sh [options] DESTINATION_FOLDER
 #
@@ -197,7 +197,7 @@ largest=$data_bytes
 (( model_bytes > largest )) && largest=$model_bytes
 peak=$(( need + largest ))   # the pieces are moved into the .tar one at a time, so at worst: all of it, plus the biggest piece
 
-say "Backing up AI Image Studio ($REPO)"
+say "Backing up AI Studio ($REPO)"
 say "  to:      $FINAL"
 say "  data:    yes ($(human "$data_bytes"))"
 say "  image:   $( ((WITH_IMAGE)) && echo "yes ($IMAGE)" || echo no )"

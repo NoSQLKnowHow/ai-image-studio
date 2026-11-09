@@ -79,10 +79,10 @@ def server_stopping(app: FastAPI) -> bool:
 
 PLACEHOLDER_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Image Studio</title>
+<title>AI Studio</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#222;background:#fafafa}
 @media (prefers-color-scheme:dark){body{color:#eee;background:#16161a}}code{font-size:.9em}</style></head>
-<body><h1>AI Image Studio</h1>
+<body><h1>AI Studio</h1>
 <p>The backend is running, but the web interface has not been built. Build it with <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code> (the container image does this for you).</p>
 <p>API: <code>/api/health</code>, <code>/api/status</code>, <code>/api/capabilities</code>, <code>/api/runs</code>,
 <code>/api/events</code>.</p></body></html>"""
@@ -187,7 +187,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             log.info("the prompts' word index was not in step with the prompts and has been rebuilt")
         app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
         app.state.vector_png_slots = asyncio.Semaphore(VECTOR_PNG_AT_ONCE)
-        log.info("AI Image Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
+        log.info("AI Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
         try:
             yield
         finally:
@@ -195,7 +195,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             db.close()
 
     app = FastAPI(
-        title="AI Image Studio",
+        title="AI Studio",
         version=__version__,
         lifespan=lifespan,
         docs_url=None,

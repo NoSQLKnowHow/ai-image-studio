@@ -13,7 +13,7 @@ async function setRange(locator: Locator, value: number) {
 
 test("loads cleanly and explains the model state", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "AI Image Studio" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AI Studio" })).toBeVisible();
   // whatever state the model is in (a run from an earlier test may still be going)
   const pill = page.locator('button[aria-controls="model-details"]');
   await expect(pill).toHaveText(/^(Model not loaded|Loading (image|music|speech) model…|(Image|Music|Speech) model ready|Generating|Making music|Making reading)/);
@@ -29,8 +29,8 @@ test("the title and the tab show the version the server is running", async ({ pa
   const { version } = (await (await page.request.get("/api/health")).json()) as { version: string };
   expect(version).toMatch(/^\d+\.\d+/);
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "AI Image Studio" })).toHaveText(`AI Image Studio v${version}`);
-  await expect(page).toHaveTitle(`AI Image Studio v${version}`);
+  await expect(page.getByRole("heading", { name: "AI Studio" })).toHaveText(`AI Studio v${version}`);
+  await expect(page).toHaveTitle(`AI Studio v${version}`);
   // index.html is revalidated on every load, so a rebuilt page can't hide behind the browser's cache
   const html = await page.request.get("/");
   expect(html.headers()["cache-control"]).toBe("no-cache");
@@ -185,7 +185,7 @@ test("phone width: no sideways scrolling, and Options is a bottom sheet", async 
   await useOptions(page);
   await page.goto("/");
   // the title and its version are never overlapped by the status pill (the pill gives way, with an ellipsis)
-  await expect(page.getByRole("heading", { name: /^AI Image Studio v\d/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^AI Studio v\d/ })).toBeVisible();
   const gap = await page.evaluate(() => {
     const title = document.querySelector(".brand h1")!.getBoundingClientRect(); // the text, not its (shrinkable) container
     const pill = document.querySelector(".pill-wrap")!.getBoundingClientRect();
@@ -433,9 +433,11 @@ test("every image has a thumbnail to download, on its card and in the viewer", a
   expect(response.headers()["content-type"]).toBe("image/webp");
   expect(response.headers()["content-disposition"]).toMatch(/filename="generate_two-thumbnails.*_thumb\.webp"/);
   await page.keyboard.press("Escape");
-  // wait for the viewer to be gone: closing it gives focus back to the picture that opened it, and if that happens after the prompt box was filled, the Ctrl+Enter
-  // goes to that button and nothing is made (seen once in a whole run under load: the prompt still in the box, no card)
+  // Closing the viewer gives focus back to the picture that opened it, by a call the page puts off a moment (useReturnFocus). If that comes after the prompt box was filled,
+  // it takes the focus from the box, the Ctrl+Enter goes to that button and nothing is made (seen twice in whole runs: the prompt still in the box, no card, focus on the
+  // picture's button). Waiting only for the viewer to be gone was not enough, because the focus comes a moment after that: so wait for the focus itself.
   await expect(page.getByRole("dialog")).toBeHidden();
+  await expect(c.getByRole("button", { name: /Open image 2 of 2/ })).toBeFocused();
 
   const single = await generate(page, unique("one thumbnail"));
   await expect(single.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });

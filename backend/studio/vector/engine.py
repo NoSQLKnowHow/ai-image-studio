@@ -235,7 +235,7 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
     # ---- the SVGs ----
     description = (f"{svgio.fmt(width)} x {svgio.fmt(height)} mm, one unit is one millimetre. {len(svg_layers)} layer"
                    f"{'' if len(svg_layers) == 1 else 's'}, each in its own exact colour. White is the bare material and has no layer.")
-    title = "AI Image Studio Vector"
+    title = "AI Studio Vector"
     svg = svgio.build_svg(width, height, svg_layers, opts.fill_mode, title, description)
     files = tuple(LayerFile(id=layer.id, name=layer.name, colour=layer.colour,
                             svg=svgio.build_svg(width, height, [layer], opts.fill_mode, title, description)) for layer in svg_layers)

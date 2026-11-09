@@ -1,4 +1,4 @@
-/* AI Image Studio. Design tokens first; light is the base, dark overrides follow.
+/* AI Studio. Design tokens first; light is the base, dark overrides follow.
    Contrast targets WCAG AA (4.5:1 for text) in both themes. */
 
 :root {

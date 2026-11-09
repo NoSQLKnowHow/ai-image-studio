@@ -1,4 +1,4 @@
-# AI Image Studio for the NVIDIA DGX Spark (arm64, GB10 "Blackwell", sm_121).
+# AI Studio for the NVIDIA DGX Spark (arm64, GB10 "Blackwell", sm_121).
 #
 # Build it on the Spark itself:   docker compose build
 # (or: docker build -t ai-image-studio:local .). See README "Build and run on the DGX Spark".

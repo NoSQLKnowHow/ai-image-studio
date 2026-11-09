@@ -1,9 +1,9 @@
-# AI Image Studio on the NVIDIA DGX Spark.
+# AI Studio on the NVIDIA DGX Spark.
 #
 #   cp .env.example .env        # then set STUDIO_UID/STUDIO_GID (run: id -u; id -g)
 #   mkdir -p data               # before the first start, so it's yours and not root's
 #   docker compose up -d --build
-#   open http://<spark-address>:8080
+#   open http://<spark-address>:8081
 #
 # Run docker compose as yourself, not with sudo: sudo changes $HOME, and with it the model cache
 # folder below. README "Build and run on the DGX Spark" and docs/SPARK_TEST.md have the details.
@@ -42,7 +42,9 @@ services:
       - "host.docker.internal:host-gateway"
     ports:
       # STUDIO_BIND=127.0.0.1 keeps it off the LAN (for an SSH tunnel / NVIDIA Sync only).
-      - "${STUDIO_BIND:-0.0.0.0}:${STUDIO_PORT:-8080}:8080"
+      # The LEFT port is the one you open from outside, on the Spark's own address: 8081 unless STUDIO_PORT in .env says otherwise (a STUDIO_PORT=8080 left in an
+      # older .env wins over this default, so change that line). The RIGHT port, 8080, is the one the image listens on inside the container and is not meant to change.
+      - "${STUDIO_BIND:-0.0.0.0}:${STUDIO_PORT:-8081}:8080"
     volumes:
       - ./data:/data  # database, images, thumbnails
       # The Hugging Face cache, shared with anything else on the Spark that uses the default one

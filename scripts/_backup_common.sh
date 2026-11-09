@@ -144,7 +144,7 @@ container_running() {
 studio_busy() {
   command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1 || return 1
   local port json
-  port=$(env_value STUDIO_PORT 8080)
+  port=$(env_value STUDIO_PORT 8081)
   json=$(curl -fsS --max-time 3 "http://127.0.0.1:${port}/api/status" 2>/dev/null) || return 1
   printf '%s' "$json" | python3 -c '
 import json, sys
