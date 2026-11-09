@@ -101,7 +101,7 @@ test.beforeEach(async ({ page }) => {
 // ------------------------------------------------------------------ the tab, and the form's limits
 test("Vector is the third tab (before the Prompt builder): the arrow keys reach it, only its panel is shown, and the choice is remembered", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("tab")).toHaveText(["Images", "Music", "Vector", "Prompt builder"]);
+  await expect(page.getByRole("tab")).toHaveText(["Images", "Music", "Vector", "Prompt builder", "Speech"]);
   await musicTab(page).click();
   await page.keyboard.press("ArrowRight");
   await expect(vectorTab(page)).toHaveAttribute("aria-selected", "true");
@@ -119,6 +119,8 @@ test("Vector is the third tab (before the Prompt builder): the arrow keys reach 
   await vectorTab(page).focus();
   await page.keyboard.press("ArrowRight");
   await expect(page.getByRole("tab", { name: "Prompt builder" })).toHaveAttribute("aria-selected", "true"); // the fourth tab, since 1.19
+  await page.keyboard.press("ArrowRight");
+  await expect(page.getByRole("tab", { name: "Speech" })).toHaveAttribute("aria-selected", "true"); // the fifth, since 1.20
   await page.keyboard.press("ArrowRight");
   await expect(imagesTab(page)).toHaveAttribute("aria-selected", "true"); // wraps round
 });
@@ -171,7 +173,7 @@ test("the server's answers have exactly the keys the contract lists, so the page
   expect(Object.keys(caps.limits.vector).sort()).toEqual(expect.arrayContaining(Object.keys(CONTRACT.capabilities.limits_vector).sort())); // the page's optional PNG range may be there too
   // the counts have a third tab, each with the same keys as before
   const counts = (await (await page.request.get("/api/runs/counts")).json()) as Record<string, Record<string, number>>;
-  expect(Object.keys(counts).sort()).toEqual(["image", "music", "vector"]);
+  expect(Object.keys(counts).sort()).toEqual(["image", "music", "speech", "vector"]); // (Speech, the fifth tab, since 1.20)
   for (const tab of ["all", "kept", "deleted"]) expect(counts.vector[tab]).toEqual(expect.any(Number));
   // the history can be asked for the Vector tab's runs alone
   const listed = (await (await page.request.get("/api/runs?kind=vector")).json()) as { runs: ApiRun[] };
