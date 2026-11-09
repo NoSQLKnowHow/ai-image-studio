@@ -39,6 +39,17 @@ def test_a_reading_cannot_be_made_not_kept_and_the_answer_says_why(client):
     assert client.patch(f"/api/runs/{reading['id']}", json={"pinned": True}).status_code == 200  # keeping it, which it is, is not refused
 
 
+def test_a_reading_in_a_project_asked_not_to_be_kept_gets_the_readings_answer_and_not_advice_that_would_not_help(client):
+    """For a picture in a project the answer is "take it out of the project first", because that would let it stop being kept. For a reading that advice would be
+    wrong: taking it out changes nothing about being kept, so the answer has to be the reading's own, whatever else is true of it."""
+    reading = finished_reading(client)
+    project = client.post("/api/projects", json={"name": "Books"}).json()
+    assert client.put(f"/api/runs/{reading['id']}/project", json={"project_id": project["id"]}).status_code == 200
+    refused = client.patch(f"/api/runs/{reading['id']}", json={"pinned": False})
+    assert refused.status_code == 409 and refused.json()["code"] == "always_kept"
+    assert "project" not in refused.json()["detail"]
+
+
 def test_a_picture_can_still_be_made_not_kept(client):
     """The refusal is for readings only: every other kind of run keeps the Keep it always had."""
     picture = wait_for(client, create_run(client)["id"])

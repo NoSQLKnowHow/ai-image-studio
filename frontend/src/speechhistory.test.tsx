@@ -9,7 +9,7 @@ import { binContents, deleteProjectQuestion, emptyBinQuestion, projectContents }
 import { SpeechPanel, type SpeechHistory } from "./components/SpeechPanel";
 import type { ReadingInfo } from "./speechTypes";
 import { memoryStore, server } from "./speechTestSupport";
-import { CAPS, makeSpeechRun } from "./testdata";
+import { CAPS, STATUS, makeSpeechRun } from "./testdata";
 import type { Project, SpeechRun } from "./types";
 
 // A reading in the history (DESIGN.md §38.2): its card in each state it can be in, what each button asks for, the words the shared dialogs and filter bar say about it,
@@ -98,6 +98,34 @@ describe("a reading's card", () => {
     card(run);
     expect(screen.getByRole("progressbar", { name: "How much of the reading is made" }).getAttribute("aria-valuenow")).toBe("40");
     expect(screen.getByText(/^Part 2 of 2 · paragraph 2 of 5 · less than a minute made · about 14 min to go$/)).toBeTruthy();
+    cleanup();
+    card(makeSpeechRun({ status: "running", reading: reading(made(1, 2), { pieces_done: 2, pieces_total: 3 }) }));
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("67"); // two thirds is 67 per cent: rounded, not cut off at 66
+  });
+
+  it("says how long is left only while it is being made: a canceled, failed or finished reading has no time to go, whatever the server last estimated", () => {
+    for (const status of ["canceled", "failed", "done"] as const) {
+      cleanup();
+      card(makeSpeechRun({ status, reading: reading(made(1, 2), { seconds_to_go: 600 }) }));
+      expect(screen.getByText(/ made$/), status).toBeTruthy(); // the line about how far it got is there...
+      expect(screen.queryByText(/to go/), status).toBeNull(); // ...without a time still to go
+    }
+  });
+
+  it("says nothing about how far it has got when it has nothing in it to make (no pieces at all)", () => {
+    card(makeSpeechRun({ status: "queued", queue_position: 1, reading: reading(made(0, 0), { parts_total: 0, pieces_total: 0 }) }));
+    expect(document.querySelector(".reading-progress")).toBeNull();
+    expect(screen.queryByText(/none made yet/)).toBeNull();
+  });
+
+  it("announces its progress only while it is being made: a live region on every finished card would have a screen reader read them all out", () => {
+    card(makeSpeechRun({ status: "running", reading: reading(made(1, 2), { pieces_done: 2 }) }));
+    expect(document.querySelector(".reading-progress")?.getAttribute("role")).toBe("status");
+    for (const status of ["queued", "done", "canceled"] as const) {
+      cleanup();
+      card(makeSpeechRun({ status, queue_position: status === "queued" ? 1 : null }));
+      expect(document.querySelector(".reading-progress")?.hasAttribute("role"), status).toBe(false);
+    }
   });
 
   it("has no bar before anything is made, and says so", () => {
@@ -137,6 +165,21 @@ describe("a reading's card", () => {
     cleanup();
     card(done());
     expect(screen.queryByText("Non-commercial use only")).toBeNull();
+  });
+
+  it("says it is in a project even when the page does not know that project's name (yet)", () => {
+    card(makeSpeechRun({ project_id: "f".repeat(32) }));
+    expect(document.querySelector("[data-project-chip]")?.textContent).toContain("Project");
+    cleanup();
+    card(done());
+    expect(document.querySelector("[data-project-chip]")).toBeNull(); // and nothing of the kind when it is in none
+  });
+
+  it("shows an error only on a reading that has failed: a stale one on a reading that is being made again is not shown, nor is Retry offered", () => {
+    card(makeSpeechRun({ status: "running", error: { message: "The voice failed at part 1.", hint: "Retry." } }));
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(button("Retry")).toBeNull();
+    expect(screen.queryByText("The voice failed at part 1.")).toBeNull();
   });
 
   it("says why a working reading is in a filtered view that would not show it", () => {
@@ -195,7 +238,14 @@ describe("a reading's buttons", () => {
     expect(handlers.onDelete).toHaveBeenCalledTimes(1);
     cleanup();
     card(makeSpeechRun({ status: "running" }));
-    expect((screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement).disabled).toBe(true);
+    const running = screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement;
+    expect(running.disabled).toBe(true);
+    expect(running.getAttribute("title")).toBe("Can't delete while it's being made");
+    cleanup();
+    card(makeSpeechRun({ status: "queued", queue_position: 2 })); // one that only waits can be deleted: it has made nothing worth keeping
+    const waiting = screen.getByRole("button", { name: "Delete" }) as HTMLButtonElement;
+    expect(waiting.disabled).toBe(false);
+    expect(waiting.getAttribute("title")).toBe("Delete this reading and its audio");
   });
 
   it("has the Project button, as the other cards have", () => {
@@ -212,9 +262,10 @@ describe("a reading's buttons", () => {
     expect(onListen).toHaveBeenCalledTimes(1);
     expect((onListen.mock.calls[0][0] as SpeechRun).id).toBe(stopped.id);
     expect(screen.getByText("Continue listening from 2:14:07 in part 2")).toBeTruthy(); // where they stopped, as the design words it
+    expect(listen.getAttribute("title")).toBe("Continue listening from 2:14:07 in part 2"); // and the button says so too
     cleanup();
     card(done(), { onListen });
-    expect(screen.getByRole("button", { name: "Listen" })).toBeTruthy(); // the contract's reading was stopped half a second in: that is where anyone starts
+    expect(screen.getByRole("button", { name: "Listen" }).getAttribute("title")).toMatch(/^Listen to it/); // the contract's reading was stopped half a second in: that is where anyone starts
     expect(document.querySelector('[data-note="place"]')).toBeNull();
     cleanup();
     card(made(1, 2), { onListen });
@@ -259,8 +310,15 @@ describe("a reading in the bin", () => {
   });
 
   it("does not offer the place to continue from, which is for a reading that is not in the bin", () => {
-    card(binned(), { onListen: noop });
-    expect(document.querySelector('[data-note="place"]')).toBeNull();
+    const stopped = makeSpeechRun({ deleted_at: "2026-11-03T10:00:00.000Z", purge_at: "2026-12-03T10:00:00.000Z", reading: reading(done(), { position: { part: 1, piece: 0, offset_ms: 134000 } }) });
+    card(stopped, { onListen: noop });
+    expect(screen.getByRole("button", { name: "Continue listening" })).toBeTruthy(); // the button still knows it (a reading in the bin can be listened to)...
+    expect(document.querySelector('[data-note="place"]')).toBeNull(); // ...but the card does not write the place out
+  });
+
+  it("has no Cancel, whatever its state says: a reading in the bin has finished, and the page does not rely on that", () => {
+    card(makeSpeechRun({ status: "queued", queue_position: 1, deleted_at: "2026-11-03T10:00:00.000Z", purge_at: "2026-12-03T10:00:00.000Z" }));
+    expect(button("Cancel")).toBeNull();
   });
 });
 
@@ -310,12 +368,44 @@ describe("the history under the Speech tab", () => {
     expect(screen.queryByRole("button", { name: /Load older/ })).toBeNull();
   });
 
-  it("hands each card's buttons the reading they are on", () => {
-    const h = history([a(), b()]);
-    show(h);
-    const second = screen.getAllByRole("article")[1];
-    fireEvent.click(within(second).getByRole("button", { name: "Delete" }));
-    expect((h.onDelete as ReturnType<typeof vi.fn>).mock.calls[0][0].id).toBe("b2");
+  it("hands each card's buttons the reading they are on, and each button to its own handler", () => {
+    const working = makeSpeechRun({ id: "w1", status: "running", reading: reading(done(), { title: "Working book" }) });
+    const stopped = makeSpeechRun({ id: "c3", status: "canceled", reading: reading(made(1, 2), { title: "Stopped book", parts_done: 1 }) });
+    const binned = makeSpeechRun({ id: "d4", deleted_at: "2026-11-03T10:00:00.000Z", purge_at: "2026-12-03T10:00:00.000Z", reading: reading(done(), { title: "Binned book" }) });
+    const spies = { cancel: vi.fn(), continue: vi.fn(), restore: vi.fn(), delete: vi.fn(), listen: vi.fn() };
+    show(history([working, a(), stopped, b(), binned], { onCancel: spies.cancel, onContinue: spies.continue, onRestore: spies.restore, onDelete: spies.delete, onListen: spies.listen }));
+    const card = (id: string) => screen.getAllByRole("article").find((c) => c.getAttribute("data-run-id") === id) as HTMLElement;
+    const press = (id: string, name: string) => fireEvent.click(within(card(id)).getByRole("button", { name }));
+    const calledWith = (which: keyof typeof spies) => spies[which].mock.calls.map((call) => (call[0] as SpeechRun).id);
+    press("w1", "Cancel");
+    press("c3", "Continue");
+    press("d4", "Restore");
+    press("b2", "Delete");
+    press("a1", "Listen");
+    // each press reached its own handler, once, with the reading it was pressed on, and no other handler heard of it
+    expect(calledWith("cancel")).toEqual(["w1"]);
+    expect(calledWith("continue")).toEqual(["c3"]);
+    expect(calledWith("restore")).toEqual(["d4"]);
+    expect(calledWith("delete")).toEqual(["b2"]);
+    expect(calledWith("listen")).toEqual(["a1"]);
+    press("d4", "Delete forever");
+    expect(calledWith("delete")).toEqual(["b2", "d4"]);
+  });
+
+  it("tells each card whether it is only in the view because it is working, and which view that is", () => {
+    const working = makeSpeechRun({ id: "w1", status: "running", reading: reading(done(), { title: "Working book" }) });
+    show(history([working, a()], { isTransient: (run) => run.id === "w1", viewScope: "project" }));
+    const notes = (id: string) => screen.getAllByRole("article").find((c) => c.getAttribute("data-run-id") === id)?.querySelector("[data-note^='working-in-']")?.getAttribute("data-note");
+    expect(notes("w1")).toBe("working-in-project");
+    expect(notes("a1")).toBeUndefined();
+  });
+
+  it("shows the queue above the readings, as the other tabs do, only when there is one", () => {
+    show(history([a()], { status: { ...STATUS, queue: { running: "w1", queued: 2, cap: 10, enlarge_waiting: [] } } }));
+    expect(screen.getByText(/^Generating 1 run · 2 waiting \(room for 8 more\)$/)).toBeTruthy();
+    cleanup();
+    show(history([a()], { status: STATUS }));
+    expect(document.querySelector(".queue-bar")).toBeNull();
   });
 
   it("is shown when speech cannot be made now, so that a reading made before an engine went away can still be downloaded", () => {
@@ -341,6 +431,11 @@ describe("what the shared dialogs say of a reading", () => {
     expect(screen.getByRole("heading", { name: "Stop this reading?" })).toBeTruthy();
     expect(screen.getByText("Everything already made is kept (1 part is finished), and so is what was made of the part being worked on. Continue makes the rest.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Stop making the reading" })).toBeTruthy();
+  });
+
+  it("keeps what was made of the first part even when no part is finished yet, and does not say '0 parts are finished'", () => {
+    render(<ConfirmCancel run={makeSpeechRun({ status: "running", reading: reading(done(), { parts_done: 0, pieces_done: 2 }) })} onBack={noop} onConfirm={noop} />);
+    expect(screen.getByText("Everything already made is kept, and so is what was made of the part being worked on. Continue makes the rest.")).toBeTruthy();
   });
 
   it("says so plainly when nothing is made yet, and when several parts are finished", () => {

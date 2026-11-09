@@ -66,7 +66,7 @@ export function ReadingCard({ run, now, transient, viewScope, projects, onListen
           <span className={`badge badge-${run.status === "queued" ? "queued" : run.status}`}>{label}</span>
           {filed && <span className="badge badge-project" data-project-chip><FolderIcon /> {project?.name ?? "Project"}</span>}
           {inBin && <span className="badge badge-deleted"><TrashIcon /> Deleted</span>}
-          {/* an engine with a restricted licence says so on the card of what it made (criterion 289) */}
+          {/* an engine with a restricted licence says so on the tab (§38.4, criterion 289); the card of what it made repeats it, for the day someone else looks at it */}
           {reading?.licence?.noncommercial && <span className="badge" title={reading.licence.notice}>Non-commercial use only</span>}
           <time dateTime={run.created_at} title={new Date(run.created_at).toLocaleString()}>{timeAgo(run.created_at, now)}</time>
         </div>
