@@ -12,6 +12,7 @@ import type { PresetVoice, ReadingPieceEvent, SavedVoice, SpeechJob } from "../s
 import { isSpeechRun, type Capabilities, type Run, type SpeechRun, type Status } from "../types";
 import type { ViewScope } from "../format";
 import { useEngineVoices } from "../useEngineVoices";
+import { usePassage } from "../usePassage";
 import { useSampler } from "../useSampler";
 import { useSpeechSource, type Problem } from "../useSpeechSource";
 import { SpeechEngines } from "./SpeechEngines";
@@ -20,6 +21,7 @@ import { SpeechReview } from "./SpeechReview";
 import { SpeechSourceBox } from "./SpeechSource";
 import { SpeechStyle } from "./SpeechStyle";
 import { SpeechVoices } from "./SpeechVoices";
+import { AddVoiceDialog, ConfirmDeleteVoice, DesignVoiceDialog } from "./VoiceDialogs";
 import { QueueBar } from "./Feedback";
 import type { ProjectControls } from "./ProjectMenu";
 import { ReadingCard } from "./ReadingCard";
@@ -125,7 +127,7 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
   // the engine shown: the one remembered if it can be used, else the first that can; and its voices, once it is ready
   const engine = chooseEngine(speech, choice.engine);
   const usable = !!engine && engineUsable(engine);
-  const { voices, loading, problem: voicesProblem } = useEngineVoices(usable ? engine.id : null);
+  const { voices, loading, problem: voicesProblem, reload: reloadVoices } = useEngineVoices(usable ? engine.id : null);
   const presets = voices?.presets ?? NO_PRESETS;
   const saved = voices?.saved ?? NO_SAVED;
   const remembered = choice.voice && findVoice(choice.voice, presets, saved) ? choice.voice : null;
@@ -141,6 +143,46 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
     update({ engine: id });
   };
   const chooseVoice = (next: VoicePick) => update({ voice: next });
+
+  // The person's own voices (DESIGN.md §38.4): made in a dialog, renamed in the list, deleted after a question. What the dialogs need to know (the passage, and the limits
+  // on a name and a description) is asked for the first time one is opened, and not before.
+  const [maker, setMaker] = useState<"design" | "clone" | null>(null);
+  const [deleting, setDeleting] = useState<SavedVoice | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deleteProblem, setDeleteProblem] = useState<Problem | null>(null);
+  const passage = usePassage(maker !== null);
+  const words = (error: unknown, fallback: string): Problem => (error instanceof ApiError ? { message: error.message, hint: error.hint } : { message: fallback, hint: null });
+  const savedVoice = (voice: SavedVoice) => {
+    setMaker(null);
+    reloadVoices();
+    update({ voice: { kind: "saved", id: voice.id } }); // the voice just made is the voice chosen
+    push?.("success", `Saved the voice “${voice.name}”.`);
+  };
+  const renameVoice = async (voice: SavedVoice, name: string): Promise<Problem | null> => {
+    try {
+      await speechApi.renameVoice(voice.id, name.trim());
+      reloadVoices();
+      return null;
+    } catch (error) {
+      return words(error, "The voice could not be renamed.");
+    }
+  };
+  const confirmDeleteVoice = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    setDeleteProblem(null);
+    try {
+      await speechApi.deleteVoice(deleting.id);
+      stop(); // a sample of it that was playing
+      reloadVoices();
+      push?.("success", `Deleted the voice “${deleting.name}”.`);
+      setDeleting(null);
+    } catch (error) {
+      setDeleteProblem(words(error, "The voice could not be deleted."));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
   const setFilter = (filter: VoiceFilter) => update({ filter });
 
   const prepared = source.prepared;
@@ -196,13 +238,22 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
             {engine && (
               <>
                 <SpeechVoices engine={engine.id} presets={presets} saved={saved} chosen={pick} onChoose={chooseVoice} filter={choice.filter} onFilter={setFilter} sampler={sampler}
-                  loading={loading} problem={voicesProblem} idle={idle} />
+                  loading={loading} problem={voicesProblem} idle={idle} nameMax={passage.passage?.name_max}
+                  tools={usable ? { design: engine.can_design ? () => setMaker("design") : null, clone: engine.can_clone ? () => setMaker("clone") : null } : undefined}
+                  onRename={renameVoice} onDelete={(voice) => { setDeleteProblem(null); setDeleting(voice); }} />
                 {usable && <SpeechStyle engine={engine} voice={voice} style={choice.style} onStyle={(style) => update({ style })} language={choice.language} onLanguage={(language) => update({ language })} />}
               </>
             )}
           </section>
           {prepared && <SpeechMake summary={summary} blocked={blocked} making={making} problem={makeProblem} queued={queued} onMake={() => void make()} />}
           <audio ref={audio} preload="none" />
+          {engine && usable && (
+            <>
+              <DesignVoiceDialog open={maker === "design"} onOpenChange={(open) => !open && setMaker(null)} engine={engine} passage={passage} jobs={jobs} onSaved={savedVoice} />
+              <AddVoiceDialog open={maker === "clone"} onOpenChange={(open) => !open && setMaker(null)} engine={engine} limits={limits} passage={passage} jobs={jobs} onSaved={savedVoice} />
+            </>
+          )}
+          <ConfirmDeleteVoice voice={deleting} deleting={deleteBusy} problem={deleteProblem} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDeleteVoice()} />
         </>
       )}
       {/* a reading made before an engine went away can still be listened to, so the player does not depend on speech being available */}

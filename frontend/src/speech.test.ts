@@ -6,6 +6,7 @@ import {
   partChars, partsToRead, pieceAt, pieceStart, playerAction, positionFor, progressLine, readChoice, readPlayerPrefs, readingFacts, readingProblem, readingTitle,
   readingTotals, renamePart, resumeTime, saveChoice, savePlayerPrefs, savedVoiceFacts, seekedTime, setInclude, sourceText, speedText, startingPart, stepSpeed,
   styleControl, styleToSend, toGoText, totalsLine, voiceFacts, voiceMatches, voiceName,
+  RECORDING_ACCEPT, RECORDING_EXTENSIONS, deleteVoiceQuestion, descriptionProblem, recordingFacts, recordingProblem, voiceNameProblem,
   RESTART_AFTER, nextPieceSource, nextTime, partListText, partPlayable, partSeconds, partTime, pieceMade, pieceSource, previousTime, sourceFor, wholeTime,
   FILE_ACCEPT, FILE_EXTENSIONS, aboutLength, fileProblem, queuedText, sampleBody, sampleKey, sampleLabel, sampleWords, normalizeUrl, partLengthText, pastedTextLine, reviewChanged, reviewLine, skippedText, switchesChanged, urlProblem,
 } from "./speech";
@@ -1014,5 +1015,89 @@ describe("what the player plays and where it goes", () => {
       expect(pieceMade(piece(0, 0))).toBe(true);
       expect(pieceMade(piece(3, null))).toBe(false);
     });
+  });
+});
+
+
+// ------------------------------------------------------------------ the person's own voices (§38.4)
+describe("a voice of one's own: the checks made before anything is sent, and the words", () => {
+  const limits = { recording_mb: 25 };
+  const MB = 1024 * 1024;
+
+  describe("a recording before it is sent", () => {
+    it.each(RECORDING_EXTENSIONS)("may be a %s file, in capitals too", (ending) => {
+      expect(recordingProblem({ name: `me${ending}`, size: 1000 }, limits)).toBeNull();
+      expect(recordingProblem({ name: `ME${ending.toUpperCase()}`, size: 1000 }, limits)).toBeNull();
+    });
+
+    it("has the kinds the design names, and no others", () => {
+      expect([...RECORDING_EXTENSIONS]).toEqual([".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".webm"]);
+      expect(RECORDING_ACCEPT).toBe("audio/*,.wav,.mp3,.m4a,.aac,.ogg,.flac,.webm");
+    });
+
+    it("is refused, saying what to use, when it is another kind or has no ending", () => {
+      const words = "is not a kind of recording that can be read. Use a WAV, MP3, M4A, AAC, OGG, FLAC or WebM recording.";
+      expect(recordingProblem({ name: "voice.txt", size: 10 }, limits)).toBe(`voice.txt ${words}`);
+      expect(recordingProblem({ name: "voice.mp4", size: 10 }, limits)).toBe(`voice.mp4 ${words}`);
+      expect(recordingProblem({ name: "voice", size: 10 }, limits)).toBe(`voice ${words}`);
+      expect(recordingProblem({ name: "my.wav.exe", size: 10 }, limits)).toBe(`my.wav.exe ${words}`);
+    });
+
+    it("is refused when it is empty", () => {
+      expect(recordingProblem({ name: "me.wav", size: 0 }, limits)).toBe("me.wav is empty.");
+    });
+
+    it("is refused when it is larger than the server takes, a megabyte being 1,048,576 bytes", () => {
+      expect(recordingProblem({ name: "me.wav", size: 25 * MB }, limits)).toBeNull();
+      expect(recordingProblem({ name: "me.wav", size: 25 * MB + 1 }, limits)).toBe("me.wav is 26 MB; a recording can be at most 25 MB.");
+    });
+
+    it("says 'That file' of one with no name", () => {
+      expect(recordingProblem({ name: "", size: 10 }, limits)).toMatch(/^That file is not a kind of recording/);
+    });
+
+    it("judges the kind before the size, and the size of an empty file before its length", () => {
+      expect(recordingProblem({ name: "big.txt", size: 100 * MB }, limits)).toMatch(/not a kind of recording/);
+      expect(recordingProblem({ name: "none.wav", size: 0 }, { recording_mb: 0 })).toBe("none.wav is empty.");
+    });
+  });
+
+  describe("what is said of a recording that passed", () => {
+    it("is how long it is, with the silence taken from its ends when that was half a second or more", () => {
+      expect(recordingFacts({ seconds: 10, trimmed_seconds: 0 })).toBe("10 s long");
+      expect(recordingFacts({ seconds: 10, trimmed_seconds: 0.49 })).toBe("10 s long");
+      expect(recordingFacts({ seconds: 10, trimmed_seconds: 0.5 })).toBe("10 s long, with 0.5 s of silence taken from the ends");
+      expect(recordingFacts({ seconds: 24.6, trimmed_seconds: 1.234 })).toBe("25 s long, with 1.2 s of silence taken from the ends");
+    });
+    it("says a long one in minutes", () => {
+      expect(recordingFacts({ seconds: 95, trimmed_seconds: 0 })).toBe("2 min long");
+    });
+  });
+
+  describe("the name of a voice", () => {
+    it("must be there, whatever is around it", () => {
+      expect(voiceNameProblem("", 60)).toBe("Give the voice a name.");
+      expect(voiceNameProblem("   \t ", 60)).toBe("Give the voice a name.");
+      expect(voiceNameProblem("Kirk", 60)).toBeNull();
+    });
+    it("may be as long as the limit, judged as it will be kept (trimmed), and no longer", () => {
+      expect(voiceNameProblem("x".repeat(60), 60)).toBeNull();
+      expect(voiceNameProblem(`  ${"x".repeat(60)}  `, 60)).toBeNull();
+      expect(voiceNameProblem("x".repeat(61), 60)).toBe("A name can be at most 60 characters; this one is 61.");
+    });
+  });
+
+  describe("the description of a voice to design", () => {
+    it("must be there, and may be as long as the limit and no longer", () => {
+      expect(descriptionProblem("  ", 300)).toBe("Describe the voice you would like.");
+      expect(descriptionProblem("a warm voice", 300)).toBeNull();
+      expect(descriptionProblem("x".repeat(300), 300)).toBeNull();
+      expect(descriptionProblem(`${"x".repeat(300)}   `, 300)).toBeNull();
+      expect(descriptionProblem("x".repeat(301), 300)).toBe("A description can be at most 300 characters; this one is 301.");
+    });
+  });
+
+  it("asks before a voice is deleted, and says what is not lost", () => {
+    expect(deleteVoiceQuestion("Kirk")).toBe("Delete the voice “Kirk”? Readings already made with it keep their audio and show the voice's name as it was. A voice that is deleted cannot be got back.");
   });
 });

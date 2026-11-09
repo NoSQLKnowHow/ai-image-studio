@@ -1054,3 +1054,28 @@ fieldset.field { gap: 8px; }
   .reading-parts ol { max-height: 200px; }
   .reading-view-head { flex-wrap: wrap; }
 }
+
+/* ---- the person's own voices: designing one, adding one, renaming, deleting (DESIGN.md §38.4) ---- */
+.speech-voice-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.speech-voice-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: start; }
+.speech-voice-rename { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.speech-voice-rename label { flex: 1 0 100%; font-weight: 600; }
+.speech-voice-rename input { flex: 1 1 12em; min-width: 0; }
+.speech-voice-rename .form-error { flex: 1 0 100%; margin: 0; }
+.voice-dialog {
+  position: fixed; z-index: 50; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; background: var(--surface); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); padding: 20px; display: grid; gap: 12px; outline: none;
+}
+.voice-dialog h2 { font-size: 18px; }
+.voice-body { display: grid; gap: 10px; }
+.voice-body textarea, .voice-body input[type="text"] { width: 100%; font: inherit; }
+.voice-passage { margin: 0; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0; line-height: 1.6; }
+.voice-clips { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.voice-clips ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.voice-clips li { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.voice-clips label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.voice-staged { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.voice-save { display: grid; gap: 6px; }
+.voice-consent { display: flex; gap: 8px; align-items: flex-start; }
+.voice-consent input { margin-top: 4px; flex: none; }

@@ -7,7 +7,7 @@
 import type { KeyValueStore } from "./options";
 import type {
   EngineState, PartDetail, PartPiece, PositionBody, PresetVoice, Prepared, ReadingBody, ReadingInfo, ReadingPart, ReadingPosition, SavedVoice, SourceInfo, SpeechCaps, SpeechEngine,
-  SampleBody, SpeechJob, SpeechLimits,
+  SampleBody, SpeechJob, SpeechLimits, StagedRecording,
 } from "./speechTypes";
 import type { SpeechRun } from "./types";
 
@@ -729,3 +729,49 @@ export const jobSettled = (job: Pick<SpeechJob, "status">): boolean => job.statu
 export function candidateClips(job: SpeechJob): { index: number; url: string }[] {
   return job.files.filter((f) => typeof f.index === "number").map((f) => ({ index: f.index as number, url: f.url })).sort((a, b) => a.index - b.index);
 }
+
+// ------------------------------------------------------------------ the person's own voices: designing one, adding one by a recording (§38.4)
+/** The kinds of recording the studio reads (§38.4): what a phone or a computer makes, by the ending of the file's name. The server decodes what it is given with ffmpeg and
+ *  decides; this is the cheap check made first so that a file of another kind is not uploaded only to be refused. */
+export const RECORDING_EXTENSIONS = [".wav", ".mp3", ".m4a", ".aac", ".ogg", ".flac", ".webm"] as const;
+/** For the file box's `accept`: any audio, and the endings above for a browser that does not say a file is audio. */
+export const RECORDING_ACCEPT = ["audio/*", ...RECORDING_EXTENSIONS].join(",");
+const RECORDING_KINDS_WORDS = "Use a WAV, MP3, M4A, AAC, OGG, FLAC or WebM recording.";
+
+/** Why a recording cannot be sent, in words, or null when it may be. The size limit is megabytes of 1,048,576 bytes, as the server counts them. Whether it is long enough,
+ *  not silent and not clipped is the server's to say, and is shown as it says it. */
+export function recordingProblem(file: { name: string; size: number }, limits: Pick<SpeechLimits, "recording_mb">): string | null {
+  const dot = file.name.lastIndexOf(".");
+  const extension = dot === -1 ? "" : file.name.slice(dot).toLowerCase();
+  const shown = file.name || "That file";
+  if (!(RECORDING_EXTENSIONS as readonly string[]).includes(extension)) return `${shown} is not a kind of recording that can be read. ${RECORDING_KINDS_WORDS}`;
+  if (file.size === 0) return `${shown} is empty.`;
+  if (file.size > limits.recording_mb * 1024 * 1024) return `${shown} is ${Math.ceil(file.size / (1024 * 1024))} MB; a recording can be at most ${limits.recording_mb} MB.`;
+  return null;
+}
+
+/** What is said of a recording that passed the server's checks: how long it is, and the silence taken from its ends if that was worth saying (half a second or more). */
+export function recordingFacts(recording: Pick<StagedRecording, "seconds" | "trimmed_seconds">): string {
+  const length = `${lengthSeconds(recording.seconds)} long`;
+  return recording.trimmed_seconds >= 0.5 ? `${length}, with ${recording.trimmed_seconds.toFixed(1)} s of silence taken from the ends` : length;
+}
+
+/** Why a name cannot be used for a voice, or null. The name is judged as it will be kept: trimmed. */
+export function voiceNameProblem(name: string, max: number): string | null {
+  const trimmed = name.trim();
+  if (!trimmed) return "Give the voice a name.";
+  if (trimmed.length > max) return `A name can be at most ${max} characters; this one is ${trimmed.length}.`;
+  return null;
+}
+
+/** Why a description cannot be sent to make a voice from, or null. */
+export function descriptionProblem(description: string, max: number): string | null {
+  const trimmed = description.trim();
+  if (!trimmed) return "Describe the voice you would like.";
+  if (trimmed.length > max) return `A description can be at most ${max} characters; this one is ${trimmed.length}.`;
+  return null;
+}
+
+/** The question before a voice is deleted: what is lost, and what is not. */
+export const deleteVoiceQuestion = (name: string): string =>
+  `Delete the voice “${name}”? Readings already made with it keep their audio and show the voice's name as it was. A voice that is deleted cannot be got back.`;

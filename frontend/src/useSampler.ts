@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { ApiError } from "./api";
 import type { Emitter } from "./emitter";
-import { jobSettled, type SamplePhase } from "./speech";
+import type { SamplePhase } from "./speech";
 import { speechApi } from "./speechApi";
+import { waitForJob } from "./speechJobs";
 import type { SampleBody, SpeechJob } from "./speechTypes";
 
 // "Play sample" (DESIGN.md §38.4, criterion 262): ask for the sample of a voice, wait for it if it has to be made, and play it. A kept sample comes back at once; one that
@@ -79,27 +80,12 @@ export function useSampler({ audio, jobs, api = speechApi, pollMs = 2000 }: Env)
     }
   }, [audio]);
 
-  /** Wait until a job has finished: told by the event, or found by asking every `pollMs`. Resolves with the finished job, or null if this press was given up. */
-  const wait = useCallback((first: SpeechJob, mine: number) => new Promise<SpeechJob | null>((resolve) => {
-    let over = false;
-    const finish = (job: SpeechJob | null) => {
-      if (over) return;
-      over = true;
-      unsubscribe();
-      clearInterval(timer);
-      resolve(job);
-    };
-    const hear = (job: SpeechJob) => {
-      if (job.id === first.id && jobSettled(job)) finish(job);
-    };
-    const unsubscribe = jobs.subscribe(hear);
-    const timer = setInterval(() => {
-      if (mine !== turn.current) return finish(null);
-      api.job(first.id).then((job) => { if (jobSettled(job)) finish(job); }, () => undefined); // a poll that fails is tried again at the next one
-    }, pollMs);
-    cleanup.current = () => finish(null);
-    if (jobSettled(first)) finish(first);
-  }), [api, jobs, pollMs]);
+  /** Wait until a job has finished (speechJobs.ts). Resolves with the finished job, or null if this press was given up. */
+  const wait = useCallback((first: SpeechJob, mine: number) => {
+    const waiting = waitForJob(first, { jobs, api, pollMs, wanted: () => mine === turn.current });
+    cleanup.current = waiting.cancel;
+    return waiting.done;
+  }, [api, jobs, pollMs]);
 
   const play = useCallback((key: string, body: SampleBody) => {
     if (current?.key === key && (current.phase === "playing" || current.phase === "waiting")) return stop();
