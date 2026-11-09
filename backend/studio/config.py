@@ -74,6 +74,24 @@ class Settings:
     ollama_max_reply_s: int = 900  # the longest one reply may take altogether
     builder_at_once: int = 1  # replies written at the same time (§37.3 rule 9)
     builder_llm: str = "real"  # "fake" = the scripted model of the tests (§37.4)
+    # Speech: text read aloud (DESIGN.md §38.10). Engines are named by their ids, which only the speech registry knows, so a model path is looked up by id.
+    speech_engines: tuple[str, ...] = ()  # the engines to offer (STUDIO_SPEECH_ENGINES); empty = every one the registry has
+    speech_libs: Optional[Path] = None  # a folder holding one folder of libraries per engine, put first on that engine's worker path (§38.3)
+    speech_models: tuple[tuple[str, str], ...] = ()  # (engine id, model id or path) from STUDIO_SPEECH_<ID>_MODEL; an engine not listed uses its own default
+    speech_min_free_gb: Optional[float] = None  # the memory check before a speech engine loads; None = the engine's own estimate (real pipeline only)
+    speech_gpu_fraction: float = 0.2  # the share of GPU memory an engine that runs a server of its own may let that server take (§38.3)
+    speech_max_chars: int = 1_500_000  # the longest text one reading may hold, about 250,000 words
+    speech_part_max_chars: int = 30_000  # the longest part of a reading, about 35 minutes of audio
+    speech_max_upload_mb: int = 50  # the biggest .txt, .md, .pdf, .epub or .docx file
+    speech_fetch_max_mb: int = 5  # the biggest web page
+    speech_fetch_timeout_s: int = 20  # the time allowed for each step of fetching a web page (60 seconds in all)
+    speech_pause_ms: int = 450  # the pause after a paragraph; a heading's is twice that
+    speech_voice_min_seconds: int = 8  # how short and how long a recording of a person's voice may be
+    speech_voice_max_seconds: int = 60
+    speech_recording_max_mb: int = 30  # the biggest recording of a voice that may be uploaded (a minute of stereo WAV at 48 kHz is under 12 MB)
+    speech_ffmpeg: str = "ffmpeg"  # the program that reads a recording that is not a plain WAV (MP3, M4A, OGG, FLAC, WebM); found on the PATH unless a path is given
+    speech_decode_timeout_s: int = 30  # how long it may take to read one recording
+    speech_temp_hours: int = 24  # how long the candidates of a voice design and an uploaded recording that was not saved are kept
     fake_step_delay_ms: int = 30
     static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
@@ -85,6 +103,10 @@ class Settings:
     def builder_configured(self) -> bool:
         """Whether the Prompt builder has what it needs to talk to a model: an address and a model name, or the scripted model of the tests."""
         return self.builder_llm == "fake" or bool(self.ollama_url and self.ollama_model)
+
+    def speech_model_for(self, engine_id: str) -> str:
+        """The model the person chose for a speech engine (STUDIO_SPEECH_<ID>_MODEL), or "" for the engine's own default."""
+        return dict(self.speech_models).get(engine_id, "")
 
     @property
     def upscaler_model_path(self) -> Path:
@@ -211,6 +233,23 @@ class Settings:
             errors.append(f"STUDIO_BUILDER_LLM={builder_llm!r} must be one of: {', '.join(BUILDER_LLMS)}.")
             builder_llm = cls.builder_llm
 
+        # Speech (DESIGN.md §38.10). A model path is set per engine by STUDIO_SPEECH_<ID>_MODEL, the id in capitals with its hyphens as underscores; any
+        # such variable is accepted here, and the registry decides which engines exist, so this file never names one.
+        speech_models = tuple(sorted(
+            (match.group(1).lower().replace("_", "-"), value.strip())
+            for name, value in env.items()
+            if (match := re.fullmatch(r"STUDIO_SPEECH_([A-Z0-9_]+)_MODEL", name)) and value.strip()
+        ))
+        speech_engines = tuple(e.strip().lower() for e in env.get("STUDIO_SPEECH_ENGINES", "").split(",") if e.strip())
+        if speech_engines:
+            from .speech.registry import FAKE_ENGINES, REAL_ENGINES
+
+            unknown = [e for e in speech_engines if e not in REAL_ENGINES and e not in FAKE_ENGINES]
+            if unknown:
+                errors.append(f"STUDIO_SPEECH_ENGINES names an engine that does not exist: {', '.join(unknown)} "
+                              f"(the engines are: {', '.join(REAL_ENGINES)}).")
+                speech_engines = tuple(e for e in speech_engines if e not in unknown)
+
         pipeline = env.get("STUDIO_PIPELINE", "real").strip().lower()
         if pipeline not in PIPELINES:
             errors.append(f"STUDIO_PIPELINE={pipeline!r} must be one of: {', '.join(PIPELINES)}.")
@@ -266,11 +305,32 @@ class Settings:
             ollama_max_reply_s=integer("STUDIO_OLLAMA_MAX_REPLY_S", cls.ollama_max_reply_s, 10, 7200),
             builder_at_once=integer("STUDIO_BUILDER_AT_ONCE", cls.builder_at_once, 1, 4),
             builder_llm=builder_llm,
+            speech_engines=speech_engines,
+            speech_libs=Path(env["STUDIO_SPEECH_LIBS"]).expanduser() if env.get("STUDIO_SPEECH_LIBS", "").strip() else None,
+            speech_models=speech_models,
+            speech_min_free_gb=optional_float("STUDIO_SPEECH_MIN_FREE_GB", 0.0),
+            speech_gpu_fraction=number("STUDIO_SPEECH_GPU_FRACTION", cls.speech_gpu_fraction, 0.05, 0.9),
+            speech_max_chars=integer("STUDIO_SPEECH_MAX_CHARS", cls.speech_max_chars, 1000, 20_000_000),
+            speech_part_max_chars=integer("STUDIO_SPEECH_PART_MAX_CHARS", cls.speech_part_max_chars, 500, 200_000),
+            speech_max_upload_mb=integer("STUDIO_SPEECH_MAX_UPLOAD_MB", cls.speech_max_upload_mb, 1, 500),
+            speech_fetch_max_mb=integer("STUDIO_SPEECH_FETCH_MAX_MB", cls.speech_fetch_max_mb, 1, 100),
+            speech_fetch_timeout_s=integer("STUDIO_SPEECH_FETCH_TIMEOUT_S", cls.speech_fetch_timeout_s, 2, 120),
+            speech_pause_ms=integer("STUDIO_SPEECH_PAUSE_MS", cls.speech_pause_ms, 0, 3000),
+            speech_voice_min_seconds=integer("STUDIO_SPEECH_VOICE_MIN_SECONDS", cls.speech_voice_min_seconds, 1, 120),
+            speech_voice_max_seconds=integer("STUDIO_SPEECH_VOICE_MAX_SECONDS", cls.speech_voice_max_seconds, 5, 600),
+            speech_recording_max_mb=integer("STUDIO_SPEECH_RECORDING_MAX_MB", cls.speech_recording_max_mb, 1, 200),
+            speech_ffmpeg=text("STUDIO_SPEECH_FFMPEG", cls.speech_ffmpeg),
+            speech_decode_timeout_s=integer("STUDIO_SPEECH_DECODE_TIMEOUT_S", cls.speech_decode_timeout_s, 2, 300),
+            speech_temp_hours=integer("STUDIO_SPEECH_TEMP_HOURS", cls.speech_temp_hours, 1, 720),
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )
         if settings.draft_size % 32:
             errors.append(f"STUDIO_DRAFT_SIZE={settings.draft_size} must be a multiple of 32 (the model needs it).")
+        if settings.speech_voice_min_seconds >= settings.speech_voice_max_seconds:
+            errors.append("STUDIO_SPEECH_VOICE_MIN_SECONDS must be smaller than STUDIO_SPEECH_VOICE_MAX_SECONDS.")
+        if settings.speech_part_max_chars > settings.speech_max_chars:
+            errors.append("STUDIO_SPEECH_PART_MAX_CHARS must not be larger than STUDIO_SPEECH_MAX_CHARS.")
         if settings.ollama_max_reply_s < settings.ollama_timeout_s:
             errors.append("STUDIO_OLLAMA_MAX_REPLY_S must not be smaller than STUDIO_OLLAMA_TIMEOUT_S (the cap on a whole reply is the longer of the two limits).")
         if errors:

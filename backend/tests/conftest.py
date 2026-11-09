@@ -75,6 +75,14 @@ def quiet_janitors(client: TestClient) -> None:
     client.portal.call(stop)
 
 
+def hold_speech_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the Speech tab out of `modes` for a test that checks the exact list of modes for another tab (music, vector). `modes` lists "speech" when
+    an engine can run, which the fake ones always can, so an exact list in such a test would fail for a reason that has nothing to do with its tab. What
+    `modes` says about Speech is tested in test_speech_server.py."""
+    monkeypatch.setattr(JobManager, "speech_status", lambda self: {"available": False, "reason": "held out: this test is about another tab", "hint": None,
+                                                                   "engines": []})
+
+
 @pytest.fixture
 def quiet_client(client_factory: Callable[..., TestClient]) -> TestClient:
     return client_factory(quiet=True)

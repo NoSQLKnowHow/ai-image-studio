@@ -1,0 +1,3 @@
+# Piper (DESIGN.md section 38.1): piper-tts 1.8.0, GPL-3.0-or-later, which carries its own copy of espeak-ng's data and has a wheel for aarch64 (checked on PyPI 2026-11-09).
+# The studio imports it only in the speech worker, a process of its own, never in the API process (DESIGN.md section 38.18). It needs onnxruntime and pathvalidate.
+piper-tts==1.8.0

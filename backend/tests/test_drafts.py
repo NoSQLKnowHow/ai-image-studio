@@ -127,7 +127,9 @@ def test_without_json_functions_the_queue_falls_back_to_arrival_order(tmp_path, 
     monkeypatch.setattr(sqlite3, "connect", lambda *a, **k: real_connect(*a, **{**k, "factory": NoJson}))
     db = Database(tmp_path / "studio.sqlite")
     try:
-        assert db._queue_order == "seq"
+        # still arrival order, which is what this test is about: without the JSON functions a draft cannot jump the queue. The one thing the order keeps is
+        # `queue_key` (DESIGN.md §38.6): a reading that went back to the queue after a part stands where it went back, which needs no JSON.
+        assert db._queue_order == "COALESCE(queue_key, seq), seq"
     finally:
         db.close()
 

@@ -260,8 +260,8 @@ def test_the_projects_list_counts_prompts_and_chats_that_are_on_show(store, db):
     store.bin_item("prompt", gone, T1)
     store.create_chat(now=T0, title="1", project_id=PROJECT)
     counts = {p["name"]: p["counts"] for p in db.list_projects()}
-    assert counts["Logo"] == {"image": 0, "music": 0, "vector": 0, "prompts": 2, "chats": 1}  # the one in the bin is not on show
-    assert counts["Pitch"] == {"image": 0, "music": 0, "vector": 0, "prompts": 0, "chats": 0}
+    assert counts["Logo"] == {"image": 0, "music": 0, "vector": 0, "speech": 0, "prompts": 2, "chats": 1}  # the one in the bin is not on show
+    assert counts["Pitch"] == {"image": 0, "music": 0, "vector": 0, "speech": 0, "prompts": 0, "chats": 0}
 
 
 def test_deleting_a_project_deletes_no_prompt_or_chat_and_turns_its_preferences_off_but_keeps_them(store, db):

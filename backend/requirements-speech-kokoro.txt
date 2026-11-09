@@ -1,0 +1,10 @@
+# Kokoro-82M (DESIGN.md section 38.1): kokoro 0.9.4 (Apache-2.0, Python 3.10 to 3.12) and misaki 0.9.4, its text-to-phonemes library, with the English extras. Both pure Python.
+# Installed with the image's own packages and under its pins: Kokoro asks only for torch, transformers, numpy and huggingface-hub without versions, which the image has.
+#
+# misaki loads the spaCy model en_core_web_sm and, if it is not installed, tries to download it with pip when first used (misaki/en.py: spacy.cli.download). In the container
+# (not root, site-packages not writable, and the model files are meant to come from a cache) that would fail, so the model is installed here, at build time. The URL is the
+# spaCy models release for spaCy 3.8 (a 12.8 MB wheel, checked to exist on 2026-11-09).
+kokoro==0.9.4
+misaki[en]==0.9.4
+loguru
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl

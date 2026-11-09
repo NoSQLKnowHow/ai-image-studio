@@ -10,5 +10,5 @@
   // needs the whole repository. `src/buildconfig.test.ts` fails if this build ever reaches outside `frontend/`.
   "extends": "./tsconfig.json",
   "include": ["src", "vite.config.ts"],
-  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/testdata.ts", "src/builderTestSupport.tsx"]
+  "exclude": ["src/**/*.test.ts", "src/**/*.test.tsx", "src/testdata.ts", "src/builderTestSupport.tsx", "src/speechTestSupport.tsx"]
 }

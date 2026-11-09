@@ -141,16 +141,19 @@ function focusAfterDelete(runId: string): HTMLElement | null {
   return own?.closest(".tab-panel")?.querySelector<HTMLElement>("#prompt, .music-grid input, [data-first-field]") ?? document.getElementById("prompt");
 }
 
-/** The Reuse button of a run's card: where focus goes when a control that had it disappears. */
+/** The control of a run's card that stays: Reuse on a picture, a track or a vector, and on a reading (which has no Reuse) Listen, else Download. It is where focus
+ *  goes when a control that had it disappears (the Cancel button turns into "Stopping…" and then goes away). */
 export function cardReuseButton(runId: string): HTMLElement | null {
-  return document.querySelector<HTMLElement>(`article.run-card[data-run-id="${runId}"] button[data-action="reuse"]`);
+  return document.querySelector<HTMLElement>(`article.run-card[data-run-id="${runId}"] [data-action="reuse"], article.run-card[data-run-id="${runId}"] [data-action="listen"], article.run-card[data-run-id="${runId}"] [data-action="download"]`);
 }
 
 export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onBack: () => void; onConfirm: () => void }) {
   const music = run?.mode === "music";
   const vector = run?.mode === "vector"; // a Vector run's results are its versions (DESIGN.md §31.12.5)
-  const thing = music ? "track" : vector ? "version" : "image";
-  const done = (music ? run?.tracks.length : vector ? run?.vectors.length : run?.images.length) ?? 0;
+  const speech = run?.mode === "speech"; // a reading's results are its parts, and every piece made is kept (§38.6)
+  const thing = music ? "track" : vector ? "version" : speech ? "part" : "image";
+  const done = (music ? run?.tracks.length : vector ? run?.vectors.length : speech ? run?.reading?.parts_done : run?.images.length) ?? 0;
+  const piecesMade = speech ? run?.reading?.pieces_done ?? 0 : 0;
   const { props: returnFocus, redirectTo } = useReturnFocus();
   const confirm = () => {
     if (run) redirectTo(cardReuseButton(run.id)); // the Cancel button turns into "Stopping…" and then goes away
@@ -161,15 +164,19 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
-          <Dialog.Title>Stop this run?</Dialog.Title>
+          <Dialog.Title>{speech ? "Stop this reading?" : "Stop this run?"}</Dialog.Title>
           <Dialog.Description>
-            {done
-              ? `The ${done === 1 ? thing : `${done} ${thing}s`} already finished ${done === 1 ? "is" : "are"} kept. The one being made now is discarded.`
-              : `Nothing has been finished yet, so nothing is kept. The ${thing} being made now is discarded.`}
+            {speech
+              ? piecesMade
+                ? `Everything already made is kept${done ? ` (${done === 1 ? "1 part is" : `${done} parts are`} finished)` : ""}, and so is what was made of the part being worked on. Continue makes the rest.`
+                : "Nothing has been made yet, so nothing is kept. Continue makes it from the start."
+              : done
+                ? `The ${done === 1 ? thing : `${done} ${thing}s`} already finished ${done === 1 ? "is" : "are"} kept. The one being made now is discarded.`
+                : `Nothing has been finished yet, so nothing is kept. The ${thing} being made now is discarded.`}
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Keep going</Dialog.Close>
-            <button type="button" className="button danger-solid" onClick={confirm}>{music ? "Stop making music" : vector ? "Stop making the vector" : "Stop generating"}</button>
+            <button type="button" className="button danger-solid" onClick={confirm}>{music ? "Stop making music" : vector ? "Stop making the vector" : speech ? "Stop making the reading" : "Stop generating"}</button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -183,15 +190,16 @@ export function ConfirmCancel({ run, onBack, onConfirm }: { run: Run | null; onB
 export function ConfirmDelete({ run, binDays, projectName, onCancel, onConfirm }: { run: Run | null; binDays: number; projectName: string | null; onCancel: () => void; onConfirm: () => void }) {
   const music = run?.mode === "music";
   const vector = run?.mode === "vector";
+  const speech = run?.mode === "speech"; // a reading has no pictures, tracks or versions: what goes is its audio (DESIGN.md §38.8)
   const thing = music ? "track" : vector ? "version" : "image";
-  const n = (music ? run?.tracks.length : vector ? run?.vectors.length : run?.images.length) ?? 0;
+  const n = (music ? run?.tracks.length : vector ? run?.vectors.length : speech ? 0 : run?.images.length) ?? 0;
   // One dialog, three cases. A finished run, with a bin: Delete moves it to Deleted (nothing is lost yet). A run already in the bin:
   // "Delete forever". Anything else (a run that is only waiting, or any run when there is no bin): deleted for good, with no way back.
   const inBin = !!run?.deleted_at;
   // it moves to the bin only if there is a bin, it is not already in it, and it has finished (a run still waiting made nothing worth keeping)
   const toBin = !!run && !inBin && binDays > 0 && run.status !== "queued" && run.status !== "running";
   // what "for good" means: the pictures or tracks are removed from the Spark, not just hidden
-  const gone = n ? `Its ${n === 1 ? `${thing} is` : `${n} ${thing}s are`} removed from the Spark.` : "It is removed from the history.";
+  const gone = speech ? "Its audio is removed from the Spark." : n ? `Its ${n === 1 ? `${thing} is` : `${n} ${thing}s are`} removed from the Spark.` : "It is removed from the history.";
   // a run filed in a project: the project is named, and what happens to the run there is said (a run in the bin keeps its project, and Restore puts it back)
   const filed = !!run && run.project_id !== null;
   const project = projectName === null ? "a project" : `the project “${projectName}”`;
@@ -207,14 +215,14 @@ export function ConfirmDelete({ run, binDays, projectName, onCancel, onConfirm }
       <Dialog.Portal>
         <Dialog.Overlay className="overlay" />
         <Dialog.Content className="confirm" role="alertdialog" {...returnFocus}>
-          <Dialog.Title>{inBin ? "Delete this run for good?" : "Delete this run?"}</Dialog.Title>
+          <Dialog.Title>{speech ? (inBin ? "Delete this reading for good?" : "Delete this reading?") : inBin ? "Delete this run for good?" : "Delete this run?"}</Dialog.Title>
           <Dialog.Description>
             {toBin && severalVersions
               ? `${filed ? `It is in ${project}. ` : ""}It has ${n} versions. All of them move to Deleted and stay there for ${binDays} ${binDays === 1 ? "day" : "days"}; ${filed ? "restoring the run puts it back in the project" : "you can restore the run from there"}. After that they are gone for good.`
               : toBin
               ? `${filed ? `It is in ${project}. ` : ""}It moves to Deleted and stays there for ${binDays} ${binDays === 1 ? "day" : "days"}; ${filed ? "restoring it puts it back in the project" : "you can restore it from there"}. After that it is gone for good.`
               : `${gone} ${filed ? `It is in ${project}, which loses it. ` : ""}This can't be undone.`}
-            {run?.pinned && !inBin && !filed ? " You marked it Keep." : ""}
+            {run?.pinned && !speech && !inBin && !filed ? " You marked it Keep." : ""}
           </Dialog.Description>
           <div className="confirm-actions">
             <Dialog.Close className="button">Cancel</Dialog.Close>

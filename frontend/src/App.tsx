@@ -29,6 +29,10 @@ import { useCopyVectorSvg } from "./useCopyVectorSvg";
 import { usePicturePaste } from "./usePicturePaste";
 import type { ModelAction } from "./model";
 import { readTab, saveTab, type TabId } from "./music";
+import { SpeechPanel } from "./components/SpeechPanel";
+import { createEmitter } from "./emitter";
+import { speechApi } from "./speechApi";
+import type { ReadingPieceEvent, SpeechJob } from "./speechTypes";
 import {
   MOVED_NOTE,
   PROMPT_KEY,
@@ -51,7 +55,7 @@ import {
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
 import {
-  isImageRun, isMusicRun, isVectorRun, type BinnedImage, type BinnedTrack, type BinnedVectorItem, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun,
+  isImageRun, isMusicRun, isSpeechRun, isVectorRun, type BinnedImage, type BinnedTrack, type BinnedVectorItem, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun,
   type Project, type Run,
 } from "./types";
 import { VECTOR_PNG_RANGE, pngRange } from "./vector";
@@ -108,6 +112,11 @@ export default function App() {
   const [modelBusy, setModelBusy] = useState(false); // a Load or Unload request is on its way (DESIGN.md §25)
   const [tab, setTab] = useState<TabId>(() => readTab(store)); // Images, Music, Vector or Prompt builder (DESIGN.md §26.1, §31.12.8, §37.2), remembered
   const [builderWorking, setBuilderWorking] = useState(false); // a reply is being written: the dot on the Prompt builder tab
+  const [speechEngine, setSpeechEngine] = useState<string | null>(null); // the engine the Speech tab shows: the header's Load and Unload act on it (DESIGN.md §38.2)
+  const speechJobs = useRef(createEmitter<SpeechJob>()).current; // `speech.job` events, for the Speech tab to hear when a sample is made
+  const speechPieces = useRef(createEmitter<ReadingPieceEvent>()).current; // `reading.piece` events, for the player to hear that a piece of a reading is made
+  // the reading open in the player. `turn` counts the presses of Listen: pressing it again on the reading that is open opens it again at its place and plays (what the button says)
+  const [listening, setListening] = useState<{ id: string; turn: number } | null>(null);
   const [builderTick, setBuilderTick] = useState(0); // another page changed a prompt, chat or preference
   const [builderCommand, setBuilderCommand] = useState<BuilderCommand | null>(null); // something for the Prompt builder to do: open a prompt, refine a picture, help write an edit
   const [fromPrompt, setFromPrompt] = useState<FromPrompt | null>(null); // the saved prompt the Images prompt box came from: the next Generate carries it (DESIGN.md §37.3 rule 3)
@@ -134,9 +143,22 @@ export default function App() {
   const imageRuns = useMemo(() => visible.filter(isImageRun), [visible]);
   const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
   const vectorRuns = useMemo(() => visible.filter(isVectorRun), [visible]);
+  const speechRuns = useMemo(() => visible.filter(isSpeechRun).filter((run) => !run.hidden), [visible]); // readings (a sample or a design is never in a list, DESIGN.md §38.4)
+  // The reading in the player is looked for among all the runs the page has, not only those the filter shows, so that choosing another filter does not stop it. If it is
+  // gone (deleted for good) the player goes with it. Closing returns focus to the card it was opened from.
+  const listeningRun = listening ? state.runs[listening.id] : undefined;
+  useEffect(() => {
+    if (listening && !listeningRun) setListening(null);
+  }, [listening, listeningRun]);
+  const closeReader = () => {
+    const id = listening?.id;
+    setListening(null);
+    if (id) window.setTimeout(() => cardReuseButton(id)?.focus(), 0);
+  };
+  const reader = listening && listeningRun && isSpeechRun(listeningRun) ? { run: listeningRun, turn: listening.turn, pieces: speechPieces, onClose: closeReader } : undefined;
   // what the tab being looked at is called in the counts (`Counts` has a key for each)
-  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
-  const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : imageRuns;
+  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : tab === "speech" ? "speech" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
+  const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : tab === "speech" ? speechRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
   const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
   // The counts are asked for within the project that is chosen (DESIGN.md §32.5), so they are only used for the filter they describe: a number
@@ -154,7 +176,7 @@ export default function App() {
 
   // The tab says which build the server is running, too.
   useEffect(() => {
-    document.title = version ? `AI Image Studio v${version}` : "AI Image Studio";
+    document.title = version ? `AI Studio v${version}` : "AI Studio";
   }, [version]);
 
   const start = useCallback(async () => {
@@ -181,6 +203,8 @@ export default function App() {
   useEventStream(dispatch, {
     onCapabilitiesChanged: () => void api.capabilities().then((c) => dispatch({ type: "caps", caps: c })).catch(() => undefined),
     onBuilderChanged: () => setBuilderTick((n) => n + 1),
+    onSpeechJob: speechJobs.emit,
+    onReadingPiece: speechPieces.emit,
   });
 
   useEffect(() => {
@@ -246,13 +270,15 @@ export default function App() {
 
   // Load or unload the model from the header. The new state arrives over the event stream like every other change, so
   // the answer is not used to move the pill: it could overtake a later event and make the pill go backwards.
-  const changeModel = useCallback(async ({ kind, model }: ModelAction) => {
+  const changeModel = useCallback(async ({ kind, model, engine }: ModelAction) => {
     setModelBusy(true);
     try {
-      await (kind === "load" ? api.loadModel(model) : api.unloadModel(model));
+      // the speech model is one engine: Load names it (DESIGN.md §38.3); Unload stops whichever speech engine is loaded
+      if (model === "speech") await (kind === "load" ? speechApi.loadEngine(engine ?? "") : speechApi.unloadEngine());
+      else await (kind === "load" ? api.loadModel(model) : api.unloadModel(model));
       return true;
     } catch (error) {
-      push("error", `Couldn't ${kind} the ${model === "music" ? "music model" : "model"}: ${(error as ApiError).message}`);
+      push("error", `Couldn't ${kind} the ${model === "music" ? "music model" : model === "speech" ? "speech model" : "model"}: ${(error as ApiError).message}`);
       return false;
     } finally {
       setModelBusy(false);
@@ -263,6 +289,15 @@ export default function App() {
   const changeOptions = (next: Options) => {
     setOptions(next);
     setFormProblem(null);
+  };
+
+  // Continue after a Cancel, Retry after a failure: both make the rest of a reading, from the first piece not made (DESIGN.md §38.6)
+  const continueReading = async (run: Run) => {
+    try {
+      dispatch({ type: "runUpsert", run: await speechApi.continueReading(run.id) });
+    } catch (error) {
+      push("error", `Couldn't continue the reading: ${(error as ApiError).message}`);
+    }
   };
 
   const changeTab = (next: TabId) => {
@@ -996,7 +1031,7 @@ export default function App() {
   const vectorViewRun = foundVector && isVectorRun(foundVector) && (vectorView?.binned ? foundVector.binned_vectors.length > 0 : foundVector.vectors.length > 0) ? foundVector : null;
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
   // the whole bin, both tabs, whatever project is chosen: what Empty bin deletes (the counts on the bar are for the tab and the project shown)
-  const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted + state.totals.vector.deleted : null;
+  const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted + state.totals.vector.deleted + state.totals.speech.deleted : null; // (every tab's bin: Empty bin empties all of it)
   // the same, as runs and pictures per tab, for the question Empty bin asks (DESIGN.md §33.1)
   const binTotals = state.totals ? binContents(state.totals) : EMPTY_BIN;
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
@@ -1027,14 +1062,15 @@ export default function App() {
   return (
     <PromptLinksContext.Provider value={promptLinks}>
       <a className="skip-link" href="#prompt">Skip to the prompt</a>
-      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : "image"} musicAvailable={musicAvailable} onModel={changeModel} />
+      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : tab === "speech" ? "speech" : "image"} musicAvailable={musicAvailable}
+        speech={{ available: !!caps?.speech.available, engine: speechEngine }} onModel={changeModel} />
       <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
       <main className="app-main">
         {!caps || !options ? (
           <p className="loading" role="status">Connecting to the studio…</p>
         ) : (
           <>
-            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking }} />
+            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking, speech: speechRuns.some(working) }} />
             <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
             <PromptBar
               ref={promptRef}
@@ -1179,6 +1215,12 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
+            <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} onQueued={(run) => dispatch({ type: "runUpsert", run })}
+              history={{
+                status, runs: speechRuns, runsReady, filterBar, loadProblem: problem, empty: emptyFor("speech"), isTransient: transient, viewScope, projects: projectControls, more, loadingOlder, now,
+                onLoadOlder: () => void loadOlder(), onCancel: requestCancel, onContinue: (run) => void continueReading(run), onRestore: (run) => void restore(run, true), onDelete: setPendingDelete,
+                onListen: (run) => setListening((now) => ({ id: run.id, turn: (now?.turn ?? 0) + 1 })),
+              }} reader={reader} />
             <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
               integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
             <VectorPanel

@@ -1,0 +1,11 @@
+# What qwen-tts 0.1.1 imports besides torch and transformers (DESIGN.md section 38.3), read from its source: librosa and soundfile when it is imported, and einops, sox and
+# onnxruntime with the speech tokenizer. These do not conflict with anything in NVIDIA's image, so they are installed with it, under its pins (a package that wants to
+# replace torch or numpy fails the step instead of swapping in a generic build). gradio, which the package also lists, is only for its demo and is left out.
+#
+# torchaudio, which the speech tokenizer also imports, is NOT here: a generic wheel of it would need a generic torch. If NVIDIA's image does not have it, the Qwen3-TTS line of
+# docker/check_image.py says "torchaudio" and SPARK_TEST says what to do. NOT confirmed either way.
+librosa
+soundfile
+einops
+sox
+onnxruntime

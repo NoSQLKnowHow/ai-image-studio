@@ -28,6 +28,8 @@ from .builder.prompt_routes import add_prompt_routes as add_builder_prompt_route
 from .builder.routes import add_routes as add_builder_routes
 from .builder.service import BuilderService
 from .builder.store import BuilderStore
+from .speech import speech_limits
+from .speech.routes import add_routes as add_speech_routes
 from .config import Settings
 from .db import Database
 from .events import OVERFLOW, EventBus, format_sse
@@ -36,7 +38,7 @@ from . import vector as vector_mod
 from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import (
-    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, RunConflict, RunNotFound,
+    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, RunAlwaysKept, RunConflict, RunNotFound,
 )
 from .naming import (
     content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename, vector_filename,
@@ -77,10 +79,10 @@ def server_stopping(app: FastAPI) -> bool:
 
 PLACEHOLDER_HTML = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Image Studio</title>
+<title>AI Studio</title>
 <style>body{font:16px/1.5 system-ui,sans-serif;max-width:40rem;margin:4rem auto;padding:0 1rem;color:#222;background:#fafafa}
 @media (prefers-color-scheme:dark){body{color:#eee;background:#16161a}}code{font-size:.9em}</style></head>
-<body><h1>AI Image Studio</h1>
+<body><h1>AI Studio</h1>
 <p>The backend is running, but the web interface has not been built. Build it with <code>cd frontend &amp;&amp; npm ci &amp;&amp; npm run build</code> (the container image does this for you).</p>
 <p>API: <code>/api/health</code>, <code>/api/status</code>, <code>/api/capabilities</code>, <code>/api/runs</code>,
 <code>/api/events</code>.</p></body></html>"""
@@ -91,7 +93,9 @@ class ModelChoice(BaseModel):
     means whichever model is loaded."""
 
     model_config = ConfigDict(extra="forbid", strict=True)
-    model: Literal["image", "music"]
+    model: Literal["image", "music", "speech"]
+    engine: Optional[str] = None  # a speech model is one engine in one variant (DESIGN.md §38.3); the variant defaults to the one that speaks the presets
+    variant: Optional[str] = None
 
 
 class RunPatch(BaseModel):
@@ -183,7 +187,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             log.info("the prompts' word index was not in step with the prompts and has been rebuilt")
         app.state.upscale_slots = asyncio.Semaphore(UPSCALE_AT_ONCE)
         app.state.vector_png_slots = asyncio.Semaphore(VECTOR_PNG_AT_ONCE)
-        log.info("AI Image Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
+        log.info("AI Studio %s ready (pipeline=%s, data=%s)", __version__, settings.pipeline, storage.root)
         try:
             yield
         finally:
@@ -191,7 +195,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             db.close()
 
     app = FastAPI(
-        title="AI Image Studio",
+        title="AI Studio",
         version=__version__,
         lifespan=lifespan,
         docs_url=None,
@@ -250,6 +254,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
                 "vector": vector_limits(),
                 "builder": builder_limits(),
+                "speech": speech_limits(settings),
                 "music": {
                     "duration": {"min": P.MUSIC_DURATION_MIN, "max": settings.music_max_seconds, "default": P.MUSIC_DEFAULT_SECONDS},
                     "tracks": {"min": 1, "max": settings.music_max_tracks},
@@ -261,6 +266,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             },
             "music": {**jobs.music_status(), "model": jobs.model_id_for("music")},
             "vector": jobs.vector_status(),  # the Vector tab (DESIGN.md §31.12.7): {available, reason, hint}, like `music`
+            "speech": jobs.speech_status(),  # the Speech tab (DESIGN.md §38.9): {available, reason, hint, engines: [...]}
             "upscaler": jobs.upscaler_status(),  # Enlarge (DESIGN.md §28.3): whether it can run here, and if not why
             "builder": request.app.state.builder.cached(),  # the Prompt builder (§37.4): set up? what is known of Ollama (null until something has looked)
             "queue_cap": settings.queue_cap,
@@ -272,7 +278,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         """Start loading a model now, without a run (DESIGN.md §25.2, §26.3). The image model unless one is named."""
         jobs = jobs_of(request)
         try:
-            started = await jobs.load_model(body.model if body else "image")
+            started = await jobs.load_model(body.model if body else "image", (body.engine or "") if body else "", (body.variant or "") if body else "")
         except ModelRefused as exc:
             return _model_refused(exc)
         return JSONResponse(status_code=202 if started else 200, content=jobs.status())
@@ -301,11 +307,13 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         except PromptRefRefused as exc:
             return _error(exc.status, exc.message, exc.code)
 
-    async def read_limited_body(request: Request) -> Any:
+    async def read_limited_body(request: Request, megabytes: Optional[int] = None) -> Any:
         """The request body as bytes, or the 413 response when it is larger than STUDIO_MAX_UPLOAD_MB (refused from the declared
-        length when there is one, and while it streams in when there is not). Used by uploads and by Upscale a picture."""
-        limit = settings.max_upload_mb * 1024 * 1024
-        too_big = _error(413, f"The file is larger than {settings.max_upload_mb} MB.", "too_large")
+        length when there is one, and while it streams in when there is not). Used by uploads and by Upscale a picture, and, with its own limit
+        in `megabytes`, by the Speech tab's files (STUDIO_SPEECH_MAX_UPLOAD_MB)."""
+        megabytes = megabytes or settings.max_upload_mb
+        limit = megabytes * 1024 * 1024
+        too_big = _error(413, f"The file is larger than {megabytes} MB.", "too_large")
         declared = request.headers.get("content-length", "")
         if declared.isdigit() and int(declared) > limit:
             return too_big
@@ -350,7 +358,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         kept: Optional[bool] = Query(None, description="true: only kept runs; false: only runs that are not kept; absent: either"),
         deleted: Optional[bool] = Query(None, description="true: only the bin; false or absent: the history, without the bin"),
         project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a project's id: only its runs; 'none': only runs in no project; absent: any"),
-        kind: Optional[Literal["image", "music", "vector"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
+        kind: Optional[Literal["image", "music", "vector", "speech"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
         prompt: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a saved prompt's id: only the runs made from it (DESIGN.md §37.4)"),
     ) -> Any:
         try:
@@ -379,6 +387,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             await jobs_of(request).set_pinned(run_id, body.pinned)
         except (StorageError, RunNotFound):
             return _error(404, "Run not found.", "not_found")
+        except RunAlwaysKept as exc:
+            return _error(409, str(exc), "always_kept")  # a reading never expires, so it is kept from the start (DESIGN.md §38.8)
         except RunConflict as exc:
             # a run in a project stays kept (DESIGN.md §32.3): it has to be taken out of the project before it can stop being kept
             return _error(409, str(exc), "run_in_project")
@@ -885,6 +895,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     add_builder_routes(app)  # /api/builder/... (registered before the page below, which takes every other path)
     add_builder_chat_routes(app)
     add_builder_prompt_routes(app)
+    add_speech_routes(app, read_limited_body)  # /api/speech/... and /api/readings/...
 
     static_dir = settings.static_dir or DEFAULT_STATIC_DIR
     if (static_dir / "index.html").is_file():

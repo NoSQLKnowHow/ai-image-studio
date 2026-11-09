@@ -518,10 +518,10 @@ def test_keep_and_projects_work_for_a_vector_run(vclient):
     kept = vclient.patch(f"/api/runs/{run['id']}", json={"pinned": True}).json()
     assert kept["pinned"] is True and kept["expires_at"] is None and len(kept["vectors"]) == 1
     project = vclient.post("/api/projects", json={"name": "Laser jobs"}).json()
-    assert project["counts"] == {"image": 0, "music": 0, "vector": 0, "prompts": 0, "chats": 0}
+    assert project["counts"] == {"image": 0, "music": 0, "vector": 0, "speech": 0, "prompts": 0, "chats": 0}
     filed = vclient.put(f"/api/runs/{run['id']}/project", json={"project_id": project["id"]})
     assert filed.status_code == 200 and filed.json()["project_id"] == project["id"]
-    assert vclient.get("/api/projects").json()["projects"][0]["counts"] == {"image": 0, "music": 0, "vector": 1, "prompts": 0, "chats": 0}
+    assert vclient.get("/api/projects").json()["projects"][0]["counts"] == {"image": 0, "music": 0, "vector": 1, "speech": 0, "prompts": 0, "chats": 0}
     assert vclient.patch(f"/api/runs/{run['id']}", json={"pinned": False}).status_code == 409  # a filed run stays kept
     assert [r["id"] for r in vclient.get("/api/runs", params={"project": project["id"], "kind": "vector"}).json()["runs"]] == [run["id"]]
     assert vclient.get("/api/runs", params={"project": project["id"], "kind": "image"}).json()["runs"] == []

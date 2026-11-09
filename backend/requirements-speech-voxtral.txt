@@ -1,0 +1,7 @@
+# Voxtral TTS (DESIGN.md section 38.1, 38.3): vLLM and vLLM-Omni, in a virtual environment of their own (/opt/speech-libs/voxtral), because vLLM brings its own PyTorch and
+# that must never replace NVIDIA's. An OPTIONAL step, off unless the image is built with --build-arg SPEECH_VOXTRAL=1 (docker compose build --build-arg SPEECH_VOXTRAL=1), because
+# it is large and, as far as I found, nobody has reported it on a DGX Spark. The model card asks for vllm, vllm-omni >= 0.18.0 and mistral_common >= 1.10.0.
+# NOT confirmed: that this installs on aarch64 with this GPU. If it does not, the step prints a note and the engine's pill says "not installed".
+vllm
+vllm-omni>=0.18.0
+mistral_common>=1.10.0

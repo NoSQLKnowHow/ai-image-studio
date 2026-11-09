@@ -60,6 +60,7 @@ class Storage:
         self.images = self.root / "images"
         self.audio = self.root / "audio"
         self.vector = self.root / "vector"
+        self.speech = self.root / "speech"  # readings, voices and samples (DESIGN.md §38.8)
         self.thumbs = self.root / "thumbs"
         self.inputs = self.root / "inputs"
         self.staged = self.inputs / "staged"
@@ -67,7 +68,7 @@ class Storage:
 
     def ensure_layout(self) -> None:
         try:
-            for directory in (self.root, self.images, self.audio, self.vector, self.thumbs, self.inputs, self.staged, self.staged_thumbs):
+            for directory in (self.root, self.images, self.audio, self.vector, self.speech, self.thumbs, self.inputs, self.staged, self.staged_thumbs):
                 directory.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryFile(dir=self.root):
                 pass
@@ -84,6 +85,10 @@ class Storage:
 
     def audio_dir(self, run_id: str) -> Path:
         return self.audio / check_id(run_id)
+
+    def reading_dir(self, run_id: str) -> Path:
+        """Where a reading keeps the audio of its pieces: <data>/speech/readings/<run>/<part>/<piece>.wav (DESIGN.md §38.8)."""
+        return self.speech / "readings" / check_id(run_id)
 
     def vector_dir(self, run_id: str) -> Path:
         """Where a vector run keeps its drawings and what was made of them (DESIGN.md §31.12.6)."""
@@ -156,6 +161,16 @@ class Storage:
             partial.unlink(missing_ok=True)
         return dst
 
+    def accept_worker_piece(self, rel: str, run_id: str) -> Path:
+        """Validate a path reported by the worker for a piece of a reading: an existing file inside this reading's own folder, two levels down (part, piece)."""
+        path = self.abs(rel)
+        folder = self.reading_dir(run_id).resolve()
+        if path.parent.parent != folder or path.suffix != ".wav":
+            raise StorageError(f"Worker reported a piece outside the reading's folder: {rel!r}")
+        if not path.is_file():
+            raise StorageError(f"Worker reported a missing piece file: {rel!r}")
+        return path
+
     def run_inputs_dir(self, run_id: str) -> Path:
         return self.inputs / check_id(run_id)
 
@@ -166,6 +181,7 @@ class Storage:
         shutil.rmtree(self.images / run_id, ignore_errors=True)
         shutil.rmtree(self.audio / run_id, ignore_errors=True)
         shutil.rmtree(self.vector / run_id, ignore_errors=True)
+        shutil.rmtree(self.speech / "readings" / run_id, ignore_errors=True)
         shutil.rmtree(self.thumbs / run_id, ignore_errors=True)
         shutil.rmtree(self.inputs / run_id, ignore_errors=True)
 

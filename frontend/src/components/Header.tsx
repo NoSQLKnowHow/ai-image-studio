@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { untilText } from "../format";
 import { useNarrow } from "../hooks";
-import { MODEL_LABEL, modelAction, modelActionLabel, modelActionTitle, modelAnnouncement, type ModelAction, type ModelAsk } from "../model";
+import { MODEL_LABEL, modelAction, modelActionLabel, modelActionTitle, modelAnnouncement, type ModelAction, type ModelAsk, type SpeechTarget } from "../model";
 import { MUSIC_MODEL_NAME } from "../music";
 import { NEXT_THEME, applyTheme, readTheme, type ThemeChoice } from "../theme";
 import type { ModelName, Status, WorkerState, WorkerStatus } from "../types";
@@ -18,7 +18,7 @@ function pillLabel(state: WorkerState, model: ModelName): string {
     case "ready":
       return `${name} ready`;
     case "busy":
-      return model === "music" ? "Making music" : "Generating";
+      return model === "music" ? "Making music" : model === "speech" ? "Making a reading" : "Generating";
     case "error":
       return `${name} problem`;
     case "unavailable":
@@ -46,6 +46,7 @@ const EXPLAIN: Record<WorkerState, string> = {
 };
 
 function pipelineName(w: WorkerStatus): string {
+  if (w.model === "speech") return w.pipeline === "fake" ? "Test pipeline (fake speech, no GPU)" : `Speech engine: ${w.engine ?? "none"}`;
   if (w.model === "music") return w.pipeline === "fake" ? "Test pipeline (fake music, no GPU)" : MUSIC_MODEL_NAME;
   return w.pipeline === "fake" ? "Test pipeline (fake images, no GPU)" : "Qwen-Image-2.1";
 }
@@ -155,15 +156,16 @@ interface HeaderProps {
   busy: boolean; // a Load or Unload request is on its way
   tab: ModelName; // the model the open tab is about: the button acts on it
   musicAvailable: boolean;
+  speech?: SpeechTarget; // on the Speech tab: whether any engine can run, and which one the tab shows (the button acts on it, DESIGN.md §38.2)
   onModel: (action: ModelAction) => Promise<boolean>; // asks the server; false if it was refused or failed
 }
 
-export function Header({ status, now, busy, tab, musicAvailable, onModel }: HeaderProps) {
+export function Header({ status, now, busy, tab, musicAvailable, speech, onModel }: HeaderProps) {
   const pill = useRef<HTMLButtonElement>(null);
   const [ask, setAsk] = useState<ModelAsk | null>(null);
   const [said, setSaid] = useState("");
   const worker = status?.worker ?? null;
-  const action = worker ? modelAction(worker, tab, musicAvailable) : null;
+  const action = worker ? modelAction(worker, tab, musicAvailable, speech) : null;
 
   // Say what became of a Load or Unload the user asked for, since the button they pressed is gone by then.
   useEffect(() => {
@@ -176,7 +178,7 @@ export function Header({ status, now, busy, tab, musicAvailable, onModel }: Head
 
   const press = async (chosen: ModelAction) => {
     if (!worker) return;
-    setAsk({ ...chosen, from: worker.state, fromModel: worker.model });
+    setAsk({ ...chosen, from: worker.state, fromModel: worker.model, fromEngine: worker.engine ?? null });
     setSaid(chosen.kind === "load" ? `Loading the ${chosen.model} model…` : `Unloading the ${chosen.model} model…`);
     pill.current?.focus(); // the button is about to go away, and focus must not be lost with it
     if (!(await onModel(chosen))) {
@@ -191,7 +193,7 @@ export function Header({ status, now, busy, tab, musicAvailable, onModel }: Head
         <div className="brand">
           <span className="brand-mark" aria-hidden="true"><SparkleIcon /></span>
           <h1>
-            AI Image Studio
+            AI Studio
             {status && <span className="brand-version"> v{status.version}</span>}
           </h1>
         </div>

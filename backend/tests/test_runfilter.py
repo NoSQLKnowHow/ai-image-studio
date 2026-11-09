@@ -15,6 +15,12 @@ from studio.runfilter import COUNTED, KINDS, NO_PROJECT, RunFilter, counted_with
 TABLE = json.loads((Path(__file__).parent / "filter_cases.json").read_text())
 
 
+def same_as_the_table(counts: dict, expected: dict) -> None:
+    """The counts for every tab are the table's, exactly: the table lists a tab for each kind of run the server counts (Images, Music, Vector and, since the page has a Speech tab,
+    Speech), so a kind the table forgot would be a count nothing checks."""
+    assert counts == expected
+
+
 # One run as the database wants it (a dict of columns). The letter names the run (a to f), `seq` fixes how old it is, `deleted` puts it in the bin,
 # and `project` is the project it is filed in (the table's own short names, "x" and "y": the database takes any text there).
 def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False, project: str | None = None) -> dict:
@@ -80,13 +86,13 @@ def test_every_case_of_the_table_gives_the_listed_runs_in_order(db, case):
 
 # the table also lists the counts the server must give for each tab
 def test_the_counts_are_the_tables(db):
-    assert db.run_counts(COUNTED) == TABLE["counts"]
+    same_as_the_table(db.run_counts(COUNTED), TABLE["counts"])
 
 
 # ... and what they are within each project, and within "no project": the numbers on the filter bar follow the project chosen (§32.5)
 @pytest.mark.parametrize("project", sorted(TABLE["counts_by_project"]))
 def test_the_counts_within_a_project_are_the_tables(db, project):
-    assert db.run_counts(counted_within(project)) == TABLE["counts_by_project"][project]
+    same_as_the_table(db.run_counts(counted_within(project)), TABLE["counts_by_project"][project])
 
 
 # a filter with no project is `COUNTED` itself, and a project is added to every counted filter without losing what each already says
@@ -98,7 +104,7 @@ def test_counted_within_narrows_every_counted_filter_to_the_project():
 
 
 def test_the_kinds_are_the_tabs():
-    assert KINDS == {"image": ("generate", "edit"), "music": ("music",), "vector": ("vector",)}  # the Vector tab is the third (DESIGN.md §31.12.7)
+    assert KINDS == {"image": ("generate", "edit"), "music": ("music",), "vector": ("vector",), "speech": ("speech",)}  # Vector is the third tab (§31.12.7), Speech the fifth (§38.2: the fourth, Prompt builder, has no runs of its own)
 
 
 # conditions() is the whole SQL contract: nothing set adds nothing, and kept=True or False binds 1 or 0
@@ -126,19 +132,21 @@ def test_a_project_is_one_fixed_condition_with_a_bound_value():
 # paging inside a filter: the cursor continues among the matching runs only
 def test_pages_continue_within_the_filter(db):
     first, more = db.list_runs(2, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in first] == ["j", "f"] and more
+    assert [letter(r["id"]) for r in first] == ["r", "p"] and more  # (the two readings: they are kept from the start, §38.8)
     second, more = db.list_runs(2, first[-1]["id"], RunFilter(kept=True))
-    assert [letter(r["id"]) for r in second] == ["c", "a"] and more  # l, the oldest kept run, is on a page of its own
+    assert [letter(r["id"]) for r in second] == ["j", "f"] and more
     third, more = db.list_runs(2, second[-1]["id"], RunFilter(kept=True))
-    assert [letter(r["id"]) for r in third] == ["l"] and not more
+    assert [letter(r["id"]) for r in third] == ["c", "a"] and more  # l, the oldest kept run, is on a page of its own
+    fourth, more = db.list_runs(2, third[-1]["id"], RunFilter(kept=True))
+    assert [letter(r["id"]) for r in fourth] == ["l"] and not more
 
 
 def test_a_page_that_is_exactly_full_is_not_followed_by_an_empty_one(db):
-    """Five runs are kept: a page of five has no next page, a page of four has."""
-    rows, more = db.list_runs(5, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a", "l"] and not more
-    rows, more = db.list_runs(4, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a"] and more
+    """Seven runs are kept (two of them readings): a page of seven has no next page, a page of six has."""
+    rows, more = db.list_runs(7, None, RunFilter(kept=True))
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "j", "f", "c", "a", "l"] and not more
+    rows, more = db.list_runs(6, None, RunFilter(kept=True))
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "j", "f", "c", "a"] and more
     rows, more = db.list_runs(3, f"{ord('f'):032x}", RunFilter(kept=True))  # after f: c, a and l, exactly a page
     assert [letter(r["id"]) for r in rows] == ["c", "a", "l"] and not more
 
@@ -155,11 +163,11 @@ def test_an_unknown_cursor_is_still_an_error(db):
 
 
 def test_no_filter_is_what_it_was(db):
-    # the history: the runs in the bin (k, m) are not in it; the runs with a picture, a track or a version in the bin (g, j, o) are
+    # the history: the runs in the bin (k, m, q) are not in it; the runs with a picture, a track or a version in the bin (g, j, o) are
     rows, _ = db.list_runs(100)
-    assert [letter(r["id"]) for r in rows] == ["o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
     rows, _ = db.list_runs(100, None, None)
-    assert [letter(r["id"]) for r in rows] == ["o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
 
 
 # ------------------------------------------------------------------ the API
@@ -198,13 +206,13 @@ def test_the_counts_say_how_many_runs_each_tab_holds_and_how_many_are_kept(clien
     music = client.post("/api/runs", json={"mode": "music", "prompt": "Genre: ambient. A slow piano.", "options": {"duration": 30}}).json()["id"]
     for run_id in (first, second, music):
         wait_for(client, run_id)
-    none = {"all": 0, "kept": 0, "deleted": 0, "deleted_items": 0}  # nothing has been made on the Vector tab: it is counted, and counts zero
+    none = {"all": 0, "kept": 0, "deleted": 0, "deleted_items": 0}  # nothing has been made on the Vector or Speech tab: they are counted, and count zero
     assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0},
-                                                     "music": {"all": 1, "kept": 0, "deleted": 0, "deleted_items": 0}, "vector": none}
+                                                     "music": {"all": 1, "kept": 0, "deleted": 0, "deleted_items": 0}, "vector": none, "speech": none}
     keep(client, first, True)
     keep(client, music, True)
     assert client.get("/api/runs/counts").json() == {"image": {"all": 2, "kept": 1, "deleted": 0, "deleted_items": 0},
-                                                     "music": {"all": 1, "kept": 1, "deleted": 0, "deleted_items": 0}, "vector": none}
+                                                     "music": {"all": 1, "kept": 1, "deleted": 0, "deleted_items": 0}, "vector": none, "speech": none}
     keep(client, first, False)
     assert client.get("/api/runs/counts").json()["image"] == {"all": 2, "kept": 0, "deleted": 0, "deleted_items": 0}
 

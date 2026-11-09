@@ -196,7 +196,8 @@ export interface Counts {
   image: TabCounts;
   music: TabCounts;
   vector: TabCounts; // its `deleted_items` counts versions in the bin (DESIGN.md §35.4)
+  speech: TabCounts; // readings: kept from the start (they never expire, §38.8), and with nothing of their own in the bin, so `deleted_items` is 0
 }
 
-/** The three tabs, in the order the page shows them: the keys of `Counts`, and what a tab is called when the page asks the server about it. */
+/** The tabs that keep a history, in the order the page shows them: the keys of `Counts`, and what a tab is called when the page asks the server about it. */
 export type TabKind = keyof Counts;

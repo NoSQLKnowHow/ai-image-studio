@@ -107,7 +107,7 @@ def test_status_reports_memory(client_factory, tmp_path, monkeypatch):
 def ui_dir(tmp_path):
     root = tmp_path / "ui"
     (root / "assets").mkdir(parents=True)
-    (root / "index.html").write_text("<!doctype html><title>AI Image Studio</title><div id=root></div>")
+    (root / "index.html").write_text("<!doctype html><title>AI Studio</title><div id=root></div>")
     (root / "assets" / "app-123.js").write_text("console.log('hi')")
     (root / "theme-init.js").write_text("// theme")
     return root

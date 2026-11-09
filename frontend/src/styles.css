@@ -1,4 +1,4 @@
-/* AI Image Studio. Design tokens first; light is the base, dark overrides follow.
+/* AI Studio. Design tokens first; light is the base, dark overrides follow.
    Contrast targets WCAG AA (4.5:1 for text) in both themes. */
 
 :root {
@@ -547,6 +547,8 @@ fieldset.field { gap: 8px; }
 .phase { display: grid; gap: 4px; }
 .phase-label { font-size: 12px; font-weight: 600; color: var(--text-3); }
 @media (max-width: 520px) { .phases { grid-template-columns: minmax(0, 1fr); } .tab { flex: 1 1 0; justify-content: center; } }
+/* Five tabs on a 360 px phone: each gets a fifth of the bar and its label wraps ("Prompt builder" on two lines) rather than the bar scrolling sideways (DESIGN.md §38.2) */
+@media (max-width: 520px) { .tab { min-width: 0; padding: 0 4px; font-size: 14px; line-height: 1.15; text-align: center; white-space: normal; overflow-wrap: anywhere; } }
 
 
 /* ------------------------------------------------------------------ project folders (DESIGN.md §32) */
@@ -909,3 +911,171 @@ fieldset.field { gap: 8px; }
 .builder-history-grid button:hover, .builder-history-grid button:focus-visible { border-color: var(--accent); }
 .builder-history-grid img { display: block; width: 100%; aspect-ratio: 1; object-fit: cover; }
 .builder-primed { margin: 0; }
+
+/* ------------------------------------------------------------------ the Speech tab (DESIGN.md §38.2) */
+.speech-panel h2 { margin: 0; font-size: 18px; }
+.speech-source, .speech-review, .speech-unavailable { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); min-width: 0; }
+.speech-text { width: 100%; min-height: 9em; resize: vertical; font: inherit; line-height: 1.5; }
+.speech-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.speech-url-row { display: flex; gap: 8px; align-items: stretch; }
+.speech-url-row input { flex: 1 1 auto; min-width: 0; }
+.speech-drop {
+  display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; padding: 18px 16px; border: 2px dashed var(--border-strong, var(--border)); border-radius: 12px;
+  background: var(--surface-2); min-width: 0;
+}
+.speech-drop.dragging { border-color: var(--accent); background: var(--surface); }
+.speech-drop:has(input:focus-visible) label.button { outline: 2px solid var(--accent); outline-offset: 2px; }
+.speech-drop label.button.disabled { opacity: 0.55; pointer-events: none; }
+.speech-drop-text { color: var(--text-2); }
+.speech-file-name { font-weight: 600; overflow-wrap: anywhere; }
+.speech-switches { display: grid; gap: 6px; }
+.speech-switches .choice { display: flex; gap: 8px; align-items: flex-start; }
+.speech-switches .choice input { margin-top: 4px; flex: none; }
+.speech-working { display: flex; gap: 12px; align-items: baseline; margin: 0; color: var(--text-2); }
+.speech-problem p { margin: 0; }
+.speech-problem p + p { margin-top: 4px; }
+.speech-replace { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--accent); border-radius: 10px; background: var(--surface-2); }
+.speech-replace p { margin: 0; }
+.speech-unavailable p { margin: 0; }
+
+.speech-warnings { margin: 0; padding: 10px 12px 10px 28px; border-radius: 10px; background: var(--surface-2); }
+.speech-stale { margin: 0; }
+.speech-review-line { margin: 0; color: var(--text-2); font-weight: 600; }
+.speech-cleaning summary { cursor: pointer; }
+.speech-cleaning ul { margin: 6px 0 0; padding-left: 22px; color: var(--text-2); }
+
+.speech-parts { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.speech-part { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); min-width: 0; }
+/* a part that is left out is greyed, and says so in words as well (colour is never the only sign) */
+.speech-part.left-out { background: var(--surface-2); }
+.speech-part.left-out .speech-part-title { color: var(--text-3); text-decoration: line-through; }
+.speech-part-head { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; min-width: 0; }
+.speech-include { display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.speech-part-title { font-weight: 600; overflow-wrap: anywhere; min-width: 0; flex: 1 1 12em; }
+.speech-part-rename { flex: 1 1 12em; min-width: 0; font: inherit; }
+.speech-part-meta { display: inline-flex; gap: 6px; align-items: center; color: var(--text-2); font-size: 14px; flex: none; }
+.speech-part-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.speech-part-actions [aria-disabled="true"] { opacity: 0.55; cursor: not-allowed; }
+.speech-paragraphs { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.speech-paragraph textarea { width: 100%; font: inherit; line-height: 1.45; resize: vertical; }
+.speech-paragraph.heading textarea { font-weight: 700; }
+.speech-paragraph.skipped { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: flex-start; padding: 6px 8px; border-radius: 8px; background: var(--surface-2); color: var(--text-3); }
+.speech-skipped-text { margin: 0; flex: 1 1 14em; max-height: 6em; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+.speech-more { list-style: none; }
+@media (max-width: 520px) { .speech-source, .speech-review, .speech-unavailable { padding: 12px; } .speech-url-row { flex-wrap: wrap; } .speech-url-row button { flex: 1 1 100%; } }
+
+/* the engine and the voice (DESIGN.md §38.2) */
+.speech-voice-section { display: grid; gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); min-width: 0; }
+.speech-voice-section fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: grid; gap: 8px; }
+.speech-voice-section legend { font-size: 14px; font-weight: 600; padding: 0; margin-bottom: 4px; }
+.speech-engines ul, .speech-voice-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.speech-engine { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.speech-engine.chosen { border-color: var(--accent); background: var(--surface-2); }
+.speech-engine-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.speech-engine-label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.speech-engine-title { font-weight: 600; }
+.speech-engine p { margin: 0; }
+.speech-engine-reason { color: var(--text-2); font-size: 14px; }
+/* the state of an engine is a word, drawn in a colour: the colour is never the only sign */
+.engine-pill { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--surface-2); color: var(--text-2); }
+.engine-pill.good { background: var(--success-soft); color: var(--success); }
+.engine-pill.bad { background: var(--danger-soft); color: var(--danger); }
+.engine-pill.warn { background: var(--accent-soft); color: var(--accent-text); }
+.speech-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+/* the chips themselves (.chip, with its pressed state) are the Music tab's; the Speech tab uses them as they are */
+.speech-voices-heading { margin: 6px 0 0; font-size: 14px; color: var(--text-2); }
+.speech-voice { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px; align-items: start; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; }
+.speech-voice.chosen { border-color: var(--accent); background: var(--surface-2); }
+.speech-voice-label { display: grid; gap: 2px; min-width: 0; }
+.speech-voice-label label { display: inline-flex; gap: 8px; align-items: baseline; cursor: pointer; }
+.speech-voice-name { font-weight: 600; }
+.speech-voice-facts { color: var(--text-2); font-size: 14px; padding-left: 24px; }
+.speech-voice-label .field-hint { padding-left: 24px; }
+.speech-sample { align-self: center; white-space: nowrap; }
+.speech-sample-problem { grid-column: 1 / -1; margin: 0; }
+.speech-style { display: grid; gap: 12px; }
+.speech-style textarea { width: 100%; font: inherit; resize: vertical; }
+.speech-style-line { margin: 0; }
+.speech-make { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); }
+.speech-summary { margin: 0; font-weight: 600; }
+.speech-make .hint { margin: 0; }
+.speech-queued { margin: 0; color: var(--success); font-weight: 600; }
+@media (max-width: 520px) {
+  .speech-voice-section, .speech-make { padding: 12px; }
+  .speech-voice { grid-template-columns: minmax(0, 1fr); }
+  .speech-sample { justify-self: start; }
+}
+
+/* ---- the reading view: the player, the parts and the text of a reading (DESIGN.md §38.7) ---- */
+.reading-view { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.reading-view:focus { outline: none; }
+.reading-view:focus-visible { box-shadow: var(--focus); }
+.reading-view-head { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; }
+.reading-view-head h3 { font-size: 17px; overflow-wrap: anywhere; }
+.player { display: grid; gap: 10px; padding: 12px; border-radius: 10px; background: var(--surface-2); }
+.player-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.player-play { min-width: 96px; }
+.player-seek { width: 100%; accent-color: var(--accent); }
+.player-times { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.player-clock { font-weight: 600; color: var(--text); }
+.player-speed { display: inline-flex; gap: 6px; align-items: center; justify-self: start; }
+.reading-view-status { min-height: 1.4em; color: var(--text-2); }
+.reading-view-status span { display: block; }
+.reading-view-body { display: grid; grid-template-columns: minmax(180px, 260px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.reading-parts ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; max-height: 60vh; overflow-y: auto; }
+.reading-parts li { display: grid; gap: 4px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; }
+.reading-parts li.open { border-color: var(--accent); background: var(--accent-soft); }
+.part-open { display: grid; gap: 2px; text-align: left; background: transparent; border: 0; padding: 4px; cursor: pointer; border-radius: 6px; }
+.part-open:disabled { cursor: not-allowed; opacity: 0.6; }
+.part-title { font-weight: 600; overflow-wrap: anywhere; }
+.part-state { font-size: 13px; color: var(--text-2); }
+.reading-text { display: grid; gap: 8px; min-width: 0; }
+.reading-text-head { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; }
+.reading-text-title { font-weight: 600; overflow-wrap: anywhere; }
+.player-options { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+.player-options .choice { display: inline-flex; gap: 6px; align-items: center; }
+.read-along { position: relative; max-height: 60vh; overflow-y: auto; padding: 12px; border: 1px solid var(--border); border-radius: 10px; line-height: 1.5; }
+.read-along[data-spaced="true"] .piece { line-height: 2; }
+.read-along.empty { min-height: 4em; }
+.piece-row { display: grid; gap: 4px; }
+.piece { margin: 0 0 0.6em; padding: 2px 6px; border-left: 3px solid transparent; border-radius: 4px; overflow-wrap: anywhere; }
+.piece[title] { cursor: pointer; }
+.piece[title]:hover { background: var(--surface-2); }
+.piece-heading { font-weight: 700; }
+.piece-current { background: var(--accent-soft); border-left-color: var(--accent); }
+.piece-pending { opacity: 0.55; font-style: italic; }
+.piece-edit { justify-self: start; margin-bottom: 0.6em; }
+.piece-error { margin: 0 0 0.6em; color: var(--danger); font-size: 13px; }
+.piece-editor { display: grid; gap: 8px; margin-bottom: 0.6em; }
+.piece-editor textarea { width: 100%; resize: vertical; font: inherit; line-height: 1.5; }
+.reading-keys { margin: 0; }
+@media (max-width: 700px) {
+  .reading-view-body { grid-template-columns: minmax(0, 1fr); }
+  .reading-parts ol { max-height: 200px; }
+  .reading-view-head { flex-wrap: wrap; }
+}
+
+/* ---- the person's own voices: designing one, adding one, renaming, deleting (DESIGN.md §38.4) ---- */
+.speech-voice-tools { display: flex; flex-wrap: wrap; gap: 8px; }
+.speech-voice-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; align-items: start; }
+.speech-voice-rename { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 8px; align-items: center; }
+.speech-voice-rename label { flex: 1 0 100%; font-weight: 600; }
+.speech-voice-rename input { flex: 1 1 12em; min-width: 0; }
+.speech-voice-rename .form-error { flex: 1 0 100%; margin: 0; }
+.voice-dialog {
+  position: fixed; z-index: 50; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow-y: auto; background: var(--surface); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg); padding: 20px; display: grid; gap: 12px; outline: none;
+}
+.voice-dialog h2 { font-size: 18px; }
+.voice-body { display: grid; gap: 10px; }
+.voice-body textarea, .voice-body input[type="text"] { width: 100%; font: inherit; }
+.voice-passage { margin: 0; padding: 10px 14px; border-left: 3px solid var(--accent); background: var(--surface-2); border-radius: 0 8px 8px 0; line-height: 1.6; }
+.voice-clips { display: grid; gap: 8px; border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+.voice-clips ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.voice-clips li { display: flex; gap: 10px; align-items: center; justify-content: space-between; }
+.voice-clips label { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+.voice-staged { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.voice-save { display: grid; gap: 6px; }
+.voice-consent { display: flex; gap: 8px; align-items: flex-start; }
+.voice-consent input { margin-top: 4px; flex: none; }

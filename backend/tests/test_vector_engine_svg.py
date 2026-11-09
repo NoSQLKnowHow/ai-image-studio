@@ -191,7 +191,7 @@ def test_the_file_has_a_title_and_a_description_that_says_what_it_is():
     one = make([("rect", (mm(10), mm(10), mm(40), mm(40)), BLACK)], colours=2)
     many = make(drawing(), colours=4)
     root_one, root_many = parse(one.svg)[0], parse(many.svg)[0]
-    assert root_one.find(SVG + "title").text == "AI Image Studio Vector"
+    assert root_one.find(SVG + "title").text == "AI Studio Vector"
     assert root_one.find(SVG + "desc").text.startswith("50 x 50 mm, one unit is one millimetre. 1 layer, each in")
     assert root_many.find(SVG + "desc").text.startswith("50 x 50 mm, one unit is one millimetre. 3 layers, each in")
 

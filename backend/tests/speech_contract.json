@@ -1,0 +1,527 @@
+{
+  "capabilities_speech": {
+    "available": true,
+    "engines": [
+      {
+        "can_clone": true,
+        "can_design": true,
+        "can_style": true,
+        "clone_variant": "clone",
+        "design_variant": "design",
+        "hint": null,
+        "id": "fake",
+        "interruptible": true,
+        "languages": [
+          "English",
+          "German"
+        ],
+        "licence": {
+          "name": "Test only",
+          "noncommercial": false,
+          "notice": ""
+        },
+        "max_chars": 400,
+        "memory_gb": 0.1,
+        "min_chars": 40,
+        "model_id": "fake-speech",
+        "notes": "A stand-in that makes tones, for tests.",
+        "preset_variant": "default",
+        "reason": null,
+        "sample_rate": 24000,
+        "state": "ready",
+        "title": "Fake speech",
+        "variants": [
+          "default",
+          "clone",
+          "design"
+        ]
+      },
+      {
+        "can_clone": false,
+        "can_design": false,
+        "can_style": false,
+        "clone_variant": null,
+        "design_variant": null,
+        "hint": null,
+        "id": "fake-basic",
+        "interruptible": false,
+        "languages": [],
+        "licence": {
+          "name": "Test only (non-commercial)",
+          "noncommercial": true,
+          "notice": "A test notice for the licence badge."
+        },
+        "max_chars": 300,
+        "memory_gb": 0.05,
+        "min_chars": 20,
+        "model_id": "fake-basic-speech",
+        "notes": "A stand-in with no extras, for tests.",
+        "preset_variant": "default",
+        "reason": null,
+        "sample_rate": 22050,
+        "state": "ready",
+        "title": "Fake basic speech",
+        "variants": [
+          "default"
+        ]
+      }
+    ],
+    "hint": null,
+    "reason": null
+  },
+  "design_job": {
+    "description": "a warm Irish woman in her forties, unhurried and clear",
+    "error": null,
+    "files": [
+      {
+        "index": 0,
+        "key": "c0",
+        "url": "/api/speech/candidates/7f6108c5034732e60e81230e03fd5041/0.wav"
+      },
+      {
+        "index": 1,
+        "key": "c1",
+        "url": "/api/speech/candidates/7f6108c5034732e60e81230e03fd5041/1.wav"
+      },
+      {
+        "index": 2,
+        "key": "c2",
+        "url": "/api/speech/candidates/7f6108c5034732e60e81230e03fd5041/2.wav"
+      }
+    ],
+    "id": "7f6108c5034732e60e81230e03fd5041",
+    "label": "a warm Irish woman in her forties, unhurried and clear",
+    "status": "done",
+    "target": "design:7f6108c5034732e60e81230e03fd5041",
+    "task": "design"
+  },
+  "engine_voices": {
+    "engine": "fake",
+    "presets": [
+      {
+        "accent": "American",
+        "description": "A bright test voice.",
+        "gender": "female",
+        "id": "anna",
+        "label": "Anna",
+        "language": "English",
+        "sample": {
+          "ready": true,
+          "url": "/api/speech/samples/fake/anna.wav"
+        },
+        "styleable": true
+      },
+      {
+        "accent": null,
+        "description": "",
+        "gender": "female",
+        "id": "bea",
+        "label": "Bea",
+        "language": "English",
+        "sample": {
+          "ready": false,
+          "url": null
+        },
+        "styleable": false
+      },
+      {
+        "accent": "British",
+        "description": "",
+        "gender": "male",
+        "id": "carl",
+        "label": "Carl",
+        "language": "English",
+        "sample": {
+          "ready": false,
+          "url": null
+        },
+        "styleable": false
+      },
+      {
+        "accent": null,
+        "description": "",
+        "gender": "male",
+        "id": "dan",
+        "label": "Dan",
+        "language": "German",
+        "sample": {
+          "ready": false,
+          "url": null
+        },
+        "styleable": false
+      }
+    ],
+    "saved": [
+      {
+        "consent_at": "2026-11-09T14:13:44.761Z",
+        "created_at": "2026-11-09T14:13:44.762Z",
+        "description": null,
+        "engine": "fake",
+        "id": "645edefaa97092f2f8ce405f5853431f",
+        "kind": "cloned",
+        "name": "My own voice",
+        "sample": {
+          "ready": false,
+          "url": null
+        },
+        "seconds": 10.0
+      },
+      {
+        "consent_at": null,
+        "created_at": "2026-11-09T14:13:44.665Z",
+        "description": "a warm Irish woman in her forties, unhurried and clear",
+        "engine": "fake",
+        "id": "bcf8a4efb7bde127f4f40fc26525eb5e",
+        "kind": "designed",
+        "name": "Warm narrator",
+        "sample": {
+          "ready": false,
+          "url": null
+        },
+        "seconds": 4.57
+      }
+    ]
+  },
+  "limits_speech": {
+    "chars_per_second": 14.0,
+    "fetch_mb": 5,
+    "max_chars": 1500000,
+    "part_max_chars": 30000,
+    "pause_ms": 450,
+    "recording_mb": 30,
+    "upload_mb": 50,
+    "voice_seconds": {
+      "max": 60,
+      "min": 8
+    }
+  },
+  "part_detail": {
+    "chars": 148,
+    "complete": true,
+    "download_url": "/api/speech/2d2e4f3fce4381ebd5f77cbfae6f3418/parts/0.wav?download=1",
+    "idx": 0,
+    "pieces": [
+      {
+        "continues": false,
+        "error": null,
+        "frames": 39312,
+        "idx": 0,
+        "kind": "paragraph",
+        "start_frame": 0,
+        "status": "done",
+        "text": "Paragraph 1: the quick brown fox jumps over the lazy dog, again and again.",
+        "url": "/api/speech/2d2e4f3fce4381ebd5f77cbfae6f3418/parts/0/pieces/0.wav"
+      },
+      {
+        "continues": false,
+        "error": null,
+        "frames": 39312,
+        "idx": 1,
+        "kind": "paragraph",
+        "start_frame": 39312,
+        "status": "done",
+        "text": "Paragraph 2: the quick brown fox jumps over the lazy dog, again and again.",
+        "url": "/api/speech/2d2e4f3fce4381ebd5f77cbfae6f3418/parts/0/pieces/1.wav"
+      }
+    ],
+    "sample_rate": 24000,
+    "title": "One",
+    "total_frames": 78624,
+    "url": "/api/speech/2d2e4f3fce4381ebd5f77cbfae6f3418/parts/0.wav"
+  },
+  "passage": {
+    "consent": "This is my own voice, or the person whose voice it is has agreed that I may use it.",
+    "description_max": 300,
+    "name_max": 60,
+    "sample_sentence": "Good evening. This is how I will sound when I read to you.",
+    "text": "On a quiet morning the town wakes slowly. Bakers lift their shutters, a few gulls argue over the harbour, and the first bus rattles up the hill. Nobody is in a hurry, because nothing important begins before nine. By noon the streets are loud and bright, yet if you listen closely you can still hear the sea, patient as ever, folding the day into the shore.",
+    "voice_seconds": {
+      "max": 60,
+      "min": 8
+    }
+  },
+  "prepared": {
+    "chapters_found": 1,
+    "chars": 190,
+    "cleaning": [],
+    "minutes": 0.2,
+    "options": {
+      "clean": true,
+      "read_extras": false
+    },
+    "parts": [
+      {
+        "chars": 190,
+        "include": true,
+        "minutes": 0.2,
+        "note": null,
+        "paragraphs": [
+          {
+            "kind": "paragraph",
+            "skipped": null,
+            "text": "A short test chapter"
+          },
+          {
+            "kind": "paragraph",
+            "skipped": null,
+            "text": "The quick brown fox jumps over the lazy dog, again and again, until the dog gives up."
+          },
+          {
+            "kind": "paragraph",
+            "skipped": null,
+            "text": "A second paragraph follows, long enough to stand as a piece of its own in the review."
+          }
+        ],
+        "title": "A short test chapter"
+      }
+    ],
+    "source": {
+      "kind": "text"
+    },
+    "title": "A short test chapter",
+    "warnings": []
+  },
+  "reading_run": {
+    "binned_images": [],
+    "binned_tracks": [],
+    "binned_vectors": [],
+    "canceling": false,
+    "created_at": "2026-11-09T14:13:43.790Z",
+    "deleted_at": null,
+    "effective_prompt": "A test reading",
+    "error": null,
+    "expires_at": null,
+    "finished_at": "2026-11-09T14:13:43.942Z",
+    "hidden": false,
+    "id": "2d2e4f3fce4381ebd5f77cbfae6f3418",
+    "images": [],
+    "inputs": [],
+    "lyrics": null,
+    "mode": "speech",
+    "model_id": "fake-speech",
+    "options": {
+      "chars": 222,
+      "engine": "fake",
+      "engine_title": "Fake speech",
+      "language": "English",
+      "licence": {
+        "name": "Test only",
+        "noncommercial": false,
+        "notice": ""
+      },
+      "pause_ms": 450,
+      "sample_rate": 24000,
+      "source": {
+        "kind": "paste"
+      },
+      "style": "calm and slow",
+      "task": "reading",
+      "title": "A test reading",
+      "variant": "default",
+      "voice": {
+        "accent": "American",
+        "gender": "female",
+        "id": "anna",
+        "kind": "preset",
+        "label": "Anna"
+      }
+    },
+    "pinned": true,
+    "progress": null,
+    "project_id": null,
+    "prompt": "A test reading",
+    "prompt_ref": null,
+    "purge_at": null,
+    "queue_position": null,
+    "reading": {
+      "bytes": 236004,
+      "engine": "fake",
+      "engine_title": "Fake speech",
+      "language": "English",
+      "licence": {
+        "name": "Test only",
+        "noncommercial": false,
+        "notice": ""
+      },
+      "parts": [
+        {
+          "chars": 148,
+          "idx": 0,
+          "made": 2,
+          "pieces": 2,
+          "seconds": 3.28,
+          "state": "done",
+          "title": "One"
+        },
+        {
+          "chars": 74,
+          "idx": 1,
+          "made": 1,
+          "pieces": 1,
+          "seconds": 1.64,
+          "state": "done",
+          "title": "Two"
+        }
+      ],
+      "parts_done": 2,
+      "parts_total": 2,
+      "pieces_done": 3,
+      "pieces_total": 3,
+      "position": {
+        "offset_ms": 500,
+        "part": 0,
+        "piece": 1
+      },
+      "sample_rate": 24000,
+      "seconds_made": 4.91,
+      "seconds_to_go": null,
+      "seconds_total": 4.9,
+      "source": {
+        "kind": "paste"
+      },
+      "style": "calm and slow",
+      "title": "A test reading",
+      "variant": "default",
+      "voice": {
+        "accent": "American",
+        "gender": "female",
+        "id": "anna",
+        "kind": "preset",
+        "label": "Anna"
+      },
+      "waiting": false
+    },
+    "started_at": "2026-11-09T14:13:43.923Z",
+    "status": "done",
+    "tracks": [],
+    "vectors": []
+  },
+  "requests": {
+    "design": [
+      "description",
+      "engine"
+    ],
+    "piece": [
+      "text"
+    ],
+    "position": [
+      "offset_ms",
+      "part",
+      "piece"
+    ],
+    "prepare": [
+      "clean",
+      "read_extras",
+      "source",
+      "text",
+      "url"
+    ],
+    "reading": [
+      "engine",
+      "language",
+      "parts",
+      "saved_voice",
+      "source",
+      "style",
+      "title",
+      "voice"
+    ],
+    "reading_paragraph": [
+      "kind",
+      "text"
+    ],
+    "reading_part": [
+      "paragraphs",
+      "title"
+    ],
+    "rename_voice": [
+      "name"
+    ],
+    "sample": [
+      "engine",
+      "recording",
+      "saved_voice",
+      "voice"
+    ],
+    "save_voice": [
+      "candidate",
+      "consent",
+      "engine",
+      "kind",
+      "name",
+      "recording"
+    ],
+    "save_voice_candidate": [
+      "index",
+      "job"
+    ]
+  },
+  "sample_answer_queued": {
+    "job": {
+      "error": null,
+      "files": [],
+      "id": "83b66f79f5b434dbe3eb0f9299d172e8",
+      "label": "Anna",
+      "status": "queued",
+      "target": "preset:fake:anna",
+      "task": "sample"
+    },
+    "ready": false,
+    "url": null
+  },
+  "sample_answer_ready": {
+    "job": null,
+    "ready": true,
+    "url": "/api/speech/samples/fake/anna.wav"
+  },
+  "sample_job": {
+    "error": null,
+    "files": [
+      {
+        "key": "sample",
+        "url": "/api/speech/samples/fake/anna.wav"
+      }
+    ],
+    "id": "83b66f79f5b434dbe3eb0f9299d172e8",
+    "label": "Anna",
+    "status": "done",
+    "target": "preset:fake:anna",
+    "task": "sample"
+  },
+  "saved_voice_cloned": {
+    "consent_at": "2026-11-09T14:13:44.761Z",
+    "created_at": "2026-11-09T14:13:44.762Z",
+    "description": null,
+    "engine": "fake",
+    "id": "645edefaa97092f2f8ce405f5853431f",
+    "kind": "cloned",
+    "name": "My own voice",
+    "sample": {
+      "ready": false,
+      "url": null
+    },
+    "seconds": 10.0
+  },
+  "saved_voice_designed": {
+    "consent_at": null,
+    "created_at": "2026-11-09T14:13:44.665Z",
+    "description": "a warm Irish woman in her forties, unhurried and clear",
+    "engine": "fake",
+    "id": "bcf8a4efb7bde127f4f40fc26525eb5e",
+    "kind": "designed",
+    "name": "Warm narrator",
+    "sample": {
+      "ready": false,
+      "url": null
+    },
+    "seconds": 4.57
+  },
+  "staged_recording": {
+    "clipped": 0.0,
+    "id": "7816ca70e6b50d4c9cc52ec58138c7be",
+    "peak": 0.244,
+    "seconds": 10.0,
+    "trimmed_seconds": 0.0,
+    "url": "/api/speech/recordings/7816ca70e6b50d4c9cc52ec58138c7be.wav"
+  }
+}

@@ -15,7 +15,7 @@ from studio.serialize import utcnow
 def test_health_index_and_capabilities(client):
     assert client.get("/api/health").json()["ok"] is True
     page = client.get("/").text  # no UI build in this test's settings -> placeholder
-    assert "AI Image Studio" in page and "/api/health" in page
+    assert "AI Studio" in page and "/api/health" in page
     caps = client.get("/api/capabilities").json()
     assert caps["pipeline"] == "fake" and caps["modes"] == ["generate", "edit"] and caps["model"] == "fake-pipeline"
     assert caps["defaults"]["width"] == 2752 and caps["defaults"]["steps"] == 40 and caps["queue_cap"] == 10

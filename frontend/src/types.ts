@@ -1,12 +1,14 @@
 import type { BuilderCaps, BuilderLimits } from "./builderTypes";
+import type { ReadingInfo, ReadingVoice, SourceInfo, SpeechCaps, SpeechLicence, SpeechLimits } from "./speechTypes";
 // JSON shapes returned by the backend (backend/studio/serialize.py, api.py, jobs.py).
 
-/** Pictures are made in one of two modes; music (DESIGN.md §26) and vector (§31) are two more kinds of run, each on its own tab. */
+/** Pictures are made in one of two modes; music (DESIGN.md §26), vector (§31) and speech (§38) are more kinds of run, each on its own tab. */
 export type ImageMode = "generate" | "edit";
-export type Mode = ImageMode | "music" | "vector";
-/** The two models the studio can hold, one at a time (DESIGN.md §26.4). A Vector run is drawn by the image model, so it has no model of its
- *  own: on the Vector tab the model pill and the Load / Unload button act on "image" (§31.12.8). */
-export type ModelName = "image" | "music";
+export type Mode = ImageMode | "music" | "vector" | "speech";
+/** The three models the studio can hold, one at a time (DESIGN.md §26.4, §38.3). A Vector run is drawn by the image model, so it has no model of its
+ *  own: on the Vector tab the model pill and the Load / Unload button act on "image" (§31.12.8). "speech" is one engine in one variant, which the worker's
+ *  status names (`engine`, `variant`). */
+export type ModelName = "image" | "music" | "speech";
 export type RunStatus = "queued" | "running" | "done" | "failed" | "canceled";
 export type WorkerState = "unloaded" | "loading" | "ready" | "busy" | "error" | "unavailable";
 
@@ -113,7 +115,7 @@ export interface Project {
   created_at: string;
   // `vector` is optional because the list of projects was written before Vector (§32.4) and §31.12 does not say whether it counts them: the page
   // treats a missing number as "not known" and never shows it as 0 (see FilterBar and `projectContents`).
-  counts: { image: number; music: number; vector?: number; prompts?: number; chats?: number };
+  counts: { image: number; music: number; vector?: number; speech?: number; prompts?: number; chats?: number };
 }
 
 /** Where a run came from when it was made from a saved prompt (DESIGN.md §37.3 rule 3): the prompt, the version, whether the prompt is in the bin or gone (then `title` may be null),
@@ -329,10 +331,45 @@ export interface VectorRun extends RunBase {
   binned_vectors: BinnedVectorItem[]; // the ones that are; empty for a run that is itself in the bin
 }
 
-export type Run = ImageRun | MusicRun | VectorRun;
+/** What a reading records of itself in `options` (DESIGN.md §38.6): the engine and voice it was made with, and where its text came from. */
+export interface SpeechOptionsSnapshot {
+  task: "reading" | "sample" | "design";
+  engine: string;
+  engine_title?: string;
+  variant: string;
+  voice: ReadingVoice;
+  style?: string | null;
+  language?: string | null;
+  source?: SourceInfo | null;
+  title?: string | null;
+  pause_ms?: number;
+  licence?: SpeechLicence;
+  sample_rate?: number;
+  chars?: number;
+}
+
+/** A reading (DESIGN.md §38.9). The short jobs behind a voice sample or a voice being designed are speech runs too, but they are `hidden` and no list or
+ *  count has them: the page learns of them from the `speech.job` event, and never as a run. */
+export interface SpeechRun extends RunBase {
+  mode: "speech";
+  options: SpeechOptionsSnapshot;
+  lyrics: null;
+  inputs: [];
+  images: [];
+  binned_images: [];
+  tracks: [];
+  binned_tracks: [];
+  vectors: [];
+  binned_vectors: [];
+  hidden: boolean;
+  reading: ReadingInfo | null; // null for a hidden job
+}
+
+export type Run = ImageRun | MusicRun | VectorRun | SpeechRun;
 
 export const isMusicRun = (run: Run): run is MusicRun => run.mode === "music";
 export const isVectorRun = (run: Run): run is VectorRun => run.mode === "vector";
+export const isSpeechRun = (run: Run): run is SpeechRun => run.mode === "speech";
 export const isImageRun = (run: Run): run is ImageRun => run.mode === "generate" || run.mode === "edit";
 
 export interface WorkerStatus {
@@ -341,6 +378,8 @@ export interface WorkerStatus {
   hint: string | null;
   pipeline: string;
   model: ModelName; // the model the worker holds, or last tried to load (DESIGN.md §26.3)
+  engine?: string | null; // for the speech model: which engine and variant it is (DESIGN.md §38.3); null for the other two, absent from an older server
+  variant?: string | null;
   pid: number | null;
   unload_at: string | null;
   idle_timeout_min: number; // 0 = unload as soon as the queue is empty, so loading ahead of time is not offered (§25)
@@ -457,10 +496,12 @@ export interface Capabilities {
     music: MusicLimits;
     vector: VectorLimits;
     builder: BuilderLimits; // DESIGN.md §37.4
+    speech: SpeechLimits; // DESIGN.md §38.9
   };
   music: MusicAvailability;
   vector: VectorAvailability;
   builder: BuilderCaps; // the Prompt builder: set up? what is known of Ollama (§37.4)
+  speech: SpeechCaps; // the Speech tab: can it work here, and what each engine says (§38.3, §38.9)
   upscaler: UpscalerStatus;
   queue_cap: number;
   device: WorkerStatus["device"];

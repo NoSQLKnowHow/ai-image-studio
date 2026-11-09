@@ -8,12 +8,12 @@ import { hasPlainText, pastedPictures, routePaste } from "./paste";
 // does not also do something with it, and then handed to the page.
 
 export interface PasteHandlers {
-  tab: "images" | "music" | "vector" | "builder";
+  tab: "images" | "music" | "vector" | "builder" | "speech";
   ready: boolean; // the page knows what the server can do
   onTray: (files: File[]) => void; // pictures for the Images tab's prompt card (Edit's tray; Generate switches to Edit)
   onUpscale: (files: File[]) => void; // pictures for Upscale a picture…, which has the focus
   onBuilder?: (files: File[]) => void; // pictures for the Prompt builder's chat
-  onWrongTab: () => void; // a picture was given to the Music or Vector tab
+  onWrongTab: () => void; // a picture was given to the Music, Vector or Speech tab
 }
 
 /** A dialog (the questions, the Options drawer, the viewers) is open: they are all Radix dialogs, which carry these roles. */
@@ -40,9 +40,11 @@ export function usePicturePaste(handlers: PasteHandlers): void {
       else now.onWrongTab();
     };
     // A picture dropped on the Music or Vector tab: the window already stops the browser from opening it; this says where pictures are used.
+    // The Speech tab says nothing: a file dropped there is meant for its own file box (a .txt, .epub or .docx), which answers for itself, and a picture dropped
+    // elsewhere on that tab is simply not taken.
     const onDrop = (event: DragEvent) => {
       const now = latest.current;
-      if (now.tab === "images" || now.tab === "builder" || !now.ready || modalIsOpen()) return;
+      if (now.tab === "images" || now.tab === "builder" || now.tab === "speech" || !now.ready || modalIsOpen()) return;
       if (event.dataTransfer?.types.includes("Files")) now.onWrongTab();
     };
     document.addEventListener("paste", onPaste);

@@ -94,7 +94,7 @@ docker compose logs -f studio          # Ctrl+C stops following; the server keep
 Good, in the log:
 
 - `serving the web UI from /app/static`
-- `AI Image Studio 0.1.0 ready (pipeline=real, data=/data)`
+- `AI Studio 0.1.0 ready (pipeline=real, data=/data)`
 - `capability check passed: {... 'name': 'NVIDIA GB10', 'capability': '12.1' ...}` (this can take
   a minute: it imports PyTorch and diffusers in a separate process)
 
@@ -102,7 +102,7 @@ If it says `capability check failed: ...` instead, the message says why; see Tro
 
 ## 7. Open the page
 
-From your laptop or phone on the same network: `http://<spark-address>:8080` (on the Spark,
+From your laptop or phone on the same network: `http://<spark-address>:8081` (on the Spark,
 `hostname -I` shows its addresses).
 
 Good: the page loads with the light or dark theme following your system. The model pill in the
@@ -138,7 +138,7 @@ Note:
 - `MemAvailable` before you click (the model not loaded): **A**
 - the lowest `MemAvailable` while it generates: **B**
 - the worker's own memory while loaded:
-  `curl -s localhost:8080/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'`
+  `curl -s localhost:8081/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'`
   (`worker_rss_gb`)
 
 The footprint is about **A − B**. Set `STUDIO_MIN_FREE_GB` in `.env` to that plus 10–20% headroom,
@@ -164,7 +164,7 @@ Generate one image, then wait. The pill says **Model ready · unloads in 2 minut
 not loaded**.
 
 Good: `MemAvailable` rises by about the footprint from step 9, and
-`curl -s localhost:8080/api/status | python3 -m json.tool` shows the worker `"state": "unloaded"`.
+`curl -s localhost:8081/api/status | python3 -m json.tool` shows the worker `"state": "unloaded"`.
 The next Generate loads it again (faster this time: the files are cached).
 
 Put the timeout back afterwards (`30` is the default, or whatever suits you) and `docker compose up -d`.
@@ -227,7 +227,7 @@ the page, then `docker compose down && docker compose up -d`: it is still kept.
 throwaway. It ages the newest run by 27 days:
 
 ```bash
-RUN=$(curl -s 'localhost:8080/api/runs?limit=1' | python3 -c 'import sys, json; print(json.load(sys.stdin)["runs"][0]["id"])')
+RUN=$(curl -s 'localhost:8081/api/runs?limit=1' | python3 -c 'import sys, json; print(json.load(sys.stdin)["runs"][0]["id"])')
 docker compose exec -T studio python - "$RUN" 27 <<'PY'
 import datetime as d, sqlite3, sys
 t = (d.datetime.now(d.timezone.utc) - d.timedelta(days=float(sys.argv[2]))).isoformat(timespec="milliseconds").replace("+00:00", "Z")
@@ -262,7 +262,7 @@ database written by the real 1.1 code. A backup (`scripts/backup.sh`) first is s
 ```bash
 git pull && docker compose up -d --build
 docker compose logs studio | grep -i "schema"        # "upgrading the database from schema 1 to 2 ..."
-curl -s localhost:8080/api/health                    # "version":"1.2"
+curl -s localhost:8081/api/health                    # "version":"1.2"
 ```
 
 **a) A first edit** (the first run after a quiet spell loads the model, which takes a while):
@@ -355,9 +355,9 @@ run's JSON has an `options.full`; the second command is refused with a 422 becau
 larger:
 
 ```sh
-curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
+curl -s -X POST localhost:8081/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
   -d '{"prompt": "a lighthouse", "options": {"width": 512, "height": 512, "steps": 20, "full": {"width": 1024, "height": 1024, "steps": 40}}}'
-curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
+curl -s -X POST localhost:8081/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' \
   -d '{"prompt": "a lighthouse", "options": {"width": 1024, "height": 1024, "steps": 20, "full": {"width": 512, "height": 512, "steps": 40}}}'
 ```
 
@@ -529,12 +529,12 @@ can, watch `docker compose logs studio` for anything that looks like a download.
 **h) Through the studio's API (the Music tab does exactly this).**
 
 ```bash
-curl -s -X POST localhost:8080/api/model/load -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' -d '{"model":"music"}'
-curl -s localhost:8080/api/status | python3 -m json.tool | grep -E '"state"|"model"|"detail"'   # until state is "ready", model "music"
-curl -s -X POST localhost:8080/api/runs -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8081/api/model/load -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' -d '{"model":"music"}'
+curl -s localhost:8081/api/status | python3 -m json.tool | grep -E '"state"|"model"|"detail"'   # until state is "ready", model "music"
+curl -s -X POST localhost:8081/api/runs -H 'X-Studio-Client: 1' -H 'Content-Type: application/json' \
   -d '{"mode":"music","prompt":"Global Metadata\nBasic Attributes: ambient.\nInstrumental, no vocals.","options":{"duration":15,"tracks":1}}'
-# then poll   curl -s localhost:8080/api/runs/<id>   until "status" is "done", and fetch the track:
-curl -s -o /tmp/api.wav 'localhost:8080/api/audio/<track id>?download=1' && strings /tmp/api.wav | grep machine-generated
+# then poll   curl -s localhost:8081/api/runs/<id>   until "status" is "done", and fetch the track:
+curl -s -o /tmp/api.wav 'localhost:8081/api/audio/<track id>?download=1' && strings /tmp/api.wav | grep machine-generated
 ```
 
 Good: the music model loads, the image model is **not** loaded at the same time (`free -h` shows only one), the run
@@ -708,7 +708,7 @@ the model, the settings (`--dtype bf16`, the tile overlap) or the whole idea nee
 | Download fails with 401/403 or "gated" | Accept the model's terms on Hugging Face if it asks, then set `HF_TOKEN` in `.env` and `docker compose up -d`. |
 | `Not enough free memory to load the model` | Hermes' vLLM probably holds the memory: lower its `--gpu-memory-utilization` or stop it, then flush the page cache: `sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'`. Then **Retry**. |
 | Out of memory while loading or generating | Same as above; also try a smaller size or fewer images per click. |
-| `port is already allocated` | Something else uses 8080: set `STUDIO_PORT` in `.env`. |
+| `port is already allocated` | Something else uses 8081 (the studio's port on the Spark since 1.20; it was 8080): set another `STUDIO_PORT` in `.env`, and if your `.env` still says `STUDIO_PORT=8080`, change it to 8081. |
 | The page loads but never updates live | Check `docker compose logs studio`; the connection banner at the top says if the live stream is down. |
 
 To update later: `git pull && docker compose up -d --build`.
@@ -841,7 +841,7 @@ then choose **1:1** (2048 × 2048) and generate one more. If the model has to lo
 
 - the time on the card (the seconds of the run, without the model load);
 - `MemAvailable` before you click (**A**) and the lowest it reached while the run was going (**B**), so the footprint is **A − B**;
-- the worker's own memory while it was loaded: `curl -s localhost:8080/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'` (`worker_rss_gb`).
+- the worker's own memory while it was loaded: `curl -s localhost:8081/api/status | python3 -c 'import json,sys; print(json.load(sys.stdin)["memory"])'` (`worker_rss_gb`).
 
 **Good:** the 16:9 run takes about as long as the square (it has 0.9% more pixels: 4.23 MP against 4.19) and its **A − B** is no more than the square's, within the noise between two runs.
 **If it is larger, send me both sets of numbers:** the default would have to be thought about again, and `STUDIO_MIN_FREE_GB` (step 9) may need raising.
@@ -853,7 +853,7 @@ then choose **1:1** (2048 × 2048) and generate one more. If the model has to lo
 (`file` on the downloaded PNG, or the size on the card). A request that names a size (`"width": 1024, "height": 1024`) gets that size.
 
 ```bash
-curl -s -X POST localhost:8080/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' -d '{"prompt": "a lighthouse at dusk", "options": {"steps": 20}}'
+curl -s -X POST localhost:8081/api/runs -H 'Content-Type: application/json' -H 'X-Studio-Client: 1' -d '{"prompt": "a lighthouse at dusk", "options": {"steps": 20}}'
 ```
 
 **f) What does not change.** Turn **Edit** on: Size is still **Auto** (*from your images*), and **Reset to defaults** leaves it there. Press **Reuse** on a card made before the update (a square):
@@ -974,7 +974,7 @@ docker compose logs studio | grep -i "schema\|builder" | head
 ```
 
 **a) The connection.** Open **Prompt builder** (the fourth tab). **Good:** *Ollama is ready: qwen3.8:27b*. Press **Test connection**. **Good:** it lists Ollama's version and its models, says yours is among them, and says whether it can look at pictures
-(Ollama's library says `qwen3.8:27b` can). **Check** that the address appears nowhere on the page, and that `curl -s http://localhost:8080/api/capabilities | grep -c -e host.docker.internal -e 11434` (use the port in your `.env`) prints `0`; the capabilities say only whether the builder is `configured`, `reachable` and which `model`.
+(Ollama's library says `qwen3.8:27b` can). **Check** that the address appears nowhere on the page, and that `curl -s http://localhost:8081/api/capabilities | grep -c -e host.docker.internal -e 11434` (use the port in your `.env`) prints `0`; the capabilities say only whether the builder is `configured`, `reachable` and which `model`.
 With `STUDIO_OLLAMA_URL` empty, **good:** the tab says *The Prompt builder needs an Ollama server…* and Saved prompts, Preferences and Projects still work.
 
 **b) A first chat.** Type **a lighthouse in a storm** and Send. **Good:** the chat is in the list at once; a card says *Thinking…* with the seconds and a **Show thinking** fold; then the reply streams, with at most **three questions**, each with 3 to 5 chips.
@@ -1013,6 +1013,51 @@ Press **Unload from memory**: **good:** `ollama ps` shows nothing loaded and `Me
 
 **Send back:** the `ls -l data/studio.sqlite*` line; from (a) what Test connection showed; from (b) and (c) the times; from (d) the counts; from (e) your judgement of the questions; from (g) your verdict on the pictures and from (h) on the description; from (j) the memory numbers; and anything that did not match "Good", with the browser and device.
 
+## 31. The Speech tab: four voice engines, on your Spark (new in 1.20)
+
+Nothing here has run on a Spark yet. The fake engines (a tone for a voice) and a real browser have tried the plumbing; **no real engine has made a sound, and nobody has judged one**. So this section is mostly *listening*, and the notes you send back are about how it sounds and what it costs.
+
+**Load it.** Until 1.20 is merged it is on the branch `speech`; once it is merged (`main`), `git pull` is all you need.
+
+```bash
+cd ~/ai-image-studio                                  # your checkout
+mkdir -p ~/backups && scripts/backup.sh --no-model ~/backups   # first: the first start of 1.20 upgrades the database to schema 10 (without the models: about 10 GB, and a minute or two)
+git fetch origin && git checkout speech && git pull             # (after the merge: git checkout main && git pull)
+docker compose up -d --build                          # builds 1.20 and reads .env; reload the page with Ctrl+Shift+R: the title reads v1.20
+ls -l data/studio.sqlite*                             # note the line: studio.sqlite.before-schema-10 is the copy made before the upgrade
+grep check_image build.log | grep -i speech          # if you built with a log, as in step 5; else: docker compose logs studio | grep -i "speech" | head -20
+```
+
+**What is downloaded, and when.** The engines' *libraries* (Kokoro, Piper, Qwen3-TTS) go into the image when it is built; Voxtral's server is an optional extra (`SPEECH_VOXTRAL=1 docker compose build`, large) and is left out unless you ask. The voice **models are downloaded by the studio itself, the first time each engine loads** (your first **Load speech model**, **Play sample** or **Make reading** with that engine), into the Hugging Face cache that `compose.yaml` mounts (`~/.cache/huggingface`, or `HF_CACHE_DIR`). After that nothing is fetched again (`STUDIO_LOCAL_FILES_ONLY=auto`, as for the other models). **A backup does not hold these models**: it holds your readings and voices, and a restore on a new machine downloads the models again on first use. To avoid waiting in the page, you may fetch a repository beforehand with `hf download <repo>`.
+
+**a) The engines.** Open **Speech** (the fifth tab, after Prompt builder). **Good:** each engine has a pill (*Ready*, *Not installed*, *Needs more memory*) with its reason; the build's `Speech:` lines say the same. **Write down** which engines say *Ready* and the exact reason on any that do not. **Check** that Voxtral says it is not built into the image, unless you built it. **Qwen3-TTS and torchaudio.** On the first Spark run the Qwen3-TTS pill said *not installed* with `No module named 'torchaudio'` (Kokoro and Piper were *Ready*; Voxtral was not built). `qwen-tts` imports torchaudio at the top of a module that only its old 25 Hz tokenizer uses, and NVIDIA's image has none for the Spark. The build now makes that one import optional in its own copy of the library (`docker/patch_qwen_tts.py`; DESIGN section 38.18, item 72), so after a rebuild the pill says *Ready* (confirmed on the first Spark that had the patch): `grep patch_qwen_tts build.log` shows `patched` (or `already patched`). **If it still says *not installed*** and the reason names a package, send me the pill's exact words, the build's `Speech: qwen3-tts:` line, and the last lines of `docker compose exec studio env PYTHONPATH=/opt/speech-libs/qwen3-tts python -c "import qwen_tts"`, which name the next thing that is missing.
+
+**b) The first load of each engine.** For each engine in turn (Kokoro, Piper, Qwen3-TTS): choose it, press **Load speech model** (or **Play sample** on a voice). **Good:** the pill says *Loading…* for as long as the download takes, then the engine is loaded; `docker compose logs -f studio` shows no error. **Write down** the time to download and to load, and the size added to the cache (`du -sh ~/.cache/huggingface/hub/models--*` before and after). Then press **Unload** and **Load** again: **good:** quick, with no download.
+
+**c) Voices and samples.** In Kokoro, press **Play sample** on a few voices. **Good:** the first press makes the fixed sentence (*"Good evening. This is how I will sound when I read to you."*) and plays it; the second plays the kept file at once. **Check** that every voice says its accent where its source states one, and *Accent not stated* where it does not, and that no voice is called American, British or Irish by its name alone. In **Piper**, the **Jenny** voice is the one you asked about: **write down** what accent you hear.
+
+**d) A reading.** Paste two or three pages and press **Prepare text**. **Good:** the review shows the parts, with their length in minutes; **Make reading** says what it will do (*"3 parts, about 11 min of audio, about 30 MB. Kokoro-82M, Heart."*). Press it. **Good:** a card appears at once with a bar (*Part 1 of 3 · paragraph 4 of 40 · 2 min made*), and after the engine has run once, *about N min to go*. **Press Listen while it is being made.** **Good:** the text opens paragraph by paragraph, the spoken paragraph is marked and kept in view, it plays what is made and, if you catch up with the maker, says *Waiting for the next paragraph to be made…* and carries on by itself. **Listen at each paragraph boundary: is there a gap, a click, or a change of pitch?** (This is the one thing no stand-in could tell us.) **Write down** how many seconds of work each second of audio takes (the card's minutes made against the clock), for each engine, and the lowest `MemAvailable` (`free -h`) while it works.
+
+**e) Playing it.** On the finished card press **Listen**. Try: Pause and Play; the **15-second** buttons; **Previous** and **Next paragraph** (and `J`, `K`, Space and the arrow keys when focus is in the player); the **speed** at 0.75×, 1.5× and 2× (**good:** the voice does not go up in pitch); the four **text sizes** and **Wider line spacing**; **Follow along** off and on; a click on any paragraph. **Drag the slider into the middle of a part of half an hour or more** (make one from a long text): **good:** it plays from there within a second or two (this is a WAV the server builds as it sends it, and seeking into it is by range request: **write down** how long a seek takes).
+
+**f) A book.** Prepare an **EPUB** with chapters, and a long **PDF** (with bookmarks, and one that is only scanned images). **Good:** the EPUB is cut into parts by chapter and the review lets you **Include**, **Rename**, **Merge with next** and edit a paragraph; a scanned PDF is refused with *no text layer*. **Check** the summary for the book (*"12 parts, about 11 h 20 min of audio, about 2 GB"*) and, if you can, make the whole book. **Write down** the time, the disk it used, and whether the page stayed usable. **Good:** stop the container halfway (`docker compose restart studio`) and open the page: the reading says it failed because the worker stopped, keeps every finished piece, and **Retry** carries on from the piece after.
+
+**g) The place, on two devices.** Listen for a minute on the computer and press Pause. Open the studio on your phone. **Good:** the card says **Continue listening from 1:12 in part 1** (or where you stopped), and plays from there. Listen on the phone, then look at the computer: **good:** the same place.
+
+**h) On a phone.** Open the tab on your phone. **Good:** the tab bar does not scroll sideways, the Source box, the voice list, the cards and the player fit, and the player's buttons stay on screen. **Lock the screen while a reading plays.** **Good:** the lock screen shows the reading's title, the part and the voice, with play, pause, back, forward, previous and next. **Write down** what your phone and browser are, whether Safari asks you to press **Play** (*"Your browser wanted a press before it would play sound"*), and whether the sound stops when the screen locks.
+
+**i) Qwen3-TTS: a style, a designed voice, your own voice.** Choose Qwen3-TTS. **Style:** type *calm and warm, like an audiobook narrator* and make a short reading; then another with no style. **Write down** whether the style is audible. **Design a voice:** *a warm Irish woman in her forties, unhurried, clear* → **Make three samples**. **Good:** three clips of the same passage that differ from each other. **Write down** whether any sounds Irish (nothing is promised: it is an open question). Save one and use it for a short reading. **Add my voice:** read the passage aloud on your phone, upload the file. **Good:** a recording that is too short or silent is refused in the server's words; a good one can be heard back, can be heard speaking (*Hear it speak*), and is saved only after you tick the statement and give a name. **Write down** how close the cloned voice is, the time to make a reading in it, and which file kinds your phone's chooser offered (WAV, MP3, M4A…). **Rename** and **Delete** a voice: **good:** Delete asks first and says readings already made keep their audio.
+
+**j) Voxtral** (only if you built it with `SPEECH_VOXTRAL=1`). **Good:** its pill says *Ready*; the first load downloads about 8 GB, and its server starts with a share of the GPU's memory (`STUDIO_SPEECH_GPU_FRACTION`, 0.2 by default: an estimate). **Write down** the download time, whether the server started at that share (if not, the log line and what happened), the memory, and the quality against Kokoro. **Check** that its licence badge says non-commercial.
+
+**k) Sharing the Spark.** While a reading is being made, press **Generate** on Images and **Play sample** on another voice. **Good:** the sample goes ahead of waiting readings but never ahead of the part being made; the image waits its turn in the queue; the reading carries on afterwards from the next part. **Write down** how long the model swaps take each way (speech to image to speech), and `free -h` and `nvidia-smi` with each engine loaded alone and after **Unload**.
+
+**l) Downloads and the file's note.** On a finished reading press **Download**. **Good:** a ZIP of the parts with a `playlist.m3u`; open it in a player on your phone. Download one part's WAV from the player's parts list. **Check** its name (`reading_the-title_part03_af-bella_20261108.wav`) and that `ffprobe` shows a note in its file information naming the engine and the voice (a cloned voice says it was made with the speaker's agreement).
+
+**m) The bin, projects and the backup.** **Delete** a reading: **good:** it asks, goes to **Deleted** for 30 days, **Restore** brings it back, and it can be **filed in a project**. A reading is always kept (there is no Keep button). Run `scripts/backup.sh --no-model ~/backups` and look inside the newest one: `tar -xOf "$(ls -t ~/backups/ai-image-studio-backup-*.tar | head -1)" data.tar.gz | tar -tz | grep "data/speech" | head` (a backup is one `.tar` that holds `data.tar.gz`). **Good:** it lists readings and voices. The speech models that you have downloaded **are** in a backup (the studio decides which from `STUDIO_SPEECH_ENGINES` and the `STUDIO_SPEECH_<ID>_MODEL` settings). Check it without making a backup of tens of GB: `scripts/backup.sh --dry-run ~/backups`. **Good:** the `models:` summary lists each speech model you have used, for example `Qwen3-TTS CustomVoice: hub/models--Qwen--Qwen3-TTS-12Hz-1.7B-CustomVoice`, and one line names those not downloaded yet (*each downloads the first time its engine is used*). **Write down** the total it gives for `models:` and how long a real backup with the models takes.
+
+**Send back:** the `ls -l data/studio.sqlite*` line; from (a) the pills and any reasons; from (b) the download and load times and the cache sizes; from (c) the accent you hear in Jenny; from (d) the seconds of work per second of audio for each engine, the lowest `MemAvailable`, and **whether there was any gap, click or pitch change between paragraphs**; from (e) how long a seek in a long part took; from (f) the book's time and disk use and what the restart showed; from (g) and (h) your phone, whether the place and the lock screen worked, and whether Safari wanted a press; from (i) your judgement of the style, the designed voices, the clone and the file kinds your chooser offered; from (j) the Voxtral numbers; from (k) the swap times and memory; from (l) whether the ZIP and the note were right; and anything that did not match "Good", with the message the page or the log showed.
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -1040,3 +1085,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 21. From step 28 (Vector): the `Vector:` line from (a), the seconds of the drawing and of the tracing and the memory numbers from (b), the notes from (c) with a screenshot if the drawing had shading or gradients, what XCS and LightBurn showed in (e) (and the laser test sheet's six answers, `DESIGN.md` §31.9 item 1), your verdict on side by side against stacked in (f), and anything that did not match "Good".
 22. From step 29 (Vector versions, the stack view, pictures by paste): the `ls -l data/studio.sqlite*` line, your judgement of the trace against the drawing in (b), the three back-sheet results and your verdict in (d), what XCS and LightBurn showed of the stacked layers in (e), which browsers and devices did and did not take a pasted picture in (g) to (j), and from (k) the times, the memory numbers, whether eight pictures ran, whether the model follows "image 7" and "image 8", and the numbers you suggest for the limit and the cost warning.
 23. From step 30 (the Prompt builder): the `ls -l data/studio.sqlite*` line, what Test connection showed, the times to the first word and the thinking times from (b) and (c), the counts from (d) (first time, asked again, plain text; thinking on and off), your judgement of the questions from (e), your verdict on the Quick try pictures from (g) and on the description from (h), the memory numbers and the settings you suggest from (j), and anything that did not match "Good".
+24. From step 31 (the Speech tab): the `ls -l data/studio.sqlite*` line, the engine pills and the download and load times from (a) and (b), the accent you hear in Jenny, the seconds of work per second of audio and the lowest memory for each engine from (d), **whether there was any gap, click or pitch change between paragraphs when a reading was played as it was made**, the seek time from (e), the book's time and disk use and what the restart showed from (f), whether the place and the lock screen worked on your phone from (g) and (h), your judgement of the style, the designed voices and the clone from (i), the Voxtral numbers from (j), the swap times and memory from (k), and anything that did not match "Good".

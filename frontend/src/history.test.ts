@@ -6,7 +6,7 @@ import {
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
-import { makeBinnedImage, makeBinnedTrack, makeBinnedVector, makeMusicRun, makeRun, makeVectorRun } from "./testdata";
+import { makeBinnedImage, makeBinnedTrack, makeBinnedVector, makeMusicRun, makeRun, makeSpeechRun, makeVectorRun } from "./testdata";
 import type { Run, RunStatus } from "./types";
 
 // ------------------------------------------------------------------ the table both sides are tested against (DESIGN.md §29.5, criterion 120)
@@ -20,6 +20,8 @@ type TableRun = { id: string; mode: string; status: string; pinned: boolean; del
 function tableRun(entry: TableRun): Run {
   const extra = { id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned, deleted_at: entry.deleted ? "2026-10-02T00:00:00.000Z" : null, project_id: entry.project };
   const items = Array.from({ length: entry.items_in_bin }, (_, i) => i);
+  // a reading has nothing of its own to put in the bin (DESIGN.md §38.8): its row is the run alone
+  if (entry.mode === "speech") return makeSpeechRun(extra);
   // a Vector row's items are its versions (DESIGN.md §35.4)
   if (entry.mode === "vector") return makeVectorRun({ ...extra, binned_vectors: items.map((i) => makeBinnedVector(i + 1)) });
   return entry.mode === "music"
@@ -28,8 +30,8 @@ function tableRun(entry: TableRun): Run {
 }
 
 // which tab a run belongs to, as the server's counts name it
-type Kind = "image" | "music" | "vector";
-const kindOf = (run: Run): Kind => (run.mode === "music" ? "music" : run.mode === "vector" ? "vector" : "image");
+type Kind = "image" | "music" | "vector" | "speech";
+const kindOf = (run: Run): Kind => (run.mode === "music" ? "music" : run.mode === "vector" ? "vector" : run.mode === "speech" ? "speech" : "image");
 
 // ------------------------------------------------------------------ a run with one thing of its own in the bin (DESIGN.md §33.1, §35.2)
 describe("hasItemsInTheBin", () => {
@@ -65,8 +67,9 @@ describe("the shared table of cases", () => {
         + items(kind, project),
       deleted_items: items(kind, project),
     });
-    // the table says which tabs it counts (Images and Music, and Vector once the table has Vector rows: DESIGN.md §31.12.7), and the page must agree on each
+    // the table counts every tab (Images, Music, Vector, and Speech since the page has its history: DESIGN.md §38.2), and the page must agree on each
     const kinds = Object.keys(cases.counts) as Kind[];
+    expect(kinds.sort()).toEqual(["image", "music", "speech", "vector"]);
     const all = (project: string | null = null) => Object.fromEntries(kinds.map((kind) => [kind, of(kind, project)]));
     expect(all()).toEqual(cases.counts);
     // ... and within each project, and within "no project": the numbers on the filter bar follow the project chosen (DESIGN.md §32.5)

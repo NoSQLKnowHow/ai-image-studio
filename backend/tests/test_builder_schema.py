@@ -34,8 +34,8 @@ def stored_version(path) -> str:
 
 
 def as_schema_8(path) -> None:
-    """Make a database that this code made look as one from 1.18 does: none of the builder's tables or its index, `runs` without its two last columns and
-    their index, and the stored version 8."""
+    """Make a database that this code made look as one from 1.18 does: none of the builder's tables or its index, none of the Speech tab's tables (schema 10),
+    `runs` without its four last columns (the builder's two and the Speech tab's two) and the builder's index, and the stored version 8."""
     if sqlite3.sqlite_version_info < (3, 35):
         pytest.skip("this SQLite cannot DROP COLUMN, which is how the test makes the old table")
     conn = sqlite3.connect(path)
@@ -43,6 +43,10 @@ def as_schema_8(path) -> None:
         for table in ("prompt_search", "prompt_tags", "prompt_versions", "chat_attachments", "chat_messages", "chats", "prompts", "preferences"):
             conn.execute(f"DROP TABLE IF EXISTS {table}")
         conn.execute("DROP INDEX IF EXISTS idx_runs_prompt")
+        for table in ("speech_positions", "speech_pieces", "speech_parts", "speech_speeds", "voices"):
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.execute("ALTER TABLE runs DROP COLUMN hidden")
+        conn.execute("ALTER TABLE runs DROP COLUMN queue_key")
         conn.execute("ALTER TABLE runs DROP COLUMN prompt_version")
         conn.execute("ALTER TABLE runs DROP COLUMN prompt_id")
         conn.execute("UPDATE meta SET value='8' WHERE key='schema_version'")
@@ -52,16 +56,17 @@ def as_schema_8(path) -> None:
 
 
 # ------------------------------------------------------------------ a new database
-def test_the_schema_is_9_and_a_new_database_has_the_builders_tables_and_runs_columns(tmp_path):
-    assert SCHEMA_VERSION == 9
+def test_a_new_database_has_the_builders_tables_and_runs_columns(tmp_path):
+    assert SCHEMA_VERSION >= 9  # (not == 9: this file is about what schema 9 added; the number itself is pinned in test_projects.py)
     path = tmp_path / "studio.sqlite"
     db = Database(path)
     try:
         assert NEW_TABLES <= table_names(path) and "prompt_search" in table_names(path) and db.has_fts5 is True
-        assert [c for c in columns(path, "runs")][-3:] == [("project_id", "TEXT"), ("prompt_id", "TEXT"), ("prompt_version", "INTEGER")]
-        assert stored_version(path) == "9"
+        assert [c for c in columns(path, "runs")][-5:] == [("project_id", "TEXT"), ("prompt_id", "TEXT"), ("prompt_version", "INTEGER"),
+                                                           ("queue_key", "REAL"), ("hidden", "INTEGER")]  # schema 10 adds its two after the builder's
+        assert stored_version(path) == str(SCHEMA_VERSION)
         assert sqlite3.connect(path).execute("PRAGMA foreign_key_check").fetchall() == []
-        assert not (tmp_path / "studio.sqlite.before-schema-9").exists()  # a new database has nothing to keep a copy of
+        assert not (tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}").exists()  # a new database has nothing to keep a copy of
     finally:
         db.close()
 
@@ -91,7 +96,7 @@ def test_a_1_18_database_is_upgraded_after_a_copy_and_keeps_every_run_and_projec
 
     migrated = Database(path)
     try:
-        assert stored_version(path) == "9" and NEW_TABLES <= table_names(path)
+        assert stored_version(path) == str(SCHEMA_VERSION) and NEW_TABLES <= table_names(path)  # an old database is upgraded all the way in one start
         assert columns(path, "runs") == columns(fresh, "runs")  # the same columns, the same types, in the same order: ALTER TABLE gave what CREATE TABLE gives
         after = [dict(r) for r in migrated.read_all("SELECT * FROM runs ORDER BY seq")]
         assert [{k: v for k, v in row.items() if k not in ("prompt_id", "prompt_version")} for row in after] == [
@@ -108,7 +113,7 @@ def test_a_1_18_database_is_upgraded_after_a_copy_and_keeps_every_run_and_projec
         assert migrated.get_run(run_row(1)["id"])["prompt_id"] == prompt
     finally:
         migrated.close()
-    copy = tmp_path / "studio.sqlite.before-schema-9"
+    copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"  # named by the schema it is upgraded TO
     assert copy.exists() and not (NEW_TABLES & table_names(copy)) and stored_version(copy) == "8"  # the database as 1.18 left it: a way back
     assert [r[0] for r in sqlite3.connect(copy).execute("SELECT id FROM runs ORDER BY seq")] == [run_row(n)["id"] for n in (1, 2, 3)]
 
@@ -117,17 +122,17 @@ def test_an_existing_copy_is_never_replaced_by_a_later_attempt(tmp_path):
     path = tmp_path / "studio.sqlite"
     Database(path).close()
     as_schema_8(path)
-    keep = tmp_path / "studio.sqlite.before-schema-9"
+    keep = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"
     keep.write_bytes(b"the oldest copy")
     Database(path).close()
     assert keep.read_bytes() == b"the oldest copy"
 
 
 def test_a_database_made_by_this_build_is_refused_by_an_older_one(tmp_path, monkeypatch):
-    """The refusal is the check every earlier upgrade relies on: a stored version above the build's own. 1.18 is this code with its number at 8."""
+    """The refusal is the check every earlier upgrade relies on: a stored version above the build's own. 1.19 is this code with its number at 9."""
     path = tmp_path / "studio.sqlite"
     Database(path).close()
-    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 8)
+    monkeypatch.setattr(db_module, "SCHEMA_VERSION", 9)
     with pytest.raises(DatabaseError, match="newer version of the studio"):
         Database(path)
 
