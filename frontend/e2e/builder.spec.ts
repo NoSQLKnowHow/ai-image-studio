@@ -11,6 +11,17 @@ const toast = (page: Page, text: string | RegExp): Locator => page.getByRole("st
 const log = (page: Page): Locator => page.getByRole("list", { name: "Messages" });
 const library = (page: Page): Locator => page.getByRole("navigation", { name: "Library" });
 
+/**
+ * Wait until a reply of the model is shown ONCE. At the hand-over from the bubble that is being written to the saved message the same words are in the list
+ * twice for a moment (found in 1.20 by a whole run under load, in the page of 1.19, which was not changed). A locator that must match one element fails
+ * at once when it matches two, and does not wait for the second to go; so the count is waited for first. A reply that stayed twice would still fail here.
+ */
+async function replied(page: Page, text: string): Promise<void> {
+  const reply = log(page).getByText(text);
+  await expect(reply).toHaveCount(1);
+  await expect(reply).toBeVisible();
+}
+
 test.beforeEach(async ({ page }) => {
   await clearHistory(page);
   await clearBuilder(page);
@@ -23,13 +34,13 @@ test.beforeEach(async ({ page }) => {
 async function finishedPrompt(page: Page, words: string) {
   await idea(page).fill(words);
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(log(page).getByText("Lovely idea. A few questions.")).toBeVisible();
+  await replied(page, "Lovely idea. A few questions.");
   await page.getByRole("button", { name: "Dusk", exact: true }).click();
   await page.getByRole("button", { name: "Photograph", exact: true }).click();
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(log(page).getByText("Thank you. One more thing.")).toBeVisible();
+  await replied(page, "Thank you. One more thing.");
   await page.getByRole("button", { name: "Write it now" }).click();
-  await expect(log(page).getByText("Here is the finished prompt.")).toBeVisible();
+  await replied(page, "Here is the finished prompt.");
   await expect(soFar(page)).toHaveValue(new RegExp(words));
 }
 
@@ -61,7 +72,7 @@ test("an idea becomes a saved chat with a reply, questions with chips, and a pro
   await page.reload();
   await builderTab(page).click();
   await library(page).getByRole("button", { name: new RegExp(`^${words.slice(0, 20)}`, "i") }).click();
-  await expect(log(page).getByText("Here is the finished prompt.")).toBeVisible();
+  await replied(page, "Here is the finished prompt.");
 });
 
 test("a finished prompt is saved with a title, found in Prompts, and a second version is added, never over the first (criteria 229, 245)", async ({ page }) => {
@@ -211,7 +222,7 @@ test("Refine in Prompt builder opens a chat about a picture with its words, read
   await expect(page.getByRole("list", { name: "Pictures" })).toBeVisible(); // the picture, for a model that can look at pictures
   await idea(page).fill("the roof looks wrong");
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(log(page).getByText("Lovely idea. A few questions.")).toBeVisible();
+  await replied(page, "Lovely idea. A few questions.");
 });
 
 test("Preferences are added, told to the model (the chat says how many), switched off and deleted (criterion 233)", async ({ page }) => {
@@ -224,7 +235,7 @@ test("Preferences are added, told to the model (the chat says how many), switche
   await library(page).getByRole("radio", { name: "Chats" }).click();
   await idea(page).fill(unique("a pond"));
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(log(page).getByText("Using 1 preference.")).toBeVisible();
+  await replied(page, "Using 1 preference.");
   await library(page).getByRole("radio", { name: "Preferences" }).click();
   await page.getByRole("checkbox", { name: `Turn off: ${note}` }).click(); // (the switch moves once the server has answered, so it is clicked, not "unchecked")
   await expect(page.getByRole("checkbox", { name: `Turn on: ${note}` })).not.toBeChecked();
@@ -236,7 +247,7 @@ test("a chat is deleted to the bin, restored from it, and deleted for good (crit
   const words = unique("a sleeping cat");
   await idea(page).fill(words);
   await page.getByRole("button", { name: "Send", exact: true }).click();
-  await expect(log(page).getByText("Lovely idea. A few questions.")).toBeVisible();
+  await replied(page, "Lovely idea. A few questions.");
   const title = words.split(/\s+/).slice(0, 12).join(" ").slice(0, 60);
   await page.getByRole("button", { name: `Delete “${title}”` }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Delete", exact: true }).click();

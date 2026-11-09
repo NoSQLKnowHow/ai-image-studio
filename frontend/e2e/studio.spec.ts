@@ -433,6 +433,9 @@ test("every image has a thumbnail to download, on its card and in the viewer", a
   expect(response.headers()["content-type"]).toBe("image/webp");
   expect(response.headers()["content-disposition"]).toMatch(/filename="generate_two-thumbnails.*_thumb\.webp"/);
   await page.keyboard.press("Escape");
+  // wait for the viewer to be gone: closing it gives focus back to the picture that opened it, and if that happens after the prompt box was filled, the Ctrl+Enter
+  // goes to that button and nothing is made (seen once in a whole run under load: the prompt still in the box, no card)
+  await expect(page.getByRole("dialog")).toBeHidden();
 
   const single = await generate(page, unique("one thumbnail"));
   await expect(single.locator(".badge").first()).toHaveText("Done", { timeout: 20_000 });
