@@ -24,9 +24,11 @@ from ..db import Database
 from ..serialize import utcnow
 from ..storage import Storage
 from . import SPOKEN_CHARS_PER_SECOND, registry
+from .refused import ReadingRefused, require_engine
 from .store import SpeechStore
 from .text.model import Paragraph
 from .text.pieces import make_pieces
+from .voices import VoiceService
 
 MAX_PARTS = 1000
 MAX_TITLE_CHARS = 200
@@ -35,14 +37,6 @@ MAX_PIECES = 60_000  # about 1,500,000 characters at the smallest allowance an e
 DISK_MARGIN = 1.2  # the audio is estimated, and the estimate is made 20% larger
 DISK_RESERVE = 1024 ** 3  # and a gigabyte is kept free besides, for the database, the thumbnails and the next job
 SAMPLE_BYTES = 2  # 16-bit mono
-
-
-class ReadingRefused(Exception):
-    """A request for a reading (or something done to one) was refused. `status` and `code` are the response's; `field` names what is wrong where one thing is."""
-
-    def __init__(self, status: int, code: str, message: str, field: Optional[str] = None, hint: Optional[str] = None):
-        super().__init__(message)
-        self.status, self.code, self.message, self.field, self.hint = status, code, message, field, hint
 
 
 @dataclass
@@ -98,19 +92,14 @@ class SpeechService:
     def __init__(self, settings: Settings, db: Database, storage: Storage):
         self.settings, self.db, self.storage = settings, db, storage
         self.store = SpeechStore(db)
+        self.voices = VoiceService(settings, storage, self.store)  # presets, samples, designed and cloned voices (§38.4)
 
     # ------------------------------------------------------------------ a request becomes a reading
     def build(self, spec: ReadingSpec, engines: dict[str, dict[str, Any]]) -> BuiltReading:
         """Check a request and make its rows. `engines` is what `capabilities.speech.engines` says, by id. Raises ReadingRefused, naming the field where
         one is at fault (criteria 274, 264). Nothing is written."""
         title = " ".join(spec.title.split())[:MAX_TITLE_CHARS] or "Reading"
-        entry = engines.get(spec.engine)
-        if entry is None:
-            raise ReadingRefused(422, "unknown_engine", f"There is no speech engine {spec.engine!r} on this server.", "engine")
-        if entry["state"] == "checking":  # not a verdict: the check made at start-up has not finished, and the page disables Start until it has
-            raise ReadingRefused(409, "engine_checking", f"{entry.get('title') or spec.engine} is still being checked. Try again in a moment.", "engine")
-        if entry["state"] not in ("ready", "needs_memory"):
-            raise ReadingRefused(409, "engine_unavailable", entry.get("reason") or "That speech engine cannot run here.", "engine", entry.get("hint"))
+        require_engine(engines, spec.engine)
         info = registry.info(spec.engine)
         presets = {v.id: v for v in registry.presets(spec.engine)}
 
@@ -199,9 +188,20 @@ class SpeechService:
         return BuiltReading(run=run, parts=parts, pieces=pieces, seconds=seconds)
 
     # ------------------------------------------------------------------ the next part, as a job
+    @staticmethod
+    def is_reading(row: sqlite3.Row) -> bool:
+        """A speech run is a reading, or one of the short hidden jobs behind a sample or a voice design (told apart by `task` in its options)."""
+        return json.loads(row["options_json"]).get("task", "reading") == "reading"
+
+    def has_work(self, row: sqlite3.Row) -> bool:
+        """Whether there is anything for a worker to do for this run: a short job always has; a reading has while a piece is not made."""
+        return True if not self.is_reading(row) else self.pieces_left(row["id"]) > 0
+
     def job_for(self, row: sqlite3.Row) -> Optional[dict[str, Any]]:
         """The job that makes the next part of a reading, or None when every piece is made. Raises ValueError if the voice it uses has been deleted."""
         options = json.loads(row["options_json"])
+        if options.get("task", "reading") != "reading":
+            return self.voices.job_for(row)
         pieces = self.store.next_pieces(row["id"])
         if not pieces:
             return None
@@ -265,7 +265,7 @@ class SpeechService:
     # ------------------------------------------------------------------ describing a reading
     def readings(self, rows: Sequence[sqlite3.Row]) -> dict[str, dict[str, Any]]:
         """The `reading` object of each speech run among `rows` (DESIGN.md §38.9): where it stands, part by part, and how long it will take."""
-        speech_rows = [r for r in rows if r["mode"] == "speech"]
+        speech_rows = [r for r in rows if r["mode"] == "speech" and not r["hidden"]]  # (the short jobs behind a sample or a design have no pieces to describe)
         totals = self.store.totals([r["id"] for r in speech_rows])
         out: dict[str, dict[str, Any]] = {}
         for row in speech_rows:

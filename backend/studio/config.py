@@ -88,6 +88,10 @@ class Settings:
     speech_pause_ms: int = 450  # the pause after a paragraph; a heading's is twice that
     speech_voice_min_seconds: int = 8  # how short and how long a recording of a person's voice may be
     speech_voice_max_seconds: int = 60
+    speech_recording_max_mb: int = 30  # the biggest recording of a voice that may be uploaded (a minute of stereo WAV at 48 kHz is under 12 MB)
+    speech_ffmpeg: str = "ffmpeg"  # the program that reads a recording that is not a plain WAV (MP3, M4A, OGG, FLAC, WebM); found on the PATH unless a path is given
+    speech_decode_timeout_s: int = 30  # how long it may take to read one recording
+    speech_temp_hours: int = 24  # how long the candidates of a voice design and an uploaded recording that was not saved are kept
     fake_step_delay_ms: int = 30
     static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
@@ -314,6 +318,10 @@ class Settings:
             speech_pause_ms=integer("STUDIO_SPEECH_PAUSE_MS", cls.speech_pause_ms, 0, 3000),
             speech_voice_min_seconds=integer("STUDIO_SPEECH_VOICE_MIN_SECONDS", cls.speech_voice_min_seconds, 1, 120),
             speech_voice_max_seconds=integer("STUDIO_SPEECH_VOICE_MAX_SECONDS", cls.speech_voice_max_seconds, 5, 600),
+            speech_recording_max_mb=integer("STUDIO_SPEECH_RECORDING_MAX_MB", cls.speech_recording_max_mb, 1, 200),
+            speech_ffmpeg=text("STUDIO_SPEECH_FFMPEG", cls.speech_ffmpeg),
+            speech_decode_timeout_s=integer("STUDIO_SPEECH_DECODE_TIMEOUT_S", cls.speech_decode_timeout_s, 2, 300),
+            speech_temp_hours=integer("STUDIO_SPEECH_TEMP_HOURS", cls.speech_temp_hours, 1, 720),
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )

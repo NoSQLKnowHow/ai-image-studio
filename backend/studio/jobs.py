@@ -975,6 +975,12 @@ class JobManager:
                 raise
             except Exception:
                 log.exception("the expiry sweep failed; it will be tried again at the next interval")
+            try:
+                await self.sweep_speech_temp()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("the clean-up of unsaved voice recordings and candidates failed; it will be tried again at the next interval")
             await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
 
     async def sweep_uploads(self) -> int:
@@ -1018,7 +1024,7 @@ class JobManager:
         self._current = run_id
         self._publish_run(run_id)
         self._publish_queue()
-        if row["mode"] == SPEECH and not self.speech.pieces_left(run_id):  # a reading with nothing left to make (a Continue that came too late): done, no worker needed
+        if row["mode"] == SPEECH and not self.speech.has_work(row):  # a reading with nothing left to make (a Continue that came too late): done, no worker needed
             self._finish(run_id, "done")
             return
         try:
@@ -1091,6 +1097,13 @@ class JobManager:
                 except Exception as exc:
                     log.exception("could not store track %s of run %s", event.get("idx"), run_id)
                     storage_error = storage_error or f"A track could not be stored: {exc}"
+            elif kind == "piece_done" and speech_run and not self.speech.is_reading(row):  # a sample, or a candidate of a voice design (DESIGN.md §38.4)
+                try:
+                    await asyncio.to_thread(self.speech.voices.accept_file, row, event)
+                    self._publish_run(run_id)  # (for a hidden run this is the `speech.job` event, with the files that exist now)
+                except Exception as exc:
+                    log.exception("could not take in file %s of run %s", event.get("key"), run_id)
+                    storage_error = storage_error or f"A file could not be stored: {exc}"
             elif kind == "piece_done" and speech_run:
                 try:
                     made = await asyncio.to_thread(self.speech.accept_piece, row, event)
@@ -1642,8 +1655,30 @@ class JobManager:
     # ------------------------------------------------------------ events
     def _publish_run(self, run_id: str) -> None:
         payload = self.payload(run_id)
-        if payload is not None:
-            self.bus.publish("run.updated", payload)
+        if payload is None:
+            return
+        if payload.get("hidden"):  # a sample or a voice design is not history: the page hears of it as a `speech.job`, and the history never sees it
+            row = self.speech.store.hidden_job(run_id)
+            if row is not None:
+                self.bus.publish("speech.job", self.speech.voices.job_status(row))
+            return
+        self.bus.publish("run.updated", payload)
+
+    async def submit_hidden(self, run: dict[str, Any]) -> dict[str, Any]:
+        """Queue the short job behind a sample or a voice design (DESIGN.md §38.4). It goes ahead of waiting readings like a Draft and is not in the history.
+        Returns how it stands (`VoiceService.job_status`). Raises QueueFull."""
+        outcome = await asyncio.to_thread(self.db.insert_run, run, self.settings.queue_cap)
+        if outcome != "ok":
+            raise QueueFull(f"The queue is full ({self.settings.queue_cap} jobs waiting). Try again when one finishes.")
+        row = self.speech.store.hidden_job(run["id"])
+        assert row is not None
+        self._publish_queue()
+        self._wakeup.set()
+        return self.speech.voices.job_status(row)
+
+    async def sweep_speech_temp(self) -> dict[str, int]:
+        """Clear away what a voice feature left that was never kept (see `VoiceService.sweep`)."""
+        return await asyncio.to_thread(self.speech.voices.sweep)
 
     def _publish_projects(self) -> None:
         """Tell every open page that the projects, or how many runs each holds, changed: each page then asks for the list again (DESIGN.md §32.4).

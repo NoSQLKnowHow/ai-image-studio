@@ -302,3 +302,8 @@ def add_routes(app: FastAPI, read_limited_body) -> None:
         zip_name = naming.speech_filename(title=(json.loads(row["options_json"]).get("title") or row["prompt"]), part=0, voice="", created_at=parse_ts(row["created_at"]), ext=".zip")
         return StreamingResponse(stream_zip(members, stamp=parse_ts(row["created_at"]).timestamp()), media_type="application/zip",
                                  headers={"Content-Disposition": naming.content_disposition(zip_name, default="reading.zip")})
+
+    # ------------------------------------------------------------------ voices (DESIGN.md §38.4): their own file, registered with the rest
+    from . import voice_routes  # (here and not at the top: voice_routes takes `error` and `refusal` from this module)
+
+    voice_routes.add_routes(app, read_limited_body)

@@ -103,9 +103,67 @@ class SpeechStore:
                       (run_id, part_idx, run_id, part_idx))
             return "ok"
 
-    # ------------------------------------------------------------------ voices (the rest of their SQL is in voices.py)
+    # ------------------------------------------------------------------ voices the person made
     def voice(self, voice_id: str) -> Optional[sqlite3.Row]:
         return self.db.read_one("SELECT * FROM voices WHERE id=?", (voice_id,))
+
+    def voices(self, engine: Optional[str] = None) -> list[sqlite3.Row]:
+        """The saved voices, newest first; those of one engine if `engine` is given (a voice belongs to the engine it was made for, DESIGN.md §38.4)."""
+        if engine is None:
+            return self.db.read_all("SELECT * FROM voices ORDER BY created_at DESC, id")
+        return self.db.read_all("SELECT * FROM voices WHERE engine=? ORDER BY created_at DESC, id", (engine,))
+
+    def insert_voice(self, row: dict[str, Any]) -> str:
+        """Add a voice. Returns "ok", or "name_taken" if another voice has the same name once case is folded away (`name_key` is unique)."""
+        try:
+            with self.db.tx() as c:
+                c.execute(f"INSERT INTO voices ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})", tuple(row.values()))
+        except sqlite3.IntegrityError:
+            return "name_taken"
+        return "ok"
+
+    def rename_voice(self, voice_id: str, name: str, name_key: str) -> str:
+        """"ok", "not_found" or "name_taken" (another voice already has the name). Renaming a voice to its own name in other letters is allowed."""
+        try:
+            with self.db.tx() as c:
+                changed = c.execute("UPDATE voices SET name=?, name_key=? WHERE id=?", (name, name_key, voice_id)).rowcount
+        except sqlite3.IntegrityError:
+            return "name_taken"
+        return "ok" if changed else "not_found"
+
+    def delete_voice(self, voice_id: str) -> bool:
+        with self.db.tx() as c:
+            return c.execute("DELETE FROM voices WHERE id=?", (voice_id,)).rowcount == 1
+
+    def runs_using_voice(self, voice_id: str) -> int:
+        """How many readings and short jobs that are queued or running speak in this voice: a voice they need cannot be deleted from under them."""
+        return int(self.db.read_one(
+            "SELECT COUNT(*) AS n FROM runs WHERE mode='speech' AND status IN ('queued','running') "
+            "AND json_extract(options_json, '$.voice.id') = ?", (voice_id,))["n"])
+
+    # ------------------------------------------------------------------ the short jobs behind a sample or a designed voice
+    def hidden_jobs(self, statuses: Sequence[str]) -> list[sqlite3.Row]:
+        marks = ", ".join("?" for _ in statuses)
+        return self.db.read_all(f"SELECT * FROM runs WHERE mode='speech' AND hidden=1 AND status IN ({marks}) ORDER BY seq", tuple(statuses))
+
+    def hidden_job(self, run_id: str) -> Optional[sqlite3.Row]:
+        return self.db.read_one("SELECT * FROM runs WHERE id=? AND mode='speech' AND hidden=1", (run_id,))
+
+    def active_job_for(self, target: str) -> Optional[sqlite3.Row]:
+        """A queued or running short job already making the same thing (the same sample), so that pressing Play sample again does not queue it twice."""
+        return self.db.read_one(
+            "SELECT * FROM runs WHERE mode='speech' AND hidden=1 AND status IN ('queued','running') AND json_extract(options_json, '$.target') = ? "
+            "ORDER BY seq LIMIT 1", (target,))
+
+    def delete_hidden_jobs_before(self, cutoff: str) -> list[str]:
+        """Remove finished short jobs made before `cutoff` (they are not history). Returns their ids."""
+        with self.db.tx() as c:
+            ids = [r["id"] for r in c.execute(
+                "SELECT id FROM runs WHERE mode='speech' AND hidden=1 AND status IN ('done','failed','canceled') AND COALESCE(finished_at, created_at) < ?",
+                (cutoff,)).fetchall()]
+            for run_id in ids:
+                c.execute("DELETE FROM runs WHERE id=?", (run_id,))
+        return ids
 
     # ------------------------------------------------------------------ position
     def position(self, run_id: str) -> Optional[sqlite3.Row]:
