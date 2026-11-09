@@ -142,8 +142,8 @@ export default function App() {
   const vectorRuns = useMemo(() => visible.filter(isVectorRun), [visible]);
   const speechRuns = useMemo(() => visible.filter(isSpeechRun).filter((run) => !run.hidden), [visible]); // readings (a sample or a design is never in a list, DESIGN.md §38.4)
   // what the tab being looked at is called in the counts (`Counts` has a key for each)
-  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
-  const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : imageRuns;
+  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : tab === "speech" ? "speech" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
+  const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : tab === "speech" ? speechRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
   const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
   // The counts are asked for within the project that is chosen (DESIGN.md §32.5), so they are only used for the filter they describe: a number
@@ -273,6 +273,15 @@ export default function App() {
   const changeOptions = (next: Options) => {
     setOptions(next);
     setFormProblem(null);
+  };
+
+  // Continue after a Cancel, Retry after a failure: both make the rest of a reading, from the first piece not made (DESIGN.md §38.6)
+  const continueReading = async (run: Run) => {
+    try {
+      dispatch({ type: "runUpsert", run: await speechApi.continueReading(run.id) });
+    } catch (error) {
+      push("error", `Couldn't continue the reading: ${(error as ApiError).message}`);
+    }
   };
 
   const changeTab = (next: TabId) => {
@@ -1006,7 +1015,7 @@ export default function App() {
   const vectorViewRun = foundVector && isVectorRun(foundVector) && (vectorView?.binned ? foundVector.binned_vectors.length > 0 : foundVector.vectors.length > 0) ? foundVector : null;
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
   // the whole bin, both tabs, whatever project is chosen: what Empty bin deletes (the counts on the bar are for the tab and the project shown)
-  const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted + state.totals.vector.deleted : null;
+  const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted + state.totals.vector.deleted + state.totals.speech.deleted : null; // (every tab's bin: Empty bin empties all of it)
   // the same, as runs and pictures per tab, for the question Empty bin asks (DESIGN.md §33.1)
   const binTotals = state.totals ? binContents(state.totals) : EMPTY_BIN;
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
@@ -1190,7 +1199,11 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
-            <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} onQueued={(run) => dispatch({ type: "runUpsert", run })} />
+            <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} onQueued={(run) => dispatch({ type: "runUpsert", run })}
+              history={{
+                status, runs: speechRuns, runsReady, filterBar, loadProblem: problem, empty: emptyFor("speech"), isTransient: transient, viewScope, projects: projectControls, more, loadingOlder, now,
+                onLoadOlder: () => void loadOlder(), onCancel: requestCancel, onContinue: (run) => void continueReading(run), onRestore: (run) => void restore(run, true), onDelete: setPendingDelete,
+              }} />
             <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
               integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
             <VectorPanel

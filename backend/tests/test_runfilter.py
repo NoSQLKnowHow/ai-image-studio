@@ -16,12 +16,9 @@ TABLE = json.loads((Path(__file__).parent / "filter_cases.json").read_text())
 
 
 def same_as_the_table(counts: dict, expected: dict) -> None:
-    """The counts for every tab the table lists are the table's; a tab it has no rows for counts nothing. The table says which tabs it counts, and the page's own
-    test (history.test.ts) reads that list: Speech joins it when the page has a Speech tab (as Vector joined once the table had Vector rows, §31.12.7), and
-    then this is plain equality. Until then the server counts Speech too, and with no readings in the table it must count zero."""
-    assert {kind: numbers for kind, numbers in counts.items() if kind in expected} == expected
-    for kind in set(counts) - set(expected):
-        assert all(n == 0 for n in counts[kind].values()), kind
+    """The counts for every tab are the table's, exactly: the table lists a tab for each kind of run the server counts (Images, Music, Vector and, since the page has a Speech tab,
+    Speech), so a kind the table forgot would be a count nothing checks."""
+    assert counts == expected
 
 
 # One run as the database wants it (a dict of columns). The letter names the run (a to f), `seq` fixes how old it is, `deleted` puts it in the bin,
@@ -135,19 +132,21 @@ def test_a_project_is_one_fixed_condition_with_a_bound_value():
 # paging inside a filter: the cursor continues among the matching runs only
 def test_pages_continue_within_the_filter(db):
     first, more = db.list_runs(2, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in first] == ["j", "f"] and more
+    assert [letter(r["id"]) for r in first] == ["r", "p"] and more  # (the two readings: they are kept from the start, §38.8)
     second, more = db.list_runs(2, first[-1]["id"], RunFilter(kept=True))
-    assert [letter(r["id"]) for r in second] == ["c", "a"] and more  # l, the oldest kept run, is on a page of its own
+    assert [letter(r["id"]) for r in second] == ["j", "f"] and more
     third, more = db.list_runs(2, second[-1]["id"], RunFilter(kept=True))
-    assert [letter(r["id"]) for r in third] == ["l"] and not more
+    assert [letter(r["id"]) for r in third] == ["c", "a"] and more  # l, the oldest kept run, is on a page of its own
+    fourth, more = db.list_runs(2, third[-1]["id"], RunFilter(kept=True))
+    assert [letter(r["id"]) for r in fourth] == ["l"] and not more
 
 
 def test_a_page_that_is_exactly_full_is_not_followed_by_an_empty_one(db):
-    """Five runs are kept: a page of five has no next page, a page of four has."""
-    rows, more = db.list_runs(5, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a", "l"] and not more
-    rows, more = db.list_runs(4, None, RunFilter(kept=True))
-    assert [letter(r["id"]) for r in rows] == ["j", "f", "c", "a"] and more
+    """Seven runs are kept (two of them readings): a page of seven has no next page, a page of six has."""
+    rows, more = db.list_runs(7, None, RunFilter(kept=True))
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "j", "f", "c", "a", "l"] and not more
+    rows, more = db.list_runs(6, None, RunFilter(kept=True))
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "j", "f", "c", "a"] and more
     rows, more = db.list_runs(3, f"{ord('f'):032x}", RunFilter(kept=True))  # after f: c, a and l, exactly a page
     assert [letter(r["id"]) for r in rows] == ["c", "a", "l"] and not more
 
@@ -164,11 +163,11 @@ def test_an_unknown_cursor_is_still_an_error(db):
 
 
 def test_no_filter_is_what_it_was(db):
-    # the history: the runs in the bin (k, m) are not in it; the runs with a picture, a track or a version in the bin (g, j, o) are
+    # the history: the runs in the bin (k, m, q) are not in it; the runs with a picture, a track or a version in the bin (g, j, o) are
     rows, _ = db.list_runs(100)
-    assert [letter(r["id"]) for r in rows] == ["o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
     rows, _ = db.list_runs(100, None, None)
-    assert [letter(r["id"]) for r in rows] == ["o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
+    assert [letter(r["id"]) for r in rows] == ["r", "p", "o", "j", "g", "f", "e", "d", "c", "b", "a", "l", "n"]
 
 
 # ------------------------------------------------------------------ the API

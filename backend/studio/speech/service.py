@@ -182,6 +182,7 @@ class SpeechService:
         }
         run = {
             "id": run_id, "created_at": utcnow(), "status": "queued", "mode": "speech", "prompt": title, "effective_prompt": title, "negative_prompt": None,
+            "pinned": 1,  # a reading never expires, so it is kept from the start: the Kept filter, the counts and the projects need no case for it (DESIGN.md §38.8)
             "transparent": 0, "width": None, "height": None, "steps": 0, "cfg_scale": None, "seed": base_seed, "num_images": len(parts),
             "model_id": self.settings.speech_model_for(spec.engine) or info.model_id, "options_json": json.dumps(options), "lyrics": None,
         }

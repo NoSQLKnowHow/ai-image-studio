@@ -38,7 +38,7 @@ from . import vector as vector_mod
 from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import (
-    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, RunConflict, RunNotFound,
+    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, RunAlwaysKept, RunConflict, RunNotFound,
 )
 from .naming import (
     content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename, vector_filename,
@@ -387,6 +387,8 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             await jobs_of(request).set_pinned(run_id, body.pinned)
         except (StorageError, RunNotFound):
             return _error(404, "Run not found.", "not_found")
+        except RunAlwaysKept as exc:
+            return _error(409, str(exc), "always_kept")  # a reading never expires, so it is kept from the start (DESIGN.md §38.8)
         except RunConflict as exc:
             # a run in a project stays kept (DESIGN.md §32.3): it has to be taken out of the project before it can stop being kept
             return _error(409, str(exc), "run_in_project")

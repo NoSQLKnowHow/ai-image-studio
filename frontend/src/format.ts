@@ -206,18 +206,24 @@ export function emptiedText(runs: number, items = 0, kinds?: { pictures: number;
 /** What is in the bin, per tab: how many runs, and how many pictures (Images), tracks (Music) or versions (Vector) of runs that are still in the history.
  *  Made from the server's counts, whose `deleted` is the two added together (§33.1, §35.2). */
 export interface BinTab { runs: number; items: number }
-export interface BinContents { image: BinTab; music: BinTab; vector?: BinTab } // `vector` missing means nothing of its is in the bin
-export function binContents(counts: { image: { deleted: number; deleted_items: number }; music: { deleted: number; deleted_items: number }; vector?: { deleted: number; deleted_items?: number } }): BinContents {
+export interface BinContents { image: BinTab; music: BinTab; vector?: BinTab; speech?: BinTab } // `vector` or `speech` missing means nothing of its is in the bin
+export function binContents(counts: {
+  image: { deleted: number; deleted_items: number }; music: { deleted: number; deleted_items: number };
+  vector?: { deleted: number; deleted_items?: number }; speech?: { deleted: number; deleted_items?: number };
+}): BinContents {
   const tab = (c: { deleted: number; deleted_items?: number }): BinTab => ({ runs: c.deleted - (c.deleted_items ?? 0), items: c.deleted_items ?? 0 });
-  return { image: tab(counts.image), music: tab(counts.music), vector: tab(counts.vector ?? { deleted: 0, deleted_items: 0 }) };
+  return {
+    image: tab(counts.image), music: tab(counts.music), vector: tab(counts.vector ?? { deleted: 0, deleted_items: 0 }), speech: tab(counts.speech ?? { deleted: 0, deleted_items: 0 }),
+  };
 }
 
 /** The question Empty bin asks (§30.1, §33.1, §35.2): how many runs, pictures, tracks and versions go, and how many on each tab, so that it is concrete. With
  *  only runs in the bin it is the question it was before a picture could be deleted alone. */
 export function emptyBinQuestion(bin: BinContents, wholeBin: boolean): string {
   const vector = bin.vector ?? { runs: 0, items: 0 };
+  const speech = bin.speech ?? { runs: 0, items: 0 }; // a reading has nothing of its own in the bin: only the reading itself, counted as a run
   const items = bin.image.items + bin.music.items + vector.items;
-  const what = thingsText({ runs: bin.image.runs + bin.music.runs + vector.runs, pictures: bin.image.items, tracks: bin.music.items, versions: vector.items });
+  const what = thingsText({ runs: bin.image.runs + bin.music.runs + vector.runs + speech.runs, pictures: bin.image.items, tracks: bin.music.items, versions: vector.items });
   // how many are on each tab: just the numbers when it is only runs (as ever), else each tab's runs and pictures or tracks, since "3 on Images" would not say of what
   const onTab = (tab: BinTab, name: string, things: (tab: BinTab) => Things): string =>
     !tab.runs && !tab.items ? "" : items === 0 ? `${tab.runs} on ${name}` : `${thingsText(things(tab))} on ${name}`;
@@ -225,6 +231,7 @@ export function emptyBinQuestion(bin: BinContents, wholeBin: boolean): string {
     onTab(bin.image, "Images", (tab) => ({ runs: tab.runs, pictures: tab.items, tracks: 0 })),
     onTab(bin.music, "Music", (tab) => ({ runs: tab.runs, pictures: 0, tracks: tab.items })),
     onTab(vector, "Vector", (tab) => ({ runs: tab.runs, pictures: 0, tracks: 0, versions: tab.items })),
+    onTab(speech, "Speech", (tab) => ({ runs: tab.runs, pictures: 0, tracks: 0 })),
   ].filter(Boolean).join(", ");
   const text = `Delete ${what} for good${parts ? ` (${parts})` : ""}, with their files. This can't be undone.`;
   // with a project chosen, the bar on screen shows only that project's part of the bin: say that the whole bin goes
@@ -316,19 +323,21 @@ export interface ProjectCounts {
   image: number;
   music: number;
   vector?: number;
+  speech?: number; // readings (DESIGN.md §38.8)
   prompts?: number;
   chats?: number;
 }
 
 const many = (n: number, one: string, other: string): string => `${n} ${n === 1 ? one : other}`;
 
-/** What a project holds, in words: "3 pictures, 1 track, 2 vectors, 3 prompts, 2 chats", or "no runs". The numbers of runs are of runs in the history, each tab counted on its own.
+/** What a project holds, in words: "3 pictures, 1 track, 2 vectors, 1 reading, 3 prompts, 2 chats", or "no runs". The numbers of runs are of runs in the history, each tab counted on its own.
  *  `vector` may be missing (the server's list of projects may not count Vector runs): then it says nothing about them, rather than "0". */
 export function projectContents(counts: ProjectCounts): string {
   const parts = [
     counts.image ? many(counts.image, "picture", "pictures") : "",
     counts.music ? many(counts.music, "track", "tracks") : "",
     counts.vector ? many(counts.vector, "vector", "vectors") : "",
+    counts.speech ? many(counts.speech, "reading", "readings") : "",
     counts.prompts ? many(counts.prompts, "prompt", "prompts") : "",
     counts.chats ? many(counts.chats, "chat", "chats") : "",
   ].filter(Boolean);
@@ -358,12 +367,12 @@ export function keepLockedTitle(projectName: string | null): string {
 
 /** The question when a project is deleted (§32.1, §37.3 rule 5): nothing in it is deleted, and it says how many runs, prompts and chats there are and that they stay. */
 export function deleteProjectQuestion(project: { name: string; counts: ProjectCounts }): string {
-  const runs = project.counts.image + project.counts.music + (project.counts.vector ?? 0);
+  const runs = project.counts.image + project.counts.music + (project.counts.vector ?? 0) + (project.counts.speech ?? 0);
   const builder = (project.counts.prompts ?? 0) + (project.counts.chats ?? 0);
   const lead = `Delete the project “${project.name}”?`;
   const others = [project.counts.prompts ? many(project.counts.prompts, "prompt", "prompts") : "", project.counts.chats ? many(project.counts.chats, "chat", "chats") : ""].filter(Boolean).join(" and ");
   if (runs === 0 && builder === 0) return `${lead} It has no runs.`;
   if (runs === 0) return `${lead} Its ${others} ${builder === 1 ? "is" : "are"} not deleted: ${builder === 1 ? "it stays" : "they stay"} and ${builder === 1 ? "is" : "are"} no longer in a project.`;
-  const runsPart = `Its ${many(runs, "run", "runs")} (${projectContents({ image: project.counts.image, music: project.counts.music, vector: project.counts.vector })}) ${runs === 1 ? "is" : "are"} not deleted: ${runs === 1 ? "it stays" : "they stay"} kept and ${runs === 1 ? "is" : "are"} no longer in a project.`;
+  const runsPart = `Its ${many(runs, "run", "runs")} (${projectContents({ image: project.counts.image, music: project.counts.music, vector: project.counts.vector, speech: project.counts.speech })}) ${runs === 1 ? "is" : "are"} not deleted: ${runs === 1 ? "it stays" : "they stay"} kept and ${runs === 1 ? "is" : "are"} no longer in a project.`;
   return builder === 0 ? `${lead} ${runsPart}` : `${lead} ${runsPart} Its ${others} stay too, no longer in a project.`;
 }

@@ -86,6 +86,10 @@ class RunConflict(Exception):
     pass
 
 
+class RunAlwaysKept(RunConflict):
+    """A reading cannot stop being kept: it never expires (DESIGN.md §38.8). A kind of conflict with a code of its own, so the page can say it plainly."""
+
+
 class ImageNotFound(Exception):
     """No such result image, or its file is gone."""
 
@@ -566,6 +570,8 @@ class JobManager:
             raise RunNotFound(run_id)
         if result == "locked":
             raise RunConflict("This run is in a project, so it stays kept. Take it out of the project first.")
+        if result == "always_kept":
+            raise RunAlwaysKept("A reading is always kept: it never expires, so there is no Keep to turn off.")
         self._publish_run(run_id)
 
     # ------------------------------------------------------------ projects (DESIGN.md §32)

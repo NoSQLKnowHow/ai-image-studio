@@ -115,11 +115,12 @@ const EMPTY_ALL: Record<TabKind, { title: string; body: string }> = {
   image: { title: "No images yet", body: "Describe something above and press Generate. Every run lands here with its prompt and settings." },
   music: { title: "No music yet", body: "Describe the music above and press Make music. Every track lands here with its description and settings." },
   vector: { title: "No vectors yet", body: "Describe your idea above and press Make vector. Every SVG lands here with its settings and its layers." },
+  speech: { title: "No readings yet", body: "Give it a text above, choose a voice and press Make reading. Every reading lands here, and you can listen to it while it is being made." },
 };
 // what each tab calls its runs, in the empty states of the Deleted and Kept views, and what the tab is called when a project's view is empty
-const EMPTY_DELETED: Record<TabKind, string> = { image: "No deleted images", music: "No deleted music", vector: "No deleted vectors" };
-const EMPTY_KEPT: Record<TabKind, string> = { image: "No kept images yet", music: "No kept music yet", vector: "No kept vectors yet" };
-const TAB_NAME: Record<TabKind, string> = { image: "Images", music: "Music", vector: "Vector" };
+const EMPTY_DELETED: Record<TabKind, string> = { image: "No deleted images", music: "No deleted music", vector: "No deleted vectors", speech: "No deleted readings" };
+const EMPTY_KEPT: Record<TabKind, string> = { image: "No kept images yet", music: "No kept music yet", vector: "No kept vectors yet", speech: "No readings yet" };
+const TAB_NAME: Record<TabKind, string> = { image: "Images", music: "Music", vector: "Vector", speech: "Speech" };
 
 /** What the list says when the tab has nothing to show for the filter (§29.1, §32.1). `project` is the folder chosen, when the filter names one
  *  (null for "no project" or for a project the page does not know). */
@@ -165,7 +166,9 @@ export function EmptyHistory({ kind, filter, binDays, project, onShowAll, onShow
     return (
       <div className="empty-state">
         <p className="empty-title">{EMPTY_KEPT[kind]}</p>
-        <p>Press <strong>Keep</strong> on a run to keep it here. Kept runs are never deleted automatically.</p>
+        {kind === "speech"
+          ? <p>Readings are always kept: they are never deleted automatically, and there is nothing to keep by hand.</p>
+          : <p>Press <strong>Keep</strong> on a run to keep it here. Kept runs are never deleted automatically.</p>}
         <button type="button" className="button small" onClick={onShowAll}>Show all</button>
       </div>
     );

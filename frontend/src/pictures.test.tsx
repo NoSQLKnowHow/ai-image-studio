@@ -127,8 +127,8 @@ describe("what Empty bin says (DESIGN.md §30.1, §33.1)", () => {
   });
 
   it("splits the server's count of things into runs and pictures, per tab", () => {
-    // (counts that say nothing about Vector, as the server's did before 1.17, leave none of its runs in the bin)
-    expect(binContents({ image: { deleted: 5, deleted_items: 2 }, music: { deleted: 1, deleted_items: 1 } })).toEqual({ ...bin([3, 2], [0, 1]), vector: { runs: 0, items: 0 } });
+    // (counts that say nothing about Vector or Speech, as the server's did before 1.17 and 1.20, leave none of their runs in the bin)
+    expect(binContents({ image: { deleted: 5, deleted_items: 2 }, music: { deleted: 1, deleted_items: 1 } })).toEqual({ ...bin([3, 2], [0, 1]), vector: { runs: 0, items: 0 }, speech: { runs: 0, items: 0 } });
   });
 
   it("tells afterwards what was deleted, and says which kind of thing the pictures were", () => {

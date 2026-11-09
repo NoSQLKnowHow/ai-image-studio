@@ -659,7 +659,7 @@ describe("counts and the filter for the third kind of run", () => {
 
   it("counts the bin of the Vector tab as runs only (a Vector run is binned whole)", () => {
     expect(binContents({ image: { deleted: 5, deleted_items: 2 }, music: { deleted: 1, deleted_items: 1 }, vector: { deleted: 4 } })).toEqual({
-      image: { runs: 3, items: 2 }, music: { runs: 0, items: 1 }, vector: { runs: 4, items: 0 },
+      image: { runs: 3, items: 2 }, music: { runs: 0, items: 1 }, vector: { runs: 4, items: 0 }, speech: { runs: 0, items: 0 },
     });
   });
 

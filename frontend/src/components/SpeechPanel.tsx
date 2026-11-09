@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError } from "../api";
 import { createEmitter, type Emitter } from "../emitter";
 import type { ToastKind } from "../hooks";
@@ -9,7 +9,8 @@ import {
 } from "../speech";
 import { speechApi } from "../speechApi";
 import type { PresetVoice, SavedVoice, SpeechJob } from "../speechTypes";
-import { isSpeechRun, type Capabilities, type SpeechRun } from "../types";
+import { isSpeechRun, type Capabilities, type Run, type SpeechRun, type Status } from "../types";
+import type { ViewScope } from "../format";
 import { useEngineVoices } from "../useEngineVoices";
 import { useSampler } from "../useSampler";
 import { useSpeechSource, type Problem } from "../useSpeechSource";
@@ -19,6 +20,9 @@ import { SpeechReview } from "./SpeechReview";
 import { SpeechSourceBox } from "./SpeechSource";
 import { SpeechStyle } from "./SpeechStyle";
 import { SpeechVoices } from "./SpeechVoices";
+import { QueueBar } from "./Feedback";
+import type { ProjectControls } from "./ProjectMenu";
+import { ReadingCard } from "./ReadingCard";
 import { panelId, tabId } from "./Tabs";
 
 // The Speech tab (DESIGN.md §38.2): text in, read aloud in a voice. This file is the tab's frame and what ties its parts together: whether speech can work here at all,
@@ -29,6 +33,29 @@ const NO_PRESETS: PresetVoice[] = []; // one array each, so that nothing re-rend
 const NO_SAVED: SavedVoice[] = [];
 const NO_JOBS: Emitter<SpeechJob> = createEmitter<SpeechJob>();
 
+/** What the history of readings needs from the page, handed over together: the list (newest first), how to say that it is loading or empty, the filter bar that the
+ *  tabs share (DESIGN.md §29), the projects (§32), and what each button of a card does. */
+export interface SpeechHistory {
+  status: Status | null;
+  runs: SpeechRun[]; // newest first
+  runsReady: boolean;
+  filterBar: ReactNode;
+  loadProblem: ReactNode | null; // shown in place of "Loading…" when the filtered list could not be loaded
+  empty: ReactNode; // what the list says when there is nothing to show for the filter, or that it is still looking
+  isTransient: (run: SpeechRun) => boolean; // in a filtered view only because it is working (§29.3, §32)
+  viewScope: ViewScope;
+  projects: ProjectControls;
+  more: boolean; // older runs can be loaded
+  loadingOlder: boolean;
+  now: number;
+  onLoadOlder: () => void;
+  onCancel: (run: Run) => void;
+  onContinue: (run: Run) => void;
+  onRestore: (run: Run) => void;
+  onDelete: (run: Run) => void;
+  onListen?: (run: SpeechRun) => void; // open the reading view
+}
+
 export interface SpeechPanelProps {
   hidden: boolean;
   caps: Capabilities;
@@ -37,9 +64,39 @@ export interface SpeechPanelProps {
   jobs?: Emitter<SpeechJob>; // the `speech.job` events: a sample or a design that has moved on
   onEngine?: (engine: string | null) => void; // which engine the tab shows, for the header's Load and Unload
   onQueued?: (run: SpeechRun) => void; // a reading was queued: it joins the page's runs
+  history?: SpeechHistory; // the readings made so far, with the filter bar above them
 }
 
-export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngine, onQueued }: SpeechPanelProps) {
+/** The readings made so far (DESIGN.md §38.2): one card each, newest first, under the filter bar the tabs share. They are shown whether or not speech can be made now,
+ *  so that a reading made before an engine went away can still be listened to and downloaded. */
+function Readings({ history }: { history: SpeechHistory }) {
+  const { runs } = history;
+  return (
+    <>
+      <QueueBar status={history.status} />
+      {history.filterBar}
+      <section className="timeline" aria-label="Your readings">
+        {!history.runsReady ? (
+          history.loadProblem ?? <p className="loading" role="status">Loading your readings…</p>
+        ) : runs.length === 0 ? (
+          history.empty
+        ) : (
+          runs.map((run) => (
+            <ReadingCard key={run.id} run={run} now={history.now} transient={history.isTransient(run)} viewScope={history.viewScope} projects={history.projects} onListen={history.onListen}
+              onContinue={() => history.onContinue(run)} onCancel={() => history.onCancel(run)} onRestore={() => history.onRestore(run)} onDelete={() => history.onDelete(run)} />
+          ))
+        )}
+        {history.more && (
+          <button type="button" className="button load-more" onClick={history.onLoadOlder} disabled={history.loadingOlder}>
+            {history.loadingOlder ? "Loading…" : "Load older runs"}
+          </button>
+        )}
+      </section>
+    </>
+  );
+}
+
+export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngine, onQueued, history }: SpeechPanelProps) {
   const speech = caps.speech;
   const limits = caps.limits.speech;
   const source = useSpeechSource(limits);
@@ -138,6 +195,7 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
           <audio ref={audio} preload="none" />
         </>
       )}
+      {history && <Readings history={history} />}
     </div>
   );
 }

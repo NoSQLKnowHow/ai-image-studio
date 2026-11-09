@@ -554,13 +554,15 @@ class Database:
             )
 
     def set_pinned(self, run_id: str, pinned: bool) -> str:
-        """Keep (or stop keeping) a run. Returns 'ok' (also when it already was so), 'not_found', or 'locked': a run that is in a project stays
-        kept (DESIGN.md §32.3), so stopping to keep it is refused. Checked and written in one transaction, so a run filed at the same moment
-        is never left un-kept."""
+        """Keep (or stop keeping) a run. Returns 'ok' (also when it already was so), 'not_found', 'locked': a run that is in a project stays
+        kept (DESIGN.md §32.3), so stopping to keep it is refused, or 'always_kept': a reading never expires and is kept from the start (§38.8), so
+        there is nothing to stop. Checked and written in one transaction, so a run filed at the same moment is never left un-kept."""
         with self.tx() as c:
-            row = c.execute("SELECT project_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            row = c.execute("SELECT project_id, mode FROM runs WHERE id=?", (run_id,)).fetchone()
             if row is None:
                 return "not_found"
+            if not pinned and row["mode"] == "speech":
+                return "always_kept"
             if not pinned and row["project_id"] is not None:
                 return "locked"
             c.execute("UPDATE runs SET pinned=? WHERE id=?", (int(pinned), run_id))
@@ -830,14 +832,15 @@ class Database:
 
     def unfile_run(self, run_id: str, keep: bool = True) -> str:
         """Take a run out of its project. It stays kept unless `keep` is False (which is what Undo of a filing asks for: the run goes back to
-        exactly what it was, DESIGN.md §32.3 item 3). Returns 'unfiled', 'not_found' or 'not_in_project'."""
+        exactly what it was, DESIGN.md §32.3 item 3). A reading is always kept (§38.8), so for it `keep` makes no difference. Returns 'unfiled', 'not_found'
+        or 'not_in_project'."""
         with self.tx() as c:
-            row = c.execute("SELECT project_id FROM runs WHERE id=?", (run_id,)).fetchone()
+            row = c.execute("SELECT project_id, mode FROM runs WHERE id=?", (run_id,)).fetchone()
             if row is None:
                 return "not_found"
             if row["project_id"] is None:
                 return "not_in_project"
-            c.execute("UPDATE runs SET project_id=NULL" + ("" if keep else ", pinned=0") + " WHERE id=?", (run_id,))
+            c.execute("UPDATE runs SET project_id=NULL" + ("" if keep or row["mode"] == "speech" else ", pinned=0") + " WHERE id=?", (run_id,))
             return "unfiled"
 
     def recover_interrupted(self, now: str) -> list[str]:

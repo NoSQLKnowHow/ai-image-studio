@@ -115,7 +115,7 @@ export interface Project {
   created_at: string;
   // `vector` is optional because the list of projects was written before Vector (§32.4) and §31.12 does not say whether it counts them: the page
   // treats a missing number as "not known" and never shows it as 0 (see FilterBar and `projectContents`).
-  counts: { image: number; music: number; vector?: number; prompts?: number; chats?: number };
+  counts: { image: number; music: number; vector?: number; speech?: number; prompts?: number; chats?: number };
 }
 
 /** Where a run came from when it was made from a saved prompt (DESIGN.md §37.3 rule 3): the prompt, the version, whether the prompt is in the bin or gone (then `title` may be null),
