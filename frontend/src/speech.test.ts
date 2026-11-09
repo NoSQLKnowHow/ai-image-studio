@@ -6,6 +6,7 @@ import {
   partChars, partsToRead, pieceAt, pieceStart, playerAction, positionFor, progressLine, readChoice, readPlayerPrefs, readingFacts, readingProblem, readingTitle,
   readingTotals, renamePart, resumeTime, saveChoice, savePlayerPrefs, savedVoiceFacts, seekedTime, setInclude, sourceText, speedText, startingPart, stepSpeed,
   styleControl, styleToSend, toGoText, totalsLine, voiceFacts, voiceMatches, voiceName,
+  RESTART_AFTER, nextPieceSource, nextTime, partListText, partPlayable, partSeconds, partTime, pieceMade, pieceSource, previousTime, sourceFor, wholeTime,
   FILE_ACCEPT, FILE_EXTENSIONS, aboutLength, fileProblem, queuedText, sampleBody, sampleKey, sampleLabel, sampleWords, normalizeUrl, partLengthText, pastedTextLine, reviewChanged, reviewLine, skippedText, switchesChanged, urlProblem,
 } from "./speech";
 import type { DraftPart } from "./speech";
@@ -867,5 +868,151 @@ describe("what is said when a reading is queued", () => {
     expect(queuedText({ ...run, reading: null })).toBe("Queued “A test reading”.");
     expect(queuedText({ ...run, reading: { ...(run.reading as ReadingInfo), title: null } })).toMatch(/^Queued “A test reading”: /);
     expect(queuedText({ ...run, reading: null, options: { ...run.options, title: null }, prompt: "From the prompt" })).toBe("Queued “From the prompt”.");
+  });
+});
+
+
+// ------------------------------------------------------------------ what the player plays, and where it goes (§38.7)
+describe("what the player plays and where it goes", () => {
+  const rate = 1000; // a frame is a millisecond, so a start can be read off
+  const piece = (idx: number, start: number | null, frames = 2000): PartPiece => ({
+    idx, kind: "paragraph", text: `p${idx}`, continues: false, status: start === null ? "pending" : "done", frames: start === null ? null : frames,
+    start_frame: start, error: null, url: start === null ? null : `/p/${idx}.wav`,
+  });
+  // a part with `made` of five pieces made, two seconds each, and none of it whole
+  const partial = (made = 3) => makePartDetail({
+    complete: false, url: null, download_url: null, sample_rate: rate, total_frames: made * 2000,
+    pieces: [0, 1, 2, 3, 4].map((i) => piece(i, i < made ? i * 2000 : null)),
+  });
+  const whole = () => makePartDetail({ complete: true, url: "/p/all.wav", sample_rate: rate, total_frames: 6000, pieces: [piece(0, 0), piece(1, 2000), piece(2, 4000)] });
+
+  describe("how long a part is", () => {
+    it("is its frames over the engine's rate, and nothing before there is a rate", () => {
+      expect(partSeconds({ total_frames: 6000, sample_rate: 1000 })).toBe(6);
+      expect(partSeconds({ total_frames: 78624, sample_rate: 24000 })).toBeCloseTo(3.276, 3);
+      expect(partSeconds({ total_frames: 0, sample_rate: null })).toBe(0);
+      expect(partSeconds({ total_frames: 5000, sample_rate: null })).toBe(0); // (cannot be, but never a division by nothing)
+    });
+  });
+
+  describe("a piece as it is played", () => {
+    it("is its own file and where it starts in the part", () => {
+      expect(pieceSource(partial(), 1)).toEqual({ kind: "piece", piece: 1, url: "/p/1.wav", start: 2, at: 0 });
+    });
+    it("is nothing when it is not made, has no file, or is not there", () => {
+      expect(pieceSource(partial(), 3)).toBeNull();
+      expect(pieceSource(partial(), 99)).toBeNull();
+      const noFile = partial();
+      noFile.pieces[1] = { ...noFile.pieces[1], url: null };
+      expect(pieceSource(noFile, 1)).toBeNull();
+    });
+  });
+
+  describe("what to play from a time", () => {
+    it("is the whole file for a part that is complete, from that time", () => {
+      expect(sourceFor(whole(), 4.5)).toEqual({ kind: "part", url: "/p/all.wav", at: 4.5 });
+    });
+    it("keeps the time inside the whole part: not before its start, not past its end", () => {
+      expect(sourceFor(whole(), -3)).toEqual({ kind: "part", url: "/p/all.wav", at: 0 });
+      expect(sourceFor(whole(), 99)).toEqual({ kind: "part", url: "/p/all.wav", at: 6 });
+    });
+    it("is the piece the time falls in, and how far into it, for a part still being made", () => {
+      expect(sourceFor(partial(), 0)).toEqual({ kind: "piece", piece: 0, url: "/p/0.wav", start: 0, at: 0 });
+      expect(sourceFor(partial(), 2.5)).toEqual({ kind: "piece", piece: 1, url: "/p/1.wav", start: 2, at: 0.5 });
+      expect(sourceFor(partial(), 2)).toEqual({ kind: "piece", piece: 1, url: "/p/1.wav", start: 2, at: 0 }); // exactly at a start: that piece
+      expect(sourceFor(partial(), 5.75)).toEqual({ kind: "piece", piece: 2, url: "/p/2.wav", start: 4, at: 1.75 });
+    });
+    it("is the end of the last piece made when the time is past what is made, and the start when it is before it", () => {
+      expect(sourceFor(partial(), 99)).toEqual({ kind: "piece", piece: 2, url: "/p/2.wav", start: 4, at: 2 }); // that piece is two seconds long
+      expect(sourceFor(partial(), -4)).toEqual({ kind: "piece", piece: 0, url: "/p/0.wav", start: 0, at: 0 });
+    });
+    it("is nothing when nothing of the part is made", () => {
+      expect(sourceFor(partial(0), 0)).toBeNull();
+      expect(sourceFor(makePartDetail({ complete: false, url: null, sample_rate: null, total_frames: 0, pieces: [] }), 3)).toBeNull();
+    });
+    it("plays the pieces of a part that says it is complete but has no file (never trust one half of two)", () => {
+      const odd = { ...partial(3), complete: true, url: null };
+      expect(sourceFor(odd, 1)?.kind).toBe("piece");
+    });
+  });
+
+  describe("the piece after", () => {
+    it("is the next made piece, to be loaded while this one plays", () => {
+      expect(nextPieceSource(partial(), 0)).toEqual({ kind: "piece", piece: 1, url: "/p/1.wav", start: 2, at: 0 });
+      expect(nextPieceSource(partial(), 1)?.piece).toBe(2);
+    });
+    it("is nothing after the last one made, or after one that is not made", () => {
+      expect(nextPieceSource(partial(), 2)).toBeNull();
+      expect(nextPieceSource(partial(), 3)).toBeNull();
+      expect(nextPieceSource(partial(0), 0)).toBeNull();
+    });
+  });
+
+  describe("times", () => {
+    it("a time in the part is the element's own for the whole part, and the piece's start later for a piece", () => {
+      expect(partTime({ kind: "part", url: "/x", at: 0 }, 12.5)).toBe(12.5);
+      expect(partTime({ kind: "piece", piece: 2, url: "/x", start: 4, at: 0 }, 1.25)).toBe(5.25);
+    });
+    it("a time in the whole reading adds what the parts before hold", () => {
+      const reading = { parts: [{ seconds: 100 }, { seconds: 250 }, { seconds: 40 }] } as ReadingInfo;
+      expect(wholeTime(reading, 0, 7)).toBe(7);
+      expect(wholeTime(reading, 1, 7)).toBe(107);
+      expect(wholeTime(reading, 2, 7)).toBe(357);
+    });
+  });
+
+  describe("previous and next paragraph", () => {
+    // three paragraphs of ten seconds each: 0, 10 and 20, and a fourth not made
+    const long = [piece(0, 0, 10000), piece(1, 10000, 10000), piece(2, 20000, 10000), piece(3, null)];
+
+    it("K goes to the start of the next paragraph that is made", () => {
+      expect(nextTime(long, 3, rate)).toBe(10);
+      expect(nextTime(long, 10, rate)).toBe(20); // exactly at a start is in that paragraph: the next is the one after
+      expect(nextTime(long, 19.9, rate)).toBe(20);
+    });
+    it("K has nowhere to go from the last paragraph made, or when nothing is made", () => {
+      expect(nextTime(long, 25, rate)).toBeNull();
+      expect(nextTime([piece(0, null)], 0, rate)).toBeNull();
+      expect(nextTime([], 0, rate)).toBeNull();
+    });
+    it("J goes to the start of the paragraph before, in the first seconds of one", () => {
+      expect(previousTime(long, 11, rate)).toBe(0); // 1 s into the second
+      expect(previousTime(long, 21, rate)).toBe(10);
+      expect(previousTime(long, 10, rate)).toBe(0); // exactly at the start
+    });
+    it("J starts the paragraph again once it is more than three seconds in, as an audiobook player's previous does", () => {
+      expect(RESTART_AFTER).toBe(3);
+      expect(previousTime(long, 15, rate)).toBe(10); // 5 s in
+      expect(previousTime(long, 13.5, rate)).toBe(10); // 3.5 s in
+      expect(previousTime(long, 13, rate)).toBe(0); // exactly three seconds in is still "the first seconds"
+    });
+    it("J in the first paragraph goes back to its start, and from the very start has nowhere to go", () => {
+      expect(previousTime(long, 2, rate)).toBe(0);
+      expect(previousTime(long, 7, rate)).toBe(0); // more than three seconds in: its own start, which is the start
+      expect(previousTime(long, 0, rate)).toBeNull();
+    });
+    it("J has nowhere to go when nothing is made", () => {
+      expect(previousTime([piece(0, null)], 0, rate)).toBeNull();
+      expect(previousTime([], 5, rate)).toBeNull();
+    });
+  });
+
+  describe("the parts list", () => {
+    const part = (state: "done" | "started" | "waiting", made: number, pieces: number, seconds: number) => ({ idx: 0, title: "T", chars: 10, pieces, made, seconds, state });
+    it("a part with something made can be played, and one with nothing cannot", () => {
+      expect(partPlayable(part("done", 3, 3, 12))).toBe(true);
+      expect(partPlayable(part("started", 1, 3, 4))).toBe(true);
+      expect(partPlayable(part("waiting", 0, 3, 0))).toBe(false);
+    });
+    it("says how long a finished part is, how far one that is not has got, and that one not begun is not made", () => {
+      expect(partListText(part("done", 3, 3, 3725))).toBe("1:02:05");
+      expect(partListText(part("started", 2, 7, 95))).toBe("1:35 made so far · 2 of 7 paragraphs");
+      expect(partListText(part("started", 1, 1, 4))).toBe("0:04 made so far · 1 of 1 paragraph");
+      expect(partListText(part("waiting", 0, 3, 0))).toBe("Not made yet");
+    });
+    it("a piece is made when it has a place in the part's audio", () => {
+      expect(pieceMade(piece(0, 0))).toBe(true);
+      expect(pieceMade(piece(3, null))).toBe(false);
+    });
   });
 });

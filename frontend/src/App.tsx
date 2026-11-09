@@ -32,7 +32,7 @@ import { readTab, saveTab, type TabId } from "./music";
 import { SpeechPanel } from "./components/SpeechPanel";
 import { createEmitter } from "./emitter";
 import { speechApi } from "./speechApi";
-import type { SpeechJob } from "./speechTypes";
+import type { ReadingPieceEvent, SpeechJob } from "./speechTypes";
 import {
   MOVED_NOTE,
   PROMPT_KEY,
@@ -114,6 +114,9 @@ export default function App() {
   const [builderWorking, setBuilderWorking] = useState(false); // a reply is being written: the dot on the Prompt builder tab
   const [speechEngine, setSpeechEngine] = useState<string | null>(null); // the engine the Speech tab shows: the header's Load and Unload act on it (DESIGN.md §38.2)
   const speechJobs = useRef(createEmitter<SpeechJob>()).current; // `speech.job` events, for the Speech tab to hear when a sample is made
+  const speechPieces = useRef(createEmitter<ReadingPieceEvent>()).current; // `reading.piece` events, for the player to hear that a piece of a reading is made
+  // the reading open in the player. `turn` counts the presses of Listen: pressing it again on the reading that is open opens it again at its place and plays (what the button says)
+  const [listening, setListening] = useState<{ id: string; turn: number } | null>(null);
   const [builderTick, setBuilderTick] = useState(0); // another page changed a prompt, chat or preference
   const [builderCommand, setBuilderCommand] = useState<BuilderCommand | null>(null); // something for the Prompt builder to do: open a prompt, refine a picture, help write an edit
   const [fromPrompt, setFromPrompt] = useState<FromPrompt | null>(null); // the saved prompt the Images prompt box came from: the next Generate carries it (DESIGN.md §37.3 rule 3)
@@ -141,6 +144,18 @@ export default function App() {
   const musicRuns = useMemo(() => visible.filter(isMusicRun), [visible]);
   const vectorRuns = useMemo(() => visible.filter(isVectorRun), [visible]);
   const speechRuns = useMemo(() => visible.filter(isSpeechRun).filter((run) => !run.hidden), [visible]); // readings (a sample or a design is never in a list, DESIGN.md §38.4)
+  // The reading in the player is looked for among all the runs the page has, not only those the filter shows, so that choosing another filter does not stop it. If it is
+  // gone (deleted for good) the player goes with it. Closing returns focus to the card it was opened from.
+  const listeningRun = listening ? state.runs[listening.id] : undefined;
+  useEffect(() => {
+    if (listening && !listeningRun) setListening(null);
+  }, [listening, listeningRun]);
+  const closeReader = () => {
+    const id = listening?.id;
+    setListening(null);
+    if (id) window.setTimeout(() => cardReuseButton(id)?.focus(), 0);
+  };
+  const reader = listening && listeningRun && isSpeechRun(listeningRun) ? { run: listeningRun, turn: listening.turn, pieces: speechPieces, onClose: closeReader } : undefined;
   // what the tab being looked at is called in the counts (`Counts` has a key for each)
   const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : tab === "speech" ? "speech" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
   const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : tab === "speech" ? speechRuns : imageRuns;
@@ -189,6 +204,7 @@ export default function App() {
     onCapabilitiesChanged: () => void api.capabilities().then((c) => dispatch({ type: "caps", caps: c })).catch(() => undefined),
     onBuilderChanged: () => setBuilderTick((n) => n + 1),
     onSpeechJob: speechJobs.emit,
+    onReadingPiece: speechPieces.emit,
   });
 
   useEffect(() => {
@@ -1203,7 +1219,8 @@ export default function App() {
               history={{
                 status, runs: speechRuns, runsReady, filterBar, loadProblem: problem, empty: emptyFor("speech"), isTransient: transient, viewScope, projects: projectControls, more, loadingOlder, now,
                 onLoadOlder: () => void loadOlder(), onCancel: requestCancel, onContinue: (run) => void continueReading(run), onRestore: (run) => void restore(run, true), onDelete: setPendingDelete,
-              }} />
+                onListen: (run) => setListening((now) => ({ id: run.id, turn: (now?.turn ?? 0) + 1 })),
+              }} reader={reader} />
             <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
               integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
             <VectorPanel

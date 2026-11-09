@@ -6,7 +6,7 @@
 
 import type { KeyValueStore } from "./options";
 import type {
-  EngineState, PartDetail, PartPiece, PositionBody, PresetVoice, Prepared, ReadingBody, ReadingInfo, ReadingPosition, SavedVoice, SourceInfo, SpeechCaps, SpeechEngine,
+  EngineState, PartDetail, PartPiece, PositionBody, PresetVoice, Prepared, ReadingBody, ReadingInfo, ReadingPart, ReadingPosition, SavedVoice, SourceInfo, SpeechCaps, SpeechEngine,
   SampleBody, SpeechJob, SpeechLimits,
 } from "./speechTypes";
 import type { SpeechRun } from "./types";
@@ -555,6 +555,88 @@ export function resumeTime(position: ReadingPosition, detail: Pick<PartDetail, "
 /** The part a reading opens at: the one the person stopped in if there is one and it is there, else the first. */
 export const startingPart = (reading: ReadingInfo): number =>
   reading.position && reading.position.part < reading.parts.length ? reading.position.part : 0;
+
+// ------------------------------------------------------------------ what the player plays, and where it goes (§38.7)
+/** What the player puts in an audio element to play a part from a given time. A finished part is one file (§38.7), so seeking in it is the browser's. A part still being
+ *  made has only its pieces, each its own file: the player plays the one the time falls in. `start` is where that piece starts in the part, `at` is the seconds into the
+ *  piece (or, for the whole part, into the part) to play from. */
+export type PlaySource =
+  | { kind: "part"; url: string; at: number }
+  | { kind: "piece"; piece: number; url: string; start: number; at: number };
+export type PieceSource = Extract<PlaySource, { kind: "piece" }>;
+
+/** The seconds of audio a part has so far: all of it once the part is complete. 0 before anything is made (the engine's rate is not known yet). */
+export const partSeconds = (detail: Pick<PartDetail, "total_frames" | "sample_rate">): number => (detail.sample_rate ? detail.total_frames / detail.sample_rate : 0);
+
+/** A made piece as the player plays it: its own file and where it starts in the part, from its beginning. Null for a piece that is not made, or that does not exist. */
+export function pieceSource(detail: PartDetail, idx: number): PieceSource | null {
+  const piece = detail.pieces.find((p) => p.idx === idx);
+  const start = piece ? pieceStart(piece, detail.sample_rate ?? 0) : null;
+  return piece && start !== null && piece.url ? { kind: "piece", piece: idx, url: piece.url, start, at: 0 } : null;
+}
+
+/** What to play for the part from `time` seconds into it: the whole file once the part is complete, else the piece the time falls in. A time past what is made is the end of
+ *  the last piece that is made (a click beyond what exists plays the end, not nothing), and one before the start is the start. Null when nothing in the part is made. */
+export function sourceFor(detail: PartDetail, time: number): PlaySource | null {
+  const t = Math.max(0, time);
+  if (detail.complete && detail.url) return { kind: "part", url: detail.url, at: Math.min(t, partSeconds(detail)) };
+  const rate = detail.sample_rate ?? 0;
+  const idx = pieceAt(detail.pieces, t, rate);
+  const found = idx === null ? null : pieceSource(detail, idx);
+  if (!found) return null;
+  const length = (detail.pieces.find((p) => p.idx === idx)?.frames ?? 0) / rate;
+  return { ...found, at: Math.min(t - found.start, length) };
+}
+
+/** The made piece after `idx`, as the player would play it next (to be loaded while this one plays). Null when there is none made yet. */
+export function nextPieceSource(detail: PartDetail, idx: number): PieceSource | null {
+  const next = neighbourPiece(detail.pieces, idx, 1);
+  return next === null ? null : pieceSource(detail, next);
+}
+
+/** Seconds into the part for a place `elementTime` seconds into what the audio element plays: the same for the whole part, `start` later for a piece. */
+export const partTime = (source: PlaySource, elementTime: number): number => (source.kind === "part" ? elementTime : source.start + elementTime);
+
+/** Seconds into the whole reading: what the parts before this one hold, and `time` into this one. */
+export const wholeTime = (reading: Pick<ReadingInfo, "parts">, part: number, time: number): number =>
+  reading.parts.slice(0, part).reduce((sum, p) => sum + p.seconds, 0) + time;
+
+/** How far into a paragraph it is when "previous paragraph" starts that paragraph again and not the one before it, as an audiobook player's "previous" does. */
+export const RESTART_AFTER = 3;
+
+/** Where J goes, in seconds into the part: the start of the paragraph being spoken once it is more than a few seconds in, else the start of the one before. Null at the
+ *  very start of the part (the view then goes to the part before), and when nothing is made. */
+export function previousTime(pieces: readonly PartPiece[], time: number, sampleRate: number): number | null {
+  const current = pieceAt(pieces, time, sampleRate);
+  const here = pieces.find((p) => p.idx === current);
+  const start = here ? pieceStart(here, sampleRate) : null;
+  if (current === null || start === null) return null;
+  if (time - start > RESTART_AFTER) return start;
+  const before = neighbourPiece(pieces, current, -1);
+  const earlier = pieces.find((p) => p.idx === before);
+  if (earlier) return pieceStart(earlier, sampleRate);
+  return time > start + 1e-6 ? start : null;
+}
+
+/** Where K goes, in seconds into the part: the start of the next paragraph that is made. Null at the end of what is made (the view then goes to the next part). */
+export function nextTime(pieces: readonly PartPiece[], time: number, sampleRate: number): number | null {
+  const after = neighbourPiece(pieces, pieceAt(pieces, time, sampleRate), 1);
+  const piece = pieces.find((p) => p.idx === after);
+  return piece ? pieceStart(piece, sampleRate) : null;
+}
+
+/** Whether a part can be played at all: something of it is made. */
+export const partPlayable = (part: ReadingPart): boolean => part.made > 0;
+
+/** What the parts list says under a part's title: how long it is, and how far it has got if it is not all made. */
+export function partListText(part: ReadingPart): string {
+  if (part.state === "done") return clockText(part.seconds);
+  if (part.made === 0) return "Not made yet";
+  return `${clockText(part.seconds)} made so far · ${part.made} of ${plural(part.pieces, "paragraph")}`;
+}
+
+/** Whether a piece is made, so that it can be heard and sought to. */
+export const pieceMade = (piece: PartPiece): boolean => piece.start_frame !== null;
 
 /** The text sizes of the reading view, smallest first: the four the design asks for, as a multiple of the page's own text size. */
 export const TEXT_SIZES = [

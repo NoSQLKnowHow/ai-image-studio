@@ -8,7 +8,7 @@ import {
   type SpeechChoice, type VoicePick, type VoiceFilter,
 } from "../speech";
 import { speechApi } from "../speechApi";
-import type { PresetVoice, SavedVoice, SpeechJob } from "../speechTypes";
+import type { PresetVoice, ReadingPieceEvent, SavedVoice, SpeechJob } from "../speechTypes";
 import { isSpeechRun, type Capabilities, type Run, type SpeechRun, type Status } from "../types";
 import type { ViewScope } from "../format";
 import { useEngineVoices } from "../useEngineVoices";
@@ -23,6 +23,7 @@ import { SpeechVoices } from "./SpeechVoices";
 import { QueueBar } from "./Feedback";
 import type { ProjectControls } from "./ProjectMenu";
 import { ReadingCard } from "./ReadingCard";
+import { ReadingView } from "./ReadingView";
 import { panelId, tabId } from "./Tabs";
 
 // The Speech tab (DESIGN.md §38.2): text in, read aloud in a voice. This file is the tab's frame and what ties its parts together: whether speech can work here at all,
@@ -56,6 +57,14 @@ export interface SpeechHistory {
   onListen?: (run: SpeechRun) => void; // open the reading view
 }
 
+/** The reading that is open in the player (§38.7), if one is: which, the `reading.piece` events it hears, and what closing it does. */
+export interface SpeechReader {
+  run: SpeechRun;
+  turn: number; // the press of Listen that opened it: another press on the same reading opens it again, at its place, and plays
+  pieces: Emitter<ReadingPieceEvent>;
+  onClose: () => void;
+}
+
 export interface SpeechPanelProps {
   hidden: boolean;
   caps: Capabilities;
@@ -65,6 +74,7 @@ export interface SpeechPanelProps {
   onEngine?: (engine: string | null) => void; // which engine the tab shows, for the header's Load and Unload
   onQueued?: (run: SpeechRun) => void; // a reading was queued: it joins the page's runs
   history?: SpeechHistory; // the readings made so far, with the filter bar above them
+  reader?: SpeechReader; // the reading being listened to: the player, above the history
 }
 
 /** The readings made so far (DESIGN.md §38.2): one card each, newest first, under the filter bar the tabs share. They are shown whether or not speech can be made now,
@@ -96,7 +106,7 @@ function Readings({ history }: { history: SpeechHistory }) {
   );
 }
 
-export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngine, onQueued, history }: SpeechPanelProps) {
+export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngine, onQueued, history, reader }: SpeechPanelProps) {
   const speech = caps.speech;
   const limits = caps.limits.speech;
   const source = useSpeechSource(limits);
@@ -195,6 +205,8 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
           <audio ref={audio} preload="none" />
         </>
       )}
+      {/* a reading made before an engine went away can still be listened to, so the player does not depend on speech being available */}
+      {reader && <ReadingView key={`${reader.run.id}:${reader.turn}`} run={reader.run} pieces={reader.pieces} store={store} onClose={reader.onClose} />}
       {history && <Readings history={history} />}
     </div>
   );
