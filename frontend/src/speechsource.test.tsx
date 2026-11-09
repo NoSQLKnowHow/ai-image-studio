@@ -78,6 +78,19 @@ describe("the source, asked twice", () => {
     expect(result.current.problem).toBeNull();
   });
 
+  it("stops the file that is being read when a newer question is asked, so that it is not uploaded for nothing", async () => {
+    const waiting = held();
+    const { result } = renderHook(() => useSpeechSource(limits));
+    act(() => result.current.chooseFile(new File(["x"], "old.epub")));
+    expect(waiting[0].signal?.aborted).toBe(false);
+    act(() => result.current.setText("A newer question, long enough."));
+    act(() => result.current.prepareText());
+    expect(waiting[0].signal?.aborted).toBe(true); // the older upload is told to stop ...
+    await act(async () => waiting[1].resolve(review("Newer")));
+    expect(result.current.title).toBe("Newer"); // ... and the newer answer is the one taken
+    expect(result.current.problem).toBeNull(); // (the stopped one is not a failure)
+  });
+
   it("does not ask the server for text that is empty, a file of the wrong kind, or an address that is not one", async () => {
     const waiting = held();
     const { result } = renderHook(() => useSpeechSource(limits));

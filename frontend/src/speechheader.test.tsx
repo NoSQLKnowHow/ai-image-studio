@@ -54,6 +54,18 @@ describe("the model button on the Speech tab", () => {
   });
 });
 
+describe("what is said when Load is pressed", () => {
+  it("is 'Loading…' at once, and an old problem of the engine that was loaded is not announced as the answer", () => {
+    const onModel = vi.fn(async () => true);
+    const old: Status = { ...status("error", "speech", "fake-basic"), worker: { ...status("error", "speech", "fake-basic").worker, detail: "The last attempt ran out of memory." } };
+    header(old, "speech", { available: true, engine: "fake" }, onModel);
+    fireEvent.click(screen.getByRole("button", { name: "Load speech model" }));
+    const said = screen.getAllByRole("status").map((node) => node.textContent).join(" | ");
+    expect(said).toContain("Loading the speech model…");
+    expect(said).not.toContain("ran out of memory"); // nothing has changed yet: that is the old problem, not the answer to this
+  });
+});
+
 describe("the pill", () => {
   it("names the speech model when that is what is loaded, and says a reading is being made", () => {
     header(status("ready", "speech", "fake"), "speech", { available: true, engine: "fake" });

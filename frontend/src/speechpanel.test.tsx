@@ -337,14 +337,15 @@ describe("a file", () => {
     expect(calls[0].url).toContain("name=first.txt");
   });
 
-  it("can be chosen again after it was chosen, since the box forgets it", async () => {
+  it("can be chosen again after it was chosen, since the box is told to forget it (a browser does not repeat a choice that has not changed)", async () => {
     const calls = server(() => ({ body: BOOK }));
     openFile();
-    const f = file("same.txt");
     const input = screen.getByLabelText("File") as HTMLInputElement;
-    fireEvent.change(input, { target: { files: [f] } });
+    const assigned: string[] = [];
+    Object.defineProperty(input, "value", { configurable: true, get: () => "", set: (value: string) => void assigned.push(value) }); // jsdom keeps no file name to look at: watch what is set
+    fireEvent.change(input, { target: { files: [file("same.txt")] } });
     await waitFor(() => expect(calls).toHaveLength(1));
-    expect(input.value).toBe("");
+    expect(assigned).toEqual([""]);
   });
 
   it("can be stopped while it is being read, and that is not reported as a failure", async () => {
@@ -423,6 +424,7 @@ describe("the review", () => {
     fireEvent.change(within(row(2)).getByLabelText("Title of part 3"), { target: { value: "" } });
     fireEvent.keyDown(within(row(2)).getByLabelText("Title of part 3"), { key: "Escape" });
     expect(within(row(2)).getByText("Part 3")).toBeTruthy();
+    expect(within(row(2)).getByRole("checkbox", { name: "Include part 3: Part 3" })).toBeTruthy(); // the checkbox is named by what is shown, not by nothing
   });
 
   it("joins a part to the next: one part fewer, the first one's title, and all the paragraphs", async () => {
@@ -548,6 +550,34 @@ describe("preparing again", () => {
     await waitFor(() => expect(screen.queryByText(/switches above have changed/)).toBeNull());
   });
 
+  it("prepares again the same source it was made from: the web page is fetched again, the file is sent again", async () => {
+    const calls = server(() => ({ body: BOOK }));
+    show();
+    fireEvent.click(screen.getByRole("radio", { name: "Web page" }));
+    fireEvent.change(screen.getByLabelText("Address of the web page"), { target: { value: "https://example.org/a" } });
+    press("Fetch");
+    await screen.findByRole("heading", { name: "What will be read" });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Read code and tables too/ }));
+    press("Prepare again");
+    await waitFor(() => expect(calls).toHaveLength(2));
+    expect(calls[1].url).toBe("/api/speech/prepare");
+    expect(jsonBody(calls[1])).toEqual({ source: "url", url: "https://example.org/a", clean: true, read_extras: true });
+    await waitFor(() => expect(screen.queryByText(/switches above have changed/)).toBeNull());
+    cleanup();
+
+    const fileCalls = server(() => ({ body: BOOK }));
+    show();
+    fireEvent.click(screen.getByRole("radio", { name: "File" }));
+    const book = new File(["x"], "book.epub");
+    fireEvent.change(screen.getByLabelText("File"), { target: { files: [book] } });
+    await screen.findByRole("heading", { name: "What will be read" });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Clean up the text/ }));
+    press("Prepare again");
+    await waitFor(() => expect(fileCalls).toHaveLength(2));
+    expect(fileCalls[1].url).toBe("/api/speech/prepare/file?name=book.epub&clean=false&read_extras=false");
+    expect(fileCalls[1].init.body).toBe(book); // the same file again, from the page's own copy
+  });
+
   it("changes nothing by itself when a switch is changed: the review stays as it is until asked", async () => {
     const calls = server(() => ({ body: BOOK }));
     show();
@@ -586,9 +616,11 @@ describe("preparing again", () => {
     fireEvent.change(screen.getByLabelText("Title of the reading"), { target: { value: "Changed title" } });
     press("Prepare text");
     press("Replace the review");
+    expect(screen.queryByRole("group", { name: "Replace the review?" })).toBeNull(); // the question is answered: it does not stay on the screen
     await waitFor(() => expect((screen.getByLabelText("Title of the reading") as HTMLInputElement).value).toBe("Another text"));
     expect(calls).toHaveLength(2);
     expect(parts()).toHaveLength(1);
+    expect(screen.queryByRole("group", { name: "Replace the review?" })).toBeNull();
   });
 
   it("does not ask when nothing in the review was changed", async () => {
