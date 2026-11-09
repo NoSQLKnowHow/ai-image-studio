@@ -24,6 +24,10 @@ class StandIn extends EventTarget {
   set src(value: string) {
     this.srcLog.push(value);
     this.held = value;
+    // loading a file puts an element back at its start, at its default speed and (a play that was under way having been given up) paused: the player must say all
+    // of that again, which is why it does
+    this.playbackRate = 1;
+    this.currentTime = 0;
   }
   get src(): string {
     return this.held ?? "";
@@ -80,7 +84,7 @@ function setup(details: PartDetail[], { making = false, speed = 1, parts = detai
   const list: ReadingPart[] = Array.from({ length: parts }, (_, i) => ({ idx: i, title: `Part ${i + 1}`, chars: 10, pieces: 3, made: 3, seconds: 6, state: "done" as const }));
   const engine = new PlayerEngine({
     id: "r1", audios: [a as unknown as HTMLAudioElement, b as unknown as HTMLAudioElement], api, onChange: (s) => states.push(s), parts: () => list, making: () => flags.making,
-    speed, saveEveryMs: SAVE_EVERY_MS,
+    speed, // (the period of the reports is left to the engine's own default: it is one of the things tried)
   });
   const reading = (position: ReadingInfo["position"] = null): ReadingInfo => ({ ...(makeSpeechRun().reading as ReadingInfo), parts: list, position });
   return { engine, a, b, api, states, flags, answers, list, reading, state: () => engine.snapshot };
@@ -209,8 +213,10 @@ describe("a part that is still being made", () => {
 
   it("goes on into the next piece when one ends, without loading it again, and gets the one after ready", async () => {
     const t = await opened([partial(3)]);
+    t.a.pause.mockClear();
+    t.b.currentTime = 1.5; // (an element that was loaded early and left somewhere: the next piece is to start at its start)
     t.a.tell("ended");
-    expect(t.a.pause).toHaveBeenCalled();
+    expect(t.a.pause).toHaveBeenCalledTimes(1); // the piece that ended is not left in the way
     expect(t.b.play).toHaveBeenCalledTimes(1);
     expect(t.b.currentTime).toBe(0);
     expect(t.b.loads).toEqual(["/p0/1.wav"]); // loaded once, while the first played
@@ -384,8 +390,9 @@ describe("the end of a part", () => {
 describe("play, pause and moving about", () => {
   it("pauses, and plays again", async () => {
     const t = await opened([whole(0)]);
+    t.a.pause.mockClear();
     t.engine.toggle();
-    expect(t.a.pause).toHaveBeenCalled();
+    expect(t.a.pause).toHaveBeenCalledTimes(1);
     expect(t.state().playing).toBe(false);
     t.engine.toggle();
     expect(t.a.play).toHaveBeenCalledTimes(2);
@@ -517,15 +524,16 @@ describe("play, pause and moving about", () => {
     expect(t.a.src).toBe("/w/1.wav");
   });
 
-  it("changes the speed of both elements, and keeps it for what is loaded after", async () => {
+  it("changes the speed of both elements, and keeps it for every file loaded after (loading a file puts an element back at the default speed)", async () => {
     const t = await opened([partial(3)], true, { speed: 1.5 });
-    expect(t.a.playbackRate).toBe(1.5);
-    expect(t.b.playbackRate).toBe(1.5);
+    expect(t.a.playbackRate).toBe(1.5); // a file loaded into the playing element is played at the speed asked for
     t.engine.setSpeed(0.75);
     expect(t.a.playbackRate).toBe(0.75);
     expect(t.b.playbackRate).toBe(0.75);
     expect(t.state().speed).toBe(0.75);
-    t.a.tell("ended");
+    t.engine.seek(2.5); // another piece is loaded into the playing element, and the one after it into the other: both put back at the default
+    expect(t.a.playbackRate).toBe(0.75);
+    t.a.tell("ended"); // on into the piece that was loaded early
     expect(t.b.playbackRate).toBe(0.75);
     expect(t.a.preservesPitch).toBe(true);
   });
@@ -536,13 +544,13 @@ describe("reporting where the person is", () => {
   it("reports every ten seconds while playing, with the part, the paragraph and the time in the part", async () => {
     const t = await opened([whole(0)]);
     t.a.at(2.5);
-    await vi.advanceTimersByTimeAsync(SAVE_EVERY_MS - 1);
+    await vi.advanceTimersByTimeAsync(9_999);
     expect(t.api.savePosition).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(t.api.savePosition).toHaveBeenCalledTimes(1);
     expect(t.api.savePosition).toHaveBeenLastCalledWith("r1", { part: 0, piece: 1, offset_ms: 2500 });
     t.a.at(4.25);
-    await vi.advanceTimersByTimeAsync(SAVE_EVERY_MS);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(t.api.savePosition).toHaveBeenCalledTimes(2);
     expect(t.api.savePosition).toHaveBeenLastCalledWith("r1", { part: 0, piece: 2, offset_ms: 4250 });
   });
@@ -553,13 +561,13 @@ describe("reporting where the person is", () => {
     t.engine.toggle();
     expect(t.api.savePosition).toHaveBeenCalledTimes(1);
     expect(t.api.savePosition).toHaveBeenLastCalledWith("r1", { part: 0, piece: 1, offset_ms: 3100 });
-    await vi.advanceTimersByTimeAsync(SAVE_EVERY_MS * 3);
+    await vi.advanceTimersByTimeAsync(30_000);
     expect(t.api.savePosition).toHaveBeenCalledTimes(1);
   });
 
   it("does not report a place before anything was played or moved: opening a reading must not lose the place it has", async () => {
     const t = await opened([whole(0)], false);
-    await vi.advanceTimersByTimeAsync(SAVE_EVERY_MS * 2);
+    await vi.advanceTimersByTimeAsync(20_000);
     t.engine.dispose();
     expect(t.api.savePosition).not.toHaveBeenCalled();
   });
@@ -582,11 +590,31 @@ describe("reporting where the person is", () => {
 
   it("goes on playing when a report fails: the next one will do", async () => {
     const t = await opened([whole(0)]);
-    t.api.savePosition.mockRejectedValue(new Error("offline"));
-    await vi.advanceTimersByTimeAsync(SAVE_EVERY_MS);
-    await settle();
+    // (a plain function, not a mock: a mock attaches its own handlers to what it returns, so a rejection from one is never left unhandled, whatever the code does)
+    let reports = 0;
+    (t.api as { savePosition: unknown }).savePosition = () => {
+      reports += 1;
+      return Promise.reject(new Error("offline"));
+    };
+    const unhandled: unknown[] = [];
+    const note = (reason: unknown) => void unhandled.push(reason);
+    process.on("unhandledRejection", note);
+    try {
+      await vi.advanceTimersByTimeAsync(10_000); // the report is made, and refused
+      await settle();
+      vi.useRealTimers();
+      await new Promise((resolve) => setTimeout(resolve, 0)); // a rejection nobody handled is only noticed once the current turn of the event loop is over
+    } finally {
+      process.off("unhandledRejection", note);
+    }
+    expect(reports).toBe(1);
+    expect(unhandled).toEqual([]); // a report that failed is dealt with here: it is no one else's to catch
     expect(t.state().playing).toBe(true);
     expect(t.state().problem).toBeNull();
+  });
+
+  it("reports every ten seconds and not more often (the engine's own period)", () => {
+    expect(SAVE_EVERY_MS).toBe(10_000);
   });
 
   it("opening a part to play it counts as playing: the place is kept", async () => {
@@ -670,5 +698,105 @@ describe("closing", () => {
     await settle();
     expect(t.a.src).toBe("");
     expect(t.a.play).not.toHaveBeenCalled();
+  });
+});
+
+
+// ------------------------------------------------------------------ what arrives late, or from the wrong element
+describe("what arrives late or from the element that is not playing", () => {
+  it("is not told of the other element's time passing", async () => {
+    const t = await opened([partial(3)]);
+    const told = t.states.length;
+    t.b.at(1.5); // the one with the next piece ready
+    expect(t.states.length).toBe(told);
+  });
+
+  it("does not take a late 'ended' from the element that played before for another end of a piece", async () => {
+    const t = await opened([partial(3)]);
+    t.a.tell("ended"); // on into piece 1, in the other element
+    expect(t.state().piece).toBe(1);
+    t.a.tell("ended"); // the first one reports its end again, late
+    expect(t.state()).toMatchObject({ piece: 1, time: 2, playing: true });
+    expect(t.b.play).toHaveBeenCalledTimes(1);
+  });
+
+  it("is not stopped by a file that fails to load in the element that is only getting the next piece ready", async () => {
+    const t = await opened([partial(3)]);
+    t.b.tell("error"); // the next piece's file could not be had
+    expect(t.state()).toMatchObject({ playing: true, problem: null });
+  });
+
+  it("does not load the next piece into the other element again when nothing about it changed", async () => {
+    const t = await opened([partial(3)]);
+    t.engine.onPiece({ run_id: "r1", part: 0, idx: 2, frames: 2000 });
+    await settle();
+    t.engine.onPiece({ run_id: "r1", part: 0, idx: 2, frames: 2000 });
+    await settle();
+    expect(t.b.loads).toEqual(["/p0/1.wav"]);
+  });
+
+  it("does not take the refusal of a play that was begun in the element it has since left", async () => {
+    const t = setup([partial(3)]);
+    let refuse: (error: unknown) => void = () => undefined;
+    t.a.play.mockImplementationOnce(() => new Promise<undefined>((_, reject) => (refuse = reject)));
+    t.engine.start(t.reading(), true);
+    await settle();
+    t.a.tell("ended"); // on into the other element
+    refuse(new DOMException("not allowed", "NotAllowedError")); // the first one's play is refused, long after
+    await settle();
+    expect(t.state()).toMatchObject({ playing: true, blocked: false, problem: null });
+  });
+
+  it("goes on into the next part keeping paused when it was paused (K from the last paragraph)", async () => {
+    const t = await opened([whole(0), whole(1)], true);
+    t.engine.toggle(); // paused
+    t.engine.seek(5);
+    t.engine.next();
+    await settle();
+    expect(t.state()).toMatchObject({ part: 1, playing: false });
+    expect(t.a.src).toBe("/w/1.wav");
+  });
+
+  it("stops the sound of the part it leaves at once, before the pieces of the next have arrived", async () => {
+    const t = await opened([whole(0), whole(1)]);
+    let release: (d: PartDetail) => void = () => undefined;
+    t.api.part.mockImplementationOnce(() => new Promise<PartDetail>((resolve) => (release = resolve)));
+    t.a.pause.mockClear();
+    t.engine.openPart(1);
+    expect(t.a.pause).toHaveBeenCalled();
+    expect(t.a.src).toBe(""); // nothing of the old part is left in the element
+    expect(t.state()).toMatchObject({ part: 1, loading: true });
+    release(whole(1));
+    await settle();
+    expect(t.a.src).toBe("/w/1.wav");
+  });
+
+  it("takes only the answer for the part that is open when the answers come in the wrong order", async () => {
+    const t = setup([whole(0), whole(1)]);
+    const held: Array<(d: PartDetail) => void> = [];
+    t.api.part.mockImplementation(() => new Promise<PartDetail>((resolve) => void held.push(resolve)));
+    t.engine.open(0, 0, true); // asks for part 0
+    t.engine.open(1, 0, true); // then, before any answer, for part 1
+    held[0](whole(0)); // the answer for part 0 comes first
+    await settle();
+    expect(t.state()).toMatchObject({ part: 1, detail: null, loading: true });
+    held[1](whole(1));
+    await settle();
+    expect(t.state().detail?.idx).toBe(1);
+    expect(t.a.src).toBe("/w/1.wav");
+  });
+
+  it("takes the newer answer for a part, and not an older one that comes after it", async () => {
+    const t = setup([partial(1)], { making: true });
+    const held: Array<(d: PartDetail) => void> = [];
+    t.api.part.mockImplementation(() => new Promise<PartDetail>((resolve) => void held.push(resolve)));
+    t.engine.start(t.reading(), true); // asks
+    t.engine.onPiece({ run_id: "r1", part: 0, idx: 1, frames: 2000 }); // asks again: a piece was made meanwhile
+    held[1](partial(2)); // the newer answer comes first
+    await settle();
+    expect(t.state().detail?.pieces.filter((p) => p.start_frame !== null)).toHaveLength(2);
+    held[0](partial(1)); // the older one comes after
+    await settle();
+    expect(t.state().detail?.pieces.filter((p) => p.start_frame !== null)).toHaveLength(2);
   });
 });

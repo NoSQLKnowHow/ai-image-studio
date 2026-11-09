@@ -125,7 +125,9 @@ describe("the reading view", () => {
 
   it("dims a paragraph that is not made, says so to a screen reader, and does not play it when pressed", async () => {
     const t = await open([partial(2, 0), whole(1)], {}, runOf({ status: "running" }, { parts: [readingPart(0, "started", 2, 4), readingPart(1, "waiting", 0, 0)] }));
+    expect(paragraph("Paragraph 1 of part 1.").getAttribute("title")).toBe("Hear from here"); // one that is made says it can be pressed
     const pending = paragraph(/^Paragraph 3 of part 1\./);
+    expect(pending.hasAttribute("title")).toBe(false);
     expect(pending.className).toContain("piece-pending");
     expect(pending.textContent).toContain("(not made yet)");
     plays.mockClear();
@@ -197,6 +199,7 @@ describe("the player's controls", () => {
     const t = await open([whole(0)], { autoplay: false });
     const slider = screen.getByRole("slider", { name: "Position in this part" }) as HTMLInputElement;
     expect(slider.max).toBe("6");
+    expect(slider.getAttribute("step")).toBe("any"); // a place is not rounded to a whole second
     expect(slider.getAttribute("aria-valuetext")).toBe("0:00 of 0:06");
     fireEvent.change(slider, { target: { value: "3.5" } });
     expect(t.audios()[0].currentTime).toBe(3.5);
@@ -780,5 +783,163 @@ describe("the reading view in the Speech tab", () => {
     await flush();
     expect(screen.queryByRole("region", { name: "A long book" })).toBeNull();
     expect(screen.getByRole("region", { name: "Another book" })).toBeTruthy();
+  });
+});
+
+
+// ------------------------------------------------------------------ more of what the view does with what it is told
+describe("what the view makes of the reading it is given", () => {
+  const readingMaking = (made: number, status: SpeechRun["status"] = "running") =>
+    runOf({ status }, { parts: [readingPart(0, "started", made, made * 2), readingPart(1, "waiting", 0, 0)], seconds_made: made * 2 });
+
+  it("takes a reading that is waiting its turn between two parts for one that is still being made: it waits for the next paragraph", async () => {
+    const t = await open([partial(1, 0)], {}, readingMaking(1, "queued"));
+    await t.tell(t.audios()[0], "ended");
+    expect(screen.getByText("Waiting for the next paragraph to be made…")).toBeTruthy();
+  });
+
+  it("asks the reading as it is now and not as it was when opened: a reading canceled meanwhile is not waited for", async () => {
+    const t = await open([partial(1, 0)], {}, readingMaking(1));
+    t.rerender(readingMaking(1, "canceled"));
+    await t.tell(t.audios()[0], "ended");
+    expect(screen.queryByText("Waiting for the next paragraph to be made…")).toBeNull();
+    expect(button("Play")).toBeTruthy();
+  });
+
+  it("knows the reading's parts: at the end of one it goes on into the next", async () => {
+    const t = await open([whole(0), whole(1)]);
+    await t.tell(t.audios()[0], "ended");
+    await flush();
+    expect(t.api.part).toHaveBeenLastCalledWith("r1", 1);
+    expect(paragraph("Paragraph 1 of part 2.")).toBeTruthy();
+  });
+
+  it("does not look again when the reading says less is made than the player knows (the reading's news is older than the player's)", async () => {
+    const t = await open([partial(3, 0)], {}, readingMaking(1));
+    expect(t.api.part).toHaveBeenCalledTimes(1); // the first asking, and no more
+    t.rerender(readingMaking(1));
+    await flush();
+    expect(t.api.part).toHaveBeenCalledTimes(1);
+  });
+
+  it("has Play off while the part is still being asked for, and on when it has come", async () => {
+    const api = fakeApi([whole(0)]);
+    let release: (d: PartDetail) => void = () => undefined;
+    api.part.mockImplementationOnce(() => new Promise<PartDetail>((resolve) => (release = resolve)));
+    render(<ReadingView run={runOf()} pieces={createEmitter()} store={memoryStore()} onClose={vi.fn()} api={api} mediaSession={null} autoplay={false} />);
+    expect((screen.getByRole("button", { name: "Play" }) as HTMLButtonElement).disabled).toBe(true);
+    release(whole(0));
+    await flush();
+    expect((screen.getByRole("button", { name: "Play" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("says nothing is made yet only when it is not waiting for the first paragraph", async () => {
+    await open([partial(0, 0)], {}, readingMaking(0));
+    expect(screen.getByText("Waiting for the next paragraph to be made…")).toBeTruthy();
+    expect(screen.queryByText("Nothing of this part is made yet.")).toBeNull();
+  });
+
+  it("has the download of each finished part, for that part", async () => {
+    await open([whole(0)], {}, runOf());
+    expect(screen.getByRole("link", { name: "Download part 1" }).getAttribute("href")).toBe("/api/speech/r1/parts/0.wav?download=1");
+    expect(screen.getByRole("link", { name: "Download part 2" }).getAttribute("href")).toBe("/api/speech/r1/parts/1.wav?download=1");
+  });
+
+  it("takes the arrows as ten seconds, and the buttons as fifteen, in a part long enough to tell them apart", async () => {
+    const long = makePartDetail({ ...whole(0), total_frames: 60_000 });
+    const t = await open([long], { autoplay: false });
+    const text = screen.getByRole("region", { name: "Text of this part" });
+    fireEvent.keyDown(text, { key: "ArrowRight" });
+    expect(t.audios()[0].currentTime).toBe(10);
+    fireEvent.keyDown(text, { key: "ArrowRight" });
+    expect(t.audios()[0].currentTime).toBe(20);
+    fireEvent.keyDown(text, { key: "ArrowLeft" });
+    expect(t.audios()[0].currentTime).toBe(10);
+    fireEvent.click(button("Forward 15 seconds"));
+    expect(t.audios()[0].currentTime).toBe(25);
+    fireEvent.click(button("Back 15 seconds"));
+    expect(t.audios()[0].currentTime).toBe(10);
+  });
+
+  it("brings itself into sight and takes focus when it is opened, so that its keys work and a screen reader says where it is", async () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", { value: scrollIntoView, configurable: true, writable: true });
+    try {
+      await open([whole(0)], { autoplay: false });
+      expect(scrollIntoView).toHaveBeenCalledTimes(1);
+      expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ block: "nearest" }));
+      expect(document.activeElement).toBe(screen.getByRole("region", { name: "A long book" }));
+    } finally {
+      delete (HTMLElement.prototype as unknown as Record<string, unknown>).scrollIntoView;
+    }
+  });
+});
+
+describe("the media controls, in the details", () => {
+  type Handler = (details: MediaSessionActionDetails) => void;
+  const makeSession = () => {
+    const handlers = new Map<string, Handler | null>();
+    return {
+      handlers, metadata: null as MediaMetadata | null, playbackState: "none" as MediaSessionPlaybackState,
+      setActionHandler: vi.fn((action: string, handler: Handler | null) => void handlers.set(action, handler)), setPositionState: vi.fn(),
+    };
+  };
+  beforeEach(() => {
+    vi.stubGlobal("MediaMetadata", class { constructor(public init: unknown) {} });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("moves forward by the amount the browser asks for", async () => {
+    const s = makeSession();
+    const t = await open([makePartDetail({ ...whole(0), total_frames: 60_000 })], { autoplay: false, mediaSession: s as unknown as ReadingViewProps["mediaSession"] });
+    act(() => void s.handlers.get("seekforward")?.({ action: "seekforward", seekOffset: 4 }));
+    expect(t.audios()[0].currentTime).toBe(4);
+    act(() => void s.handlers.get("seekforward")?.({ action: "seekforward" })); // and by fifteen when it does not say
+    expect(t.audios()[0].currentTime).toBe(19);
+  });
+
+  it("keeps the place it gives inside the duration it gives, and tells the speed", async () => {
+    const s = makeSession();
+    const store = memoryStore({ [PLAYER_PREFS_KEY]: JSON.stringify({ speed: 1.5, textSize: "medium", spaced: false, follow: true }) });
+    const t = await open([whole(0)], { store, mediaSession: s as unknown as ReadingViewProps["mediaSession"] });
+    await t.at(65); // (the stand-in element does not stop at the end of the file, as a browser's would)
+    expect(s.setPositionState).toHaveBeenLastCalledWith({ duration: 6, playbackRate: 1.5, position: 6 });
+  });
+});
+
+describe("editing a paragraph, in the details", () => {
+  const running = () => runOf({ status: "running" }, { position: { part: 1, piece: 0, offset_ms: 0 }, parts: [readingPart(0, "done", 3, 6), readingPart(1, "started", 2, 4)] });
+  const edit = () => fireEvent.click(screen.getByRole("button", { name: "Edit the text of paragraph 3" }));
+
+  it("is saved to the part that is open", async () => {
+    const t = await open([whole(0), partial(2, 1)], { autoplay: false }, running());
+    edit();
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "New words." } });
+    fireEvent.click(button("Save"));
+    await flush();
+    expect(t.api.editPiece).toHaveBeenCalledWith("r1", 1, 2, "New words.");
+  });
+
+  it("cannot be saved twice, or put away, while it is being saved", async () => {
+    const t = await open([whole(0), partial(2, 1)], { autoplay: false }, running());
+    t.api.editPiece.mockImplementationOnce(() => new Promise(() => undefined));
+    edit();
+    fireEvent.click(button("Save"));
+    await flush();
+    expect((button("Saving…") as HTMLButtonElement).disabled).toBe(true);
+    expect((button("Cancel") as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).disabled).toBe(true);
+  });
+
+  it("forgets what went wrong when it is put away, so that the next try starts clean", async () => {
+    const t = await open([whole(0), partial(2, 1)], { autoplay: false }, running());
+    t.api.editPiece.mockRejectedValueOnce(new ApiError("That paragraph is already made.", 409, "piece_made"));
+    edit();
+    fireEvent.click(button("Save"));
+    await flush();
+    expect(screen.getByRole("alert")).toBeTruthy();
+    fireEvent.click(button("Cancel"));
+    edit();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });

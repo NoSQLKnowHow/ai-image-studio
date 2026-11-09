@@ -101,7 +101,7 @@ function PartsList({ player, run, reading }: { player: Player; run: SpeechRun; r
 
 // ------------------------------------------------------------------ the text, paragraph by paragraph
 /** Where to scroll a box so that `element` is in the middle of it. The box scrolls and not the page, so that following along never takes the controls off the screen. */
-function centre(container: HTMLElement, element: HTMLElement): void {
+export function centre(container: Pick<HTMLElement, "clientHeight" | "scrollTo" | "scrollTop">, element: Pick<HTMLElement, "offsetTop" | "clientHeight">): void {
   const top = Math.max(0, element.offsetTop - container.clientHeight / 2 + element.clientHeight / 2);
   if (typeof container.scrollTo === "function") container.scrollTo({ top, behavior: "smooth" });
   else container.scrollTop = top;
@@ -163,7 +163,7 @@ function ReadAlong({ player, run, editApi }: { player: Player; run: SpeechRun; e
         return (
           <div className="piece-row" key={piece.idx}>
             {editing === piece.idx ? (
-              <PieceEditor piece={piece} saving={saving} problem={problem} onSave={(text) => void save(piece, text)} onCancel={() => { setEditing(null); setProblem(null); }} />
+              <PieceEditor piece={piece} saving={saving} problem={problem} onSave={(text) => void save(piece, text)} onCancel={() => setEditing(null)} />
             ) : (
               <p
                 className={`piece${heading ? " piece-heading" : ""}${current ? " piece-current" : ""}${made ? "" : " piece-pending"}`} data-piece={piece.idx}

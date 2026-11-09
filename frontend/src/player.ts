@@ -335,17 +335,13 @@ export class PlayerEngine {
   private endOfPart(): void {
     const next = this.state.part + 1;
     if (next < this.env.parts().length) this.open(next, 0, true);
-    else {
-      this.setPlaying(false);
-      this.save();
-    }
+    else this.setPlaying(false); // (which reports where it ended)
   }
 
   // ------------------------------------------------------------------ what the person does
   toggle(): void {
     const detail = this.state.detail;
     if (!detail) return;
-    this.touched = true;
     if (this.state.playing) {
       this.element.pause();
       this.set({ waiting: false });
