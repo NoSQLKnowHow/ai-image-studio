@@ -147,9 +147,11 @@ describe("changing a part", () => {
     expect(out[1]).toBe(parts[1]);
   });
 
-  it("keeps a paragraph marked as edited once it has been, even if the words are put back", () => {
+  it("keeps a paragraph marked as edited once it has been, whatever is done to it after: other words, the same words again, or the first words put back", () => {
     const once = editParagraph(parts, 0, 0, "other");
-    expect(editParagraph(once, 0, 0, "a1")[0].paragraphs[0].edited).toBe(true);
+    expect(editParagraph(once, 0, 0, "other")[0].paragraphs[0].edited).toBe(true); // the same words as it has now: nothing new, and nothing forgotten
+    expect(editParagraph(once, 0, 0, "a1")[0].paragraphs[0].edited).toBe(true); // the first words put back: the page cannot know they are the first
+    expect(editParagraph(once, 0, 0, "yet other")[0].paragraphs[0].edited).toBe(true);
   });
 
   it("does not mark a paragraph edited when its words are the same", () => {
@@ -332,6 +334,9 @@ describe("whether a reading can be asked for", () => {
     expect(readingProblem(parts, engine({ state: "checking" }), ANNA)).toMatch(/still being checked/);
     expect(readingProblem(parts, engine({ state: "not_installed", reason: "Its libraries are not installed." }), ANNA)).toBe("Its libraries are not installed.");
     expect(readingProblem(parts, engine({ state: "error", reason: null }), ANNA)).toBe("Fake speech cannot run here.");
+    expect(readingProblem(parts, engine({ state: "not_installed", reason: "Not installed." }), null)).toBe("Not installed."); // the engine's trouble comes before the voice
+    expect(readingProblem(parts, null, null)).toMatch(/no speech engine/); // and no engine before everything
+    expect(readingProblem(setInclude(parts, 0, false), FULL, null)).toBe("Choose a voice."); // a voice is asked for before the text is judged
     expect(readingProblem(parts, FULL, null)).toBe("Choose a voice.");
     expect(readingProblem(setInclude(parts, 0, false), FULL, ANNA)).toMatch(/Include at least one part/);
     expect(readingProblem([], FULL, ANNA)).toBe("There is no text to read yet.");
@@ -341,6 +346,13 @@ describe("whether a reading can be asked for", () => {
 describe("the request for a reading", () => {
   const parts = draft(["  One ", ["first  paragraph", "   ", "second"]], ["Two", ["hidden"], false], ["Three", ["only skipped"]]);
   parts[2].paragraphs[0].skipped = "code";
+
+  it("leaves out a paragraph that is skipped (code, a table) from a part that has other words to say", () => {
+    const mixed = draft(["Mixed", ["spoken words", "code that is not read", "more spoken words"]]);
+    mixed[0].paragraphs[1].skipped = "code";
+    const body = buildReadingBody("A book", { kind: "text" }, mixed, FULL, ANNA, "", "");
+    expect(body.parts[0].paragraphs.map((p) => p.text)).toEqual(["spoken words", "more spoken words"]);
+  });
 
   it("has the parts that will be read, their spoken paragraphs, with spaces collapsed, and nothing else", () => {
     const body = buildReadingBody("A book", { kind: "text" }, parts, FULL, ANNA, "", "Auto");
@@ -448,6 +460,9 @@ describe("listening", () => {
   it("opens at the part the person stopped in, if it is there, else the first", () => {
     expect(startingPart(at(1, 5000))).toBe(1);
     expect(startingPart(at(9, 5000))).toBe(0); // a part that is not there (the reading cannot lose parts, but a stale number must not break the page)
+    const count = (at(0, 0).parts as unknown[]).length;
+    expect(startingPart(at(count - 1, 5000))).toBe(count - 1); // the last part is there
+    expect(startingPart(at(count, 5000))).toBe(0); // one past the last is not
     expect(startingPart({ ...at(0, 0), position: null })).toBe(0);
   });
 });
@@ -557,6 +572,7 @@ describe("which piece is being spoken", () => {
 
   it("says where the person is: the part, the piece that time is in, and the time in the part in whole milliseconds", () => {
     expect(positionFor(3, pieces, 6.2504, rate)).toEqual({ part: 3, piece: 2, offset_ms: 6250 });
+    expect(positionFor(3, pieces, 6.2506, rate).offset_ms).toBe(6251); // to the nearest millisecond, not cut off
     expect(positionFor(0, [], 3, rate)).toEqual({ part: 0, piece: 0, offset_ms: 3000 });
     expect(positionFor(0, pieces, -2, rate).offset_ms).toBe(0);
   });
