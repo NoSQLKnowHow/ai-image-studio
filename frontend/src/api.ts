@@ -42,7 +42,13 @@ export function toApiError(status: number, body: unknown): ApiError {
     }));
     return new ApiError(fieldErrors.map((f) => f.message).join(" ") || "The request was rejected.", status, code, fieldErrors);
   }
-  if (typeof detail === "string") return new ApiError(detail, status, code, [], typeof hint === "string" ? hint : null);
+  if (typeof detail === "string") {
+    // A refusal of the Speech routes names the box it is about in a top-level `field` (DESIGN.md §38.9, e.g. "name", "consent", "recording"), so the page can put
+    // the words beside that box. It becomes the one field error, with the same words as the message.
+    const field = (body as { field?: unknown } | null)?.field;
+    const fieldErrors = typeof field === "string" && field ? [{ field, message: detail }] : [];
+    return new ApiError(detail, status, code, fieldErrors, typeof hint === "string" ? hint : null);
+  }
   if (status === 0) return new ApiError("Can't reach the studio server.", status, code);
   return new ApiError(`The server answered ${status}.`, status, code);
 }

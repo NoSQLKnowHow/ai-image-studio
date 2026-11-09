@@ -1,3 +1,4 @@
+import { canceledLine } from "./speech";
 import type { ImageRun, Run } from "./types";
 
 export function timeAgo(iso: string, now: number = Date.now()): string {
@@ -37,6 +38,8 @@ export function expiryText(iso: string | null, now: number = Date.now()): string
 
 /** The note on a canceled card: what was kept. */
 export function canceledText(run: Run): string {
+  // A reading keeps every piece that was made and says how many parts are done (DESIGN.md §38.6, criterion 279); Continue makes the rest.
+  if (run.mode === "speech") return run.reading ? canceledLine(run.reading) : "Canceled.";
   const music = run.mode === "music";
   const vector = run.mode === "vector"; // a Vector run's results are its versions (DESIGN.md §31.12.5)
   const done = music ? run.tracks.length : vector ? run.vectors.length : run.images.length;

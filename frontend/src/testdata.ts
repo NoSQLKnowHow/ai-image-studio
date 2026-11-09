@@ -4,10 +4,18 @@
 // page's test data cannot drift away from the server's. This file is left out of the production build (tsconfig.build.json), which is why it may read a
 // file outside `frontend/`, as `history.test.ts` does with `filter_cases.json`.
 import contract from "../../backend/tests/vector_contract.json";
-import type { BinnedImage, BinnedTrack, BinnedVectorItem, Capabilities, ImageInfo, ImageRun, MusicRun, Status, TrackInfo, VectorItem, VectorLimits, VectorRun } from "./types";
+import speechContract from "../../backend/tests/speech_contract.json";
+import type { PartDetail, Prepared, SpeechCaps, SpeechLimits } from "./speechTypes";
+import type {
+  BinnedImage, BinnedTrack, BinnedVectorItem, Capabilities, ImageInfo, ImageRun, MusicRun, SpeechRun, Status, TrackInfo, VectorItem, VectorLimits, VectorRun,
+} from "./types";
 
 /** The contract file as it is, for the tests that compare the page's types and requests with it. Cloned, so a test that changes it changes nothing else. */
 export const VECTOR_CONTRACT = structuredClone(contract);
+
+/** The Speech tab's contract file (backend/tests/speech_contract.json, DESIGN.md §38.9): what the server sent in a real run of its fake engines, which the server's
+ *  own tests check it still sends. Cloned for the same reason. */
+export const SPEECH_CONTRACT = structuredClone(speechContract);
 
 /** The capabilities as GET /api/capabilities answers them. Its `defaults` are the server's: 16:9, 2752×1536 since 1.16 (DESIGN.md §34).
  *  The page has no default of its own, so a test that needs a particular shape names it (`aspect: "1:1"`) and does not rely on this one. */
@@ -48,10 +56,12 @@ export const CAPS: Capabilities = {
       questions_max: 3, chips: { min: 3, max: 5 }, chip_chars: 60, reply_chars: 2000, title_chars: 120, note_chars: 300, tags_max: 12, tag_chars: 30,
       preferences_max: 50, preference_chars: 300,
     },
+    speech: structuredClone(speechContract.limits_speech) as unknown as SpeechLimits, // the contract's own limits
   },
   music: { available: true, state: "done", reason: null, hint: null, model: "fake-music" },
   vector: structuredClone(contract.capabilities.vector), // available: the libraries import and the image pipeline can generate
   builder: { available: true, configured: true, reachable: true, model: "fake-builder", vision: true },
+  speech: structuredClone(speechContract.capabilities_speech) as unknown as SpeechCaps, // the two fake engines, both ready
   upscaler: { available: true, model: "fake", reason: null, hint: null, max_enlargement: 4 },
   queue_cap: 10,
   device: { name: "fake (no GPU used)" },
@@ -201,3 +211,24 @@ export const STATUS: Status = {
   queue: { running: null, queued: 0, cap: 10, enlarge_waiting: [] },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },
 };
+
+// ------------------------------------------------------------------ Speech (DESIGN.md §38): every one of these is the contract's, made into the page's types
+let speechCounter = 0;
+
+/** A reading as the server sends it: the contract's finished one (two parts, three pieces, the fake engine's voice Anna, a place to continue from). */
+export function makeSpeechRun(overrides: Partial<SpeechRun> = {}): SpeechRun {
+  speechCounter += 1;
+  const run = structuredClone(speechContract.reading_run) as unknown as SpeechRun;
+  return {
+    ...run,
+    id: overrides.id ?? `speech${String(speechCounter).padStart(4, "0")}`,
+    created_at: `2026-11-02T12:00:${String(speechCounter % 60).padStart(2, "0")}.000Z`,
+    ...overrides,
+  };
+}
+
+/** The review of a pasted text, as the server sends it. */
+export const makePrepared = (overrides: Partial<Prepared> = {}): Prepared => ({ ...(structuredClone(speechContract.prepared) as unknown as Prepared), ...overrides });
+
+/** One part of a finished reading with its pieces, as the server sends it. */
+export const makePartDetail = (overrides: Partial<PartDetail> = {}): PartDetail => ({ ...(structuredClone(speechContract.part_detail) as unknown as PartDetail), ...overrides });

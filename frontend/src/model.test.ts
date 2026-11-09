@@ -135,3 +135,71 @@ describe("what is announced when loading one model replaces the other", () => {
     expect(modelAnnouncement(ask("unload", "ready", "music"), worker("unloaded", { model: "music" }))).toEqual({ text: "Music model unloaded.", settled: true });
   });
 });
+
+// ------------------------------------------------------------------ the Speech tab's engine (DESIGN.md §38.2, criterion 292)
+// "The speech model" is one engine in one variant, so the button acts on the engine the tab shows, and a different engine that is loaded is swapped for it.
+describe("the same button on the Speech tab acts on the engine shown", () => {
+  const target = { available: true, engine: "kokoro" };
+  const loaded = (state: WorkerState, engine: string | null, extra: Partial<WorkerStatus> = {}) => worker(state, { model: "speech", engine, variant: "default", ...extra });
+
+  it("Load, naming the engine, when nothing is loaded or the last load had a problem", () => {
+    expect(modelAction(worker("unloaded"), "speech", true, target)).toEqual({ kind: "load", model: "speech", engine: "kokoro" });
+    expect(modelAction(loaded("error", "kokoro"), "speech", true, target)).toEqual({ kind: "load", model: "speech", engine: "kokoro" });
+  });
+
+  it("Unload when that engine is loaded and idle", () => {
+    expect(modelAction(loaded("ready", "kokoro"), "speech", true, target)).toEqual({ kind: "unload", model: "speech", engine: "kokoro" });
+  });
+
+  it("Load, to swap, when another engine is loaded and idle, or another model", () => {
+    expect(modelAction(loaded("ready", "piper"), "speech", true, target)).toEqual({ kind: "load", model: "speech", engine: "kokoro" });
+    expect(modelAction(worker("ready"), "speech", true, target)).toEqual({ kind: "load", model: "speech", engine: "kokoro" }); // the image model is loaded
+  });
+
+  it("neither while a model loads or a reading is made, nor when no engine can run or none is shown", () => {
+    expect(modelAction(loaded("loading", "kokoro"), "speech", true, target)).toBeNull();
+    expect(modelAction(loaded("busy", "kokoro"), "speech", true, target)).toBeNull();
+    expect(modelAction(worker("unloaded"), "speech", true, { available: false, engine: "kokoro" })).toBeNull();
+    expect(modelAction(worker("unloaded"), "speech", true, { available: true, engine: null })).toBeNull();
+    expect(modelAction(worker("unloaded"), "speech")).toBeNull(); // the page has not said what is shown
+  });
+
+  it("no Load when the idle timeout is 0, but Unload is still there", () => {
+    expect(modelAction(loaded("unloaded", null, { idle_timeout_min: 0 }), "speech", true, target)).toBeNull();
+    expect(modelAction(loaded("ready", "kokoro", { idle_timeout_min: 0 }), "speech", true, target)).toEqual({ kind: "unload", model: "speech", engine: "kokoro" });
+  });
+
+  it("the engine is not a thing the other tabs' buttons have", () => {
+    expect(modelAction(worker("unloaded"), "image")).toEqual({ kind: "load", model: "image" });
+    expect(modelAction(worker("unloaded"), "music")).toEqual({ kind: "load", model: "music" });
+  });
+
+  it("says Load speech model, and what it does, and what is unloaded first", () => {
+    const action = { kind: "load" as const, model: "speech" as const, engine: "kokoro" };
+    expect(modelActionLabel(action)).toBe("Load speech model");
+    expect(modelActionTitle(action, worker("unloaded"))).toBe("Load the speech engine shown now, so it is ready when you press Make reading.");
+    expect(modelActionTitle(action, loaded("ready", "piper"))).toMatch(/The speech model is unloaded first\.$/);
+    expect(modelActionTitle(action, worker("ready"))).toMatch(/The image model is unloaded first\.$/);
+    expect(modelActionTitle({ kind: "unload", model: "speech", engine: "kokoro" }, worker("ready"))).toMatch(/^Unload the model now/);
+  });
+
+  it("announces the engine that was asked for, and does not take another engine's 'ready' for it", () => {
+    const asked = { kind: "load" as const, model: "speech" as const, engine: "kokoro", from: "ready" as WorkerState, fromModel: "speech" as ModelName, fromEngine: "piper" };
+    expect(modelAnnouncement(asked, loaded("ready", "piper"))).toBeNull(); // still the old one: no answer yet
+    expect(modelAnnouncement(asked, loaded("loading", "kokoro"))).toEqual({ text: "Loading the speech model…", settled: false });
+    expect(modelAnnouncement(asked, loaded("ready", "kokoro"))).toEqual({ text: "Speech model ready.", settled: true });
+    expect(modelAnnouncement(asked, loaded("error", "kokoro", { detail: "Not enough memory." }))).toEqual({ text: "Speech model problem. Not enough memory.", settled: true });
+  });
+
+  it("loading one engine over another that is ready is not 'ready' again until the engine is the new one", () => {
+    const asked = { kind: "load" as const, model: "speech" as const, engine: "kokoro", from: "ready" as WorkerState, fromModel: "speech" as ModelName, fromEngine: "piper" };
+    expect(modelAnnouncement(asked, loaded("busy", "piper"))).toBeNull();
+    expect(modelAnnouncement(asked, loaded("ready", "kokoro"))?.settled).toBe(true);
+  });
+
+  it("announces an unload of the speech model", () => {
+    const asked = { kind: "unload" as const, model: "speech" as const, engine: "kokoro", from: "ready" as WorkerState, fromModel: "speech" as ModelName, fromEngine: "kokoro" };
+    expect(modelAnnouncement(asked, loaded("ready", "kokoro"))).toBeNull();
+    expect(modelAnnouncement(asked, worker("unloaded"))).toEqual({ text: "Speech model unloaded.", settled: true });
+  });
+});

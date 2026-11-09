@@ -1,10 +1,16 @@
 import { useEffect, useRef } from "react";
+import type { ReadingPieceEvent, SpeechJob } from "./speechTypes";
 import type { Action } from "./store";
 import type { Hello, Progress, Run, WorkerStatus } from "./types";
 
 interface Handlers {
   onCapabilitiesChanged: () => void;
   onBuilderChanged?: () => void; // a prompt, chat or preference changed on another page (DESIGN.md §37.4); the event carries only an id
+  // A short job behind a voice sample or a voice design moved on (DESIGN.md §38.4). It is not a run and no list has it, so it does not go through the store: the
+  // open Speech tab follows the one it is waiting for.
+  onSpeechJob?: (job: SpeechJob) => void;
+  // A piece of a reading was made (DESIGN.md §38.7): the reading view that is playing that part takes the piece in at once, ahead of the reading's own update.
+  onReadingPiece?: (piece: ReadingPieceEvent) => void;
 }
 
 /** Live updates over server-sent events, reconnecting after any interruption. Every connection
@@ -59,6 +65,8 @@ export function useEventStream(dispatch: (action: Action) => void, handlers: Han
       source.addEventListener("worker.state", (e) => dispatch({ type: "worker", worker: parse(e) as WorkerStatus }));
       source.addEventListener("capabilities.updated", () => handlersRef.current.onCapabilitiesChanged());
       source.addEventListener("builder.changed", () => handlersRef.current.onBuilderChanged?.());
+      source.addEventListener("speech.job", (e) => handlersRef.current.onSpeechJob?.(parse(e) as SpeechJob));
+      source.addEventListener("reading.piece", (e) => handlersRef.current.onReadingPiece?.(parse(e) as ReadingPieceEvent));
       source.addEventListener("shutdown", () => dispatch({ type: "serverStopping" }));
       source.addEventListener("overflow", () => {
         // We fell behind; a fresh stream starts with a fresh snapshot, so nothing is missed.
