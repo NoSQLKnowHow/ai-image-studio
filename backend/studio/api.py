@@ -358,7 +358,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         kept: Optional[bool] = Query(None, description="true: only kept runs; false: only runs that are not kept; absent: either"),
         deleted: Optional[bool] = Query(None, description="true: only the bin; false or absent: the history, without the bin"),
         project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a project's id: only its runs; 'none': only runs in no project; absent: any"),
-        kind: Optional[Literal["image", "music", "vector"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
+        kind: Optional[Literal["image", "music", "vector", "speech"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
         prompt: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a saved prompt's id: only the runs made from it (DESIGN.md §37.4)"),
     ) -> Any:
         try:

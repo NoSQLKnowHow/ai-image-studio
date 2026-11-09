@@ -195,11 +195,12 @@ def run_payload(
     vectors: Optional[list[sqlite3.Row]] = None,
     binned_vectors: Optional[list[sqlite3.Row]] = None,
     prompt_ref: Optional[dict[str, Any]] = None,
+    reading: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
         error = {"message": row["error_message"], "hint": row["error_hint"]}
-    return {
+    payload = {
         "id": row["id"],
         "status": row["status"],
         "mode": row["mode"],
@@ -233,3 +234,9 @@ def run_payload(
         "vectors": [vector_payload(vec) for vec in vectors or []],
         "binned_vectors": [] if row["deleted_at"] else [binned_vector_payload(vec, bin_days) for vec in binned_vectors or []],
     }
+    if row["mode"] == "speech":
+        # Two keys only a Speech run has (DESIGN.md §38.9). They are not on the other tabs' runs, whose payloads are the contracts of 1.17 to 1.19 byte for
+        # byte: a page for one of those tabs never meets them, and the Speech page reads them only where `mode` says speech.
+        payload["hidden"] = bool(row["hidden"])  # a short job behind a voice sample or a voice being designed (§38.4): queued like a run, not history
+        payload["reading"] = reading  # the parts and how far each has got, and where the listener stopped; null for a hidden job
+    return payload

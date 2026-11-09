@@ -109,7 +109,7 @@ unpack() { rm -rf "$2"; mkdir -p "$2"; tar -xf "$1" -C "$2"; }   # unpack TAR in
 # what everything looked like, so a test can prove that a restore gave back identical bytes.
 make_pristine() {
   rm -rf "$REPO" "$DEST" "$HFDIR"
-  mkdir -p "$REPO/scripts" "$REPO/backend/studio" "$REPO/data/images/run1" "$REPO/data/thumbs/run1" "$REPO/data/builder/chat1" "$DEST"
+  mkdir -p "$REPO/scripts" "$REPO/backend/studio" "$REPO/data/images/run1" "$REPO/data/thumbs/run1" "$REPO/data/builder/chat1" "$REPO/data/speech/readings/run1/0000" "$REPO/data/speech/voices/v1" "$DEST"
   cp "$SRC"/scripts/backup.sh "$SRC"/scripts/restore.sh "$SRC"/scripts/_backup_common.sh "$REPO/scripts/"
   cp "$SRC/compose.yaml" "$REPO/"
   echo '__version__ = "0.0.0-test"' > "$REPO/backend/studio/__init__.py"
@@ -117,6 +117,8 @@ make_pristine() {
   head -c 300000 /dev/urandom > "$REPO/data/images/run1/0.png"
   head -c 5000 /dev/urandom > "$REPO/data/thumbs/run1/0.webp"
   head -c 40000 /dev/urandom > "$REPO/data/builder/chat1/a1.webp"   # a picture attached to a Prompt builder chat (DESIGN.md §37.3 rule 13): part of ./data, so part of every backup
+  head -c 90000 /dev/urandom > "$REPO/data/speech/readings/run1/0000/00000.wav"   # a piece of a reading (DESIGN.md §38.8): readings never expire and a book is the largest thing in ./data, so it must be in every backup
+  head -c 30000 /dev/urandom > "$REPO/data/speech/voices/v1/reference.wav"        # the recording a saved voice is made from: lose it and the voice is gone
   python3 - "$REPO/data/studio.sqlite" <<'PY'
 import sqlite3, sys
 c = sqlite3.connect(sys.argv[1]); c.execute("PRAGMA journal_mode=WAL")
@@ -252,6 +254,8 @@ equals "a backup with models is format 2" "$(member MANIFEST.txt | grep '^format
 rm -rf "$T/xd"; mkdir -p "$T/xd"; member data.tar.gz | tar -xz -C "$T/xd"
 equals "archived data is identical to the live data" "$(tree_hash "$T/xd/data")" "$PRISTINE_DATA"
 check "a picture attached to a Prompt builder chat (data/builder) is in the backup" cmp -s "$T/xd/data/builder/chat1/a1.webp" "$REPO/data/builder/chat1/a1.webp"
+check "a piece of a reading (data/speech/readings) is in the backup" cmp -s "$T/xd/data/speech/readings/run1/0000/00000.wav" "$REPO/data/speech/readings/run1/0000/00000.wav"
+check "a saved voice's recording (data/speech/voices) is in the backup" cmp -s "$T/xd/data/speech/voices/v1/reference.wav" "$REPO/data/speech/voices/v1/reference.wav"
 equals "the .env copy keeps mode 600 inside the tar" "$(tar -tvf "$B" env.backup | cut -c1-10)" "-rw-------"
 a=$(line_of "compose stop"); b=$(line_of "compose start"); c=$(line_of "docker save")
 check "order: stop, then start, then save the image" test "$a" -lt "$b" -a "$b" -lt "$c"
@@ -603,6 +607,8 @@ out=$(rs "$NASB" 2>&1); rc=$?
 equals "exits 0" "$rc" 0
 equals "data identical to the original" "$(tree_hash "$REPO/data")" "$PRISTINE_DATA"
 check "and a chat's picture (data/builder) came back with it" test -s "$REPO/data/builder/chat1/a1.webp"
+check "and a reading's piece (data/speech/readings) came back with it" test -s "$REPO/data/speech/readings/run1/0000/00000.wav"
+check "and a saved voice's recording (data/speech/voices) came back with it" test -s "$REPO/data/speech/voices/v1/reference.wav"
 equals "SQLite database passes its integrity check" "$(python3 -c "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('PRAGMA integrity_check').fetchone()[0], c.execute('SELECT count(*) FROM runs').fetchone()[0])" "$REPO/data/studio.sqlite")" "ok 50"
 equals ".env identical" "$(sha256sum "$REPO/.env" | cut -d' ' -f1)" "$PRISTINE_ENV"
 equals ".env is private (600)" "$(stat -c %a "$REPO/.env")" 600

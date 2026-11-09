@@ -32,6 +32,7 @@ from .events import EventBus
 from .projects import normalize_name
 from .runspec import ResolvedRun, RunRequestError
 from .speech import registry as speech_registry
+from .speech.service import ReadingRefused, ReadingSpec, SpeechService
 from .pipelines.base import PipelineError
 from .serialize import format_ts, parse_ts, purge_time, run_payload, utcnow
 from .storage import Storage, StorageError
@@ -147,6 +148,7 @@ class JobManager:
         self._gpu_gate = asyncio.Lock()
         self._enlarge_waiting: list[str] = []  # image ids whose enlargement is waiting for its turn, oldest first
         self.upscaler = make_upscaler(settings)
+        self.speech = SpeechService(settings, db, storage)  # what a reading means (DESIGN.md §38.6); this class owns the queue and the worker it runs on
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
@@ -342,10 +344,12 @@ class JobManager:
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *binned_images[run_id], *inputs[run_id])])
         prompt_refs = self.db.prompt_refs_for_runs(rows)  # the saved prompt each run was made from, if any (§37.3 rule 3)
+        readings = self.speech.readings(rows)  # a Speech run's parts, and how far each has got (§38.9)
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
                         r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r),
-                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]], binned_vectors[r["id"]], prompt_refs.get(r["id"]))
+                        binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]], binned_vectors[r["id"]], prompt_refs.get(r["id"]),
+                        readings.get(r["id"]))
             for r in rows
         ]
 
@@ -457,6 +461,40 @@ class JobManager:
             self._publish_projects()  # a project now holds one more
         self._publish_queue()
         self._wakeup.set()
+        return payload
+
+    async def submit_reading(self, spec: ReadingSpec) -> dict[str, Any]:
+        """Queue a reading (DESIGN.md §38.6 items 2 and 3): the request is checked and cut into pieces, and the reading, its parts and its pieces are stored
+        in one transaction as ONE entry in the queue. Raises ReadingRefused or QueueFull."""
+        engines = {e["id"]: e for e in self.speech_status()["engines"]}
+        built = await asyncio.to_thread(self.speech.build, spec, engines)  # cutting a book into pieces takes a moment: not on the event loop
+        outcome = await asyncio.to_thread(self.speech.store.insert_reading, built.run, built.parts, built.pieces, self.settings.queue_cap)
+        if outcome != "ok":
+            raise QueueFull(f"The queue is full ({self.settings.queue_cap} jobs waiting). Try again when one finishes.")
+        payload = self.payload(built.run["id"])
+        assert payload is not None
+        self.bus.publish("run.created", payload)
+        self._publish_queue()
+        self._wakeup.set()
+        return payload
+
+    async def continue_reading(self, run_id: str) -> dict[str, Any]:
+        """Continue (after a Cancel) or Retry (after a failure) a reading: it is queued again from the first piece not made (DESIGN.md §38.6 items 5 and 6).
+        Raises RunNotFound, RunConflict or QueueFull."""
+        if self.speech.store.reading(run_id) is None:
+            raise RunNotFound(run_id)
+        outcome = self.db.restart_run(run_id, self.settings.queue_cap)
+        if outcome == "not_found":
+            raise RunNotFound(run_id)
+        if outcome == "not_restartable":
+            raise RunConflict("A reading can be continued only after it was canceled or failed.")
+        if outcome == "full":
+            raise QueueFull(f"The queue is full ({self.settings.queue_cap} jobs waiting). Try again when one finishes.")
+        self._publish_run(run_id)
+        self._publish_queue()
+        self._wakeup.set()
+        payload = self.payload(run_id)
+        assert payload is not None
         return payload
 
     def _check_prompt_ref(self, run: ResolvedRun) -> tuple[Optional[str], bool]:
@@ -980,6 +1018,9 @@ class JobManager:
         self._current = run_id
         self._publish_run(run_id)
         self._publish_queue()
+        if row["mode"] == SPEECH and not self.speech.pieces_left(run_id):  # a reading with nothing left to make (a Continue that came too late): done, no worker needed
+            self._finish(run_id, "done")
+            return
         try:
             try:
                 started_worker = False
@@ -1000,6 +1041,10 @@ class JobManager:
                     self._finish(run_id, "canceled")
                     return
                 await self._worker.send({"cmd": "run", "job": self._job_for(row)})
+            except ValueError as exc:  # a job that cannot be made: a reading whose voice was deleted since it began
+                self._finish(run_id, "failed", str(exc))
+                self._set_worker_state("ready" if self._worker.alive() else "unloaded")
+                return
             except (WorkerGone, OSError) as exc:
                 self._set_worker_state("error", f"Could not start the {self._worker.kind} worker: {exc}", "See the server log for details.")
                 self._finish(run_id, "failed", f"Could not start the {self._worker.kind} worker: {exc}")
@@ -1012,6 +1057,7 @@ class JobManager:
     async def _consume(self, row: sqlite3.Row) -> None:
         run_id = row["id"]
         vector_run = row["mode"] == "vector"
+        speech_run = row["mode"] == SPEECH
         storage_error: Optional[str] = None
         drawings: dict[int, tuple[int, Path]] = {}  # a vector run's finished drawings, by version number: (seed, the file in the run's folder)
         while True:
@@ -1045,9 +1091,21 @@ class JobManager:
                 except Exception as exc:
                     log.exception("could not store track %s of run %s", event.get("idx"), run_id)
                     storage_error = storage_error or f"A track could not be stored: {exc}"
+            elif kind == "piece_done" and speech_run:
+                try:
+                    made = await asyncio.to_thread(self.speech.accept_piece, row, event)
+                    self.bus.publish("reading.piece", {"run_id": run_id, **made})
+                    self._publish_run(run_id)
+                except Exception as exc:
+                    log.exception("could not take in piece %s of run %s", event.get("key"), run_id)
+                    storage_error = storage_error or f"A piece of the reading could not be stored: {exc}"
             elif kind == "run_finished":
                 if storage_error:
                     self._finish(run_id, "failed", storage_error, "Check free disk space and the server log.")
+                elif speech_run:
+                    self._set_worker_state("ready")
+                    self._after_part(run_id)
+                    return
                 elif vector_run:
                     # The model has drawn everything and is idle: say so before the clean-up starts, which takes the CPU and not the model. The run is
                     # finished when its last version is (DESIGN.md §31.12.5).
@@ -1066,7 +1124,7 @@ class JobManager:
                 return
             elif kind == "run_failed":
                 error = event.get("error") or {}
-                message = self._with_partial(run_id, row, error.get("message") or "Image generation failed.")
+                message = self._with_partial(run_id, row, error.get("message") or ("Speech generation failed." if speech_run else "Image generation failed."))
                 self._finish(run_id, "failed", message, error.get("hint"))
                 if self._worker_state["state"] == "busy":
                     self._set_worker_state("ready")
@@ -1075,6 +1133,23 @@ class JobManager:
                 message = f"The {event.get('kind', 'image')} worker stopped unexpectedly (exit code {event.get('returncode')})."
                 self._finish(run_id, "failed", self._with_partial(run_id, row, message), WORKER_RESTART_HINT)
                 return
+
+    def _after_part(self, run_id: str) -> None:
+        """A part of a reading is made (DESIGN.md §38.6 item 3). If more is left the reading goes to the back of the queue, where anything made while the
+        part was being worked on is ahead of it; this is how a picture or a song you ask for in the middle of a book runs between two parts. With nothing
+        waiting the loop takes the reading again at once and the model is still loaded. If a Cancel arrived as the part ended, the reading is canceled."""
+        if self.speech.pieces_left(run_id):
+            if run_id in self._cancel_requested:
+                self._finish(run_id, "canceled")
+            elif self.db.requeue_run(run_id):
+                self._progress.pop(run_id, None)
+                self._current = None
+                self._publish_run(run_id)
+                self._publish_queue()
+            else:  # the run is gone or was changed under us: nothing to put back
+                self._current = None
+            return
+        self._finish(run_id, "done")
 
     def _report_progress(self, run_id: str, progress: dict[str, Any]) -> None:
         """Remember a run's progress for its payload and tell every open page."""
@@ -1464,6 +1539,14 @@ class JobManager:
         return await self._probe_subprocess(model_key(SPEECH, engine_id, variant))
 
     def _with_partial(self, run_id: str, row: sqlite3.Row, message: str) -> str:
+        if row["mode"] == SPEECH:  # say where it stopped, remember why on that piece, and say what was kept (DESIGN.md §38.6 item 6)
+            where = self.speech.mark_failed_piece(run_id, message)
+            totals = self.speech.store.totals([run_id])[run_id]
+            if where:
+                message += f" It stopped in part {where[0] + 1}, paragraph {where[1] + 1}."
+            if totals["made"]:
+                message += f" {totals['made']} of {totals['pieces']} paragraphs were made and kept; Continue makes the rest."
+            return message
         music = row["mode"] == "music"
         done = len((self.db.tracks_for_runs if music else self.db.images_for_runs)([run_id])[run_id])
         if done:
@@ -1523,6 +1606,11 @@ class JobManager:
         self._publish_queue()
 
     def _job_for(self, row: sqlite3.Row) -> dict[str, Any]:
+        if row["mode"] == SPEECH:  # the next part of a reading (DESIGN.md §38.6)
+            job = self.speech.job_for(row)
+            if job is None:
+                raise ValueError("There is nothing left to make in this reading.")
+            return job
         if row["mode"] == "music":
             return {
                 "run_id": row["id"],

@@ -60,6 +60,20 @@ def _info_chunk(info: dict[str, str]) -> bytes:
     return _chunk(b"LIST", b"INFO" + b"".join(parts)) if parts else b""
 
 
+def wav_header(sample_rate: int, channels: int, data_bytes: int, info: Optional[dict[str, str]] = None) -> bytes:
+    """Everything of a WAV file before its samples, for `data_bytes` bytes of samples that follow: the RIFF header, the format, the information note and the
+    `data` chunk's header. The speech tab streams a part's WAV from its pieces without ever holding it (DESIGN.md §38.7), so it needs the header on its own.
+    Raises WavError for audio too long for a WAV (4 GiB)."""
+    if channels < 1 or sample_rate < 1 or data_bytes < 0 or data_bytes % (2 * channels):
+        raise WavError("a WAV needs at least one channel, a positive sample rate and whole frames")
+    fmt = _chunk(b"fmt ", struct.pack("<HHIIHH", 1, channels, sample_rate, sample_rate * channels * 2, channels * 2, 16))
+    note = _info_chunk(info or {})
+    riff = 4 + len(fmt) + len(note) + 8 + data_bytes
+    if riff > 0xFFFFFFFF:
+        raise WavError("the audio is too long for one WAV file")
+    return b"RIFF" + struct.pack("<I", riff) + b"WAVE" + fmt + note + b"data" + struct.pack("<I", data_bytes)
+
+
 def write_wav(path: Path, pcm: bytes, sample_rate: int, channels: int = 2, info: Optional[dict[str, str]] = None) -> int:
     """Write `pcm` (interleaved little-endian signed 16-bit samples) as a WAV file, atomically (a temporary file, then
     a rename, so nothing ever reads half a track). Returns the size of the file."""

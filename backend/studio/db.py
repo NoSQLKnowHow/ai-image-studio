@@ -20,13 +20,14 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping, Optional, Sequence
 
 from .builder.schema import BUILDER_SCHEMA, PROMPT_SEARCH_SQL
+from .speech.schema import SPEECH_SCHEMA
 from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
 
-# 9: the Prompt builder's tables and runs.prompt_id, runs.prompt_version (§37.4); 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
+# 10: mode 'speech', runs.queue_key and runs.hidden, and the Speech tab's tables (§38.8); 9: the Prompt builder's tables and runs.prompt_id, runs.prompt_version (§37.4); 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
 # 5: the projects table and runs.project_id, for project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
 # 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 log = logging.getLogger("studio.db")
 
 # A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
@@ -46,7 +47,7 @@ CREATE TABLE IF NOT EXISTS runs (
     started_at       TEXT,
     finished_at      TEXT,
     status           TEXT NOT NULL CHECK (status IN ('queued','running','done','failed','canceled')),
-    mode             TEXT NOT NULL CHECK (mode IN ('generate','edit','music','vector')),
+    mode             TEXT NOT NULL CHECK (mode IN ('generate','edit','music','vector','speech')),
     prompt           TEXT NOT NULL,
     effective_prompt TEXT NOT NULL,
     negative_prompt  TEXT,
@@ -68,7 +69,9 @@ CREATE TABLE IF NOT EXISTS runs (
     restored_at      TEXT,
     project_id       TEXT,
     prompt_id        TEXT,
-    prompt_version   INTEGER
+    prompt_version   INTEGER,
+    queue_key        REAL,
+    hidden           INTEGER NOT NULL DEFAULT 0
 );
 -- Project folders (DESIGN.md §32.4): a name that runs are filed under. A project is a label in this table, not a folder on the disk, so filing a
 -- run moves no file. `name_key` is the name with its case folded away (see projects.py) and is unique, so "Logo" and "logo" are one project.
@@ -148,7 +151,7 @@ CREATE TABLE IF NOT EXISTS run_inputs (
     role      TEXT NOT NULL DEFAULT 'reference' CHECK (role IN ('reference','marked','mask')),
     PRIMARY KEY (run_id, position)
 );
-""" + BUILDER_SCHEMA
+""" + BUILDER_SCHEMA + SPEECH_SCHEMA
 
 INTERRUPTED_MESSAGE = "Interrupted by a server restart."
 
@@ -180,14 +183,16 @@ class Database:
             if previous is not None and previous < SCHEMA_VERSION:
                 self._copy_before_migration(path, previous)
             self._conn.executescript(_SCHEMA)  # creates what is missing: tables and indexes of a newer schema
-            # Schemas 3 and 7 each widen the CHECK on runs.mode ('music', then 'vector'), which SQLite cannot alter in place, so an older database's table
-            # is rebuilt once, to the current definition, whichever older schema it was at (a rebuild at 7 also does what a rebuild at 3 would have)
-            if previous is not None and previous < 7:
+            # Schemas 3, 7 and 10 each widen the CHECK on runs.mode ('music', then 'vector', then 'speech'), which SQLite cannot alter in place, so an older
+            # database's table is rebuilt once, to the current definition, whichever older schema it was at (a rebuild at 10 also does what a rebuild at 7
+            # or at 3 would have). The two columns schema 10 adds come with the new definition; `_add_speech_columns` is for a table that is already new enough.
+            if previous is not None and previous < 10:
                 self._rebuild_runs(previous)
             self._add_bin_columns()
             self._add_project_column()
             self._add_picture_bin_columns()
             self._add_prompt_columns()
+            self._add_speech_columns()
             self.has_fts5 = self._add_prompt_search()
             self._record_version(previous)
             self._queue_order = self._choose_queue_order()
@@ -200,12 +205,14 @@ class Database:
         """Drafts run ahead of waiting full-size runs (DESIGN.md §22.2), then in order of arrival. The flag lives in
         options_json, which SQLite's JSON functions can read; if this SQLite was built without them, fall back to
         plain arrival order rather than fail."""
+        # Within each of those, in order of arrival: `seq` is when a run was made, and `queue_key` (DESIGN.md §38.6) is when a reading came back to the queue
+        # after a part, expressed in the same units, so a run made while the part was being worked on stands in front of it. `seq` last breaks a tie.
         try:
             self._conn.execute("SELECT json_extract('{\"draft\": true}', '$.draft')").fetchone()
         except sqlite3.OperationalError:
             log.warning("this SQLite has no JSON functions: drafts will not jump the queue")
-            return "seq"
-        return "COALESCE(json_extract(options_json, '$.draft'), 0) DESC, seq"
+            return "COALESCE(queue_key, seq), seq"
+        return "COALESCE(json_extract(options_json, '$.draft'), 0) DESC, COALESCE(queue_key, seq), seq"
 
     def _stored_version(self) -> Optional[int]:
         has_meta = self._conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
@@ -301,6 +308,16 @@ class Database:
             if column not in have:
                 self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {kind}")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_prompt ON runs(prompt_id)")
+
+    def _add_speech_columns(self) -> None:
+        """Schema 10: the two last columns of `runs` (DESIGN.md §38.8), added to a table that lacks them. `queue_key` is where a reading that goes back to the
+        queue after each part stands in it (null for every other run); `hidden` marks the short jobs behind a voice sample or a voice being designed, which are
+        queued like runs but are not history."""
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
+        if "queue_key" not in have:
+            self._conn.execute("ALTER TABLE runs ADD COLUMN queue_key REAL")
+        if "hidden" not in have:
+            self._conn.execute("ALTER TABLE runs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
 
     def _add_prompt_search(self) -> bool:
         """Schema 9: the word index over prompts (DESIGN.md §37.4). Returns whether this SQLite has FTS5; where it has not, the studio keeps working and
@@ -413,8 +430,10 @@ class Database:
         # The filter's conditions come first. Each is a fixed SQL fragment with a placeholder; its values are bound, never pasted into the
         # text, so nothing the page sent can become SQL.
         clauses, values = (run_filter or RunFilter()).conditions()
+        # The short jobs behind a voice sample or a designed voice are runs that are not history (DESIGN.md §38.4): no list or count shows them
+        clauses.append("hidden = 0")
         # The tab is one more condition, on the run's `mode`: one `?` for each mode the tab holds, all bound. An unknown kind is a KeyError, which the
-        # API never lets through (it only accepts the three) and which would otherwise silently show every run.
+        # API never lets through (it only accepts the four) and which would otherwise silently show every run.
         if kind is not None:
             modes = KINDS[kind]
             clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
@@ -437,6 +456,7 @@ class Database:
         bin count one each; a picture or track in the bin counts one when its run is still in the history (one in a run that is itself in the
         bin is not listed, §33.2 item 5, so it is not counted)."""
         clauses, values = replace(run_filter, deleted=None).conditions()  # the filter without its bin rule: it is applied by hand below
+        clauses.append("hidden = 0")
         clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
         args = (*values, *modes)
         where = " AND ".join(clauses)
@@ -459,6 +479,7 @@ class Database:
                     counts[kind][name], counts[kind][f"{name}_items"] = self._count_bin(run_filter, modes)
                     continue
                 clauses, values = run_filter.conditions()
+                clauses.append("hidden = 0")
                 # restrict the count to the tab's modes: one `?` placeholder for each
                 clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
                 row = self._one(f"SELECT COUNT(*) AS n FROM runs WHERE {' AND '.join(clauses)}", (*values, *modes))
@@ -470,6 +491,41 @@ class Database:
 
     def next_queued(self) -> Optional[sqlite3.Row]:
         return self._one(f"SELECT * FROM runs WHERE status='queued' ORDER BY {self._queue_order} LIMIT 1")
+
+    @staticmethod
+    def _next_queue_key(c: sqlite3.Connection) -> float:
+        """The place in the queue a run takes if it arrives now: after every run made so far and before every run made later. `seq` is what runs are made in
+        (AUTOINCREMENT, so its last value is in `sqlite_sequence` even if the newest run has been deleted); a key just above it is later than all of them and
+        earlier than the next. Runs that arrive in the same instant are told apart by adding a millionth for each. No clock is involved, so a clock that
+        jumps cannot reorder the queue."""
+        last = c.execute("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='runs'), 0)").fetchone()[0]
+        top = c.execute("SELECT MAX(queue_key) FROM runs WHERE queue_key >= ? AND queue_key < ?", (last, last + 1)).fetchone()[0]
+        return (top if top is not None else float(last)) + 1e-6
+
+    def requeue_run(self, run_id: str) -> bool:
+        """A reading that has made a part goes back to the back of the queue (DESIGN.md §38.6): running -> queued with a new place. A job made while the part
+        was being worked on is ahead of it. False if the run is gone or is not running."""
+        with self.tx() as c:
+            row = c.execute("SELECT status FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None or row["status"] != "running":
+                return False
+            c.execute("UPDATE runs SET status='queued', queue_key=? WHERE id=?", (self._next_queue_key(c), run_id))
+            return True
+
+    def restart_run(self, run_id: str, cap: int) -> str:
+        """Continue or Retry a reading: canceled or failed -> queued, at the back, with its error cleared. Returns 'ok', 'not_found', 'not_restartable' (it is
+        queued, running or done) or 'full' (`cap` runs are already waiting)."""
+        with self.tx() as c:
+            row = c.execute("SELECT status, mode FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                return "not_found"
+            if row["status"] not in ("canceled", "failed") or row["mode"] != "speech":
+                return "not_restartable"
+            if c.execute("SELECT COUNT(*) FROM runs WHERE status='queued'").fetchone()[0] >= cap:
+                return "full"
+            c.execute("UPDATE runs SET status='queued', finished_at=NULL, error_message=NULL, error_hint=NULL, queue_key=? WHERE id=?",
+                      (self._next_queue_key(c), run_id))
+            return "ok"
 
     def mark_running(self, run_id: str, now: str) -> bool:
         """queued -> running. False if the run is gone or no longer queued."""
@@ -514,7 +570,9 @@ class Database:
     # Which runs the clean-up may take: not kept, not in a project, not already in the bin, finished (never one that is queued or running), and
     # old enough. Old enough counts from the later of when the run was made and when it was last restored, so a restore starts a fresh clock.
     # "Not in a project" is said here although a filed run is always kept (§32.3 item 4): it holds even if something clears the Keep flag by hand.
-    _EXPIRED = ("pinned=0 AND project_id IS NULL AND deleted_at IS NULL AND status IN ('done','failed','canceled') "
+    # A reading never expires (DESIGN.md §38.8, your answer 13: a book can be 2 GB and is listened to over weeks): `mode != 'speech'`. The short hidden jobs
+    # are speech runs too, and are cleaned up by their own janitor, not by this one.
+    _EXPIRED = ("pinned=0 AND project_id IS NULL AND deleted_at IS NULL AND status IN ('done','failed','canceled') AND mode != 'speech' "
                 "AND COALESCE(restored_at, created_at) < ?")
 
     @staticmethod
@@ -525,6 +583,8 @@ class Database:
             c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM vectors WHERE run_id=?", (run_id,))
+            for table in ("speech_pieces", "speech_parts", "speech_positions"):  # a reading's rows (the cascade would do it; every table is named here as the others are)
+                c.execute(f"DELETE FROM {table} WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM runs WHERE id=?", (run_id,))
 
     def delete_expired(self, cutoff: str, limit: int) -> list[str]:

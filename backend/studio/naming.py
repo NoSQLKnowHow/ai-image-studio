@@ -61,6 +61,18 @@ def music_filename(*, label: str, seconds: float, seed: int, created_at: datetim
     return "_".join(parts) + ".wav"
 
 
+def speech_filename(*, title: str, part: int, voice: str, created_at: datetime, ext: str = ".wav") -> str:
+    """`reading_<title-words>_part<NN>_<voice-words>_<YYYYmmdd>.wav` (DESIGN.md §38.2). `part` counts from 1; a name with no part (the whole reading's ZIP)
+    passes 0 and has none, and one with no voice words (the same ZIP) passes an empty `voice`."""
+    parts = ["reading", slugify(title)]
+    if part:
+        parts.append(f"part{part:02d}")
+    if voice.strip():  # the whole reading's ZIP names no voice, and "untitled" is what slugify would make of nothing
+        parts.append(slugify(voice, 30, 3))
+    parts.append(created_at.strftime("%Y%m%d"))
+    return "_".join(parts) + ext
+
+
 def vector_filename(*, prompt: str, width_mm: float, height_mm: float, colours: int, seed: int, created_at: datetime, suffix: str = ".svg") -> str:
     """`vector_<prompt-words>_<W>x<H>mm_<N>c_s<seed>_<YYYYmmdd-HHMMSS>.svg` (DESIGN.md §31.12.7). The size is the sheet's, in millimetres, and `N`
     the number of colours the picture really has (white included). `suffix` is `.svg`, `-layers.zip` or `.png`: the three downloads of one vector
