@@ -252,9 +252,24 @@ def bin_it(client, run_id: str):
     return client.post(f"/api/runs/{run_id}/bin")
 
 
+def wait_for_startup_checks(client, timeout: float = 30.0) -> None:
+    """Let the capability checks that the server runs in the background after it starts (the image model, the music model and each speech engine, each in a
+    process of its own) finish. They end by publishing `capabilities.updated` and `worker.state`, which a test that is recording events and expects an exact
+    list would otherwise catch if it happened to start recording a moment before they were sent: a race that is rare on a quiet machine and shows on a busy one."""
+    import time
+
+    task = client.app.state.jobs._probe_task
+    deadline = time.monotonic() + timeout
+    while task is not None and not task.done():
+        if time.monotonic() > deadline:
+            raise AssertionError("the start-up capability checks have not finished")
+        time.sleep(0.01)
+
+
 @contextmanager
-# collect every event published on the server's event bus while the block runs, as an open page would see them
+# collect every event published on the server's event bus while the block runs, as an open page would see them (after the start-up checks are over: see above)
 def captured(client):
+    wait_for_startup_checks(client)
     bus = client.app.state.bus
     sub = bus.subscribe()
     events: list = []
@@ -264,6 +279,36 @@ def captured(client):
         while not sub.queue.empty():
             events.append(sub.queue.get_nowait())
         bus.unsubscribe(sub)
+
+
+def test_captured_records_only_what_happens_after_the_startup_checks_are_over(client_factory, monkeypatch):
+    """The checks the server runs after it starts end by publishing `capabilities.updated` and `worker.state`. A test that records events and expects an exact list
+    failed once in about three thousand runs when it began recording a moment before they came (the speech engines are checked in processes of their own, which
+    made the window wider). Here the checks are made slow on purpose, so that it happens every time to a recorder that does not wait."""
+    import asyncio
+    import time
+
+    from studio.jobs import JobManager
+
+    async def slow_check(self, kind):
+        await asyncio.sleep(0.4)
+        return {"ok": True, "supports": {}, "device": "fake"}
+
+    monkeypatch.setattr(JobManager, "_probe_subprocess", slow_check)
+
+    naive = client_factory()  # a recorder that starts at once sees the end of the checks...
+    sub = naive.app.state.bus.subscribe()
+    time.sleep(0.9)
+    seen = []
+    while not sub.queue.empty():
+        seen.append(sub.queue.get_nowait()[0])
+    assert "capabilities.updated" in seen and "worker.state" in seen
+
+    careful = client_factory()  # ...and `captured` does not
+    with captured(careful) as events:
+        time.sleep(0.9)
+    assert events == []
+    assert careful.app.state.jobs._probe_task.done()
 
 
 # Moving a run to the bin keeps its files and the run itself, takes it out of the history, and tells every page with a `run.updated` event
