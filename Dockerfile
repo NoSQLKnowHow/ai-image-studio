@@ -100,6 +100,12 @@ COPY docker/ /app/docker/
 COPY scripts/minimax_music.py /app/scripts/minimax_music.py
 COPY --from=ui /ui/dist /app/static
 
+# qwen-tts imports torchaudio at the top of a module that only its old 25 Hz tokenizer uses, and NVIDIA's image has no torchaudio for the Spark, so without this the whole library
+# fails to import ("No module named 'torchaudio'", seen on a Spark). docker/patch_qwen_tts.py makes that one import optional in our own copy, which only the Qwen3-TTS worker uses.
+# It is after the COPY of docker/, and before the check below so that the check sees the result. If it cannot be done it is a note, and the engine says why it cannot run.
+RUN python /app/docker/patch_qwen_tts.py /opt/speech-libs/qwen3-tts \
+    || echo "NOTE: Qwen3-TTS's library could not be patched for the missing torchaudio; its engine will say why it cannot run (DESIGN.md section 38.18, item 72)"
+
 # Fail the build now, not at the first Generate, if the stack doesn't fit together.
 RUN python /app/docker/check_image.py
 
