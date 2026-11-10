@@ -26,6 +26,7 @@ from typing import Any
 
 from ... import wavfile
 from ...pipelines.base import Canceled, OutOfMemory, PipelineError, PipelineUnavailable
+from ...pipelines.progress import fake_download_bytes, fake_load, fake_plan
 from ..engine import CancelCheck, EngineBase, EngineInfo, EngineSettings, Licence, PieceRequest, Speech, Voice
 
 ERROR_DIRECTIVE = "[fake:error]"
@@ -65,9 +66,22 @@ class _FakeBase(EngineBase):
             raise PipelineUnavailable(f"The {cls.INFO.title} engine's library is missing.", hint="This is a test; unset STUDIO_FAKE_SPEECH_UNAVAILABLE.")
         return {"device": "fake"}
 
+    def _fake_repo(self) -> str:
+        return f"fake/speech-{self.INFO.id}-{self.settings.variant}"
+
+    def download_plan(self) -> Any:
+        return fake_plan(self._fake_repo())
+
     def load(self) -> dict[str, Any]:
-        if self.settings.step_delay_ms:  # a little time to load, so a test can see the "loading" state of a worker
-            time.sleep(self.settings.step_delay_ms / 1000)
+        delay = self.settings.step_delay_ms / 1000  # a little time to load, so a test can see the "loading" state of a worker
+        if fake_download_bytes():  # a pretend download is asked for (DESIGN.md section 39): it needs a load long enough to be watched
+            try:
+                delay = max(delay, int(os.environ.get("STUDIO_FAKE_LOAD_DELAY_MS", "0")) / 1000)
+            except ValueError:
+                pass
+            fake_load(self._fake_repo(), delay)
+        elif delay:
+            time.sleep(delay)
         return {"device": "fake"}
 
     def _wait(self, seconds: float, cancelled: CancelCheck) -> None:

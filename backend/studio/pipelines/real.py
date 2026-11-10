@@ -241,6 +241,12 @@ class RealPipeline:
         self._torch: Any = None
         self._supports: dict[str, bool] = {}
 
+    def download_plan(self) -> Any:
+        """The model is a Hub repository whose every file is fetched, unless it is a folder on disk (DESIGN.md section 39)."""
+        from .progress import plan_for
+
+        return plan_for(self.model, self.hub_mode)
+
     def load(self) -> dict[str, Any]:
         torch, pipeline_cls = import_runtime()
         require_gpu(torch)
