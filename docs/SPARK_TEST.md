@@ -1058,6 +1058,26 @@ grep check_image build.log | grep -i speech          # if you built with a log, 
 
 **Send back:** the `ls -l data/studio.sqlite*` line; from (a) the pills and any reasons; from (b) the download and load times and the cache sizes; from (c) the accent you hear in Jenny; from (d) the seconds of work per second of audio for each engine, the lowest `MemAvailable`, and **whether there was any gap, click or pitch change between paragraphs**; from (e) how long a seek in a long part took; from (f) the book's time and disk use and what the restart showed; from (g) and (h) your phone, whether the place and the lock screen worked, and whether Safari wanted a press; from (i) your judgement of the style, the designed voices, the clone and the file kinds your chooser offered; from (j) the Voxtral numbers; from (k) the swap times and memory; from (l) whether the ZIP and the note were right; and anything that did not match "Good", with the message the page or the log showed.
 
+## 32. Load progress: watch a real download (new in 1.21)
+
+The server now says how far a model's load has got; the page shows it in the next release, so for now you read it from a terminal. **Nothing here has been seen on a Spark**: the watcher was tried with fake downloads and against the real downloaders in a sandbox, not with your models. This is where that is checked.
+
+**Watch it.** In one terminal, leave this running:
+```bash
+watch -n 1 "curl -s localhost:8081/api/status | python3 -c 'import json,sys; w=json.load(sys.stdin)[\"worker\"]; print(w[\"state\"], w[\"model\"], w[\"engine\"], w[\"variant\"]); print(w[\"progress\"])'"
+```
+In another, `du -sh ~/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-*` (or whichever model is loading) shows what is really on disk.
+
+**a) A first download.** Pick a checkpoint you have never used (for example **Design a voice**, which needs `…-VoiceDesign`; **Make three samples**). **Good:** the `progress` line goes from `phase: starting` to `phase: downloading` with `done_bytes` rising and `total_bytes` set (the Hub's size), then to `phase: loading` with only `elapsed_s` rising, then the state is `ready` and `progress` is `None`. **Write down:** the `total_bytes` it gave, and the size of that model's folder on disk when it was done (`du -sb`): **are they the same?** If the total is bigger than the folder, the Hub lists files the library does not fetch, and I will drop the total for that model.
+**b) The pattern of the download.** **Write down** whether `done_bytes` rose steadily or in big steps (the default downloader, `hf_xet`, writes in bursts), and whether `phase` ever said `loading` in the middle of the download. It should not: a file that is arriving counts as a download however slowly it grows.
+**c) A model that is already downloaded.** Unload it (**Unload model**) and load it again. **Good:** `phase: loading` from the start, `done_bytes` at its full size, `elapsed_s` rising. **Write down** how long a load from disk takes for each kind of voice (preset, designed or cloned, **Design a voice**): this is the reload you asked about.
+**d) What made room.** Load a preset voice, then use a voice you designed. **Good:** `progress.after` says `speech:qwen3-tts:custom` while the `clone` checkpoint loads, and is `None` once it is ready.
+**e) The other models.** Load the **image model** and the **music model** once each (`Load model` on each tab). **Good:** the same line. **Write down** whether the image model's `total_bytes` matches its folder (about 31 GiB), and the same for music (about 29 GB).
+**f) Kokoro and Piper.** Load each if you have not: **Good:** `downloading` with `done_bytes` and **`total_bytes` None** (no size is offered for them).
+**g) Voxtral** (only if built). **Good:** `downloading` while its server fetches the model, then `loading` for as long as the server takes to start. **Write down** whether `done_bytes` rises (the server writes into the same cache).
+
+**Send back:** from (a) the two sizes; from (b) steady or in steps, and any wrong `loading`; from (c) the load times; from (d) the `after` it showed; from (e) and (f) the sizes and any `total_bytes` that was wrong or missing; from (g) whether it rose.
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -1086,3 +1106,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 22. From step 29 (Vector versions, the stack view, pictures by paste): the `ls -l data/studio.sqlite*` line, your judgement of the trace against the drawing in (b), the three back-sheet results and your verdict in (d), what XCS and LightBurn showed of the stacked layers in (e), which browsers and devices did and did not take a pasted picture in (g) to (j), and from (k) the times, the memory numbers, whether eight pictures ran, whether the model follows "image 7" and "image 8", and the numbers you suggest for the limit and the cost warning.
 23. From step 30 (the Prompt builder): the `ls -l data/studio.sqlite*` line, what Test connection showed, the times to the first word and the thinking times from (b) and (c), the counts from (d) (first time, asked again, plain text; thinking on and off), your judgement of the questions from (e), your verdict on the Quick try pictures from (g) and on the description from (h), the memory numbers and the settings you suggest from (j), and anything that did not match "Good".
 24. From step 31 (the Speech tab): the `ls -l data/studio.sqlite*` line, the engine pills and the download and load times from (a) and (b), the accent you hear in Jenny, the seconds of work per second of audio and the lowest memory for each engine from (d), **whether there was any gap, click or pitch change between paragraphs when a reading was played as it was made**, the seek time from (e), the book's time and disk use and what the restart showed from (f), whether the place and the lock screen worked on your phone from (g) and (h), your judgement of the style, the designed voices and the clone from (i), the Voxtral numbers from (j), the swap times and memory from (k), and anything that did not match "Good".
+25. From section 32 (load progress): the two sizes of a first download (the `total_bytes` and the folder on disk), whether `done_bytes` rose steadily or in steps, the load times from disk, and any `total_bytes` that was wrong.
