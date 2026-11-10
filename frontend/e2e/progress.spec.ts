@@ -125,17 +125,18 @@ test("Design a voice says how far the speech model has got while the three sampl
   await page.getByRole("button", { name: "Design a voice" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByRole("heading", { name: "Design a voice" })).toBeVisible();
-  await expect(dialog.getByText(/Downloading the speech model/)).toHaveCount(0); // nothing is waited for yet
+  await expect(dialog.getByText(/Downloading Fake speech/)).toHaveCount(0); // nothing is waited for yet
   await dialog.getByLabel("Describe the voice").fill("a warm Irish woman in her forties, unhurried and clear");
   await dialog.getByRole("button", { name: "Make three samples" }).click();
 
   await expect(dialog.getByText(/Making three samples…/)).toBeVisible();
-  await expect(dialog.getByText("Downloading the speech model", { exact: true })).toBeVisible(); // not the screen reader's sentence, which has a full stop
+  // the engine's name is the server's (capabilities.speech.engines), and the kind of model is its variant word: the page writes neither
+  await expect(dialog.getByText("Downloading Fake speech for designing a voice", { exact: true })).toBeVisible(); // not the screen reader's sentence, which has a full stop
   await expect(dialog.getByText(SIZE)).toBeVisible();
   await expect(page.locator("header")).toContainText(/Loading speech model…\s*· \d+(\.\d+)? (MB|GB) of 400 MB/);
 
   await expect(dialog.getByRole("radio", { name: "Sample 3" })).toBeVisible({ timeout: 30_000 });
-  await expect(dialog.getByText(/Downloading the speech model|into memory/)).toHaveCount(0);
+  await expect(dialog.getByText(/Downloading Fake speech|into memory/)).toHaveCount(0);
 });
 
 test("on a phone the card and the pill's panel do not push the page sideways while a model loads", async ({ page }) => {

@@ -25,26 +25,33 @@ export function elapsedWords(seconds: number): string {
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
-const ENGINE_NAMES: Record<string, string> = { "qwen3-tts": "Qwen3-TTS", kokoro: "Kokoro", piper: "Piper", voxtral: "Voxtral" };
-// Qwen3-TTS is three models, one for each kind of voice (DESIGN.md §38.18): which one is loading is what explains a wait, and why switching kind of voice loads again
-const QWEN3_VARIANTS: Record<string, string> = { custom: "for preset voices", design: "for designing a voice", clone: "for your own voices" };
+/** The names of the speech engines by id, as the server gives them in `capabilities.speech.engines`. The page writes no engine's name itself: the next model is added on the
+ *  server alone (DESIGN.md §38, criterion 260), and its name arrives the way the others' do. */
+export type EngineTitles = ReadonlyMap<string, string>;
+export const NO_TITLES: EngineTitles = new Map();
+export const engineTitlesOf = (engines: readonly { id: string; title: string }[] | null | undefined): EngineTitles => new Map((engines ?? []).map((engine) => [engine.id, engine.title]));
+
+// What the server's variant word says of a model that is one of several for an engine: Qwen3-TTS is three models, one for each kind of voice (DESIGN.md §38.18), and which one is
+// loading is what explains a wait, and why switching kind of voice loads again. Said by the word and not by the engine, so that another engine that names its models the same
+// way is said the same way. (Maps, since the words come from the server: "constructor" is not a kind of voice.)
+const KINDS_OF_VOICE: ReadonlyMap<string, string> = new Map([["custom", "for preset voices"], ["design", "for designing a voice"], ["clone", "for your own voices"]]);
 
 /** What is loading, as a person would say it: "the image model", "Qwen3-TTS for designing a voice", "Kokoro". */
-export function modelWords(model: ModelName, engine?: string | null, variant?: string | null): string {
+export function modelWords(model: ModelName, engine?: string | null, variant?: string | null, titles: EngineTitles = NO_TITLES): string {
   if (model === "image") return "the image model";
   if (model === "music") return "the music model";
-  const name = engine ? ENGINE_NAMES[engine] : undefined;
+  const name = engine ? titles.get(engine) : undefined;
   if (!name) return "the speech model";
-  const kind = engine === "qwen3-tts" && variant ? QWEN3_VARIANTS[variant] : undefined;
+  const kind = variant ? KINDS_OF_VOICE.get(variant) : undefined;
   return kind ? `${name} ${kind}` : name;
 }
 
 /** The sentence about the model that was unloaded to make room, from the server's model key ("image", "music", "speech:qwen3-tts:custom"), or null. */
-export function afterWords(key: string | null | undefined): string | null {
+export function afterWords(key: string | null | undefined, titles: EngineTitles = NO_TITLES): string | null {
   if (!key) return null;
   const [kind, engine, variant] = key.split(":");
   if (kind !== "image" && kind !== "music" && kind !== "speech") return null;
-  const what = modelWords(kind, engine, variant);
+  const what = modelWords(kind, engine, variant, titles);
   return `${what.charAt(0).toUpperCase()}${what.slice(1)} was unloaded to make room.`;
 }
 
@@ -58,10 +65,10 @@ export interface LoadView {
 }
 
 /** What to show of a load that is under way; null when the worker is not loading or the server did not say how far (an older one). */
-export function loadView(worker: WorkerStatus | null | undefined): LoadView | null {
+export function loadView(worker: WorkerStatus | null | undefined, titles: EngineTitles = NO_TITLES): LoadView | null {
   const p = worker?.progress;
   if (!worker || worker.state !== "loading" || !p) return null;
-  const what = modelWords(worker.model, worker.engine, worker.variant);
+  const what = modelWords(worker.model, worker.engine, worker.variant, titles);
   const time = p.elapsed_s >= 1 ? elapsedWords(p.elapsed_s) : "";
   const known = p.total_bytes !== null && p.total_bytes > 0;
   if (p.phase === "downloading") {
@@ -69,12 +76,12 @@ export function loadView(worker: WorkerStatus | null | undefined): LoadView | nu
     return {
       phase: p.phase, headline: `Downloading ${what}`, detail: time ? `${size} · ${time}` : size,
       pill: known ? `${sizeWords(p.done_bytes)} of ${sizeWords(p.total_bytes as number)}` : sizeWords(p.done_bytes),
-      fraction: known ? Math.min(1, Math.max(0, p.done_bytes / (p.total_bytes as number))) : null, after: afterWords(p.after),
+      fraction: known ? Math.min(1, Math.max(0, p.done_bytes / (p.total_bytes as number))) : null, after: afterWords(p.after, titles),
     };
   }
   return {
     phase: p.phase, headline: p.phase === "starting" ? `Starting to load ${what}…` : `Loading ${what} into memory`, detail: time, pill: time,
-    fraction: null, after: afterWords(p.after),
+    fraction: null, after: afterWords(p.after, titles),
   };
 }
 

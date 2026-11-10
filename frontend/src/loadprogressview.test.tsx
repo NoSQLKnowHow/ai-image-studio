@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render as renderPlain, screen, within } from "@testing-library/react";
+import type { ReactElement, ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Header } from "./components/Header";
 import { LoadProgressView } from "./components/LoadProgress";
@@ -8,6 +9,8 @@ import { TrackCard } from "./components/TrackCard";
 import { VectorCard } from "./components/VectorCard";
 import { AddVoiceDialog, DesignVoiceDialog } from "./components/VoiceDialogs";
 import { createEmitter } from "./emitter";
+import { EngineTitlesContext } from "./EngineTitlesContext";
+import { engineTitlesOf } from "./loadProgress";
 import type { Passage, SpeechJob, StagedRecording } from "./speechTypes";
 import { memoryStore, server, type Answer, type Call } from "./speechTestSupport";
 import { CAPS, makeMusicRun, makeRun, makeTrack, makeVectorRun, SPEECH_CONTRACT, STATUS } from "./testdata";
@@ -19,6 +22,11 @@ import type { PassageState } from "./usePassage";
 
 const GIB = 1024 ** 3;
 const MIB = 1024 ** 2;
+
+// The page is given the engines' names by App, from the capabilities; these tests give it the same, as a wrapper that also serves the re-renders.
+const TITLES = engineTitlesOf([{ id: "qwen3-tts", title: "Qwen3-TTS" }, { id: "kokoro", title: "Kokoro" }]);
+const Titled = ({ children }: { children: ReactNode }) => <EngineTitlesContext.Provider value={TITLES}>{children}</EngineTitlesContext.Provider>;
+const render = (ui: ReactElement) => renderPlain(ui, { wrapper: Titled });
 
 afterEach(() => {
   cleanup();
@@ -75,6 +83,12 @@ describe("the view of a load", () => {
     expect(screen.getByText("Qwen3-TTS for preset voices was unloaded to make room.")).toBeTruthy();
     rerender(<LoadProgressView worker={worker({ after: null })} />);
     expect(screen.queryByText(/was unloaded to make room/)).toBeNull();
+  });
+
+  it("says the speech model, and no engine, where it has not been given the engines' names (the capabilities have not arrived)", () => {
+    renderPlain(<LoadProgressView worker={worker({ after: "speech:qwen3-tts:custom" })} />);
+    expect(screen.getByText("Downloading the speech model")).toBeTruthy();
+    expect(screen.getByText("The speech model was unloaded to make room.")).toBeTruthy();
   });
 
   it("keeps its numbers out of the live region: they change every second and would be read out each time", () => {

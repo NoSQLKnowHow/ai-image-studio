@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { EngineTitlesContext } from "./EngineTitlesContext";
+import { engineTitlesOf } from "./loadProgress";
 import { ApiError, api } from "./api";
 import { Header } from "./components/Header";
 import { MusicPanel } from "./components/MusicPanel";
@@ -168,6 +170,8 @@ export default function App() {
   // The project folders (DESIGN.md §32), and which kind of filter is on: it decides what a card shown only while it works says (§29.3, §32.1)
   const projects = state.projects ?? NO_PROJECTS;
   const projectNameMax = caps?.limits.project_name_max ?? 60;
+  const speechEngines = caps?.speech.engines;
+  const engineTitles = useMemo(() => engineTitlesOf(speechEngines), [speechEngines]); // for the places that say which model is loading (DESIGN.md §39.7)
   const viewScope: ViewScope = filter.project !== null ? "project" : "kept";
   const nameOfProject = (id: string | null): string | null => (id === null ? null : projects.find((project) => project.id === id)?.name ?? null);
   const lookingForMore = runsReady && tabRuns.length === 0 && more && !knownEmpty && !loadOlderFailed; // none on this tab yet: the next page may have some
@@ -1061,238 +1065,240 @@ export default function App() {
 
   return (
     <PromptLinksContext.Provider value={promptLinks}>
-      <a className="skip-link" href="#prompt">Skip to the prompt</a>
-      <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : tab === "speech" ? "speech" : "image"} musicAvailable={musicAvailable}
-        speech={{ available: !!caps?.speech.available, engine: speechEngine }} onModel={changeModel} />
-      <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
-      <main className="app-main">
-        {!caps || !options ? (
-          <p className="loading" role="status">Connecting to the studio…</p>
-        ) : (
-          <>
-            <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking, speech: speechRuns.some(working) }} />
-            <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
-            <PromptBar
-              ref={promptRef}
-              caps={caps}
-              options={options}
-              prompt={prompt}
-              submitting={submitting}
-              problem={formProblem}
-              tray={
-                <Tray
-                  items={tray.items}
-                  cap={tray.cap}
-                  notes={tray.notes}
-                  announcement={tray.announcement}
-                  showShape={isAutoSize(options)}
-                  followed={followedPosition(tray.items, tray.shapeKey)}
-                  heavy={cost?.heavy ? `This edit is heavy (${cost.label}): expect a long run, or running out of memory. Use 1K or fewer images.` : null}
-                  onAdd={(files) => void tray.addFiles(files)}
-                  onRemove={tray.remove}
-                  onMoveBy={tray.moveBy}
-                  onMoveTo={tray.moveTo}
-                  onInsert={insertImageRef}
-                  onShape={tray.setShapeKey}
-                  onMissing={tray.markMissing}
-                  onDismissNote={tray.dismissNote}
-                />
-              }
-              blockReason={editing ? submitBlock(tray.items) : null}
-              starterAvailable={!prompt.trim()}
-              fromPrompt={fromPrompt}
-              onClearFrom={() => setFromPrompt(null)}
-              onOpenFrom={fromPrompt ? () => promptLinks.open(fromPrompt.promptId) : undefined}
-              onHelpWrite={() => askBuilder((seq) => ({ seq, kind: "help-edit", pictures: trayPictures }))}
-              helpWriteProblem={helpWriteProblem}
-              onFiles={handleFiles}
-              onStarter={applyStarter}
-              onPromptFocus={() => {
-                caretKnown.current = true;
-              }}
-              onPrompt={(text) => {
-                setPrompt(text);
-                if (formProblem) setFormProblem(null);
-              }}
-              onMode={(mode) => setOptions({ ...options, mode })}
-              onScale={(scale: Scale) => changeOptions({ ...options, scale })}
-              onOpenOptions={() => setOptionsOpen(true)}
-              onSubmit={() => void submit()}
-              onDraft={() => void submitDraft()}
-            />
-            <QueueBar status={status} />
-            <UpscalePicture busy={upscaling} onFiles={upscaleFiles} />
-            {filterBar}
-            <section className="timeline" aria-label="Your runs">
-              {!runsReady ? (
-                problem ?? <p className="loading" role="status">Loading your runs…</p>
-              ) : imageRuns.length === 0 ? (
-                emptyFor("image")
-              ) : (
-                imageRuns.map((run) => {
-                  const id = run.id;
-                  // In Deleted, a run that is in the history but has pictures of its own in the bin is one card of those pictures (DESIGN.md §33.1); a run that
-                  // is itself in the bin, and every run in the other views, is an ordinary card
-                  if (filter.deleted === true && run.deleted_at === null) {
-                    return <BinnedItemsCard key={id} run={run} now={now} projectName={nameOfProject(run.project_id)} handlers={binnedHandlers} />;
-                  }
-                  return (
-                    <RunCard
-                      key={id}
-                      run={run}
-                      now={now}
-                      workerState={status?.worker.state ?? null}
-                      worker={status?.worker ?? null}
-                      canEdit={canEdit}
-                      making4k={making4k}
-                      enlarging={enlarging}
-                      enlargeWaiting={enlargeWaiting}
-                      transient={transient(run)}
-                      viewScope={viewScope}
-                      projects={projectControls}
-                      upscaler={caps?.upscaler ?? null}
-                      onReuse={() => reuse(run)}
-                      onRegenerateLarger={() => void regenerateLarger(run)}
-                      onMake4K={(image) => void make4k(image)}
-                      onEnlarge={(image) => void enlargeImage(image)}
-                      onEditThis={() => {
-                        const result = viewerItems(run).find((item) => item.kind === "result");
-                        if (result) editThis(viewerKnown(run, result), false);
-                      }}
-                      onRetry={() => void retry(run)}
-                      onCancel={() => requestCancel(run)}
-                      onToggleKeep={() => void toggleKeep(run)}
-                      onRestore={() => void restore(run, true)}
-                      onDelete={() => setPendingDelete(run)}
-                      onCopy={() => void copy(run)}
-                      onOpenImage={(index) => setLightbox({ runId: id, index })}
-                    />
-                  );
-                })
-              )}
-              {more && (
-                <button type="button" className="button load-more" onClick={() => void loadOlder()} disabled={loadingOlder}>
-                  {loadingOlder ? "Loading…" : "Load older runs"}
-                </button>
-              )}
-            </section>
-            <OptionsDrawer
-              open={optionsOpen}
-              onOpenChange={setOptionsOpen}
-              caps={caps}
-              options={options}
-              trayCount={tray.items.length}
-              hasAlphaInput={tray.items.some((item) => item.hasAlpha)}
-              onChange={changeOptions}
-              onReset={() => changeOptions(defaultOptions(caps))}
-            />
-            </div>
-            <MusicPanel
-              hidden={tab !== "music"}
-              caps={caps}
-              status={status}
-              store={store}
-              runs={musicRuns}
-              runsReady={runsReady}
-              filterBar={filterBar}
-              loadProblem={problem}
-              empty={emptyFor("music")}
-              isTransient={transient}
-              viewScope={viewScope}
-              projects={projectControls}
-              deletedView={filter.deleted === true}
-              binned={binnedHandlers}
-              more={more}
-              loadingOlder={loadingOlder}
-              now={now}
-              push={push}
-              fill={promptUse.musicFill}
-              onRun={(run: MusicRun) => dispatch({ type: "runUpsert", run })}
-              onLoadOlder={() => void loadOlder()}
-              onCancel={requestCancel}
-              onToggleKeep={(run) => void toggleKeep(run)}
-              onRestore={(run) => void restore(run, true)}
-              onDelete={setPendingDelete}
-              onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
-              onCopy={(run) => void copy(run)}
-            />
-            <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} worker={status?.worker ?? null} onQueued={(run) => dispatch({ type: "runUpsert", run })}
-              history={{
-                status, runs: speechRuns, runsReady, filterBar, loadProblem: problem, empty: emptyFor("speech"), isTransient: transient, viewScope, projects: projectControls, more, loadingOlder, now,
-                onLoadOlder: () => void loadOlder(), onCancel: requestCancel, onContinue: (run) => void continueReading(run), onRestore: (run) => void restore(run, true), onDelete: setPendingDelete,
-                onListen: (run) => setListening((now) => ({ id: run.id, turn: (now?.turn ?? 0) + 1 })),
-              }} reader={reader} />
-            <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
-              integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
-            <VectorPanel
-              hidden={tab !== "vector"}
-              caps={caps}
-              status={status}
-              store={store}
-              runs={vectorRuns}
-              runsReady={runsReady}
-              filterBar={filterBar}
-              loadProblem={problem}
-              empty={emptyFor("vector")}
-              isTransient={transient}
-              viewScope={viewScope}
-              projects={projectControls}
-              inDeletedView={filter.deleted === true}
-              binnedHandlers={binnedHandlers}
-              more={more}
-              loadingOlder={loadingOlder}
-              now={now}
-              push={push}
-              fill={promptUse.vectorFill}
-              onRun={(run) => dispatch({ type: "runUpsert", run })}
-              onLoadOlder={() => void loadOlder()}
-              onOpenVersion={(run, index) => setVectorView({ runId: run.id, index })}
-              onCopySvg={(item) => void copyVectorSvg(item)}
-              onCancel={requestCancel}
-              onToggleKeep={(run) => void toggleKeep(run)}
-              onRestore={(run) => void restore(run, true)}
-              onDelete={setPendingDelete}
-            />
-          </>
-        )}
-      </main>
-      <VectorViewer
-        run={vectorViewRun}
-        index={vectorView?.index ?? 0}
-        readOnly={!!vectorView?.binned || !!vectorViewRun?.deleted_at}
-        pngRange={caps ? pngRange(caps.limits.vector) : VECTOR_PNG_RANGE}
-        notice={vectorView?.notice ?? null}
-        onIndex={(index) => setVectorView((current) => (current ? { ...current, index, notice: undefined } : current))}
-        onCopySvg={(item) => void copyVectorSvg(item)}
-        onDeleteVersion={(item, position, of) => vectorViewRun && askDeleteItem(vectorViewRun, "vector", item, position, of)}
-        onClose={() => setVectorView(null)}
-      />
-      <Lightbox
-        run={lightboxRun}
-        index={lightbox?.index ?? 0}
-        notice={lightbox?.notice ?? null}
-        canEdit={canEdit}
-        readOnly={!!lightbox?.binned || !!lightboxRun?.deleted_at}
-        making4k={making4k}
-        enlarging={enlarging}
-        enlargeWaiting={enlargeWaiting}
-        upscaler={caps?.upscaler ?? null}
-        onMake4K={(image) => void make4k(image)}
-        onEnlarge={(image) => void enlargeImage(image)}
-        onEditThis={(image) => editThis(image, true)}
-        onDeletePicture={(image, position, of) => lightboxRun && askDeleteItem(lightboxRun, "image", image, position, of)}
-        onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
-        onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}
-        onClose={() => setLightbox(null)}
-      />
-      <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />
-      <ConfirmDelete run={pendingDelete} binDays={binDays} projectName={nameOfProject(pendingDelete?.project_id ?? null)} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
-      <ConfirmDeleteItem ask={pendingItem} binDays={binDays} projectName={nameOfProject(pendingItem?.run.project_id ?? null)} onCancel={() => setPendingItem(null)} onConfirm={() => void confirmDeleteItem()} />
-      <ConfirmEmptyBin open={pendingEmptyBin} bin={binTotals} wholeBin={filter.project !== null}
-        onCancel={() => setPendingEmptyBin(false)} onConfirm={() => void confirmEmptyBin()} />
-      <ProjectsDialog open={managingProjects} projects={projects} nameMax={projectNameMax} onClose={() => setManagingProjects(false)}
-        onCreate={createProject} onRename={renameProject} onDelete={deleteProject} />
-      <Toasts toasts={toasts} onDismiss={dismiss} />
+      <EngineTitlesContext.Provider value={engineTitles}>
+        <a className="skip-link" href="#prompt">Skip to the prompt</a>
+        <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : tab === "speech" ? "speech" : "image"} musicAvailable={musicAvailable}
+          speech={{ available: !!caps?.speech.available, engine: speechEngine }} onModel={changeModel} />
+        <ConnectionBanner connection={state.connection} serverStopping={state.serverStopping} />
+        <main className="app-main">
+          {!caps || !options ? (
+            <p className="loading" role="status">Connecting to the studio…</p>
+          ) : (
+            <>
+              <Tabs tab={tab} onTab={changeTab} busy={{ images: imageRuns.some(working), music: musicRuns.some(working), vector: vectorRuns.some(working), builder: builderWorking, speech: speechRuns.some(working) }} />
+              <div className="tab-panel" role="tabpanel" id={panelId("images")} aria-labelledby={tabId("images")} hidden={tab !== "images"}>
+              <PromptBar
+                ref={promptRef}
+                caps={caps}
+                options={options}
+                prompt={prompt}
+                submitting={submitting}
+                problem={formProblem}
+                tray={
+                  <Tray
+                    items={tray.items}
+                    cap={tray.cap}
+                    notes={tray.notes}
+                    announcement={tray.announcement}
+                    showShape={isAutoSize(options)}
+                    followed={followedPosition(tray.items, tray.shapeKey)}
+                    heavy={cost?.heavy ? `This edit is heavy (${cost.label}): expect a long run, or running out of memory. Use 1K or fewer images.` : null}
+                    onAdd={(files) => void tray.addFiles(files)}
+                    onRemove={tray.remove}
+                    onMoveBy={tray.moveBy}
+                    onMoveTo={tray.moveTo}
+                    onInsert={insertImageRef}
+                    onShape={tray.setShapeKey}
+                    onMissing={tray.markMissing}
+                    onDismissNote={tray.dismissNote}
+                  />
+                }
+                blockReason={editing ? submitBlock(tray.items) : null}
+                starterAvailable={!prompt.trim()}
+                fromPrompt={fromPrompt}
+                onClearFrom={() => setFromPrompt(null)}
+                onOpenFrom={fromPrompt ? () => promptLinks.open(fromPrompt.promptId) : undefined}
+                onHelpWrite={() => askBuilder((seq) => ({ seq, kind: "help-edit", pictures: trayPictures }))}
+                helpWriteProblem={helpWriteProblem}
+                onFiles={handleFiles}
+                onStarter={applyStarter}
+                onPromptFocus={() => {
+                  caretKnown.current = true;
+                }}
+                onPrompt={(text) => {
+                  setPrompt(text);
+                  if (formProblem) setFormProblem(null);
+                }}
+                onMode={(mode) => setOptions({ ...options, mode })}
+                onScale={(scale: Scale) => changeOptions({ ...options, scale })}
+                onOpenOptions={() => setOptionsOpen(true)}
+                onSubmit={() => void submit()}
+                onDraft={() => void submitDraft()}
+              />
+              <QueueBar status={status} />
+              <UpscalePicture busy={upscaling} onFiles={upscaleFiles} />
+              {filterBar}
+              <section className="timeline" aria-label="Your runs">
+                {!runsReady ? (
+                  problem ?? <p className="loading" role="status">Loading your runs…</p>
+                ) : imageRuns.length === 0 ? (
+                  emptyFor("image")
+                ) : (
+                  imageRuns.map((run) => {
+                    const id = run.id;
+                    // In Deleted, a run that is in the history but has pictures of its own in the bin is one card of those pictures (DESIGN.md §33.1); a run that
+                    // is itself in the bin, and every run in the other views, is an ordinary card
+                    if (filter.deleted === true && run.deleted_at === null) {
+                      return <BinnedItemsCard key={id} run={run} now={now} projectName={nameOfProject(run.project_id)} handlers={binnedHandlers} />;
+                    }
+                    return (
+                      <RunCard
+                        key={id}
+                        run={run}
+                        now={now}
+                        workerState={status?.worker.state ?? null}
+                        worker={status?.worker ?? null}
+                        canEdit={canEdit}
+                        making4k={making4k}
+                        enlarging={enlarging}
+                        enlargeWaiting={enlargeWaiting}
+                        transient={transient(run)}
+                        viewScope={viewScope}
+                        projects={projectControls}
+                        upscaler={caps?.upscaler ?? null}
+                        onReuse={() => reuse(run)}
+                        onRegenerateLarger={() => void regenerateLarger(run)}
+                        onMake4K={(image) => void make4k(image)}
+                        onEnlarge={(image) => void enlargeImage(image)}
+                        onEditThis={() => {
+                          const result = viewerItems(run).find((item) => item.kind === "result");
+                          if (result) editThis(viewerKnown(run, result), false);
+                        }}
+                        onRetry={() => void retry(run)}
+                        onCancel={() => requestCancel(run)}
+                        onToggleKeep={() => void toggleKeep(run)}
+                        onRestore={() => void restore(run, true)}
+                        onDelete={() => setPendingDelete(run)}
+                        onCopy={() => void copy(run)}
+                        onOpenImage={(index) => setLightbox({ runId: id, index })}
+                      />
+                    );
+                  })
+                )}
+                {more && (
+                  <button type="button" className="button load-more" onClick={() => void loadOlder()} disabled={loadingOlder}>
+                    {loadingOlder ? "Loading…" : "Load older runs"}
+                  </button>
+                )}
+              </section>
+              <OptionsDrawer
+                open={optionsOpen}
+                onOpenChange={setOptionsOpen}
+                caps={caps}
+                options={options}
+                trayCount={tray.items.length}
+                hasAlphaInput={tray.items.some((item) => item.hasAlpha)}
+                onChange={changeOptions}
+                onReset={() => changeOptions(defaultOptions(caps))}
+              />
+              </div>
+              <MusicPanel
+                hidden={tab !== "music"}
+                caps={caps}
+                status={status}
+                store={store}
+                runs={musicRuns}
+                runsReady={runsReady}
+                filterBar={filterBar}
+                loadProblem={problem}
+                empty={emptyFor("music")}
+                isTransient={transient}
+                viewScope={viewScope}
+                projects={projectControls}
+                deletedView={filter.deleted === true}
+                binned={binnedHandlers}
+                more={more}
+                loadingOlder={loadingOlder}
+                now={now}
+                push={push}
+                fill={promptUse.musicFill}
+                onRun={(run: MusicRun) => dispatch({ type: "runUpsert", run })}
+                onLoadOlder={() => void loadOlder()}
+                onCancel={requestCancel}
+                onToggleKeep={(run) => void toggleKeep(run)}
+                onRestore={(run) => void restore(run, true)}
+                onDelete={setPendingDelete}
+                onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
+                onCopy={(run) => void copy(run)}
+              />
+              <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} worker={status?.worker ?? null} onQueued={(run) => dispatch({ type: "runUpsert", run })}
+                history={{
+                  status, runs: speechRuns, runsReady, filterBar, loadProblem: problem, empty: emptyFor("speech"), isTransient: transient, viewScope, projects: projectControls, more, loadingOlder, now,
+                  onLoadOlder: () => void loadOlder(), onCancel: requestCancel, onContinue: (run) => void continueReading(run), onRestore: (run) => void restore(run, true), onDelete: setPendingDelete,
+                  onListen: (run) => setListening((now) => ({ id: run.id, turn: (now?.turn ?? 0) + 1 })),
+                }} reader={reader} />
+              <BuilderPanel hidden={tab !== "builder"} caps={caps} projects={projects} push={push} onWorking={setBuilderWorking} tick={builderTick} attachRef={builderAttach} command={builderCommand} history={historyPictures}
+                integration={{ onUse: promptUse.useIn, onGenerate: (using) => void promptUse.generate(using, false), onQuick: (using) => void promptUse.generate(using, true) }} />
+              <VectorPanel
+                hidden={tab !== "vector"}
+                caps={caps}
+                status={status}
+                store={store}
+                runs={vectorRuns}
+                runsReady={runsReady}
+                filterBar={filterBar}
+                loadProblem={problem}
+                empty={emptyFor("vector")}
+                isTransient={transient}
+                viewScope={viewScope}
+                projects={projectControls}
+                inDeletedView={filter.deleted === true}
+                binnedHandlers={binnedHandlers}
+                more={more}
+                loadingOlder={loadingOlder}
+                now={now}
+                push={push}
+                fill={promptUse.vectorFill}
+                onRun={(run) => dispatch({ type: "runUpsert", run })}
+                onLoadOlder={() => void loadOlder()}
+                onOpenVersion={(run, index) => setVectorView({ runId: run.id, index })}
+                onCopySvg={(item) => void copyVectorSvg(item)}
+                onCancel={requestCancel}
+                onToggleKeep={(run) => void toggleKeep(run)}
+                onRestore={(run) => void restore(run, true)}
+                onDelete={setPendingDelete}
+              />
+            </>
+          )}
+        </main>
+        <VectorViewer
+          run={vectorViewRun}
+          index={vectorView?.index ?? 0}
+          readOnly={!!vectorView?.binned || !!vectorViewRun?.deleted_at}
+          pngRange={caps ? pngRange(caps.limits.vector) : VECTOR_PNG_RANGE}
+          notice={vectorView?.notice ?? null}
+          onIndex={(index) => setVectorView((current) => (current ? { ...current, index, notice: undefined } : current))}
+          onCopySvg={(item) => void copyVectorSvg(item)}
+          onDeleteVersion={(item, position, of) => vectorViewRun && askDeleteItem(vectorViewRun, "vector", item, position, of)}
+          onClose={() => setVectorView(null)}
+        />
+        <Lightbox
+          run={lightboxRun}
+          index={lightbox?.index ?? 0}
+          notice={lightbox?.notice ?? null}
+          canEdit={canEdit}
+          readOnly={!!lightbox?.binned || !!lightboxRun?.deleted_at}
+          making4k={making4k}
+          enlarging={enlarging}
+          enlargeWaiting={enlargeWaiting}
+          upscaler={caps?.upscaler ?? null}
+          onMake4K={(image) => void make4k(image)}
+          onEnlarge={(image) => void enlargeImage(image)}
+          onEditThis={(image) => editThis(image, true)}
+          onDeletePicture={(image, position, of) => lightboxRun && askDeleteItem(lightboxRun, "image", image, position, of)}
+          onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
+          onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}
+          onClose={() => setLightbox(null)}
+        />
+        <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />
+        <ConfirmDelete run={pendingDelete} binDays={binDays} projectName={nameOfProject(pendingDelete?.project_id ?? null)} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
+        <ConfirmDeleteItem ask={pendingItem} binDays={binDays} projectName={nameOfProject(pendingItem?.run.project_id ?? null)} onCancel={() => setPendingItem(null)} onConfirm={() => void confirmDeleteItem()} />
+        <ConfirmEmptyBin open={pendingEmptyBin} bin={binTotals} wholeBin={filter.project !== null}
+          onCancel={() => setPendingEmptyBin(false)} onConfirm={() => void confirmEmptyBin()} />
+        <ProjectsDialog open={managingProjects} projects={projects} nameMax={projectNameMax} onClose={() => setManagingProjects(false)}
+          onCreate={createProject} onRename={renameProject} onDelete={deleteProject} />
+        <Toasts toasts={toasts} onDismiss={dismiss} />
+      </EngineTitlesContext.Provider>
     </PromptLinksContext.Provider>
   );
 }

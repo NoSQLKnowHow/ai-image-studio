@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useEngineTitles } from "../EngineTitlesContext";
 import { loadAnnouncement, loadView } from "../loadProgress";
 import type { WorkerStatus } from "../types";
 
@@ -7,7 +8,7 @@ import type { WorkerStatus } from "../types";
  *
  *  The numbers change every second and are not live: a screen reader is told only what changes rarely (the phase), and only where `announce` says this is the place to do it. */
 export function LoadProgressView({ worker, announce = false }: { worker: WorkerStatus | null | undefined; announce?: boolean }) {
-  const view = loadView(worker);
+  const view = loadView(worker, useEngineTitles());
   const headline = view?.headline ?? null;
   const [said, setSaid] = useState("");
   useEffect(() => {
