@@ -372,7 +372,7 @@ export function MusicPanel({ hidden, caps, status, store, runs, runsReady, filte
             deletedView && run.deleted_at === null ? (
               <BinnedItemsCard key={run.id} run={run} now={now} projectName={projectOf(run, projects.projects)?.name ?? null} handlers={binned} />
             ) : (
-              <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} transient={isTransient(run)} viewScope={viewScope} projects={projects}
+              <TrackCard key={run.id} run={run} now={now} workerState={status?.worker.state ?? null} worker={status?.worker ?? null} transient={isTransient(run)} viewScope={viewScope} projects={projects}
                 onReuse={() => reuse(run)} onRetry={() => void retry(run)} onCancel={() => onCancel(run)}
                 onToggleKeep={() => onToggleKeep(run)} onRestore={() => onRestore(run)} onDelete={() => onDelete(run)}
                 onDeleteTrack={(track, position, of) => onDeleteTrack(run, track, position, of)} onCopy={() => onCopy(run)} />

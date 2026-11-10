@@ -372,6 +372,15 @@ export const isVectorRun = (run: Run): run is VectorRun => run.mode === "vector"
 export const isSpeechRun = (run: Run): run is SpeechRun => run.mode === "speech";
 export const isImageRun = (run: Run): run is ImageRun => run.mode === "generate" || run.mode === "edit";
 
+/** How far the load that is under way has got (DESIGN.md §39.3): `worker.progress`, `null` when no load is, absent from an older server. */
+export interface LoadProgress {
+  phase: "starting" | "downloading" | "loading"; // starting: the worker process has not reported yet
+  done_bytes: number; // what of the model is in the cache now (0 when there is nothing to look at)
+  total_bytes: number | null; // the size to expect, or null when it is not known or would not fit what is fetched
+  elapsed_s: number; // seconds since the load began
+  after: string | null; // the model key that was unloaded to make room: "image", "music" or "speech:<engine>:<variant>"
+}
+
 export interface WorkerStatus {
   state: WorkerState;
   detail: string | null;
@@ -385,6 +394,7 @@ export interface WorkerStatus {
   idle_timeout_min: number; // 0 = unload as soon as the queue is empty, so loading ahead of time is not offered (§25)
   device: { name?: string; capability?: string; torch?: string; cuda?: string | null } | null;
   probe: string | null;
+  progress?: LoadProgress | null; // while the model loads (DESIGN.md §39)
 }
 
 export interface Status {

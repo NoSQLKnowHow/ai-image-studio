@@ -5,8 +5,10 @@ import {
   RECORDING_ACCEPT, deleteVoiceQuestion, descriptionProblem, recordingFacts, sampleLabel, sampleWords, voiceNameProblem,
 } from "../speech";
 import type { Passage, SavedVoice, SpeechEngine, SpeechJob, SpeechLimits } from "../speechTypes";
+import type { WorkerStatus } from "../types";
 import type { PassageState } from "../usePassage";
 import { useClipPlayer } from "../useClipPlayer";
+import { LoadProgressView } from "./LoadProgress";
 import { useRecordedVoice } from "../useRecordedVoice";
 import { useSampler } from "../useSampler";
 import { useVoiceDesign } from "../useVoiceDesign";
@@ -85,20 +87,21 @@ interface DesignProps {
   engine: Pick<SpeechEngine, "id" | "title">;
   passage: PassageState;
   jobs: Pick<Emitter<SpeechJob>, "subscribe">;
+  worker?: WorkerStatus | null; // the speech model's load, if one is under way: how far it has got (DESIGN.md §39)
   onSaved: (voice: SavedVoice) => void;
 }
 
 /** The dialog is mounted while open: closing it takes what was made with it, so a voice that was not saved is not kept anywhere. */
-export function DesignVoiceDialog({ open, onOpenChange, engine, passage, jobs, onSaved }: DesignProps) {
+export function DesignVoiceDialog({ open, onOpenChange, engine, passage, jobs, worker, onSaved }: DesignProps) {
   return (
     <Frame open={open} onOpenChange={onOpenChange} title="Design a voice"
       description={`Describe the voice you would like. ${engine.title} makes three short clips of the same passage in it; play them and keep the one you like. Whether a particular accent is held is not promised: listen before you save.`}>
-      {open && <DesignBody engine={engine} passage={passage} jobs={jobs} onSaved={onSaved} />}
+      {open && <DesignBody engine={engine} passage={passage} jobs={jobs} worker={worker} onSaved={onSaved} />}
     </Frame>
   );
 }
 
-function DesignBody({ engine, passage, jobs, onSaved }: Pick<DesignProps, "engine" | "passage" | "jobs" | "onSaved">) {
+function DesignBody({ engine, passage, jobs, worker, onSaved }: Pick<DesignProps, "engine" | "passage" | "jobs" | "worker" | "onSaved">) {
   const id = useId();
   const audio = useRef<HTMLAudioElement>(null);
   const clipsPlayer = useClipPlayer(audio);
@@ -135,6 +138,7 @@ function DesignBody({ engine, passage, jobs, onSaved }: Pick<DesignProps, "engin
       </div>
 
       {design.phase === "working" && <p role="status" className="speech-working">Making three samples… this takes a little while, longer if {engine.title} has to be loaded first.</p>}
+      {design.phase === "working" && <LoadProgressView worker={worker} announce />}
       {design.phase === "failed" && design.problem && <ProblemText problem={design.problem} />}
 
       {design.phase === "done" && (
@@ -173,19 +177,20 @@ interface AddProps {
   limits: Pick<SpeechLimits, "recording_mb" | "voice_seconds">;
   passage: PassageState;
   jobs: Pick<Emitter<SpeechJob>, "subscribe">;
+  worker?: WorkerStatus | null; // the speech model's load, if one is under way: how far it has got (DESIGN.md §39)
   onSaved: (voice: SavedVoice) => void;
 }
 
-export function AddVoiceDialog({ open, onOpenChange, engine, limits, passage, jobs, onSaved }: AddProps) {
+export function AddVoiceDialog({ open, onOpenChange, engine, limits, passage, jobs, worker, onSaved }: AddProps) {
   return (
     <Frame open={open} onOpenChange={onOpenChange} title="Add my voice"
       description="Read the passage aloud, record it on your phone or your computer, and choose the file. The studio checks it, lets you hear it back and hear it speak, and keeps it only when you save it.">
-      {open && <AddBody engine={engine} limits={limits} passage={passage} jobs={jobs} onSaved={onSaved} />}
+      {open && <AddBody engine={engine} limits={limits} passage={passage} jobs={jobs} worker={worker} onSaved={onSaved} />}
     </Frame>
   );
 }
 
-function AddBody({ engine, limits, passage, jobs, onSaved }: Omit<AddProps, "open" | "onOpenChange">) {
+function AddBody({ engine, limits, passage, jobs, worker, onSaved }: Omit<AddProps, "open" | "onOpenChange">) {
   const id = useId();
   const clipAudio = useRef<HTMLAudioElement>(null);
   const previewAudio = useRef<HTMLAudioElement>(null);
@@ -258,6 +263,7 @@ function AddBody({ engine, limits, passage, jobs, onSaved }: Omit<AddProps, "ope
           {text && <p className="hint">It speaks: “{text.sample_sentence}”</p>}
           {clip.problem && <p className="form-error" role="alert">{clip.problem}</p>}
           {previewProblem && <ProblemText problem={previewProblem} />}
+          {phase === "waiting" && <LoadProgressView worker={worker} announce />}
 
           <SaveRow name={name} onName={setName} max={text?.name_max ?? 60} ready={canSave} saving={recorded.saving} onSave={() => void save()} problem={recorded.saveProblem}>
             <label className="choice voice-consent">

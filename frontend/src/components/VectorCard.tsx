@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { binNote, canceledText, deleteRunTitle, duration, expiryText, keepLockedTitle, timeAgo, workingNote, type ViewScope } from "../format";
-import type { VectorItem, VectorRun, WorkerState } from "../types";
+import type { VectorItem, VectorRun, WorkerState, WorkerStatus } from "../types";
 import { bytesText, kindLabel, layersCount, placeLabel, vectorMeta, vectorPhases, vectorProgressText, vectorTitle } from "../vector";
 import { RunFrom } from "../promptLinks";
 import { AlertIcon, CopyIcon, DownloadIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon, VectorIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 import { VersionFacts } from "./VersionFacts";
+import { loadView } from "../loadProgress";
+import { LoadProgressView } from "./LoadProgress";
 
 // The card of a Vector run (DESIGN.md §31.12.8, §35.2): one compact card for the run, as an Images card is. At the left a grid of the versions' previews
 // (up to four, each on white because white is the bare material, in the sheet's own shape, with the version's place in a corner and its number of layers
@@ -20,6 +22,7 @@ interface Props {
   run: VectorRun;
   now: number;
   workerState: WorkerState | null;
+  worker?: WorkerStatus | null; // what the worker is loading and how far it has got (DESIGN.md §39), for the run that waits for it
   transient: boolean; // in a filtered view only because it is working (DESIGN.md §29.3, §32)
   viewScope: ViewScope; // which filter that is, so the note says what keeps the card there
   projects: ProjectControls; // the project folders, and what the Project button does (§32)
@@ -51,9 +54,13 @@ function statusLabel(run: VectorRun): string {
 }
 
 /** The two stages of making a vector, each with its bar (§31.12.5): drawing by the model, then tracing by the clean-up. */
-function VectorProgress({ run, workerState }: { run: VectorRun; workerState: WorkerState | null }) {
+function VectorProgress({ run, workerState, worker }: { run: VectorRun; workerState: WorkerState | null; worker?: WorkerStatus | null }) {
   const p = run.progress;
   if (!p) {
+    // waiting for the model, and the server can say how far it has got (DESIGN.md §39): say it, instead of the one line that does not move
+    if (!run.canceling && loadView(worker)) { // loadView is nothing unless the worker is loading
+      return <div className="progress" role="status"><LoadProgressView worker={worker} /></div>;
+    }
     const text = run.canceling
       ? "Stopping… (a model that is still loading finishes loading first)"
       : workerState === "loading" ? "Loading the model… (the first load takes a while)" : "Starting…";
@@ -141,7 +148,7 @@ function Downloads({ versions, lone, onOpenVersion, onCopySvg }: { versions: Vec
   return null;
 }
 
-export function VectorCard({ run, now, workerState, transient, viewScope, projects, onOpenVersion, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopySvg }: Props) {
+export function VectorCard({ run, now, workerState, worker, transient, viewScope, projects, onOpenVersion, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onCopySvg }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const label = statusLabel(run);
@@ -182,7 +189,7 @@ export function VectorCard({ run, now, workerState, transient, viewScope, projec
         <p className="run-meta">{vectorMeta(run, took).join(" · ")}</p>
         <RunFrom run={run} />
 
-        {run.status === "running" && <VectorProgress run={run} workerState={workerState} />}
+        {run.status === "running" && <VectorProgress run={run} workerState={workerState} worker={worker} />}
 
         {/* what the clean-up found, for a run that has just the one version; with several, the viewer has them for each */}
         {lone && <div className="vector-lone" data-vector-id={lone.id}><VersionFacts run={run} item={lone} /></div>}

@@ -378,6 +378,13 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .progress-track { height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .progress-track span { display: block; height: 100%; background: var(--accent); border-radius: inherit; transition: width 0.3s ease-out; }
 .progress-track.indeterminate span { width: 35%; animation: indeterminate 1.3s ease-in-out infinite; }
+
+/* How far the model that is loading has got (DESIGN.md section 39.7): in the header's panel, on the cards, and in the voice dialogs */
+.load-progress { display: grid; gap: 6px; font-size: 13px; color: var(--text-2); }
+.load-progress-line { margin: 0; overflow-wrap: anywhere; }
+.load-progress-headline { color: var(--text); font-weight: 550; }
+.load-progress-detail { font-variant-numeric: tabular-nums; }
+.load-progress-after { margin: 0; }
 @keyframes indeterminate { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 
 /* ------------------------------------------------------------------ dialogs */

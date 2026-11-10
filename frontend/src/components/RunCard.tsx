@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { binNote, canceledText, duration, expiryText, keepLockedTitle, seedText, sizeText, timeAgo, workingNote, type ViewScope } from "../format";
 import { largerTarget, resolutionLabel } from "../options";
-import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState } from "../types";
+import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState, WorkerStatus } from "../types";
 import { FourKButton } from "./FourKButton";
 import { RefineButton, RunFrom } from "../promptLinks";
 import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
+import { loadView } from "../loadProgress";
+import { LoadProgressView } from "./LoadProgress";
 
 interface Props {
   run: ImageRun;
   now: number;
   workerState: WorkerState | null;
+  worker?: WorkerStatus | null; // what the worker is loading and how far it has got (DESIGN.md §39), for the run that waits for it
   canEdit: boolean; // the studio can edit, so "Edit this" is offered
   making4k: ReadonlySet<string>; // ids of the images whose 4K copy is being made (DESIGN.md §27)
   enlarging: ReadonlySet<string>; // ids of the images being enlarged with the upscaler model (DESIGN.md §28)
@@ -50,9 +53,13 @@ function statusLabel(run: ImageRun): string {
   }
 }
 
-function ProgressBlock({ run, workerState }: { run: ImageRun; workerState: WorkerState | null }) {
+function ProgressBlock({ run, workerState, worker }: { run: ImageRun; workerState: WorkerState | null; worker?: WorkerStatus | null }) {
   const p = run.progress;
   if (!p) {
+    // waiting for the model, and the server can say how far it has got (DESIGN.md §39): say it, instead of the one line that does not move
+    if (!run.canceling && loadView(worker)) { // loadView is nothing unless the worker is loading
+      return <div className="progress" role="status"><LoadProgressView worker={worker} /></div>;
+    }
     const text = run.canceling
       ? "Stopping… (a model that is still loading finishes loading first)"
       : workerState === "loading" ? "Loading the model… (the first load takes a while)" : "Starting…";
@@ -117,7 +124,7 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, enlargeWaiting, transient, viewScope, projects, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onRestore, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, worker, canEdit, making4k, enlarging, enlargeWaiting, transient, viewScope, projects, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onRestore, onDelete, onCopy, onOpenImage }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
@@ -168,7 +175,7 @@ export function RunCard({ run, now, workerState, canEdit, making4k, enlarging, e
         <p className="run-meta">{meta.join(" · ")}</p>
         <RunFrom run={run} />
 
-        {run.status === "running" && <ProgressBlock run={run} workerState={workerState} />}
+        {run.status === "running" && <ProgressBlock run={run} workerState={workerState} worker={worker} />}
 
         {run.status === "canceled" && <p className="run-note">{canceledText(run)}</p>}
 

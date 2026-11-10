@@ -1,15 +1,18 @@
 import { useState } from "react";
 import { binNote, duration, expiryText, keepLockedTitle, timeAgo, canceledText, workingNote, type ViewScope } from "../format";
 import { musicMeta, musicPhases, musicProgressText, musicTitle, trackLabel } from "../music";
-import type { MusicRun, TrackInfo, WorkerState } from "../types";
+import type { MusicRun, TrackInfo, WorkerState, WorkerStatus } from "../types";
 import { RunFrom } from "../promptLinks";
 import { CopyIcon, DownloadIcon, FolderIcon, NoteIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
+import { loadView } from "../loadProgress";
+import { LoadProgressView } from "./LoadProgress";
 
 interface Props {
   run: MusicRun;
   now: number;
   workerState: WorkerState | null;
+  worker?: WorkerStatus | null; // what the worker is loading and how far it has got (DESIGN.md §39), for the run that waits for it
   transient: boolean; // in a filtered view only because it is working (DESIGN.md §29.3, §32)
   viewScope: ViewScope; // which filter that is, so the note says what keeps the card there
   projects: ProjectControls; // the project folders, and what the Project button does (DESIGN.md §32)
@@ -39,9 +42,13 @@ function statusLabel(run: MusicRun): string {
 }
 
 /** Two bars, one per phase (DESIGN.md §26.1): composing, then rendering. */
-function MusicProgress({ run, workerState }: { run: MusicRun; workerState: WorkerState | null }) {
+function MusicProgress({ run, workerState, worker }: { run: MusicRun; workerState: WorkerState | null; worker?: WorkerStatus | null }) {
   const p = run.progress;
   if (!p) {
+    // waiting for the model, and the server can say how far it has got (DESIGN.md §39): say it, instead of the one line that does not move
+    if (!run.canceling && loadView(worker)) { // loadView is nothing unless the worker is loading
+      return <div className="progress" role="status"><LoadProgressView worker={worker} /></div>;
+    }
     const text = run.canceling
       ? "Stopping… (a model that is still loading finishes loading first)"
       : workerState === "loading" ? "Loading the music model… (the first load takes a while)" : "Starting…";
@@ -70,7 +77,7 @@ function MusicProgress({ run, workerState }: { run: MusicRun; workerState: Worke
   );
 }
 
-export function TrackCard({ run, now, workerState, transient, viewScope, projects, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onDeleteTrack, onCopy }: Props) {
+export function TrackCard({ run, now, workerState, worker, transient, viewScope, projects, onRestore, onReuse, onRetry, onCancel, onToggleKeep, onDelete, onDeleteTrack, onCopy }: Props) {
   const [expanded, setExpanded] = useState(false);
   const long = run.prompt.length > 240;
   const label = statusLabel(run);
@@ -118,7 +125,7 @@ export function TrackCard({ run, now, workerState, transient, viewScope, project
         <p className="run-meta">{musicMeta(run, took).join(" · ")}</p>
         <RunFrom run={run} />
 
-        {run.status === "running" && <MusicProgress run={run} workerState={workerState} />}
+        {run.status === "running" && <MusicProgress run={run} workerState={workerState} worker={worker} />}
 
         {tracks.length > 0 && (
           <ul className="tracks" aria-label="Tracks">

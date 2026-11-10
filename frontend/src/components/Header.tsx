@@ -6,6 +6,8 @@ import { MUSIC_MODEL_NAME } from "../music";
 import { NEXT_THEME, applyTheme, readTheme, type ThemeChoice } from "../theme";
 import type { ModelName, Status, WorkerState, WorkerStatus } from "../types";
 import { ChipIcon, EjectIcon, MonitorIcon, MoonIcon, SparkleIcon, SunIcon } from "./icons";
+import { LoadProgressView } from "./LoadProgress";
+import { loadView } from "../loadProgress";
 
 // The pill names the model the worker holds (DESIGN.md §26.1): "Image model ready", "Loading music model…".
 function pillLabel(state: WorkerState, model: ModelName): string {
@@ -74,6 +76,7 @@ function ModelPill({ status, now, pillRef }: { status: Status | null; now: numbe
   const mem = status.memory;
   const needs = w.model === "music" ? mem.music_min_free_gb : mem.min_free_gb;
   const full = pillLabel(w.state, w.model);
+  const load = loadView(w); // while a model loads: how far it has got (DESIGN.md §39), as a short word for the pill and in full in its panel
 
   return (
     <div className="pill-wrap" ref={wrap}>
@@ -82,11 +85,13 @@ function ModelPill({ status, now, pillRef }: { status: Status | null; now: numbe
         <span className="dot" aria-hidden="true" />
         <span className="pill-label">{narrow ? SHORT_LABELS[w.state] : full}</span>
         {until && <span className="pill-sub">· unloads in {until}</span>}
+        {load?.pill && <span className="pill-sub">· {load.pill}</span>}
       </button>
       {open && (
         <div id="model-details" className="pill-panel" role="region" aria-label="Model details">
           <p className="pill-panel-title">{full}</p>
           <p>{EXPLAIN[w.state]}</p>
+          <LoadProgressView worker={w} />
           {w.detail && <p className="pill-detail">{w.detail}</p>}
           {w.hint && <p className="hint">{w.hint}</p>}
           <dl>

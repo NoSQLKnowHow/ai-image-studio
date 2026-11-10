@@ -1060,7 +1060,7 @@ grep check_image build.log | grep -i speech          # if you built with a log, 
 
 ## 32. Load progress: watch a real download (new in 1.21)
 
-The server now says how far a model's load has got; the page shows it in the next release, so for now you read it from a terminal. **Nothing here has been seen on a Spark**: the watcher was tried with fake downloads and against the real downloaders in a sandbox, not with your models. This is where that is checked.
+The server says how far a model's load has got, and the page shows it (the header pill, the cards, the Speech tab, the voice dialogs). Items a to g read it from a terminal; item h is the page. **Nothing here has been seen on a Spark**: the watcher was tried with fake downloads and against the real downloaders in a sandbox, not with your models. This is where that is checked.
 
 **Watch it.** In one terminal, leave this running:
 ```bash
@@ -1076,7 +1076,9 @@ In another, `du -sh ~/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-*` (or whic
 **f) Kokoro and Piper.** Load each if you have not: **Good:** `downloading` with `done_bytes` and **`total_bytes` None** (no size is offered for them).
 **g) Voxtral** (only if built). **Good:** `downloading` while its server fetches the model, then `loading` for as long as the server takes to start. **Write down** whether `done_bytes` rises (the server writes into the same cache).
 
-**Send back:** from (a) the two sizes; from (b) steady or in steps, and any wrong `loading`; from (c) the load times; from (d) the `after` it showed; from (e) and (f) the sizes and any `total_bytes` that was wrong or missing; from (g) whether it rose.
+**h) The page.** While (a) is running, look at the page. **Good:** the header pill says `Loading speech model… · 2.1 GB of 4.5 GB` (and `· 40 s` while it loads into memory); the pill's panel and the Speech tab say *Downloading Qwen3-TTS for designing a voice* with a bar that fills; **Design a voice** says the same under *Making three samples…*; where another checkpoint was in memory, *Qwen3-TTS for preset voices was unloaded to make room.* is there. Then load the image model (or make a track) from a cold start: its card says the same instead of *the first load takes a while*. On a phone nothing runs off the screen. **Write down** anything wrong, unclear or too busy, and whether the number rises often enough to look alive.
+
+**Send back:** from (a) the two sizes; from (b) steady or in steps, and any wrong `loading`; from (c) the load times; from (d) the `after` it showed; from (e) and (f) the sizes and any `total_bytes` that was wrong or missing; from (g) whether it rose; from (h) what the page showed.
 
 ## What to send back
 
@@ -1106,4 +1108,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 22. From step 29 (Vector versions, the stack view, pictures by paste): the `ls -l data/studio.sqlite*` line, your judgement of the trace against the drawing in (b), the three back-sheet results and your verdict in (d), what XCS and LightBurn showed of the stacked layers in (e), which browsers and devices did and did not take a pasted picture in (g) to (j), and from (k) the times, the memory numbers, whether eight pictures ran, whether the model follows "image 7" and "image 8", and the numbers you suggest for the limit and the cost warning.
 23. From step 30 (the Prompt builder): the `ls -l data/studio.sqlite*` line, what Test connection showed, the times to the first word and the thinking times from (b) and (c), the counts from (d) (first time, asked again, plain text; thinking on and off), your judgement of the questions from (e), your verdict on the Quick try pictures from (g) and on the description from (h), the memory numbers and the settings you suggest from (j), and anything that did not match "Good".
 24. From step 31 (the Speech tab): the `ls -l data/studio.sqlite*` line, the engine pills and the download and load times from (a) and (b), the accent you hear in Jenny, the seconds of work per second of audio and the lowest memory for each engine from (d), **whether there was any gap, click or pitch change between paragraphs when a reading was played as it was made**, the seek time from (e), the book's time and disk use and what the restart showed from (f), whether the place and the lock screen worked on your phone from (g) and (h), your judgement of the style, the designed voices and the clone from (i), the Voxtral numbers from (j), the swap times and memory from (k), and anything that did not match "Good".
-25. From section 32 (load progress): the two sizes of a first download (the `total_bytes` and the folder on disk), whether `done_bytes` rose steadily or in steps, the load times from disk, and any `total_bytes` that was wrong.
+25. From section 32 (load progress): the two sizes of a first download (the `total_bytes` and the folder on disk), whether `done_bytes` rose steadily or in steps, the load times from disk, any `total_bytes` that was wrong, and what the page showed (h).
