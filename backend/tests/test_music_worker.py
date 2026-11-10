@@ -38,6 +38,8 @@ class Collect:
         self.events: list[dict] = []
 
     def __call__(self, event: str, **fields) -> None:
+        if event == "load_progress":  # the progress of a load is a side channel (DESIGN.md section 39) and is tested in test_load_progress.py; this test is about the events of a run
+            return
         self.events.append({"event": event, **fields})
 
     def kinds(self) -> list[str]:

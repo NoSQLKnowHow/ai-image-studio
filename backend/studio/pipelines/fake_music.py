@@ -71,11 +71,14 @@ class FakeMusicPipeline:
     def __init__(self, step_delay_ms: int = 30):
         self.step_delay = step_delay_ms / 1000
         self._failed_once = False
-        self._images = FakePipeline(step_delay_ms=step_delay_ms)  # for the load-failure and load-delay switches
+        self._images = FakePipeline(step_delay_ms=step_delay_ms, fake_repo="fake/music")  # for the load-failure and load-delay switches (and the pretend download)
 
     @classmethod
     def probe(cls) -> dict[str, Any]:
         return {"pipeline": cls.name, "supports": dict(cls.SUPPORTS), "device": {"name": "fake (no GPU used)"}}
+
+    def download_plan(self) -> Any:
+        return self._images.download_plan()
 
     def load(self) -> dict[str, Any]:
         self._images.load()  # raises PipelineLoadError when STUDIO_FAKE_LOAD_FAIL says so, and waits STUDIO_FAKE_LOAD_DELAY_MS

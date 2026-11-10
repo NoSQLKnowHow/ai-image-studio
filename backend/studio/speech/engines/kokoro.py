@@ -111,6 +111,12 @@ class Kokoro(EngineBase):
             return str(path)
         return self._libs.hf_hub_download(repo_id=base or REPO, filename=name, local_files_only=local_only)
 
+    def download_plan(self) -> Any:
+        """A few files of the repository (the weights, the config and the voices used), so the Hub's size for all of it is not offered (DESIGN.md section 39)."""
+        from ...pipelines.progress import plan_for
+
+        return plan_for(self.settings.model or REPO, self.settings.hub_mode, ask_hub=False)
+
     def load(self) -> dict[str, Any]:
         try:
             self._libs = libs = _libs()

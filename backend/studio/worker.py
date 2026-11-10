@@ -112,7 +112,7 @@ class Worker:
         self.emit("state", state="loading")
         started = time.monotonic()
         try:
-            info = self.pipeline.load()
+            info = self._load_watched()
         except PipelineError as exc:
             self.last_load_error = exc.as_dict()
         except Exception as exc:  # keep the worker alive and report it
@@ -130,6 +130,29 @@ class Worker:
             return True
         self.emit("load_failed", error=self.last_load_error)
         return False
+
+    def _download_plan(self) -> Any:
+        """What the pipeline says it will download while it loads (DESIGN.md section 39), or None: a pipeline need not say, and one that fails to is not a reason to fail the load."""
+        plan = getattr(self.pipeline, "download_plan", None)
+        if not callable(plan):
+            return None
+        try:
+            return plan()
+        except Exception:  # noqa: BLE001
+            log.exception("the pipeline could not say what it will download")
+            return None
+
+    def _load_watched(self) -> dict[str, Any]:
+        """`pipeline.load()` with the progress of the load reported about once a second from a thread of its own, which has ended before this returns or raises, so that no report
+        can arrive after the "ready" or the failure that follows."""
+        from .pipelines.progress import LoadWatcher
+
+        watcher = LoadWatcher(self.emit, self._download_plan())
+        watcher.start()
+        try:
+            return self.pipeline.load()
+        finally:
+            watcher.stop()
 
     def _progress_callback(self, run_id: str, index: int, count: int) -> Callable[[int, int], None]:
         from .pipelines import Canceled

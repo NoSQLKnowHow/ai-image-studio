@@ -36,6 +36,7 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 from .. import presets as P
+from .progress import fake_load, fake_plan
 from .base import ImageJob, OutOfMemory, PipelineError, PipelineLoadError, StepCallback, load_inputs
 
 _DIRECTIVE = re.compile(r"\[fake:(error|oom|crash|noise)(?:@(\d+))?\]", re.IGNORECASE)
@@ -147,9 +148,10 @@ class FakePipeline:
     SUPPORTS = {"negative_prompt": True, "cfg_scale": True, "step_progress": True, "transparent": True, "edit": True,
                 "resolution": True}
 
-    def __init__(self, step_delay_ms: int = 30, load_delay_ms: int = 200):
+    def __init__(self, step_delay_ms: int = 30, load_delay_ms: int = 200, fake_repo: str = "fake/image"):
         self.step_delay = step_delay_ms / 1000
         self.load_delay = load_delay_ms / 1000
+        self.fake_repo = fake_repo  # where STUDIO_FAKE_DOWNLOAD_MB makes its pretend download (DESIGN.md section 39)
         self._failed_once = False
 
     @classmethod
@@ -173,8 +175,11 @@ class FakePipeline:
                 "Simulated model load failure (STUDIO_FAKE_LOAD_FAIL is set).",
                 hint="Unset STUDIO_FAKE_LOAD_FAIL to let the fake pipeline load.",
             )
-        time.sleep(self._load_delay())
+        fake_load(self.fake_repo, self._load_delay())  # waits, and downloads while it waits if STUDIO_FAKE_DOWNLOAD_MB says so
         return {"pipeline": self.name, "supports": dict(self.SUPPORTS)}
+
+    def download_plan(self) -> Any:
+        return fake_plan(self.fake_repo)
 
     def generate(self, job: ImageJob, index: int, seed: int, on_step: StepCallback) -> Image.Image:
         active = {kind for kind, at in parse_directives(job.prompt) if at is None or at == index}

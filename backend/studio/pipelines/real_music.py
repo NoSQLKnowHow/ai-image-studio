@@ -168,6 +168,12 @@ class RealMusicPipeline:
         self._pipe: Any = None
         self._torch: Any = None
 
+    def download_plan(self) -> Any:
+        """As for the image model (DESIGN.md section 39)."""
+        from .progress import plan_for
+
+        return plan_for(self.model, self.hub_mode)
+
     def load(self) -> dict[str, Any]:
         torch, modular_pipeline = import_music_runtime()
         if self.device == "cuda":

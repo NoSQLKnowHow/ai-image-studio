@@ -169,3 +169,7 @@ class EngineBase:
 
     def unload(self) -> None:
         return None
+
+    def download_plan(self) -> Any:
+        """What this engine will download into the cache while it loads, for the progress shown (DESIGN.md section 39): a `DownloadPlan`, or None when it does not say."""
+        return None

@@ -154,6 +154,8 @@ class JobManager:
         self.upscaler = make_upscaler(settings)
         self.speech = SpeechService(settings, db, storage)  # what a reading means (DESIGN.md §38.6); this class owns the queue and the worker it runs on
         self._worker_state: dict[str, Optional[str]] = {"state": "unloaded", "detail": None, "hint": None}
+        self._load_progress: Optional[dict[str, Any]] = None  # the last report of the worker that is loading: how much of the model is in the cache, how long it has taken (DESIGN.md section 39)
+        self._load_after: Optional[str] = None  # the model key that was unloaded to make room for the one that is loading, for the page to say so
         self._worker_info: Optional[dict[str, Any]] = None
         self._task: Optional[asyncio.Task] = None
         self._probe_task: Optional[asyncio.Task] = None
@@ -246,7 +248,15 @@ class JobManager:
             "idle_timeout_min": self.settings.idle_timeout_min,
             "device": self._probe.get("device"),
             "probe": self._probe.get("state"),
+            "progress": self._load_progress_view(),
         }
+
+    def _load_progress_view(self) -> Optional[dict[str, Any]]:
+        """How far the load that is under way has got, or None when no load is: `phase` ("starting" until the worker has reported, then "downloading" or "loading"), `done_bytes` of the model
+        in the cache, `total_bytes` to expect (None when not known), `elapsed_s`, and `after`, the model key that was unloaded to make room (DESIGN.md section 39)."""
+        if self._worker_state["state"] != "loading":
+            return None
+        return {"phase": "starting", "done_bytes": 0, "total_bytes": None, "elapsed_s": 0.0, **(self._load_progress or {}), "after": self._load_after}
 
     def status(self) -> dict[str, Any]:
         return {
@@ -1352,7 +1362,9 @@ class JobManager:
         """Make the worker for model key `kind` the one that is running, starting it (and stopping the other model's, which is idle:
         nothing calls this while a run is using it) if need be. The caller holds the lifecycle lock. True if a process
         was started. Raises _MemoryShortfall, with the state already set to an error, if the model would not fit."""
+        previous: Optional[str] = None
         if self._worker.alive() and self._model != kind:
+            previous = self._model
             log.info("unloading the %s model to make room for the %s model", self._model, kind)
             self._unload_at = None
             await self._worker.stop()  # its exit report sets the state to unloaded before this returns
@@ -1364,6 +1376,7 @@ class JobManager:
         if shortfall:
             self._set_worker_state("error", shortfall, self._memory_hint())
             raise _MemoryShortfall(shortfall)
+        self._load_after = previous  # after the stop above, which ends the state it was set in
         self._set_worker_state("loading")
         await self._worker.start()
         return True
@@ -1700,6 +1713,9 @@ class JobManager:
         })
 
     def _set_worker_state(self, state: str, detail: Optional[str] = None, hint: Optional[str] = None) -> None:
+        if state != "loading":  # whatever the way the load ended (ready, failed, unloaded), its progress is over
+            self._load_progress = None
+            self._load_after = None
         new = {"state": state, "detail": detail, "hint": hint}
         if new != self._worker_state:
             self._worker_state = new
@@ -1721,6 +1737,16 @@ class JobManager:
                     self._wakeup.set()  # a Load without a run: the idle countdown starts now
             elif event.get("state") == "loading":
                 self._set_worker_state("loading")
+        elif kind == "load_progress":
+            if self._worker_state["state"] == "loading":  # a report that comes after the load is over says nothing any more
+                total = event.get("total")
+                self._load_progress = {
+                    "phase": event.get("phase") if event.get("phase") in ("downloading", "loading") else "loading",
+                    "done_bytes": max(0, int(event.get("done") or 0)),
+                    "total_bytes": int(total) if isinstance(total, (int, float)) and total > 0 else None,
+                    "elapsed_s": max(0.0, float(event.get("elapsed") or 0.0)),
+                }
+                self.bus.publish("worker.state", self.worker_status())
         elif kind == "load_failed":
             error = event.get("error") or {}
             state = "unavailable" if error.get("kind") == "unavailable" else "error"

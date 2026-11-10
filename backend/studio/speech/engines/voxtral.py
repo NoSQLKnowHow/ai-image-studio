@@ -157,6 +157,12 @@ class Voxtral(EngineBase):
         except (urllib.error.URLError, OSError, ValueError):
             return False
 
+    def download_plan(self) -> Any:
+        """The model's repository, which vLLM's server fetches into the same cache while it starts (DESIGN.md section 39)."""
+        from ...pipelines.progress import plan_for
+
+        return plan_for(self.settings.model or MODEL, self.settings.hub_mode)
+
     def load(self) -> dict[str, Any]:
         server = _find_server()
         if server is None:

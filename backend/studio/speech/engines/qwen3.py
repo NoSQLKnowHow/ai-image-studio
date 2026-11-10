@@ -97,6 +97,12 @@ class Qwen3TTS(EngineBase):
             return str(Path(base).expanduser() / name)
         return f"{base.rstrip('/')}/{name}"
 
+    def download_plan(self) -> Any:
+        """The checkpoint of this variant, whole, unless it is a folder on disk (DESIGN.md section 39)."""
+        from ...pipelines.progress import plan_for
+
+        return plan_for(self._checkpoint(), self.settings.hub_mode)
+
     def load(self) -> dict[str, Any]:
         if self.settings.variant not in CHECKPOINTS:
             raise PipelineLoadError(f"Qwen3-TTS has no variant {self.settings.variant!r}.")

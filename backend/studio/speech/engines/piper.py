@@ -84,6 +84,15 @@ class Piper(EngineBase):
         libs.hf_hub_download(repo_id=REPO, filename=f"{VOICE_DIR}/{VOICE_FILE}.json", local_files_only=local_only)
         return model
 
+    def download_plan(self) -> Any:
+        """Two files of a repository of very many voices, so no size is offered; none at all when the voice is a file on disk (DESIGN.md section 39)."""
+        from ...pipelines.progress import plan_for
+
+        named = self.settings.model
+        if named and Path(named).expanduser().suffix == ".onnx":
+            return None
+        return plan_for(REPO, self.settings.hub_mode, ask_hub=False)
+
     def load(self) -> dict[str, Any]:
         try:
             libs = _libs()
