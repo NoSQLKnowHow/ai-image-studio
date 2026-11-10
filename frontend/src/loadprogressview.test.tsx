@@ -212,6 +212,26 @@ describe("a run that waits for the model says how far the model has got (criteri
     expect(screen.queryByText(/Downloading/)).toBeNull();
   });
 
+  it("a track and a drawing say they are stopping too, not how far the model has got", () => {
+    music(makeMusicRun({ status: "running", progress: null, canceling: true }));
+    expect(screen.getByText(/^Stopping… \(a model that is still loading finishes loading first\)/)).toBeTruthy();
+    expect(screen.queryByText(/Loading the music model into memory/)).toBeNull();
+    cleanup();
+    vector(makeVectorRun({ status: "running", progress: null, canceling: true }));
+    expect(screen.getByText(/^Stopping… \(a model that is still loading finishes loading first\)/)).toBeTruthy();
+    expect(screen.queryByText(/Downloading/)).toBeNull();
+  });
+
+  it("is not shown by a track or a drawing either when the worker is not loading", () => {
+    music(undefined, worker({ phase: "loading" }, { state: "busy", model: "music", engine: null, variant: null }));
+    expect(screen.queryByText(/into memory/)).toBeNull();
+    expect(screen.getByText("Starting…")).toBeTruthy();
+    cleanup();
+    vector(undefined, worker({}, { state: "ready", model: "image", engine: null, variant: null }));
+    expect(screen.queryByText(/Downloading/)).toBeNull();
+    expect(screen.getByText("Starting…")).toBeTruthy();
+  });
+
   it("is the run's own progress, not the model's, once the run has started", () => {
     image(makeRun({ status: "running", progress: { image: 1, of: 1, step: 5, steps: 20 } as never }));
     expect(screen.getByText(/step 5 of 20/)).toBeTruthy();
@@ -263,6 +283,46 @@ describe("the Speech tab (criterion 302)", () => {
     server(() => ({ body: { presets: [], saved: [] } }));
     render(<SpeechPanel hidden={false} caps={CAPS} store={memoryStore()} />);
     expect(screen.queryByText(/Downloading|Loading .* into memory/)).toBeNull();
+  });
+
+  // The tab hands the worker on to the two dialogs it opens: each shows the view as well as the tab's own, so the words are there twice once a dialog is waiting for the model.
+  describe("and the dialogs it opens", () => {
+    const tab = () => {
+      server((call) => {
+        if (call.url === "/api/speech/passage") return { body: PASSAGE };
+        if (call.url === "/api/speech/voices/design") return { body: { ...DESIGN_DONE, status: "queued", files: [] } };
+        if (call.url === "/api/speech/recordings") return { body: STAGED };
+        if (call.url === "/api/speech/samples") return { body: { ready: false, url: null, job: { ...DESIGN_DONE, status: "queued", files: [] } } };
+        return { status: 404, body: { detail: "n/a", code: "not_found" } };
+      });
+      render(<SpeechPanel hidden={false} caps={CAPS} store={memoryStore()} jobs={createEmitter<SpeechJob>()} worker={worker({})} />);
+    };
+    const DOWNLOADING = "Downloading Qwen3-TTS for designing a voice";
+
+    it("Design a voice, while its samples are made", async () => {
+      tab();
+      await flush();
+      expect(screen.getAllByText(DOWNLOADING)).toHaveLength(1);                           // the tab's own
+      fireEvent.click(screen.getByRole("button", { name: "Design a voice" }));
+      await flush();
+      fireEvent.change(screen.getByRole("textbox", { name: "Describe the voice" }), { target: { value: "a warm Irish woman in her forties" } });
+      fireEvent.click(screen.getByRole("button", { name: "Make three samples" }));
+      await flush();
+      expect(screen.getAllByText(DOWNLOADING)).toHaveLength(2);                           // and the dialog's
+    });
+
+    it("Add my voice, while the new voice is made to speak", async () => {
+      tab();
+      await flush();
+      fireEvent.click(screen.getByRole("button", { name: "Add my voice" }));
+      await flush();
+      fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [new File([new Uint8Array(5000)], "me.wav", { type: "audio/wav" })] } });
+      await flush();
+      expect(screen.getAllByText(DOWNLOADING)).toHaveLength(1);
+      fireEvent.click(screen.getByRole("button", { name: /Play sample of the new voice/ }));
+      await flush();
+      expect(screen.getAllByText(DOWNLOADING)).toHaveLength(2);
+    });
   });
 });
 

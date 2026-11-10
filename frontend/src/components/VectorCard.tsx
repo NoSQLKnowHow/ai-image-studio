@@ -58,7 +58,7 @@ function VectorProgress({ run, workerState, worker }: { run: VectorRun; workerSt
   const p = run.progress;
   if (!p) {
     // waiting for the model, and the server can say how far it has got (DESIGN.md §39): say it, instead of the one line that does not move
-    if (!run.canceling && workerState === "loading" && loadView(worker)) {
+    if (!run.canceling && loadView(worker)) { // loadView is nothing unless the worker is loading
       return <div className="progress" role="status"><LoadProgressView worker={worker} /></div>;
     }
     const text = run.canceling
