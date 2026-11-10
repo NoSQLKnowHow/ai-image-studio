@@ -564,6 +564,35 @@ def test_a_report_that_comes_after_the_load_is_over_is_ignored(client_factory, s
     assert client.get("/api/status").json()["worker"]["progress"] is None
 
 
+def next_load_begins(client) -> dict:
+    """The status of a load that has just begun, made to begin by hand (as `_set_worker_state` does when a load is started), on the loop that the server's events run on."""
+    jobs = client.app.state.jobs
+    client.portal.call(jobs._set_worker_state, "loading")
+    return client.get("/api/status").json()["worker"]["progress"]
+
+
+def test_the_progress_of_one_load_does_not_leak_into_the_next(client_factory, slow_download):
+    """The status hides progress when no load is under way, so a stale number would only show at the start of the NEXT load, before its own first report. It must not."""
+    client = client_factory()
+    watch(client, lambda: client.post("/api/model/load"))
+    jobs = client.app.state.jobs
+    client.portal.call(jobs._set_worker_state, "loading")
+    client.portal.call(jobs._on_worker_event, {"event": "load_progress", "phase": "downloading", "done": 5 * MB, "total": 8 * MB, "elapsed": 9.0})
+    jobs._load_after = "image"  # what a swap would have recorded
+    assert client.get("/api/status").json()["worker"]["progress"]["done_bytes"] == 5 * MB
+    client.portal.call(jobs._set_worker_state, "ready")                                 # the load ends
+    fresh = next_load_begins(client)                                                    # and the next one begins
+    assert fresh == {"phase": "starting", "done_bytes": 0, "total_bytes": None, "elapsed_s": 0.0, "after": None}
+
+
+def test_a_late_report_does_not_leak_into_the_next_load_either(client_factory, slow_download):
+    client = client_factory()
+    watch(client, lambda: client.post("/api/model/load"))                               # ready
+    jobs = client.app.state.jobs
+    client.portal.call(jobs._on_worker_event, {"event": "load_progress", "phase": "downloading", "done": 5 * MB, "total": 8 * MB, "elapsed": 9.0})   # too late
+    assert next_load_begins(client) == {"phase": "starting", "done_bytes": 0, "total_bytes": None, "elapsed_s": 0.0, "after": None}
+
+
 @pytest.mark.parametrize("event, expected", [
     ({"phase": "downloading", "done": 5, "total": 10, "elapsed": 2.5}, {"phase": "downloading", "done_bytes": 5, "total_bytes": 10, "elapsed_s": 2.5}),
     ({"phase": "loading", "done": 5, "total": None, "elapsed": 2}, {"phase": "loading", "done_bytes": 5, "total_bytes": None, "elapsed_s": 2.0}),
