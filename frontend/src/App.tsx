@@ -1142,6 +1142,7 @@ export default function App() {
                       run={run}
                       now={now}
                       workerState={status?.worker.state ?? null}
+                      worker={status?.worker ?? null}
                       canEdit={canEdit}
                       making4k={making4k}
                       enlarging={enlarging}
@@ -1215,7 +1216,7 @@ export default function App() {
               onDeleteTrack={(run, track, position, of) => askDeleteItem(run, "track", track, position, of)}
               onCopy={(run) => void copy(run)}
             />
-            <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} onQueued={(run) => dispatch({ type: "runUpsert", run })}
+            <SpeechPanel hidden={tab !== "speech"} caps={caps} store={store} push={push} jobs={speechJobs} onEngine={setSpeechEngine} worker={status?.worker ?? null} onQueued={(run) => dispatch({ type: "runUpsert", run })}
               history={{
                 status, runs: speechRuns, runsReady, filterBar, loadProblem: problem, empty: emptyFor("speech"), isTransient: transient, viewScope, projects: projectControls, more, loadingOlder, now,
                 onLoadOlder: () => void loadOlder(), onCancel: requestCancel, onContinue: (run) => void continueReading(run), onRestore: (run) => void restore(run, true), onDelete: setPendingDelete,

@@ -9,7 +9,7 @@ import {
 } from "../speech";
 import { speechApi } from "../speechApi";
 import type { PresetVoice, ReadingPieceEvent, SavedVoice, SpeechJob } from "../speechTypes";
-import { isSpeechRun, type Capabilities, type Run, type SpeechRun, type Status } from "../types";
+import { isSpeechRun, type Capabilities, type Run, type SpeechRun, type Status, type WorkerStatus } from "../types";
 import type { ViewScope } from "../format";
 import { useEngineVoices } from "../useEngineVoices";
 import { usePassage } from "../usePassage";
@@ -21,6 +21,7 @@ import { SpeechReview } from "./SpeechReview";
 import { SpeechSourceBox } from "./SpeechSource";
 import { SpeechStyle } from "./SpeechStyle";
 import { SpeechVoices } from "./SpeechVoices";
+import { LoadProgressView } from "./LoadProgress";
 import { AddVoiceDialog, ConfirmDeleteVoice, DesignVoiceDialog } from "./VoiceDialogs";
 import { QueueBar } from "./Feedback";
 import type { ProjectControls } from "./ProjectMenu";
@@ -77,6 +78,7 @@ export interface SpeechPanelProps {
   onQueued?: (run: SpeechRun) => void; // a reading was queued: it joins the page's runs
   history?: SpeechHistory; // the readings made so far, with the filter bar above them
   reader?: SpeechReader; // the reading being listened to: the player, above the history
+  worker?: WorkerStatus | null; // what the worker is doing, to show how far a speech model that is loading has got (DESIGN.md §39)
 }
 
 /** The readings made so far (DESIGN.md §38.2): one card each, newest first, under the filter bar the tabs share. They are shown whether or not speech can be made now,
@@ -108,7 +110,8 @@ function Readings({ history }: { history: SpeechHistory }) {
   );
 }
 
-export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngine, onQueued, history, reader }: SpeechPanelProps) {
+export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngine, onQueued, history, reader, worker }: SpeechPanelProps) {
+  const speechWorker = worker?.model === "speech" ? worker : null; // only a speech model's load is the Speech tab's business
   const speech = caps.speech;
   const limits = caps.limits.speech;
   const source = useSpeechSource(limits);
@@ -235,6 +238,7 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
           <section className="speech-voice-section" aria-labelledby="speech-voice-title">
             <h2 id="speech-voice-title">Voice</h2>
             <SpeechEngines engines={speech.engines} chosen={engineId} onChoose={chooseEngineById} />
+            <LoadProgressView worker={speechWorker} />
             {engine && (
               <>
                 <SpeechVoices engine={engine.id} presets={presets} saved={saved} chosen={pick} onChoose={chooseVoice} filter={choice.filter} onFilter={setFilter} sampler={sampler}
@@ -249,8 +253,8 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
           <audio ref={audio} preload="none" />
           {engine && usable && (
             <>
-              <DesignVoiceDialog open={maker === "design"} onOpenChange={(open) => !open && setMaker(null)} engine={engine} passage={passage} jobs={jobs} onSaved={savedVoice} />
-              <AddVoiceDialog open={maker === "clone"} onOpenChange={(open) => !open && setMaker(null)} engine={engine} limits={limits} passage={passage} jobs={jobs} onSaved={savedVoice} />
+              <DesignVoiceDialog open={maker === "design"} onOpenChange={(open) => !open && setMaker(null)} engine={engine} passage={passage} jobs={jobs} worker={speechWorker} onSaved={savedVoice} />
+              <AddVoiceDialog open={maker === "clone"} onOpenChange={(open) => !open && setMaker(null)} engine={engine} limits={limits} passage={passage} jobs={jobs} worker={speechWorker} onSaved={savedVoice} />
             </>
           )}
           <ConfirmDeleteVoice voice={deleting} deleting={deleteBusy} problem={deleteProblem} onCancel={() => setDeleting(null)} onConfirm={() => void confirmDeleteVoice()} />
