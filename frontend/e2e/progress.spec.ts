@@ -66,6 +66,7 @@ test("an image waits for the model, and the card, the pill and the panel say how
   const bar = card.getByRole("progressbar", { name: "Downloading the image model" });
   await expect(bar).toBeVisible();
   await expect(bar).toHaveAttribute("aria-valuenow", /^\d+$/);
+  await expect.poll(() => bar.locator("span").evaluate((el) => el.getBoundingClientRect().width), { intervals: [50] }).toBeGreaterThan(0); // painted: the real CSS reads the width
   await expect(card.getByText(/the first load takes a while/)).toHaveCount(0); // not the line that never moved
 
   // the short form is in the pill, and the whole view in the panel it opens

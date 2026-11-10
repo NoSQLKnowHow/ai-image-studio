@@ -1167,7 +1167,8 @@ test("a Vector run that waits for the model to load says so on its card", async 
   await expect.poll(async () => (await page.request.post("/api/model/unload", { headers: ASK })).status(), { timeout: 30_000 }).toBe(200);
   await openVector(page);
   const c = await makeVector(page, unique("model loading"));
-  await expect(c.locator(".progress")).toContainText("Loading the model… (the first load takes a while)"); // the fake model takes about a second to load
+  // the fake model takes about a second to load. Since 1.21 the server says how far it has got (DESIGN.md §39), and the card says that instead of "Loading the model… (the first load takes a while)"
+  await expect(c.locator(".progress")).toContainText(/Loading the image model into memory|Downloading the image model|Starting to load the image model/);
 });
 
 // ------------------------------------------------------------------ Copy SVG code when something goes wrong
