@@ -14,6 +14,7 @@ Nothing here downloads anything. The fake pipelines pretend to (`STUDIO_FAKE_DOW
 
 from __future__ import annotations
 
+import os
 import sys
 import threading
 import time
@@ -45,8 +46,8 @@ def fill(cache: Path, repo: str, files: dict[str, int]) -> None:
 class Clock:
     """A clock that moves only when told to, so that "a second later" is exact."""
 
-    def __init__(self) -> None:
-        self.now = 100.0
+    def __init__(self, start: float = 100.0) -> None:
+        self.now = start
 
     def __call__(self) -> float:
         return self.now
@@ -158,10 +159,24 @@ def test_no_size_when_the_hub_cannot_say(monkeypatch):
 # ------------------------------------------------------------------ one look at a time (a clock moved by hand)
 
 def watcher_on(tmp_path, repos=("a/one",), total=None, **kw):
-    clock = Clock()
-    watcher = LoadWatcher(lambda *a, **k: None, DownloadPlan(tuple(repos), ask_hub=False, total_bytes=total), cache_dir=tmp_path, interval=1.0, clock=clock,
+    """A watcher with two clocks moved by hand: `clock` (the watcher's own, in seconds) and `clock.wall` (the time of day, which the files' times are in)."""
+    clock, wall = Clock(), Clock(1_700_000_000.0)
+    clock.wall = wall
+    watcher = LoadWatcher(lambda *a, **k: None, DownloadPlan(tuple(repos), ask_hub=False, total_bytes=total), cache_dir=tmp_path, interval=1.0, clock=clock, wall=wall,
                           fetch_total=lambda repos: None, **kw)
     return watcher, clock
+
+
+def write(tmp_path, clock, name: str, size: int, repo: str = "a/one") -> None:
+    """Write a file of the cache as a downloader does: its size is `size` and it was written to just now, by the time of day of the watcher's wall clock."""
+    fill(tmp_path, repo, {name: size})
+    path = P.repo_dir(tmp_path, repo) / "blobs" / name
+    os.utime(path, (clock.wall.now, clock.wall.now))
+
+
+def tick(clock, seconds: float = 1.0) -> None:
+    clock.advance(seconds)
+    clock.wall.advance(seconds)
 
 
 def test_a_first_download_is_seen_as_soon_as_the_files_start_to_arrive(tmp_path):
@@ -174,23 +189,73 @@ def test_a_first_download_is_seen_as_soon_as_the_files_start_to_arrive(tmp_path)
     assert (grown["phase"], grown["done"]) == ("downloading", 10)                    # from nothing to something is growth
 
 
-def test_downloading_while_the_cache_grows_and_loading_once_it_has_stopped(tmp_path):
-    fill(tmp_path, "a/one", {"x.incomplete": 10})                                     # a partial download left from before: the baseline, which is not growth
+def test_a_file_that_is_arriving_is_a_download_however_slowly_it_grows(tmp_path):
+    """The pattern measured from the real downloader (hf_xet, 327 MB): the file exists at 0 bytes for seconds, then jumps, with a second or more between the jumps. A rule
+    that asked whether the size grew in the last second would call the gaps "loading"."""
+    watcher, clock = watcher_on(tmp_path)
+    steps = [0, 0, 0, 0, 134, 134, 134, 134, 134, 134, 327]            # megabytes, one look a second
+    for megabytes in steps:
+        if megabytes != int(watcher._last_done or 0) // MB or watcher._last_done is None:
+            write(tmp_path, clock, "x.incomplete", megabytes * MB)     # the file is written to only when it grows
+        elif not (P.repo_dir(tmp_path, "a/one") / "blobs" / "x.incomplete").exists():
+            write(tmp_path, clock, "x.incomplete", 0)
+        shot = watcher.snapshot()
+        assert shot["phase"] == "downloading", (megabytes, clock.now)
+        tick(clock)
+    # a file that is not written to for 20 s is still arriving (a slow link takes that long over one step), but not for ever
+    tick(clock, 20)
+    assert watcher.snapshot()["phase"] == "downloading"
+    tick(clock, 60)
+    assert watcher.snapshot()["phase"] == "loading"                    # untouched for over a minute: nothing is writing to it
+
+
+def test_an_incomplete_file_nobody_is_writing_to_is_left_over_and_not_a_download(tmp_path):
+    watcher, clock = watcher_on(tmp_path)
+    write(tmp_path, clock, "old.incomplete", 10 * MB)
+    tick(clock, 3600)                                                  # left by a download that stopped an hour ago
+    assert watcher.snapshot()["phase"] == "loading"
+    tick(clock)
+    assert watcher.snapshot()["phase"] == "loading"
+
+
+def test_the_download_is_over_when_the_file_is_made_whole(tmp_path):
+    watcher, clock = watcher_on(tmp_path)
+    write(tmp_path, clock, "x.incomplete", 5 * MB)
+    assert watcher.snapshot()["phase"] == "downloading"
+    os.replace(P.repo_dir(tmp_path, "a/one") / "blobs" / "x.incomplete", P.repo_dir(tmp_path, "a/one") / "blobs" / "x")   # as the downloader does
+    tick(clock)
+    shot = watcher.snapshot()
+    assert (shot["phase"], shot["done"]) == ("loading", 5 * MB)        # nothing is arriving any more and the bytes are all there: it is being loaded into memory
+
+
+def test_growth_alone_is_a_download_for_a_downloader_that_does_not_name_its_files_incomplete(tmp_path):
+    fill(tmp_path, "a/one", {"x": 10})                                 # what was there when the load began: the baseline, which is not growth
     watcher, clock = watcher_on(tmp_path)
     assert watcher.snapshot()["phase"] == "loading"
-    clock.advance(1)
-    assert watcher.snapshot()["phase"] == "loading"                                   # and it stays as it is
-    fill(tmp_path, "a/one", {"x.incomplete": 25})
-    clock.advance(1)
+    tick(clock)
+    assert watcher.snapshot()["phase"] == "loading"
+    fill(tmp_path, "a/one", {"x": 25})
+    tick(clock)
     grown = watcher.snapshot()
-    assert (grown["phase"], grown["done"], grown["elapsed"]) == ("downloading", 25, 2.0)
-    clock.advance(1)
-    assert watcher.snapshot()["phase"] == "downloading"                               # a second without growth is still a download (the window is a second and a half)
-    clock.advance(1)
-    assert watcher.snapshot()["phase"] == "loading"                                   # two seconds is not: it is being loaded into memory
-    fill(tmp_path, "a/one", {"x.incomplete": 60})
-    clock.advance(1)
-    assert watcher.snapshot()["phase"] == "downloading"                               # and moves again
+    assert (grown["phase"], grown["done"]) == ("downloading", 25)
+    tick(clock)
+    assert watcher.snapshot()["phase"] == "downloading"                # a second without growth is still a download (the window is a second and a half)
+    tick(clock)
+    assert watcher.snapshot()["phase"] == "loading"                    # two seconds is not
+    fill(tmp_path, "a/one", {"x": 60})
+    tick(clock)
+    assert watcher.snapshot()["phase"] == "downloading"                # and it moves again
+
+
+def test_the_cache_state_says_the_bytes_and_whether_a_file_is_arriving(tmp_path):
+    fill(tmp_path, "a/one", {"whole": 100, "arriving.incomplete": 50})
+    now = os.stat(P.repo_dir(tmp_path, "a/one") / "blobs" / "arriving.incomplete").st_mtime
+    assert P.cache_state(tmp_path, ["a/one"], now) == (150, True)
+    assert P.cache_state(tmp_path, ["a/one"], now + P.ARRIVING_WITHIN) == (150, True)        # a minute to the second is still fresh
+    assert P.cache_state(tmp_path, ["a/one"], now + P.ARRIVING_WITHIN + 1) == (150, False)   # a second more is not
+    fill(tmp_path, "b/two", {"whole": 7})
+    assert P.cache_state(tmp_path, ["b/two"], now) == (7, False)                             # whole files are never arriving
+    assert P.cache_state(tmp_path, ["nobody/nothing"], now) == (0, False)
 
 
 def test_a_model_that_is_already_in_the_cache_is_loading_throughout(tmp_path):

@@ -9,7 +9,13 @@ instead, at the one thing every one of them does the same way: they write the mo
 process passes it on in the worker's status. That works for every engine and for the image and music models alike, needs no change to what downloads, and cannot slow the load.
 
 What it can say is therefore exactly this and no more: how many bytes of the model are in the cache now; the size the Hub says the model has, where that is known and fits the files
-that will be fetched; whether the number is still growing; and how long the load has taken. Loading into memory has no measure, so it is shown as elapsed time only.
+that will be fetched; whether a file is still arriving; and how long the load has taken. Loading into memory has no measure, so it is shown as elapsed time only.
+
+**What was measured, and why "arriving" is not "growing".** The three downloaders of `huggingface_hub` (its own, `hf_transfer`, and `hf_xet`, which is the default) were each run on a
+real file of 327 MB (Kokoro's weights) while the cache folder was read every 0.2 s. All three write the file as `<hash>.incomplete` and rename it to `<hash>` when it is whole, and the
+size they report is the data written (the blocks allocated are the same), so the size is a fair measure. But `hf_xet` writes in large, bursty steps: the file existed for about four
+seconds at 0 bytes, then jumped to 134 MB, then to 327 MB, so "did the size grow in the last second or two" is false in the gaps of a download that is going well. A fresh
+`*.incomplete` file is present for exactly as long as a file is arriving, so that is what "downloading" means here; growth is kept as well, for a downloader that does not use the name.
 """
 
 from __future__ import annotations
@@ -70,21 +76,37 @@ def repo_dir(cache: Path, repo: str) -> Path:
     return cache / ("models--" + repo.replace("/", "--"))
 
 
-def cache_bytes(cache: Path, repos: Iterable[str]) -> int:
-    """The bytes of these repositories in the cache now: every file in each one's `blobs` folder, the ones still arriving (`*.incomplete`) as far as they have got. Never raises."""
-    total = 0
+ARRIVING_WITHIN = 60.0  # seconds: an `.incomplete` file that has not been written to for longer is left over from a download that is no longer running, not one that is
+
+
+def cache_state(cache: Path, repos: Iterable[str], now: Optional[float] = None) -> tuple[int, bool]:
+    """(the bytes of these repositories in the cache now, whether a file of them is still arriving).
+
+    The bytes are every file in each repository's `blobs` folder, the ones still arriving (`*.incomplete`) as far as they have got. A file is arriving when it is named `*.incomplete`
+    and was written to in the last minute: the downloader renames it when it is whole, and one that has lain untouched for longer was left by a download that stopped. Never raises."""
+    now = time.time() if now is None else now
+    total, arriving = 0, False
     for repo in repos:
         try:
             with os.scandir(repo_dir(cache, repo) / "blobs") as entries:
                 for entry in entries:
                     try:
-                        if entry.is_file(follow_symlinks=False):
-                            total += entry.stat(follow_symlinks=False).st_size
+                        if not entry.is_file(follow_symlinks=False):
+                            continue
+                        info = entry.stat(follow_symlinks=False)
+                        total += info.st_size
+                        if entry.name.endswith(".incomplete") and now - info.st_mtime <= ARRIVING_WITHIN:
+                            arriving = True
                     except OSError:
                         continue  # a file that was renamed as it was looked at: the next look will see it
         except OSError:
             continue  # not there yet
-    return total
+    return total, arriving
+
+
+def cache_bytes(cache: Path, repos: Iterable[str]) -> int:
+    """The bytes of these repositories in the cache now (see `cache_state`)."""
+    return cache_state(cache, repos)[0]
 
 
 def fetch_hub_total(repos: Iterable[str], timeout: float = 10.0) -> Optional[int]:
@@ -123,19 +145,21 @@ class LoadWatcher:
 
     * `done`: bytes of the plan's repositories in the cache now (0 when there is nothing to look at);
     * `total`: the size to expect, or None. A total that the cache has already outgrown was wrong (the Hub lists files the library does not fetch), and is dropped;
-    * `phase`: "downloading" while `done` grew in the last `grow_window` seconds (a second and a half, with the one-second reports), else "loading". A download that stalls for longer than
-      that is shown as "loading" until it moves again, which is the price of not hooking the downloader. A model that is already in the cache never grows, so it is "loading" throughout;
+    * `phase`: "downloading" while a file of the plan is arriving (a fresh `*.incomplete` file) or `done` grew in the last `grow_window` seconds (a second and a half, with the
+      one-second reports), else "loading". A model that is already in the cache has no file arriving and never grows, so it is "loading" throughout;
     * `elapsed`: seconds since `start()`.
     """
 
     def __init__(self, emit: Callable[..., None], plan: Optional[DownloadPlan], *, cache_dir: Optional[Path] = None, interval: Optional[float] = None,
-                 grow_window: Optional[float] = None, clock: Callable[[], float] = time.monotonic, fetch_total: Callable[[Iterable[str]], Optional[int]] = fetch_hub_total):
+                 grow_window: Optional[float] = None, clock: Callable[[], float] = time.monotonic, wall: Callable[[], float] = time.time,
+                 fetch_total: Callable[[Iterable[str]], Optional[int]] = fetch_hub_total):
         self._emit = emit
         self._plan = plan
         self._cache = cache_dir if cache_dir is not None else hub_cache_dir()
         self._interval = interval if interval is not None else progress_interval()
         self._grow_window = grow_window if grow_window is not None else max(0.3, 1.5 * self._interval)
         self._clock = clock
+        self._wall = wall  # the time of day, which the files' times are in
         self._fetch_total = fetch_total
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -148,14 +172,14 @@ class LoadWatcher:
     def snapshot(self) -> dict[str, Any]:
         """Look at the cache now and say what is seen. Called by the thread once an interval, and by tests directly."""
         now = self._clock()
-        done = cache_bytes(self._cache, self._plan.repos) if self._plan else 0
+        done, arriving = cache_state(self._cache, self._plan.repos, self._wall()) if self._plan else (0, False)
         if self._last_done is not None and done > self._last_done:
             self._grew_at = now
         self._last_done = done
         total = self._total
         if total is not None and done > total:
             total = None  # the cache holds more than the Hub said: the size does not fit what is fetched, so say none
-        downloading = self._grew_at is not None and now - self._grew_at <= self._grow_window
+        downloading = arriving or (self._grew_at is not None and now - self._grew_at <= self._grow_window)
         return {"phase": "downloading" if downloading else "loading", "done": done, "total": total, "elapsed": round(now - self._started, 1)}
 
     # ------------------------------------------------------------------ the thread
