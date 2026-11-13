@@ -62,10 +62,10 @@ def test_dropping_a_run_where_it_already_is_writes_nothing(db):
     for n in (1, 2, 3):
         put(db, n)
     db.move_queued(rid(3), before=rid(1))
-    keys = [r["queue_key"] for r in db._all("SELECT queue_key FROM runs ORDER BY seq")]
+    written = db._conn.total_changes          # rewriting an unchanged order would give the same numbers, so the rows written are counted, not compared
     assert db.move_queued(rid(1), before=rid(2)) == "ok"      # 1 is already just before 2
     assert db.move_queued(rid(2), after=rid(1)) == "ok"       # and 2 just after 1
-    assert [r["queue_key"] for r in db._all("SELECT queue_key FROM runs ORDER BY seq")] == keys and order(db) == [3, 1, 2]
+    assert db._conn.total_changes == written and order(db) == [3, 1, 2]
 
 
 # ------------------------------------------------------------------ what cannot be moved, and what it cannot be moved next to (criterion 307)

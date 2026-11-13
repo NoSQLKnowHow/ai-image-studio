@@ -400,8 +400,34 @@ export interface WorkerStatus {
 export interface Status {
   version: string;
   worker: WorkerStatus;
-  queue: { running: string | null; queued: number; cap: number; enlarge_waiting: string[] }; // enlarge_waiting: images whose Enlarge is waiting for the GPU (DESIGN.md §28.3)
+  // enlarge_waiting: images whose Enlarge is waiting for the GPU (DESIGN.md §28.3); order: the waiting runs in the order they will be worked on, which tells a page that the
+  // order changed when nothing else did (§40.5; an older server does not send it)
+  queue: { running: string | null; queued: number; cap: number; enlarge_waiting: string[]; order?: string[] };
   memory: { total_gb?: number; available_gb?: number; min_free_gb: number | null; music_min_free_gb: number | null; worker_rss_gb: number | null };
+}
+
+/** What the Queue panel says of one job (DESIGN.md section 40.4): `kind` is the model it needs, `movable` is false once it has started (and for the job that is going),
+ *  `position` is its place among the waiting jobs (null for the job that is going). */
+export type QueueKind = "image" | "music" | "vector" | "speech" | "voice";
+export interface QueueItem {
+  id: string;
+  kind: QueueKind;
+  title: string;
+  draft: boolean;
+  movable: boolean;
+  position: number | null;
+}
+/** `GET /api/queue`, and the answer to a move: the job that is going and the waiting jobs in order. */
+export interface QueueListing {
+  running: QueueItem | null;
+  queued: QueueItem[];
+  cap: number;
+}
+/** `POST /api/queue/move`: the waiting job to move, and the waiting job to put it before or after (one of the two). */
+export interface QueueMove {
+  id: string;
+  before?: string;
+  after?: string;
 }
 
 export interface Range {

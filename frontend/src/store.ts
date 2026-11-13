@@ -170,7 +170,13 @@ export function reducer(state: State, action: Action): State {
         }
       }
       const status = state.status
-        ? { ...state.status, queue: { ...state.status.queue, running: action.running, queued: Object.keys(action.positions).length, enlarge_waiting: action.enlargeWaiting } }
+        ? {
+          ...state.status,
+          queue: {
+            ...state.status.queue, running: action.running, queued: Object.keys(action.positions).length, enlarge_waiting: action.enlargeWaiting,
+            order: Object.entries(action.positions).sort((a, b) => a[1] - b[1]).map(([id]) => id), // the waiting runs by place: what tells the Queue panel to look again (§40.5)
+          },
+        }
         : null;
       return { ...state, runs: changed ? runs : state.runs, status };
     }

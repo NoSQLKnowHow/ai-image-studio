@@ -56,3 +56,8 @@ export const ChevronDownIcon = () => <Icon><path d="M6 9l6 6 6-6" /></Icon>;
 export const CheckIcon = () => <Icon><path d="M5 12.5l4.5 4.5L19 7.5" /></Icon>;
 // a pen path: a curve with its two end points drawn as squares, the icon of Vector (DESIGN.md §31)
 export const VectorIcon = () => <Icon><path d="M6 18C6 9 12 15 18 6" /><rect x="3" y="16" width="5" height="5" rx="1" /><rect x="16" y="3" width="5" height="5" rx="1" /></Icon>;
+
+// The Queue panel (DESIGN.md section 40): the button, the grip a job is dragged by, the arrows that move it for a keyboard or a finger, and the lock of a job that has started
+export const QueueIcon = () => <Icon><path d="M4 6h13M4 12h13M4 18h8" /><path d="M19 15l2.5 3-2.5 3" /></Icon>;
+export const ChevronUpIcon = () => <Icon><path d="M6 15l6-6 6 6" /></Icon>;
+export const LockIcon = () => <Icon><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Icon>;
