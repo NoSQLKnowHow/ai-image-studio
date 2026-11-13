@@ -94,6 +94,29 @@ test("a waiting job is dragged to a new place in the Queue panel, and the jobs a
   expect([...ids].sort((x, y) => String(started[ids.indexOf(x)]).localeCompare(String(started[ids.indexOf(y)])))).toEqual([ids[2], ids[0], ids[1]]);
 });
 
+test("the cards on the tab follow the queue: the job going, the waiting jobs in the order they will be worked on, then the history (criteria 316, 317)", async ({ page }) => {
+  await page.goto("/");
+  const earlier = unique("finished earlier");
+  const earlierId = await post(page, earlier);
+  await expect.poll(async () => ((await (await page.request.get(`/api/runs/${earlierId}`)).json()) as { status: string }).status, { timeout: 30_000 }).toBe("done");
+  const going = await busy(page);
+  const [a, c, e] = [unique("first"), unique("second"), unique("third")];
+  await post(page, a);
+  await post(page, c);
+  const cards = page.locator("article.run-card");
+  await expect(cards).toContainText([going.prompt, a, c, earlier]);       // the job going, the waiting ones in their order, then what was finished
+
+  await queueButton(page).click();
+  await rowOf(page, c).locator(".queue-grip").dragTo(rowOf(page, a), { targetPosition: { x: 60, y: 4 } });
+  await expect(cards).toContainText([going.prompt, c, a, earlier]);       // the card moved with the job
+  await expect(cards.nth(1).locator(".badge").first()).toHaveText("Queued · #1");
+  await expect(cards.nth(2).locator(".badge").first()).toHaveText("Queued · #2");
+
+  await post(page, e);                                                    // a new job stands last in the queue, so its card is last of the block, not at the top
+  await expect(cards).toContainText([going.prompt, c, a, e, earlier]);
+  await expect(cards.nth(3).locator(".badge").first()).toHaveText("Queued · #3");
+});
+
 test("the arrows move a job from the keyboard, say where it went, and keep focus where a person can carry on", async ({ page }) => {
   await page.goto("/");
   await busy(page);
