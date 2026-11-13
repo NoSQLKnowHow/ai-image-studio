@@ -365,7 +365,7 @@ describe("dragging a job by its grip (criterion 306)", () => {
     const { calls } = await open(["a", "b", "c"]);
     pointer("pointerdown", grip("a"), { button: 0 });
     pointer("pointermove", window, { clientY: 125 });
-    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(document.body, { key: "Escape" });                              // a key press goes to an element and up through the document, as the panel's own Escape hears it
     expect(document.querySelector(".is-dragging")).toBeNull();
     pointer("pointerup", window, { clientY: 125 });
     await flush();
