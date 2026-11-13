@@ -16,8 +16,8 @@ async function post(page: Page, prompt: string, options: Record<string, unknown>
 }
 
 /** A run that keeps the worker busy for several seconds (the fake pipeline takes 10 ms a step: 100 steps of 8 pictures), so that what is made after it waits. */
-async function busy(page: Page): Promise<{ id: string; prompt: string }> {
-  const prompt = unique("busy");
+async function busy(page: Page, words?: string): Promise<{ id: string; prompt: string }> {
+  const prompt = words ?? unique("busy");
   const id = await post(page, prompt, { steps: 100, num_images: 8 });
   await expect.poll(async () => ((await (await page.request.get(`/api/runs/${id}`)).json()) as { status: string }).status, { timeout: 20_000 }).toBe("running");
   return { id, prompt };
@@ -32,6 +32,29 @@ async function drain(page: Page) {
     for (const run of [...(queue.running ? [queue.running] : []), ...queue.queued]) await page.request.post(`/api/runs/${run.id}/cancel`, { headers: ASK });
     return queue.running === null && queue.queued.length === 0;
   }, { timeout: 30_000 }).toBe(true);
+}
+
+/** What a person really writes: a prompt much longer than the panel is wide, which the server shortens to 80 characters and the panel must shorten again, to what fits. */
+const longWords = (tag: string) => `${tag} a cinematic photorealistic film still set on a dusty old-western railway platform at golden hour, long shadows, a lone traveller waiting beside a battered trunk`;
+
+/** Every row of the open panel, the job going and the waiting ones, ends inside the panel, and the panel is inside the window. A row wider than the panel is what a long title does to a
+ *  grid whose column is allowed to grow to fit it: the page of someone with real prompts saw it, and tests with short words could not. */
+async function expectRowsInsidePanel(page: Page) {
+  const outer = await panel(page).boundingBox();
+  const window = page.viewportSize();
+  expect(outer && window).toBeTruthy();
+  expect(outer!.x).toBeGreaterThanOrEqual(0);
+  expect(outer!.x + outer!.width).toBeLessThanOrEqual(window!.width);
+  const rows = await panel(page).locator("li[data-row], .queue-now").all();
+  expect(rows.length).toBeGreaterThanOrEqual(3);
+  for (const row of rows) {
+    const box = await row.boundingBox();
+    expect(box!.x, "a row starts inside the panel").toBeGreaterThanOrEqual(outer!.x - 0.5);
+    expect(box!.x + box!.width, `a row ends inside the panel (${box!.x + box!.width} against ${outer!.x + outer!.width})`).toBeLessThanOrEqual(outer!.x + outer!.width + 0.5);
+  }
+  // the words that do not fit are cut with an ellipsis, not pushed out
+  const cut = await panel(page).locator(".queue-title").evaluateAll((els) => els.every((el) => el.scrollWidth <= el.clientWidth || getComputedStyle(el).textOverflow === "ellipsis"));
+  expect(cut).toBe(true);
 }
 
 const startedAt = async (page: Page, id: string) => ((await (await page.request.get(`/api/runs/${id}`)).json()) as { started_at: string | null }).started_at;
@@ -124,20 +147,32 @@ test("the job that is going is locked: no grip, no arrows, and the server refuse
   expect(((await refused.json()) as { code: string }).code).toBe("not_movable");
 });
 
+test("long prompts are cut to fit the panel, and no row runs out of it", async ({ page }) => {
+  await page.goto("/");
+  await busy(page, longWords("going"));
+  for (const tag of ["first", "second"]) await post(page, longWords(unique(tag)));
+  await queueButton(page).click();
+  await expect(titles(page)).toHaveCount(2);
+  await expectRowsInsidePanel(page);
+  await expect(panel(page).getByRole("button", { name: /^Move .* up$/ }).first()).toBeInViewport();    // and the arrows are still in reach at the right-hand end of each row
+  await expect(panel(page).getByRole("button", { name: /^Move .* down$/ }).first()).toBeInViewport();
+});
+
 test.describe("on a phone", () => {
   test.use({ viewport: { width: 360, height: 800 }, hasTouch: true });
 
   test("the panel fits, its arrows can be reached, and a thumb can drag a job (criteria 312, 315)", async ({ page }) => {
     await page.goto("/");
-    await busy(page);
+    await busy(page, longWords("going"));
     const [a, b, c] = [unique("first"), unique("second"), unique("third")];
-    for (const words of [a, b, c]) await post(page, words);
+    for (const words of [a, b, c]) await post(page, longWords(words));
     await queueButton(page).click();
-    await expect(titles(page)).toHaveText([a, b, c]);
+    await expect(titles(page)).toHaveCount(3);
+    await expectRowsInsidePanel(page);
     const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     expect(await overflow()).toBeLessThanOrEqual(0);
     for (const words of [a, b, c]) {
-      await expect(panel(page).getByRole("button", { name: `Move “${words}” down` })).toBeInViewport();
+      await expect(panel(page).getByRole("button", { name: new RegExp(`^Move “${words}.*” down$`) })).toBeInViewport();   // named by the job's words, which are cut at 80 characters
     }
 
     // a finger, by the protocol: touch down on the third job's grip, drag up over the first job's row, lift
@@ -152,7 +187,7 @@ test.describe("on a phone", () => {
       await touch.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: from.x, y: from.y + ((to.y - from.y) * step) / 8 }] });
     }
     await touch.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-    await expect(titles(page)).toHaveText([c, a, b]);
+    await expect(titles(page)).toHaveText([c, a, b].map((tag) => new RegExp(`^${tag}`)));   // the titles are the long words, which begin with the tag
     expect(await overflow()).toBeLessThanOrEqual(0);
   });
 });

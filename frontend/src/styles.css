@@ -154,7 +154,7 @@ button, input, textarea, select { font: inherit; color: inherit; }
   backdrop-filter: saturate(1.4) blur(10px);
   border-bottom: 1px solid var(--border);
 }
-.header-inner { max-width: 920px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.header-inner { position: relative; max-width: 920px; margin: 0 auto; padding: 10px 16px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .brand h1 { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; white-space: nowrap; }
 .brand-version { margin-left: 2px; font-size: 12px; font-weight: 500; color: var(--text-3); font-variant-numeric: tabular-nums; }
@@ -195,10 +195,15 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .hint { color: var(--text-3); font-size: 13px; }
 
 /* ------------------------------------------------------------------ the queue (DESIGN.md section 40) */
-.queue-wrap { position: relative; min-width: 0; }
+/* The panel hangs from the header's right edge and not from its button's: the button is not the last thing in the header, so a panel as wide as the window allows, anchored to it, ran off
+   the left of a phone. (`position: static` makes `.header-inner`, which is `relative`, what `.pill-panel`'s `right` and `top` are measured from.) */
+.queue-wrap { position: static; min-width: 0; }
 .queue-button { gap: 6px; padding: 0 10px; }
 .queue-count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-text); font-size: 12px; font-weight: 650; }
-.queue-panel { width: min(440px, calc(100vw - 32px)); }
+/* `minmax(0, 1fr)`: a grid column is as wide as its widest content unless told it may shrink, and a long title that does not wrap is as wide as a sentence, so rows ran out of the panel;
+   with a column that may shrink, `.queue-title` is cut with an ellipsis, which is what it is for. `top` is the pill panel's, from the bottom of the buttons and not of the header's padding. */
+.queue-panel { right: 16px; top: calc(100% - 2px); width: min(440px, calc(100vw - 32px)); grid-template-columns: minmax(0, 1fr); }
+.queue-list, .queue-row, .queue-now { min-width: 0; }
 .queue-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
 .queue-row, .queue-now { display: flex; align-items: center; gap: 8px; min-height: 40px; padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); font-size: 14px; }
 .queue-now { background: var(--surface-2); }
