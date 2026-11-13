@@ -93,6 +93,20 @@ def test_a_reading_that_has_made_a_part_is_started_and_stays_put_but_others_can_
     assert db.move_queued(rid(3), before=rid(1)) == "ok" and order(db) == [2, 3, 1]  # ... and before it
 
 
+def test_a_canceled_reading_that_is_continued_is_started_only_if_it_had_made_a_part(db):
+    """Continue puts a canceled reading back in the queue (DESIGN.md section 38). One that was canceled while it waited never started and is an ordinary waiting job;
+    one that had made a part has started, and is locked like a reading waiting between parts."""
+    for n in (1, 2, 3):
+        put(db, n, mode="speech")
+    assert db.cancel_queued(rid(1), NOW)                                     # canceled before its first part
+    assert db.mark_running(rid(2), NOW)
+    db._conn.execute("UPDATE runs SET status='canceled', finished_at=? WHERE id=?", (NOW, rid(2)))   # canceled after it had started
+    assert db.restart_run(rid(1), 10) == "ok" and db.restart_run(rid(2), 10) == "ok"
+    assert order(db) == [3, 1, 2]
+    assert db.move_queued(rid(1), before=rid(3)) == "ok" and order(db) == [1, 3, 2]
+    assert db.move_queued(rid(2), before=rid(1)) == "not_movable" and order(db) == [1, 3, 2]
+
+
 def test_it_is_put_next_to_a_waiting_run_and_nothing_else(db):
     for n in (1, 2, 3):
         put(db, n)
