@@ -48,7 +48,8 @@ describe("run list reducer", () => {
     const state = withRuns(makeRun({ id: "q1", status: "queued" }), makeRun({ id: "q2", status: "queued" }), makeRun({ id: "q3", status: "queued" }));
     const first = reducer(state, { type: "queue", running: "r0", positions: { q1: 1, q2: 2, q3: 3 }, enlargeWaiting: [] });
     expect(first.status?.queue.order).toEqual(["q1", "q2", "q3"]);
-    const moved = reducer(first, { type: "queue", running: "r0", positions: { q3: 1, q1: 2, q2: 3 }, enlargeWaiting: [] });   // the same runs, the same count, a new order
+    // the same runs, the same count, a new order; the places are given in an order that is not the order of the places, as a JSON object may
+    const moved = reducer(first, { type: "queue", running: "r0", positions: { q1: 2, q2: 3, q3: 1 }, enlargeWaiting: [] });
     expect(moved.status?.queue.order).toEqual(["q3", "q1", "q2"]);
     expect(moved.status?.queue.queued).toBe(3);
     expect(reducer(moved, { type: "queue", running: null, positions: {}, enlargeWaiting: [] }).status?.queue.order).toEqual([]);
