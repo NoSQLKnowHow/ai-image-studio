@@ -1,8 +1,8 @@
 import { filenameFromDisposition } from "./fourk";
 import { NO_FILTER, filterParams, type Counts, type HistoryFilter } from "./history";
 import type {
-  Capabilities, CreateMusicBody, CreateRunBody, CreateVectorBody, ImageRun, ModelName, MusicRun, Project, Run, RunsPage, Status, UploadResult, VectorRecipe,
-  VectorRecipeRequest, VectorRun, WithPromptRef,
+  Capabilities, CreateMusicBody, CreateRunBody, CreateVectorBody, ImageRun, ModelName, MusicRun, Project, QueueListing, QueueMove, Run, RunsPage, Status, UploadResult,
+  VectorRecipe, VectorRecipeRequest, VectorRun, WithPromptRef,
 } from "./types";
 
 /** What sending a picture, track or version to the bin answers (DESIGN.md §33.3, §35.4): what moved, and the run as it is now. A run's last one is not deleted
@@ -168,6 +168,8 @@ async function fetchText(path: string): Promise<string> {
 export const api = {
   capabilities: () => request<Capabilities>("/api/capabilities"),
   status: () => request<Status>("/api/status"),
+  queue: () => request<QueueListing>("/api/queue"),
+  moveInQueue: (move: QueueMove) => request<QueueListing>("/api/queue/move", { method: "POST", body: JSON.stringify(move) }),
   // The model is named, so a button on one tab never acts on the other tab's model (DESIGN.md §26.3).
   loadModel: (model: ModelName) => request<Status>("/api/model/load", { method: "POST", body: JSON.stringify({ model }) }),
   unloadModel: (model: ModelName) => request<Status>("/api/model/unload", { method: "POST", body: JSON.stringify({ model }) }),

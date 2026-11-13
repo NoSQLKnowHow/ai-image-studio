@@ -61,7 +61,9 @@ cat > "$T/bin/tar" <<'STUB'
 if [[ -n ${STUB_FAIL_TAR:-} && $* == *data.tar.gz* && $1 == -czf ]]; then echo "tar: stub failure" >&2; exit 2; fi
 if [[ -n ${STUB_CORRUPT_TAR:-} && $1 == -rf && $* == *MANIFEST.txt* ]]; then   # the last-but-one piece is being appended
   /usr/bin/tar "$@"; rc=$?
-  printf 'X' | dd of="$2" bs=1 seek=2000 conv=notrunc 2>/dev/null
+  # change one byte to a different value (a fixed letter would change nothing one time in 256: see flip_byte below)
+  old=$(dd if="$2" bs=1 skip=2000 count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+  printf "\\$(printf '%03o' $(( (${old:-0} + 1) % 256 )))" | dd of="$2" bs=1 seek=2000 conv=notrunc 2>/dev/null
   exit "$rc"
 fi
 exec /usr/bin/tar "$@"
@@ -83,11 +85,27 @@ contains() { local desc=$1 text=$2 needle=$3
 equals() { local desc=$1 got=$2 want=$3
   if [[ $got == "$want" ]]; then ok "$desc"; else bad "$desc" "wanted: $want | got: $got"; fi; }
 section() { printf '\n%s\n' "$1"; }
+# Damage a file by changing one byte of it to a DIFFERENT value. Writing a fixed letter leaves the file exactly as it was whenever that byte already is that letter, which
+# happens one time in 256 (the bytes of a compressed backup differ from run to run), and then "a damaged copy is refused" fails for no reason at all.
+flip_byte() { local file=$1 at=$2 old
+  old=$(dd if="$file" bs=1 skip="$at" count=1 2>/dev/null | od -An -tu1 | tr -d ' ')
+  printf "\\$(printf '%03o' $(( (${old:-0} + 1) % 256 )))" | dd of="$file" bs=1 seek="$at" conv=notrunc 2>/dev/null; }
 calls() { cat "$STUB_STATE/calls.log" 2>/dev/null || true; }
 line_of() { calls | grep -n -- "$1" | head -n 1 | cut -d: -f1; }
 tree_hash() { (cd "$1" && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1); }
 human_of() { bash -c '. "$1"; human "$2"' _ "$SRC/scripts/_backup_common.sh" "$1"; }   # the scripts' own size wording, in a child process
 count_in() { find "$1" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' '; }
+
+section "the test's own helper: flip_byte really changes a byte"
+printf 'X' > "$T/flip.bin"; flip_byte "$T/flip.bin" 0
+check "a byte that was already X is changed (a fixed X would leave it alone)" bash -c "[[ \$(head -c1 '$T/flip.bin') != X ]]"
+printf 'Y' > "$T/flip.bin"; flip_byte "$T/flip.bin" 0
+check "so is any other letter" bash -c "[[ \$(head -c1 '$T/flip.bin') != Y ]]"
+printf '\377' > "$T/flip.bin"; flip_byte "$T/flip.bin" 0
+equals "a byte of 255 wraps round to 0" "$(od -An -tu1 "$T/flip.bin" | tr -d ' ')" 0
+printf 'abc' > "$T/flip.bin"; flip_byte "$T/flip.bin" 1
+equals "only that byte is changed, and the file is no longer" "$(head -c1 "$T/flip.bin")$(tail -c1 "$T/flip.bin")$(wc -c < "$T/flip.bin" | tr -d ' ')" "ac3"
+check "and it is the one that was asked for" bash -c "[[ \$(head -c3 '$T/flip.bin' | od -An -tu1 | tr -s ' ') == ' 97 99 99' ]]"
 
 REPO="$T/my repo"              # a space in the path, on purpose
 DEST="$T/backups dir"
@@ -648,7 +666,7 @@ mkdir -p "$T/nas share" && cp "$B" "$T/nas share/"
 out=$(rs --verify "$T/nas share/$(basename "$B")" 2>&1); rc=$?
 equals "a copy in another folder verifies too" "$rc" 0
 # damage inside the data piece
-cp "$B" "$T/damaged.tar"; printf 'X' | dd of="$T/damaged.tar" bs=1 seek=100000 conv=notrunc 2>/dev/null
+cp "$B" "$T/damaged.tar"; flip_byte "$T/damaged.tar" 100000
 out=$(rs --verify "$T/damaged.tar" 2>&1); rc=$?
 equals "a damaged copy: exits 1" "$rc" 1
 contains "names the damaged piece" "$out" "data.tar.gz is damaged"
@@ -721,7 +739,7 @@ check "no stop call" bash -c "! grep -q 'compose stop' '$STUB_STATE/calls.log'"
 
 section "restore: a damaged backup is refused before anything changes"
 cp "$B" "$T/tampered.tar"
-printf 'X' | dd of="$T/tampered.tar" bs=1 seek=100000 conv=notrunc 2>/dev/null
+flip_byte "$T/tampered.tar" 100000
 rm -rf "$REPO/data"
 out=$(rs "$T/tampered.tar" 2>&1); rc=$?
 equals "damaged backup: exits 1" "$rc" 1

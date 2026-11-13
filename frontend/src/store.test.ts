@@ -44,6 +44,17 @@ describe("run list reducer", () => {
     expect(next.status?.queue).toMatchObject({ running: "r0", queued: 2 });
   });
 
+  it("keeps the waiting runs in the order of their places, so that a page can tell the order changed when nothing else did (DESIGN.md §40.5)", () => {
+    const state = withRuns(makeRun({ id: "q1", status: "queued" }), makeRun({ id: "q2", status: "queued" }), makeRun({ id: "q3", status: "queued" }));
+    const first = reducer(state, { type: "queue", running: "r0", positions: { q1: 1, q2: 2, q3: 3 }, enlargeWaiting: [] });
+    expect(first.status?.queue.order).toEqual(["q1", "q2", "q3"]);
+    // the same runs, the same count, a new order; the places are given in an order that is not the order of the places, as a JSON object may
+    const moved = reducer(first, { type: "queue", running: "r0", positions: { q1: 2, q2: 3, q3: 1 }, enlargeWaiting: [] });
+    expect(moved.status?.queue.order).toEqual(["q3", "q1", "q2"]);
+    expect(moved.status?.queue.queued).toBe(3);
+    expect(reducer(moved, { type: "queue", running: null, positions: {}, enlargeWaiting: [] }).status?.queue.order).toEqual([]);
+  });
+
   it("keeps the images whose Enlarge is waiting for the GPU, and clears them when the queue event says none is (DESIGN.md §28.3)", () => {
     const state = withRuns(makeRun({ id: "r0", status: "running" }));
     const waiting = reducer(state, { type: "queue", running: "r0", positions: {}, enlargeWaiting: ["img1", "img2"] });

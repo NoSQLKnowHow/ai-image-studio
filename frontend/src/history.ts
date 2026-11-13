@@ -153,8 +153,19 @@ function within(run: Run, boundary: Boundary | null): boolean {
   return run.created_at > boundary.created_at || (run.created_at === boundary.created_at && run.id >= boundary.id);
 }
 
-/** The runs a filter shows, newest first: those of the cache that match it and lie within what its view has loaded. With a filter on,
- *  the runs that are working come first, whatever they match (§29.3). */
+/** The runs of a list with the up-next block first (DESIGN.md section 40.4): the run that is going, then the runs that are waiting in the order they will be worked on, then every
+ *  other run as it was (newest first). So when a person moves a waiting job in the Queue panel its card moves too, and a new job's card goes to the end of the block, which is where it
+ *  stands in the queue. A waiting run that has no place yet (an older server sends none) keeps the order it was in, after those that have one. Runs that have finished never move up. */
+export function upNextFirst<T extends Pick<Run, "status" | "queue_position">>(runs: readonly T[]): T[] {
+  const going = runs.filter((run) => run.status === "running");
+  const waiting = runs
+    .filter((run) => run.status === "queued")
+    .sort((a, b) => (a.queue_position === b.queue_position ? 0 : a.queue_position === null ? 1 : b.queue_position === null ? -1 : a.queue_position - b.queue_position)); // stable
+  return [...going, ...waiting, ...runs.filter((run) => run.status !== "running" && run.status !== "queued")];
+}
+
+/** The runs a filter shows: those of the cache that match it and lie within what its view has loaded, newest first, behind the up-next block (`upNextFirst`). With a filter on,
+ *  the runs that are working are in that block whatever they match (§29.3). */
 export function visibleRuns(runs: Record<string, Run>, order: readonly string[], view: View | undefined, filter: HistoryFilter): Run[] {
   const boundary = view?.boundary ?? null;
   const active: Run[] = [];
@@ -168,7 +179,7 @@ export function visibleRuns(runs: Record<string, Run>, order: readonly string[],
     if (showsWorking(filter) && working(run)) active.push(run);
     else if (matches(run, filter) && within(run, boundary)) shown.push(run);
   }
-  return [...active, ...shown];
+  return upNextFirst([...active, ...shown]);
 }
 
 /** The runs that are in a filtered view only while they work (§29.3): which are still being watched, and which have just left the view

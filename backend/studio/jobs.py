@@ -86,6 +86,15 @@ class RunConflict(Exception):
     pass
 
 
+class QueueMoveRefused(Exception):
+    """A request to move a waiting run that cannot be done (DESIGN.md section 40.2). `status` and `code` are the response's: 404 `not_found`, 409 `not_movable` (the run
+    has started, or is not waiting) or `queue_changed` (the run it was to be put next to is no longer waiting), 422 `invalid`."""
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status, self.code = status, code
+
+
 class RunAlwaysKept(RunConflict):
     """A reading cannot stop being kept: it never expires (DESIGN.md §38.8). A kind of conflict with a code of its own, so the page can say it plainly."""
 
@@ -263,8 +272,9 @@ class JobManager:
             "version": __version__,
             "worker": self.worker_status(),
             # enlarge_waiting: the pictures whose Enlarge is queued behind the run that is going; the page shows "Waiting…" on them
+            # order: the waiting runs in the order they will be worked on, so that a page can tell that the order changed when nothing else did (DESIGN.md section 40.5)
             "queue": {"running": self._current, "queued": self.db.count_queued(), "cap": self.settings.queue_cap,
-                      "enlarge_waiting": list(self._enlarge_waiting)},
+                      "enlarge_waiting": list(self._enlarge_waiting), "order": self.db.queued_ids()},
             "memory": self.memory_status(),
         }
 
@@ -348,6 +358,43 @@ class JobManager:
 
     def queue_positions(self) -> dict[str, int]:
         return {run_id: i + 1 for i, run_id in enumerate(self.db.queued_ids())}
+
+    # What the Queue panel says of a run, by its `mode`: which model it needs is what a person reordering wants to see (DESIGN.md section 40.4). A drawing is made with the
+    # image model but is called a drawing, as its tab is.
+    _QUEUE_KINDS = {"generate": "image", "edit": "image", "music": "music", "vector": "vector", "speech": "speech"}
+
+    def _queue_item(self, row: sqlite3.Row, position: Optional[int]) -> dict[str, Any]:
+        """One line of the Queue panel: the run's id, its `kind` (image, music, vector, speech, or voice for a sample or a new voice, which no card shows), a `title` of at
+        most 80 characters, whether it is a `draft`, whether it is `movable` (waiting and never started), and its `position` in the queue (None for the run that is going)."""
+        options = json.loads(row["options_json"]) if row["options_json"] else {}
+        hidden = bool(row["hidden"])
+        if hidden:  # a voice sample or a voice being designed (section 38): no card, so its own words
+            label = " ".join(str(options.get("label") or "").split())
+            title = (f"New voice: {label}" if options.get("task") == "design" else f"Sample: {label}" if label else "Voice sample")[:80]
+        else:
+            title = " ".join((row["prompt"] or "").split())
+            title = title if len(title) <= 80 else title[:79].rstrip() + "…"
+        return {"id": row["id"], "kind": "voice" if hidden else self._QUEUE_KINDS.get(row["mode"], "image"), "title": title or "(no words)",
+                "draft": bool(options.get("draft")) and not hidden, "movable": position is not None and row["started_at"] is None, "position": position}
+
+    def queue_listing(self) -> dict[str, Any]:
+        """The run that is going and the waiting runs in order, for the Queue panel (`GET /api/queue`, DESIGN.md section 40.4)."""
+        running = self.db.get_run(self._current) if self._current else None
+        return {"running": self._queue_item(running, None) if running is not None and running["status"] == "running" else None,
+                "queued": [self._queue_item(row, place) for place, row in enumerate(self.db.queue_rows(), 1)], "cap": self.settings.queue_cap}
+
+    async def move_queued(self, run_id: str, before: Optional[str], after: Optional[str]) -> None:
+        """Put a waiting run before or after another (DESIGN.md section 40.2), and tell every open page. Raises `QueueMoveRefused`."""
+        outcome = await asyncio.to_thread(self.db.move_queued, run_id, before, after)
+        if outcome == "not_found":
+            raise QueueMoveRefused(404, "not_found", "Run not found.")
+        if outcome == "not_movable":
+            raise QueueMoveRefused(409, "not_movable", "This job has already started or finished, so it can no longer be moved.")
+        if outcome == "target_gone":
+            raise QueueMoveRefused(409, "queue_changed", "The job you dropped it next to is no longer waiting. The queue has changed; look again.")
+        if outcome != "ok":
+            raise QueueMoveRefused(422, "invalid", "Say which waiting job to put it before or after, and not itself.")
+        self._publish_queue()
 
     def payloads(self, rows: list[sqlite3.Row]) -> list[dict[str, Any]]:
         ids = [r["id"] for r in rows]

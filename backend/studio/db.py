@@ -10,6 +10,7 @@ refused by 1, so before migrating, the database is copied to studio.sqlite.befor
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
@@ -164,6 +165,12 @@ class _AlreadyClaimed(Exception):
     """A staged upload was taken or deleted between looking at it and claiming it."""
 
 
+# The order the queue runs in (DESIGN.md section 40): by `queue_key` where a run has one, else by arrival (`seq`), and `seq` last to break a tie. Nothing else: not whether a
+# run is a draft, which used to be the first term. A draft still jumps the queue, but it does so when it ARRIVES (`Database._place_draft` gives it its place among the
+# waiting runs), and from then on its place is its own like any other run's, so that a person can drag it down (1.22) and it stays there.
+QUEUE_ORDER = "COALESCE(queue_key, seq), seq"
+
+
 class Database:
     def __init__(self, path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -195,24 +202,11 @@ class Database:
             self._add_speech_columns()
             self.has_fts5 = self._add_prompt_search()
             self._record_version(previous)
-            self._queue_order = self._choose_queue_order()
+            self._queue_order = QUEUE_ORDER
 
     def close(self) -> None:
         with self._lock:
             self._conn.close()
-
-    def _choose_queue_order(self) -> str:
-        """Drafts run ahead of waiting full-size runs (DESIGN.md §22.2), then in order of arrival. The flag lives in
-        options_json, which SQLite's JSON functions can read; if this SQLite was built without them, fall back to
-        plain arrival order rather than fail."""
-        # Within each of those, in order of arrival: `seq` is when a run was made, and `queue_key` (DESIGN.md §38.6) is when a reading came back to the queue
-        # after a part, expressed in the same units, so a run made while the part was being worked on stands in front of it. `seq` last breaks a tie.
-        try:
-            self._conn.execute("SELECT json_extract('{\"draft\": true}', '$.draft')").fetchone()
-        except sqlite3.OperationalError:
-            log.warning("this SQLite has no JSON functions: drafts will not jump the queue")
-            return "COALESCE(queue_key, seq), seq"
-        return "COALESCE(json_extract(options_json, '$.draft'), 0) DESC, COALESCE(queue_key, seq), seq"
 
     def _stored_version(self) -> Optional[int]:
         has_meta = self._conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='meta'").fetchone()
@@ -393,6 +387,8 @@ class Database:
                     taken = c.execute("DELETE FROM images WHERE id=? AND run_id IS NULL AND kind='input'", (upload_id,))
                     if taken.rowcount != 1:
                         raise _AlreadyClaimed(upload_id)  # tx() rolls everything back
+                if run.get("status") == "queued" and self._is_draft(run.get("options_json")):
+                    self._place_draft(c, run["id"])
                 return "ok"
         except _AlreadyClaimed as gone:
             return f"claimed:{gone.args[0]}"
@@ -491,6 +487,63 @@ class Database:
 
     def next_queued(self) -> Optional[sqlite3.Row]:
         return self._one(f"SELECT * FROM runs WHERE status='queued' ORDER BY {self._queue_order} LIMIT 1")
+
+    def queue_rows(self) -> list[sqlite3.Row]:
+        """The waiting runs in the order they will be worked on, with what the Queue panel says of each (DESIGN.md section 40.4)."""
+        return self._all(f"SELECT id, mode, prompt, options_json, hidden, started_at FROM runs WHERE status='queued' ORDER BY {self._queue_order}")
+
+    @staticmethod
+    def _is_draft(options_json: Any) -> bool:
+        """Whether a run's stored options say it is a draft: a quick small picture (DESIGN.md section 22.2) or a voice sample (section 38), both of which jump the queue.
+        Read here and not by SQLite's JSON functions, so the queue does not depend on whether this SQLite has them."""
+        try:
+            return bool(json.loads(options_json).get("draft")) if options_json else False
+        except (ValueError, AttributeError):
+            return False
+
+    def _apply_order(self, c: sqlite3.Connection, ids: Sequence[str]) -> None:
+        """Make the waiting runs `ids` run in exactly that order, by giving each a new `queue_key`, evenly spaced between the newest run's `seq` and half way to the next one.
+        That is the region `_next_queue_key` and a later arrival already understand: every key is after every run made so far and before every run made later, so a run
+        that arrives afterwards still goes to the back, and a reading that goes back to the queue after a part goes behind these. Rewriting them all, instead of finding
+        a number between two neighbours, means the keys never run out of room however often runs are moved."""
+        last = c.execute("SELECT COALESCE((SELECT seq FROM sqlite_sequence WHERE name='runs'), 0)").fetchone()[0]
+        for place, run_id in enumerate(ids, 1):
+            c.execute("UPDATE runs SET queue_key=? WHERE id=?", (last + 0.5 * place / (len(ids) + 1), run_id))
+
+    def _place_draft(self, c: sqlite3.Connection, run_id: str) -> None:
+        """A draft that has just arrived goes to the front of the line: after the drafts that are already at the front, and before every run that is not a draft (the rule
+        of DESIGN.md section 22.2, kept as it was). It arrives at the back like every run; if a run that is not a draft is waiting ahead of that, it is moved in front of it.
+        A draft a person has dragged further down is not at the front, so it is not counted, and stays where it was put."""
+        others = [r for r in c.execute(f"SELECT id, options_json FROM runs WHERE status='queued' ORDER BY {self._queue_order}").fetchall() if r["id"] != run_id]
+        first_other = next((i for i, r in enumerate(others) if not self._is_draft(r["options_json"])), None)
+        if first_other is None:
+            return  # only drafts are waiting (or nothing): the back of the line is already the place after them
+        ids = [r["id"] for r in others]
+        ids.insert(first_other, run_id)
+        self._apply_order(c, ids)
+
+    def move_queued(self, run_id: str, before: Optional[str] = None, after: Optional[str] = None) -> str:
+        """Put a waiting run just before (`before`) or just after (`after`) another waiting run (DESIGN.md section 40.2). Returns 'ok'; 'not_found' (no such run);
+        'not_movable' (it is not waiting, or it has started: a reading that has made a part and is waiting for its next turn counts as started); 'target_gone' (the other
+        run is no longer waiting: it started, or was canceled, since the person looked); or 'invalid' (no other run, or the run itself). The run that is going is not in
+        the queue, so nothing can be put before it. One transaction, so a run that is picked up at that moment is either moved first or refused."""
+        target = before or after
+        if not target or target == run_id:
+            return "invalid"
+        with self.tx() as c:
+            row = c.execute("SELECT status, started_at FROM runs WHERE id=?", (run_id,)).fetchone()
+            if row is None:
+                return "not_found"
+            if row["status"] != "queued" or row["started_at"] is not None:
+                return "not_movable"
+            old = [r["id"] for r in c.execute(f"SELECT id FROM runs WHERE status='queued' ORDER BY {self._queue_order}").fetchall()]
+            if target not in old:
+                return "target_gone"
+            ids = [i for i in old if i != run_id]
+            ids.insert(ids.index(target) + (0 if before else 1), run_id)
+            if ids != old:  # dropped where it already is: nothing to do
+                self._apply_order(c, ids)
+            return "ok"
 
     @staticmethod
     def _next_queue_key(c: sqlite3.Connection) -> float:

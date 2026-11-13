@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import cases from "../../backend/tests/filter_cases.json";
 import {
   FILTER_KEY, NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, canBin, filterKey, filterParams, hasItemsInTheBin, isDefault, matches, parseFilterKey, readFilter, saveFilter, showsWorking,
-  visibleRuns, watchWorking, withProject, working,
+  upNextFirst, visibleRuns, watchWorking, withProject, working,
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
@@ -297,17 +297,59 @@ describe("what a filter shows (DESIGN.md §29.2, §29.3, §29.5)", () => {
     expect(ids(visibleRuns(runs, order, ready(), ONLY_KEPT))).toEqual(["c", "a"]);
   });
 
-  it("Kept shows a working run at the top whether or not it is kept, and each run once", () => {
+  it("Kept shows a working run at the top whether or not it is kept, and each run once (the one going, then the ones waiting)", () => {
     const { runs, order } = index(
       run("old-kept", 1, { pinned: true }), run("done", 2), run("working", 3, { status: "running" }),
       run("working-kept", 4, { status: "queued", pinned: true }), run("newest-kept", 5, { pinned: true }),
     );
-    expect(ids(visibleRuns(runs, order, ready(), ONLY_KEPT))).toEqual(["working-kept", "working", "newest-kept", "old-kept"]);
+    expect(ids(visibleRuns(runs, order, ready(), ONLY_KEPT))).toEqual(["working", "working-kept", "newest-kept", "old-kept"]);
   });
 
-  it("All does not move working runs: the list is the history", () => {
+  it("All puts the run that is going, then the runs that are waiting, before the history (DESIGN.md section 40.4)", () => {
     const { runs, order } = index(run("a", 1, { status: "running" }), run("b", 2), run("c", 3, { status: "queued" }));
-    expect(ids(visibleRuns(runs, order, ready(), NO_FILTER))).toEqual(["c", "b", "a"]);
+    expect(ids(visibleRuns(runs, order, ready(), NO_FILTER))).toEqual(["a", "c", "b"]);
+  });
+
+  it("the waiting runs are in the order they will be worked on, not the order they were made, and the history stays newest first", () => {
+    const { runs, order } = index(
+      run("old", 1), run("done", 2), run("going", 3, { status: "running" }),
+      run("w1", 4, { status: "queued", queue_position: 3 }), run("w2", 5, { status: "queued", queue_position: 1 }), run("w3", 6, { status: "queued", queue_position: 2 }),
+    );
+    expect(ids(visibleRuns(runs, order, ready(), NO_FILTER))).toEqual(["going", "w2", "w3", "w1", "done", "old"]);
+  });
+
+  it("a job moved in the queue moves its card, and nothing else about the list changes", () => {
+    const base = [run("old", 1), run("going", 2, { status: "running" }), run("a", 3, { status: "queued", queue_position: 1 }), run("b", 4, { status: "queued", queue_position: 2 })];
+    const before = index(...base);
+    expect(ids(visibleRuns(before.runs, before.order, ready(), NO_FILTER))).toEqual(["going", "a", "b", "old"]);
+    const moved = index(...base.map((r) => (r.id === "a" ? { ...r, queue_position: 2 } : r.id === "b" ? { ...r, queue_position: 1 } : r)));
+    expect(ids(visibleRuns(moved.runs, moved.order, ready(), NO_FILTER))).toEqual(["going", "b", "a", "old"]);
+  });
+
+  it("a new job goes to the end of the waiting runs, above the history", () => {
+    const { runs, order } = index(run("old", 1), run("going", 2, { status: "running" }), run("a", 3, { status: "queued", queue_position: 1 }), run("new", 9, { status: "queued", queue_position: 2 }));
+    expect(ids(visibleRuns(runs, order, ready(), NO_FILTER))).toEqual(["going", "a", "new", "old"]);
+  });
+
+  it("a waiting run with no place yet keeps the order it was in, after those that have one, and a finished run never moves up", () => {
+    const { runs, order } = index(
+      run("failed", 1, { status: "failed" }), run("p", 2, { status: "queued", queue_position: 1 }),
+      run("n1", 3, { status: "queued", queue_position: null }), run("n2", 4, { status: "queued", queue_position: null }), run("canceled", 5, { status: "canceled" }),
+    );
+    expect(ids(visibleRuns(runs, order, ready(), NO_FILTER))).toEqual(["p", "n2", "n1", "canceled", "failed"]);   // n2 before n1: newest first, as it always was
+  });
+
+  it("the block is the same in a filtered view: a working run that does not match is in it, in queue order", () => {
+    const { runs, order } = index(run("kept-old", 1, { pinned: true }), run("w1", 2, { status: "queued", queue_position: 2 }), run("w2", 3, { status: "queued", queue_position: 1 }));
+    expect(ids(visibleRuns(runs, order, ready(), ONLY_KEPT))).toEqual(["w2", "w1", "kept-old"]);
+  });
+
+  it("upNextFirst on its own: a list with nothing working is as it was, and the list given is not changed", () => {
+    const list = [run("x", 3), run("y", 2), run("z", 1)];
+    expect(ids(upNextFirst(list))).toEqual(["x", "y", "z"]);
+    const mixed = [run("d", 1), run("q", 2, { status: "queued", queue_position: 1 }), run("r", 3, { status: "running" })];
+    expect(ids(upNextFirst(mixed))).toEqual(["r", "q", "d"]);
+    expect(ids(mixed)).toEqual(["d", "q", "r"]);
   });
 
   it("a view shows nothing older than where it has loaded down to, even when the cache holds it", () => {

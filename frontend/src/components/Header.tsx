@@ -7,6 +7,7 @@ import { NEXT_THEME, applyTheme, readTheme, type ThemeChoice } from "../theme";
 import type { ModelName, Status, WorkerState, WorkerStatus } from "../types";
 import { ChipIcon, EjectIcon, MonitorIcon, MoonIcon, SparkleIcon, SunIcon } from "./icons";
 import { LoadProgressView } from "./LoadProgress";
+import { QueueMenu } from "./QueuePanel";
 import { loadView } from "../loadProgress";
 
 // The pill names the model the worker holds (DESIGN.md §26.1): "Image model ready", "Loading music model…".
@@ -205,6 +206,7 @@ export function Header({ status, now, busy, tab, musicAvailable, speech, onModel
         <div className="header-right">
           {action && worker && <ModelButton action={action} worker={worker} busy={busy} onPress={() => void press(action)} />}
           <ModelPill status={status} now={now} pillRef={pill} />
+          <QueueMenu status={status} />
           <ThemeToggle />
         </div>
       </div>

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import sqlite3
 
 import pytest
 from conftest import create_run, wait_for
@@ -115,23 +114,7 @@ def test_runs_made_before_drafts_existed_still_queue_in_order(tmp_path):
         db.close()
 
 
-def test_without_json_functions_the_queue_falls_back_to_arrival_order(tmp_path, monkeypatch):
-    real_connect = sqlite3.connect
-
-    class NoJson(sqlite3.Connection):
-        def execute(self, sql, *args):
-            if "json_extract" in sql:
-                raise sqlite3.OperationalError("no such function: json_extract")
-            return super().execute(sql, *args)
-
-    monkeypatch.setattr(sqlite3, "connect", lambda *a, **k: real_connect(*a, **{**k, "factory": NoJson}))
-    db = Database(tmp_path / "studio.sqlite")
-    try:
-        # still arrival order, which is what this test is about: without the JSON functions a draft cannot jump the queue. The one thing the order keeps is
-        # `queue_key` (DESIGN.md §38.6): a reading that went back to the queue after a part stands where it went back, which needs no JSON.
-        assert db._queue_order == "COALESCE(queue_key, seq), seq"
-    finally:
-        db.close()
+# (Without SQLite's JSON functions a draft used to be unable to jump the queue; the flag is read in Python now, when the draft arrives: tests/test_queue_reorder.py.)
 
 
 # ------------------------------------------------------------------ the thumbnail download
