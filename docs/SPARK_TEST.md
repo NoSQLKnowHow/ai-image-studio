@@ -1080,6 +1080,21 @@ In another, `du -sh ~/.cache/huggingface/hub/models--Qwen--Qwen3-TTS-*` (or whic
 
 **Send back:** from (a) the two sizes; from (b) steady or in steps, and any wrong `loading`; from (c) the load times; from (d) the `after` it showed; from (e) and (f) the sizes and any `total_bytes` that was wrong or missing; from (g) whether it rose; from (h) what the page showed.
 
+## 33. Reorder the queue (new in 1.22)
+
+Tried in unit tests, in a real browser with the fake pipeline, and with a finger sent through the browser's protocol; **not with your models, and not with a real thumb.** This is where that is checked. You need a job that takes long enough for others to wait behind it: a full-size image run of several pictures does it.
+
+**a) Drag.** Start a long image run (for example 4 pictures at full size). While it goes, make three more jobs, one of them a **Draft**, one a **music** track and one a plain image (they wait behind the first). The header shows **Queue** and a count. Open it. **Good:** the job that is going is at the top with a lock; the three waiting jobs are listed with their place and **Image / Music** and their words, and the draft is first (a draft jumps the line when it arrives). Drag the last job by its grip to the top. **Good:** a line shows where it will land; when you let go it is first; the cards' **Queued · #n** change to match.
+**b) The order they are worked on.** Let the long run finish. **Good:** the jobs start in the order the panel showed. **Write down:** whether anything started out of that order.
+**c) Your order wins over drafts.** Drag a full-size job above the draft. **Good:** it stays there, and runs first. Make another draft. **Good:** the new draft goes to the very **front** of the line, and the job you placed is still ahead of the first draft.
+**d) What cannot be moved.** **Good:** the job that is going has no grip and no arrows. A **reading** that has made a part and is waiting for its next turn shows a lock and cannot be dragged, but another job can be dropped before or after it. If a job starts while the panel is open, its grip and arrows are gone within a moment; if you were dragging it, nothing happens when you let go.
+**e) The arrows and the keyboard.** Use **Tab** to reach a job's *Move up* arrow and press **Enter**. **Good:** it moves, focus stays on a working arrow, and a screen reader (if you use one) says *Moved “…” to place 1 of 3.*
+**f) Two screens.** Open the Queue on your phone and on a computer. Move a job on one. **Good:** the other shows it within a second or two, without you touching it.
+**g) Your thumb.** On your phone, drag a job by its grip. **Good:** it drags instead of the page scrolling, and nothing runs off the screen at the width of your phone. **Write down:** whether the grip is easy to hit and whether you reached for the arrows instead.
+**h) A model swap.** Put a **music** track ahead of an **image** job and let them run. **Good:** the studio swaps models (the pill says it is loading the other one), and the Queue panel keeps the order you made. **Write down:** how long the swap took.
+
+**Send back:** from (a) to (c) whether anything was in an order you did not expect; from (d) what a started reading looked like; from (g) your thumb's verdict; from (h) the swap time and anything surprising.
+
 ## What to send back
 
 Paste these into the chat (no tokens or passwords; check before pasting):
@@ -1109,3 +1124,4 @@ Paste these into the chat (no tokens or passwords; check before pasting):
 23. From step 30 (the Prompt builder): the `ls -l data/studio.sqlite*` line, what Test connection showed, the times to the first word and the thinking times from (b) and (c), the counts from (d) (first time, asked again, plain text; thinking on and off), your judgement of the questions from (e), your verdict on the Quick try pictures from (g) and on the description from (h), the memory numbers and the settings you suggest from (j), and anything that did not match "Good".
 24. From step 31 (the Speech tab): the `ls -l data/studio.sqlite*` line, the engine pills and the download and load times from (a) and (b), the accent you hear in Jenny, the seconds of work per second of audio and the lowest memory for each engine from (d), **whether there was any gap, click or pitch change between paragraphs when a reading was played as it was made**, the seek time from (e), the book's time and disk use and what the restart showed from (f), whether the place and the lock screen worked on your phone from (g) and (h), your judgement of the style, the designed voices and the clone from (i), the Voxtral numbers from (j), the swap times and memory from (k), and anything that did not match "Good".
 25. From section 32 (load progress): the two sizes of a first download (the `total_bytes` and the folder on disk), whether `done_bytes` rose steadily or in steps, the load times from disk, any `total_bytes` that was wrong, and what the page showed (h).
+26. From section 33 (reordering the queue): whether the jobs ran in the order the Queue panel showed (b) and (c), what a reading that had started looked like (d), whether the other screen followed (f), your thumb's verdict on the grip (g), and the model swap time (h).
