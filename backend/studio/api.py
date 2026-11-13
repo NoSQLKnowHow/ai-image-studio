@@ -38,7 +38,7 @@ from . import vector as vector_mod
 from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import (
-    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, RunAlwaysKept, RunConflict, RunNotFound,
+    ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, QueueMoveRefused, RunAlwaysKept, RunConflict, RunNotFound,
 )
 from .naming import (
     content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename, vector_filename,
@@ -103,6 +103,16 @@ class RunPatch(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
     pinned: bool
+
+
+class QueueMove(BaseModel):
+    """Which waiting run to move, and the waiting run to put it next to: `before` or `after`, one of them (DESIGN.md section 40.2). Relative to another run and not to a
+    position number, so that a queue that changed while the person was dragging cannot send the run somewhere they did not mean."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    id: str
+    before: Optional[str] = None
+    after: Optional[str] = None
 
 
 class ProjectBody(BaseModel):
@@ -472,6 +482,34 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _error(409, str(exc), "run_finished")
         payload = jobs_of(request).payload(run_id)
         return JSONResponse(status_code=200 if outcome == "canceled" else 202, content=payload)
+
+    # ------------------------------------------------------------------ the queue (DESIGN.md section 40)
+    @app.get("/api/queue")
+    async def get_queue(request: Request) -> Any:
+        """The run that is going and the waiting runs, in order, with what the Queue panel says of each and whether it can still be moved."""
+        return jobs_of(request).queue_listing()
+
+    @app.post("/api/queue/move")
+    async def move_in_queue(body: QueueMove, request: Request) -> Any:
+        """Put a waiting run before or after another waiting run. 409 `not_movable` for a run that has started or finished, 409 `queue_changed` when the other run is no
+        longer waiting, 404 for no such run, 422 for a request that does not name exactly one other run. Answers with the queue as it is now."""
+        if (body.before is None) == (body.after is None):
+            return _error(422, "Say which waiting job to put it before, or which to put it after: one, not both and not neither.", "invalid")
+        try:
+            check_id(body.id)
+        except StorageError:
+            return _error(404, "Run not found.", "not_found")
+        try:
+            for other in (body.before, body.after):
+                if other is not None:
+                    check_id(other)
+        except StorageError:
+            return _error(422, "That is not the id of a job.", "invalid")
+        try:
+            await jobs_of(request).move_queued(body.id, body.before, body.after)
+        except QueueMoveRefused as exc:
+            return _error(exc.status, str(exc), exc.code)
+        return jobs_of(request).queue_listing()
 
     @app.delete("/api/runs/{run_id}", status_code=204)
     async def delete_run(run_id: str, request: Request) -> Response:
