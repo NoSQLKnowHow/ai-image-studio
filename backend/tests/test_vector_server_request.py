@@ -51,7 +51,7 @@ def test_every_option_has_its_default(client):
     recipe = V.build_recipe("a fox head", "silhouette", 2, ())
     assert options == {
         "colours": 2, "palette": [], "kind": "silhouette", "width_mm": 100.0, "height_mm": 100.0, "layers_by": "colour", "arrangement": "side_by_side",
-        "stack_order": "area_desc", "bleed_mm": 0.5, "min_feature_mm": 0.5, "kerf_mm": 0.0, "steps": 40, "seed": options["seed"], "num_images": 1, "recipe": recipe.positive,
+        "stack_order": "area_desc", "bleed_mm": 0.5, "min_feature_mm": 0.5, "kerf_mm": 0.0, "thin_lines": "thicken", "steps": 40, "seed": options["seed"], "num_images": 1, "recipe": recipe.positive,
         "seed_was_random": True, "negative": recipe.negative, "draw_width": 1536, "draw_height": 1536}
     assert 0 <= options["seed"] <= 2**32 - 1
 
@@ -209,11 +209,24 @@ def test_an_option_of_another_kind_of_run_is_refused_by_the_vector_run_through_t
 
 @pytest.mark.parametrize("name, value", [("colours", 3), ("palette", ["#FF0000"]), ("kind", "flat"), ("width_mm", 50.0), ("height_mm", 50.0),
                                          ("layers_by", "shape"), ("arrangement", "stacked"), ("stack_order", "palette"), ("bleed_mm", 1.0), ("min_feature_mm", 1.0), ("kerf_mm", 0.1),
-                                         ("recipe", "words")])
+                                         ("thin_lines", "drop"), ("recipe", "words")])
 @pytest.mark.parametrize("mode", ["generate", "music"])
 def test_a_vector_option_sent_with_another_kind_of_run_is_refused_and_named(client, mode, name, value):
     body = {"mode": mode, "prompt": "Genre: ambient." if mode == "music" else "a fox", "options": {"steps": 20 if mode == "music" else 3, name: value}}
     assert problems(client.post("/api/runs", json=body)) == {f"options.{name}": "Only used for Vector."}
+
+
+def test_thin_lines_is_thicken_unless_the_request_says_drop():
+    """DESIGN.md §41.3: a drawing keeps its thin lines by default, because that is what 1.23 is for; `drop` is what the clean-up did before, still asked for by name.
+    The engine's own default stays `drop`, so that a job that does not mention it is unchanged: the server is what chooses `thicken`."""
+    assert resolve().vector.thin_lines == "thicken"
+    assert resolve(thin_lines="drop").vector.thin_lines == "drop"
+    assert resolve(thin_lines="thicken").options_snapshot()["thin_lines"] == "thicken"
+    assert V.VectorOptions().thin_lines == "drop"
+
+
+def test_a_thin_lines_value_that_is_not_one_is_refused_in_the_engines_words():
+    assert refused(thin_lines="widen") == {"options.thin_lines": "Must be one of: thicken, drop."}
 
 
 def test_a_vector_option_sent_with_an_edit_is_refused_too(client):

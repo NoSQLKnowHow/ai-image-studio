@@ -109,7 +109,7 @@ def test_the_job_is_given_the_drawing_the_options_and_a_folder_of_its_own(vclien
     for call in calls:
         assert call["options"] == {"colours": 4, "palette": ["#FF0000"], "kind": "flat", "width_mm": 120.0, "height_mm": 60.0, "layers_by": "shape",
                                    "arrangement": "stacked", "stack_order": "area_asc", "bleed_mm": 1.5, "min_feature_mm": 0.2, "kerf_mm": 0.1, "shape_layer_cap": 30,
-                                   "fill_mode": "filled"}
+                                   "fill_mode": "filled", "thin_lines": "thicken"}  # the server's default: a drawing keeps its thin lines (§41.3)
         assert call["sha1"] == sha1(source / f"{call['version']}-source.png")  # it was given the drawing, where the run keeps it
         assert [arg for arg in call["argv"] if arg.startswith("--")] == ["--source", "--options", "--out"]  # the command line of §31.12.4
         assert call["argv"][1] == str(source / f"{call['version']}-source.png") and call["out_exists"]

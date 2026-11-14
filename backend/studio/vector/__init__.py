@@ -43,6 +43,12 @@ ARRANGEMENTS = ("side_by_side", "stacked")
 STACK_ORDERS = ("area_desc", "area_asc", "palette")
 KIND_DEFAULT, LAYERS_BY_DEFAULT, ARRANGEMENT_DEFAULT = "silhouette", "colour", "side_by_side"
 STACK_ORDER_DEFAULT = "area_desc"
+# What happens to a stroke narrower than the smallest feature (DESIGN.md §41.3): `drop` removes it, which is what the clean-up did before 1.23 and
+# is right for a cutter; `thicken` widens it to the smallest feature, so a drawing keeps its thin lines as one unbroken line each. The engine's
+# own default is `drop`, so that a job that does not mention it gives the same output as before; the server and the page send `thicken`.
+THIN_LINES = ("thicken", "drop")
+THIN_LINES_DEFAULT = "drop"
+THIN_LINES_REQUEST_DEFAULT = "thicken"  # what the server uses when a run request does not say: the whole point of 1.23 is that a drawing keeps its lines
 
 # One machine preset for now (§31.7: the Gweike's working area is not confirmed, so it has none yet).
 PRESETS = ({"id": "xtool-p2", "name": "xTool P2 bed", "width_mm": 600, "height_mm": 307},)
@@ -51,6 +57,7 @@ Kind = Literal["silhouette", "flat", "line"]
 LayersBy = Literal["colour", "shape"]
 Arrangement = Literal["side_by_side", "stacked"]
 StackOrder = Literal["area_desc", "area_asc", "palette"]
+ThinLines = Literal["thicken", "drop"]
 # The one switch the laser test sheet (§31.9) may flip: whether a shape is written as an area or as an outline (§31.10 item 8).
 FillMode = Literal["filled", "outline"]
 
@@ -83,6 +90,7 @@ class VectorOptions:
     kerf_mm: float = KERF_MM_DEFAULT
     shape_layer_cap: int = SHAPE_LAYER_CAP
     fill_mode: FillMode = "filled"  # type: ignore[assignment]
+    thin_lines: ThinLines = THIN_LINES_DEFAULT  # type: ignore[assignment]  # a stroke narrower than the smallest feature: widened (`thicken`) or removed (`drop`), §41.3
 
     def to_json(self) -> dict:
         """The options as plain JSON (the palette as a list), for the job's options file."""
@@ -141,7 +149,7 @@ def check_options(opts: VectorOptions) -> list[tuple[str, str]]:
         else:
             seen.add(colour)
     for name, value, allowed in (("kind", opts.kind, KINDS), ("layers_by", opts.layers_by, LAYERS_BY), ("arrangement", opts.arrangement, ARRANGEMENTS),
-                                 ("stack_order", opts.stack_order, STACK_ORDERS),
+                                 ("stack_order", opts.stack_order, STACK_ORDERS), ("thin_lines", opts.thin_lines, THIN_LINES),
                                  ("fill_mode", opts.fill_mode, ("filled", "outline"))):
         if value not in allowed:
             errors.append((name, f"Must be one of: {', '.join(allowed)}."))

@@ -53,7 +53,7 @@ def test_the_limits_are_built_from_the_constants_every_one_of_them(client_factor
             MIN_FEATURE_MM_MIN=0.06, MIN_FEATURE_MM_MAX=9.0, MIN_FEATURE_MM_DEFAULT=0.7, KERF_MM_MIN=0.1, KERF_MM_MAX=0.9, KERF_MM_DEFAULT=0.2,
             BLEED_MM_MIN=0.2, BLEED_MM_MAX=4.0, BLEED_MM_DEFAULT=0.8, SHAPE_LAYER_CAP=11, RECIPE_MAX_CHARS=1234, KIND_DEFAULT="line",
             LAYERS_BY_DEFAULT="shape", ARRANGEMENT_DEFAULT="stacked", STACK_ORDER_DEFAULT="palette", KINDS=("a", "b"), LAYERS_BY=("x",), ARRANGEMENTS=("p", "q"),
-            STACK_ORDERS=("palette", "area_asc"),
+            STACK_ORDERS=("palette", "area_asc"), THIN_LINES=("u", "v"), THIN_LINES_REQUEST_DEFAULT="v",
             PRESETS=({"id": "p1", "name": "P1", "width_mm": 11, "height_mm": 22},)).items():
         monkeypatch.setattr(V, name, value)
     limits = client_factory().get("/api/capabilities").json()["limits"]["vector"]
@@ -61,9 +61,10 @@ def test_the_limits_are_built_from_the_constants_every_one_of_them(client_factor
         "colours": {"min": 3, "max": 7, "default": 4}, "size_mm": {"min": 6.0, "max": 1100.0, "default": [120.0, 120.0]},
         "versions": {"min": 2, "max": 3}, "min_feature_mm": {"min": 0.06, "max": 9.0, "default": 0.7},
         "kerf_mm": {"min": 0.1, "max": 0.9, "default": 0.2}, "bleed_mm": {"min": 0.2, "max": 4.0, "default": 0.8}, "shape_layer_cap": 11,
-        "kinds": ["a", "b"], "layers_by": ["x"], "arrangements": ["p", "q"], "stack_orders": ["palette", "area_asc"],
+        "kinds": ["a", "b"], "layers_by": ["x"], "arrangements": ["p", "q"], "stack_orders": ["palette", "area_asc"], "thin_lines": ["u", "v"],
         "presets": [{"id": "p1", "name": "P1", "width_mm": 11, "height_mm": 22}],
-        "defaults": {"kind": "line", "layers_by": "shape", "arrangement": "stacked", "stack_order": "palette"}, "recipe_max_chars": 1234}
+        "defaults": {"kind": "line", "layers_by": "shape", "arrangement": "stacked", "stack_order": "palette", "thin_lines": "v"},
+        "recipe_max_chars": 1234}
 
 
 def test_the_limits_do_not_change_with_the_server_settings_that_belong_to_pictures(client_factory):

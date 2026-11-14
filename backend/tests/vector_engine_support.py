@@ -54,6 +54,27 @@ def mm(value: float) -> float:
     return value * PX_PER_MM
 
 
+def pencil_shapes():
+    """A constructed pencil-like drawing, for the thin-line tests (DESIGN.md §41): a heavy outline and a solid mass (hair), which every clean-up
+    keeps, and the things a face is made of that the clean-up before 1.23 deleted: lines 3 and 4 pixels wide (0.3 and 0.4 mm at the usual scale, under
+    the default smallest feature of 0.5 mm) for the eyes, brows, nose and mouth, and pale grey hatching 2 pixels wide, which is shading and not line.
+    Pixel coordinates on the default 500 x 500 picture. Returns (shapes, where), `where` naming a point inside each thing, in millimetres."""
+    ink, paper, pale = (10, 10, 10), (255, 255, 255), (175, 175, 175)
+    shapes = [
+        ("ellipse", (80, 60, 420, 460), ink), ("ellipse", (92, 72, 408, 448), paper),            # the outline, 12 px wide
+        ("poly", [(110, 150), (150, 70), (250, 40), (350, 70), (390, 150), (300, 120), (200, 120)], ink),  # the hair, solid
+        ("ellipse", (170, 200, 230, 224), ink), ("ellipse", (173, 203, 227, 221), paper),        # an eye: a ring 3 px wide
+        ("ellipse", (270, 200, 330, 224), ink), ("ellipse", (273, 203, 327, 221), paper),
+        ("poly", [(160, 180), (240, 175), (240, 179), (160, 184)], ink),                          # a brow, 4 px
+        ("poly", [(250, 230), (240, 300), (243, 300), (253, 230)], ink),                          # the nose, 3 px
+        ("rect", (200, 350, 300, 354), ink),                                                      # the mouth, 4 px
+    ]
+    for i in range(0, 120, 14):                                                                   # hatching: pale, 2 px wide, 14 px apart
+        shapes.append(("poly", [(110, 250 + i), (170, 280 + i), (170, 282 + i), (110, 252 + i)], pale))
+    where = {"eye": (20.0, 20.15), "brow": (20.0, 17.9), "nose": (24.6, 26.5), "mouth": (25.0, 35.2), "hatching": (14.0, 28.0), "hair": (25.0, 9.0)}
+    return shapes, where
+
+
 # ---- reading the SVG -------------------------------------------------------------------------------------------------------------------
 @dataclass
 class ReadPath:

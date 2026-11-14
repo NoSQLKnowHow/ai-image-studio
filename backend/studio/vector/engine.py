@@ -33,7 +33,7 @@ from shapely.geometry.base import BaseGeometry
 from . import LayerFile, VectorError, VectorOptions, VectorResult, check_options
 from .colours import colour_name, hex_to_rgb, rgb_to_hex
 from . import geometry as geo
-from . import pixels, svgio
+from . import lines, pixels, svgio
 
 # In *by shape* mode a layer's colour is a label, not the picture's colour (§31.10 item 7): laser programs tell layers apart by colour, and
 # a drawing of 30 leaves in one green would be 30 layers in one colour. A fixed list of 30 colours, each at least 17 apart from every other in
@@ -63,6 +63,8 @@ class _Tally:
     specks: int = 0
     thin_parts: int = 0
     narrow_gaps: int = 0
+    widened: int = 0  # thin lines that were widened to the smallest feature instead of removed (`thin_lines = thicken`, §41.3)
+    widen_skipped: bool = False  # `thicken` was asked for but the smallest feature is too wide to widen to, so thin parts were removed as before
     missing: list[str] = field(default_factory=list)  # palette colours that are not in the picture at all
     vanished: list[str] = field(default_factory=list)  # colours that were in the picture, but everything of them was smaller than the smallest feature
 
@@ -161,17 +163,32 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
     tolerance = max(0.002, min(0.25 * mm_per_pixel, min_feature / 5, 0.1))  # how far simplified shapes may stray from the traced ones
 
     # ---- colours: white plus at most N-1 inks ----
-    reduction = pixels.reduce_colours(rgb, opts.colours - 1, opts.palette, pixels.fringe_window(min_feature / mm_per_pixel))
+    keep_thin = opts.thin_lines == "thicken"  # DESIGN.md §41.3: thin strokes are kept (and widened) instead of deleted
+    window = pixels.fringe_window(min_feature / mm_per_pixel)
+    if keep_thin and opts.colours == 2:
+        # With one ink the only edges are between it and white, so there is no third colour for a fringe clean-up to take away, and the clean-up
+        # would take the thin strokes themselves (§41.1 cause 3). With several inks it stays: it is what keeps a thin ribbon of a third colour
+        # from appearing between two inks, and widening such a ribbon would make it a stripe.
+        window = 1
+    reduction = pixels.reduce_colours(rgb, opts.colours - 1, opts.palette, window, pixels.THIN_LINES_INK_BIAS if keep_thin else 1.0)
     if not reduction.inks:
         raise VectorError("There is nothing to cut: the picture is all white.",
                           "White is the bare material. Draw the shapes in a darker or stronger colour on the white background.")
 
-    # ---- trace each ink, largest first, cutting each out of the ones before it so that no two layers overlap (§31.12.3 item 4) ----
+    # ---- thin lines: remove the specks, widen what is narrower than the smallest feature (done on the pixels, before tracing) ----
     tally = _Tally(missing=list(reduction.missing))
+    labels = reduction.labels
+    if keep_thin:
+        labels, kept = lines.keep_thin_lines(labels, min_feature / mm_per_pixel)
+        tally.specks += kept.specks
+        tally.widened += kept.widened
+        tally.widen_skipped = kept.too_wide
+
+    # ---- trace each ink, largest first, cutting each out of the ones before it so that no two layers overlap (§31.12.3 item 4) ----
     covered: BaseGeometry = Polygon()
     layers: list[_Layer] = []
     for ink in sorted(reduction.inks, key=lambda i: (-i.pixels, i.lightness, i.index)):
-        traced = geo.trace_ink(reduction.labels == ink.index, scale_x, scale_y, tolerance / 2)
+        traced = geo.trace_ink(labels == ink.index, scale_x, scale_y, tolerance / 2)
         shape = traced.simplify(tolerance, preserve_topology=True)
         if not covered.is_empty:
             shape = shape.difference(covered)
@@ -258,6 +275,8 @@ def _build(source: Union[Path, str, bytes], opts: VectorOptions) -> VectorResult
         "layers": check_layers,
         "smallest_feature_mm": round(smallest, 2),
         "removed": {"specks": tally.specks, "thin_parts": tally.thin_parts},
+        "thin_lines": opts.thin_lines,  # what was asked: `thicken` or `drop`
+        "widened": tally.widened,  # how many thin lines were widened to the smallest feature (always 0 for `drop`)
         "mm_per_pixel": round(mm_per_pixel, 4),
         "notes": notes,
     }
@@ -303,6 +322,13 @@ def _notes(opts: VectorOptions, found: int, white: bool, tally: _Tally, hanging:
     if tally.specks:
         notes.append({"code": "specks_removed", "message": f"{_plural(tally.specks, 'speck')} smaller than {minimum} "
                       f"{'was' if tally.specks == 1 else 'were'} removed."})
+    if tally.widened:
+        notes.append({"code": "thin_widened", "message": f"{_plural(tally.widened, 'thin line')} narrower than {minimum} "
+                      f"{'was' if tally.widened == 1 else 'were'} widened to {minimum}, so {'it stays' if tally.widened == 1 else 'they stay'} "
+                      "one line each and the drawing keeps its detail."})
+    if tally.widen_skipped:
+        notes.append({"code": "thin_not_widened", "message": f"Thin lines were not widened: {minimum} is too wide to widen them to on this drawing "
+                      f"(more than {2 * lines.MAX_HALF_WIDTH_PX:g} of its pixels), so parts narrower than that were removed."})
     if tally.thin_parts or tally.narrow_gaps:
         sentences = []
         if tally.thin_parts:
