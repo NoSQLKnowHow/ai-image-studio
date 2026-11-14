@@ -93,8 +93,9 @@ def test_the_constants_are_the_ones_the_contract_fixture_publishes():
     assert (LIMITS["kinds"], LIMITS["layers_by"], LIMITS["arrangements"]) == (list(vector.KINDS), list(vector.LAYERS_BY), list(vector.ARRANGEMENTS))
     assert LIMITS["stack_orders"] == list(vector.STACK_ORDERS)  # which colour is at the back of a stacked run (DESIGN.md §35.3 item 11)
     assert LIMITS["presets"] == list(vector.PRESETS)
+    assert LIMITS["thin_lines"] == list(vector.THIN_LINES)  # what happens to a stroke narrower than the smallest feature (DESIGN.md §41.3)
     assert LIMITS["defaults"] == {"kind": vector.KIND_DEFAULT, "layers_by": vector.LAYERS_BY_DEFAULT, "arrangement": vector.ARRANGEMENT_DEFAULT,
-                                  "stack_order": vector.STACK_ORDER_DEFAULT}
+                                  "stack_order": vector.STACK_ORDER_DEFAULT, "thin_lines": vector.THIN_LINES_REQUEST_DEFAULT}
 
 
 def test_the_options_defaults_are_the_limits_defaults():

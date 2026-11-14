@@ -1264,7 +1264,8 @@ class JobManager:
             colours=options["colours"], palette=tuple(options["palette"]), kind=options["kind"], width_mm=options["width_mm"],
             height_mm=options["height_mm"], layers_by=options["layers_by"], arrangement=options["arrangement"], bleed_mm=options["bleed_mm"],
             stack_order=options.get("stack_order", vector_mod.STACK_ORDER_DEFAULT),  # a run made in 1.17 stored none
-            min_feature_mm=options["min_feature_mm"], kerf_mm=options["kerf_mm"])
+            min_feature_mm=options["min_feature_mm"], kerf_mm=options["kerf_mm"],
+            thin_lines=options.get("thin_lines", vector_mod.THIN_LINES_DEFAULT))  # a run made before 1.23 stored none: it was cleaned up as `drop`
         problems: list[tuple[str, Optional[str]]] = []  # (message, hint) for each version that is missing, with its number in the message
         made = 0
         for idx in sorted(drawings):

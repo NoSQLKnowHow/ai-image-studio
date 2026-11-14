@@ -39,6 +39,12 @@ NEAR_WHITE = 12.0
 # white as this is never bare: if the picture does not use the colours that were asked for (a palette of red for a picture drawn in black),
 # the black is the red ink's, rather than the whole picture being "all white" because black is nearer to white than to red.
 BARE_REACH = 50.0
+# How much further from white than from an ink a pixel must be, before it is called white, when thin lines are kept (`thin_lines = "thicken"`,
+# DESIGN.md §41.3). With 1.0 the cut between white and an ink is half way, which for black on white is middle grey; a thin pencil stroke is
+# anti-aliased into pixels that are mostly lighter than that, and the half-way cut kept only the cores of its widest parts (§41.1 cause 3). 1.27
+# puts the cut at about L 58 for a black ink: a pixel is white only if it is clearly nearer white than the ink. The pencil shading that
+# is lighter than that is left white here and becomes tone in the dots of §41.3, not lines.
+THIN_LINES_INK_BIAS = 1.27
 
 
 @dataclass(frozen=True)
@@ -192,13 +198,16 @@ def _give_to_neighbours(labels: np.ndarray, unassigned: np.ndarray, label_count:
     return labels
 
 
-def reduce_colours(rgb: np.ndarray, inks: int, palette: tuple[str, ...], window: int) -> Reduction:
+def reduce_colours(rgb: np.ndarray, inks: int, palette: tuple[str, ...], window: int, ink_bias: float = 1.0) -> Reduction:
     """Reduce `rgb` to white plus at most `inks` inks (§31.5 step 2, §31.12.3 item 1).
 
     White is a fixed centre. The palette's colours are fixed centres. Any further inks are found by k-means in CIE Lab, started
     from fixed points rather than random ones, so the same picture always gives the same colours: each new centre is the colour that
     is both far from the centres so far and common (distance squared times the number of pixels that have it), which finds a small red
-    eye on a large black shape before it finds a rare shade of grey. `window` is the width of fringe to remove (`fringe_window`)."""
+    eye on a large black shape before it finds a rare shade of grey. `window` is the width of fringe to remove (`fringe_window`).
+
+    `ink_bias` (1.0 = none) multiplies a pixel's distance to white before it is compared with its distance to the inks, so that above 1 an
+    in-between pixel is an ink's more often than white's. 1.0 is exactly the behaviour before 1.23."""
     height, width, _ = rgb.shape
     flat = rgb.reshape(-1, 3)
     # Work on the distinct colours with a count each: a flat drawing has few, and even a noisy one has far fewer than pixels.
@@ -223,9 +232,12 @@ def reduce_colours(rgb: np.ndarray, inks: int, palette: tuple[str, ...], window:
     assignment = None
     for _ in range(MAX_ITERATIONS):
         distance = np.stack([((lab - centre) ** 2).sum(axis=1) for centre in centres], axis=1)
+        true_white_distance = distance[:, 0].copy()  # the rule below that names a distance from white means the real one, not the biased one
+        if ink_bias != 1.0:
+            distance[:, 0] *= ink_bias ** 2  # these distances are squared
         new_assignment = distance.argmin(axis=1)  # a tie goes to the lowest centre: white first
         if len(centres) > 1:  # a colour far from white is never the bare material: it belongs to the nearest ink
-            far = (new_assignment == 0) & (distance[:, 0] > BARE_REACH ** 2)
+            far = (new_assignment == 0) & (true_white_distance > BARE_REACH ** 2)
             new_assignment = np.where(far, 1 + distance[:, 1:].argmin(axis=1), new_assignment)
         new_assignment = np.where(to_white <= NEAR_WHITE ** 2, 0, new_assignment)  # and a colour near white is white, whatever else is near it
         if assignment is not None and np.array_equal(new_assignment, assignment):

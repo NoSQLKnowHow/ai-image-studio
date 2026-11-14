@@ -35,6 +35,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.20 | **Speech** (built; tried with fake engines in unit tests and a real browser, **not with a real engine on the Spark**; §38): a fifth tab that reads text aloud. You paste text, give a web address (public sites only) or choose a `.txt`, `.md`, `.pdf`, `.epub` or `.docx` file, pick an engine and a voice (**Qwen3-TTS, Voxtral, Kokoro, Piper**, each one file in an adapter so another model can be added later), and it makes **WAV audio you can play while the rest is still being made**, with the paragraph being spoken highlighted. A book is divided into **parts per chapter**; a reading is one queue entry that **re-queues after every part**, so other jobs slip in between; readings **never expire**. Voices: presets with a **Play sample** button, **voices you design from a description**, and **your own voice cloned from a passage you read and upload**. One style note steers expression where the voice allows it | §38 | §38.19 (built; decision #57) | `docs/SPARK_TEST.md` section 31. §38.14 lists what the Spark must tell us, including **which voice sounds right for a female American, UK or Irish reader**, and whether **Voxtral** runs on a GB10 at all |
 | 1.21 | **Load progress** (built, the server side and the page side, §39; **not yet seen on the Spark**): while a model loads, the status says how much of it has arrived in the cache, how long the load has taken and which model was unloaded to make room, for the image, music and speech models alike; the page shows it in the header pill and its panel, on the cards that wait for the model, in the Speech tab and in the Design a voice and Add my voice dialogs | §39 | #44 (the server side) and the pull request after it (the page side) | `docs/SPARK_TEST.md` section 32: watch a real first download and compare the size the Hub gave with the size on disk |
 | 1.22 | **Reorder the queue** (built; tried in unit tests, a real browser, with a finger sent by the protocol, and with the fake pipeline; **not yet seen on the Spark**; §40): a **Queue** panel opened from the header lists the job that is going and every waiting job from every tab; you drag a waiting job (or use its arrows) before or after another, and the worker takes them in that order, and the cards on each tab follow it; a job that has started cannot be moved | §40 | (this PR) | `docs/SPARK_TEST.md` section 33: reorder a real queue, on the Spark and on a phone |
+| 1.23 | **A Vector that keeps the drawing** (§41; **the thin-line fix is built, the rest is spec only**): an **Engrave or Cut** choice on the Vector form; thin lines are **widened to the smallest feature** instead of deleted (no more lost faces or dashed strokes); shading becomes a **layer of dots**; the colour step reads thin dark strokes instead of dropping them; the recipe for Engrave asks for a fine line drawing with soft shading | §41 | (not yet) | Your real source PNG, and a burnt test of the dot spacing (a strip on the laser test sheet, §41.7 item 10) |
 
 **Tests today (1.18):** backend 1804 (pytest, with 3 skipped; the three modules that need `torch` are skipped on this machine, and 65 more run only where `torch` is installed: 28 for the real music pipeline, which also needs `diffusers` 0.40.0, 17 for the upscaler probe's tiling, and 20 for Enlarge's real loading path, which also need `spandrel`; the Vector engine's tests need `vtracer` and `shapely`, and the Vector tests of the server do not), front end 858 (Vitest) and 281 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
@@ -51,7 +52,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 6 | **Music 1.9** | **Built and merged** (#21, #22; §26.13): the Music tab, with the fields and preview, lyrics, tracks with a player, and Load/Unload per tab | Your run of `SPARK_TEST.md` §20, including the page |
 | 7 | **M8** | The Spark smoke test together | Everything above |
 
-**Open questions for you:** any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2).
+**Open questions for you:** any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2). **Ten ideas for what to build next are written up in §42, for you to review; none of them is decided.**
 
 ## 1. Purpose
 
@@ -138,6 +139,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 59 | The studio is published on port 8081 on the Spark (1.20) | You asked for the port that is visible from outside, in `compose.yaml`, to be 8081 (you were tired of seeing the server's *Invalid HTTP request received* warning on 8080). | DECIDED (your answer); **built in 1.20**. The left (Spark) number of the mapping in `compose.yaml` and the `STUDIO_PORT` in `.env.example` are 8081; the container's own 8080 is unchanged (§38.18 item 74). |
 | 60 | Load progress: show how far a model's download and load have got (1.21) | You designed a voice and the header said *Loading speech model…* for a long time with nothing to show it was working, and asked whether the window can show progress; I offered to build it as two pull requests (the server, then the page) and you said to go ahead and merge. | DECIDED (your answers); **built in 1.21: the server side (§39.1 to §39.6) and the page side (§39.7)**, not yet seen on the Spark. It measures the download from outside, in the cache, so nothing that downloads is hooked; loading into memory has no measure and is shown as time. |
 | 61 | Reorder the queue (1.22) | You asked to be able to drag and drop one queued job above or below another, and that a job that is under way or finished can no longer be moved. I asked four things that the queue as it works left open, and you took the recommended answer to each. | DECIDED (your answers): **a Queue panel** from the header (not the cards in each tab); **your order wins over drafts** (a new draft still joins the front of the line, but what you place stays where you put it); **a reading that has made a part is under way** (locked; others may be placed around it); **any job anywhere** (each row names the model it needs); and, asked after you tried it, **the cards on each tab follow the queue** (an up-next block on top). **Built in 1.22 (§40).** |
+| 62 | Vector quality: keep thin lines, tone as dots, Engrave or Cut (1.23) | You said the Vector tab "outputs unusable images" and showed a pencil drawing whose vector kept only the hair and the outline. I found three causes (§41.1: the smallest feature deletes thin lines, a wobbling stroke breaks into dashes, the colour step drops thin grey strokes) and asked three things. | DECIDED for your three answers: **both Engrave and Cut as a choice**, **thin lines thickened to the smallest feature**, **tone turned into dots**; the rest PROPOSED (§41.3, §41.7). **The thin-line fix is built; the rest is spec only.** |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -3254,3 +3256,182 @@ The panel reads `GET /api/queue` when it opens and again whenever the signature 
 
 **Tried:** `backend/tests/test_queue_reorder.py` (41 tests: the rules of moving and of where a run arrives, 600 random steps against a plain list, the route and what it refuses, the listing, the events); `frontend/src/queue.test.ts`, `queuepanel.test.tsx` and one in `store.test.ts` (60 tests: the arithmetic of a drop checked against a plain list for every list up to six jobs and every job and place, the panel, the arrows, the drag with the layout supplied, refusals, focus, the announcements), and six new and one rewritten in `history.test.ts` (the order of the cards); seven browser tests (`frontend/e2e/queue.spec.ts`: a drag with the mouse, with the order the jobs are in fact worked on; the cards following the drag, and a new job's card landing last of the block; the arrows from the keyboard; a second page following; the locked job; long prompts, measured against the panel and the window; a 360 px phone with a touch drag sent through the browser's protocol). **Deliberate mistakes:** 25 to the server (24 caught at once; one, a move that writes when nothing changes, was not, because rewriting an unchanged order gives the same numbers, so the test now counts the rows written); 33 to the page (32 caught at once; one, Escape also closing the panel, was not, because the test sent the key to `window`, which never reaches the document, so it now goes through it as a key press does); 7 to the order of the cards and 6 to the wiring, in the browser (the header button, the store's order, the grip's handler, the server announcing a move, the order in the status, the store applying the new places to the cards), all caught. **What the tests found, and what you found:** the old ordering expression made a draft's priority part of the order itself, which no person could override, so it moved to arrival (§40.1); the two weak tests above; **two layout faults that the tests could not see and a screenshot from your Spark showed**: with a real, long prompt each row ran out of the panel (a grid column is as wide as its widest content unless told it may shrink), and on a 360 px phone the panel began 20 px off the left of the screen (it was anchored to its button, which is not the last thing in the header); the tests had used short words, and now use a long prompt and measure every row against the panel and the panel against the window, which fail without the fix; **that the cards did not follow the queue**, which you saw and which §40.4 now describes; and, in the verification, a flaw in the backup-script tests that has nothing to do with the queue: three of them "damaged" a file by writing the letter X at one place, which changes nothing one time in 256 (the bytes of a compressed backup differ from run to run), and one run of this verification hit it (the same script passed when run again); a helper that always changes the byte, with a test of its own, replaces them. **Measured on the tree of this pull request:** backend 3311 passed, 3 skipped; page suite 46 files, 2001 tests, `tsc` and the build clean; browser suite 317 of 317 (the 310 of the earlier releases and the 7 new); backup and restore script tests 374 passed (the 369 and 5 for the helper). (The backend run was on the last commit that changed backend code; the commits after it change the page, the documents and `scripts/tests`.)
 **Not tried:** the Queue on your Spark with real models (a music track put above an image job, which swaps models, and the time that takes); a real phone (the touch drag was sent through the browser's protocol in Chromium, not made by a thumb on Safari or Android Chrome); a screen reader (the announcement's words and the focus were checked, not how it is spoken); a queue near its largest allowed size (`STUDIO_QUEUE_CAP` up to 1000: the keys are about 0.0005 apart, which a float holds with room to spare); two people dragging at the same moment; and the instant when a job is picked up as it is dropped on (the check is in one transaction, which is argued, not timed). `docs/SPARK_TEST.md` section 33 asks for the first two.
+
+## 41. Version 1.23: a Vector that keeps the drawing (decision 62 DECIDED for what you said; the rest PROPOSED; the thin-line fix is BUILT, the Engrave or Cut form, the dots and the Engrave recipe are spec only)
+
+You said the Vector tab "outputs unusable images" and showed the viewer: a pencil drawing of a face and torso on the left, and on the right a vector that kept the hair and the outline and lost almost everything else. I asked what you make with the files and what should happen to thin lines and to shading, and you answered (§41.2). **Built so far:** keeping thin lines (§41.3: the colour step that reads thin strokes, specks, widening, the server's default of `thicken`, the check's new keys). **Not built yet:** the Engrave or Cut choice (`use`) and the form's new controls (§41.4), the tone dots, and the Engrave recipe (§41.5).
+
+### 41.1 What went wrong, measured
+
+I reproduced it without a GPU. The clean-up run on a picture cut from your screenshot, at the defaults, gives a 13.5 KB SVG; your viewer said 13.7 KB, so you were on the defaults and the reproduction is the same fault. Three causes, each shown on its own:
+
+1. **The smallest feature deletes thin lines.** The default is 0.5 mm. On a 100 mm sheet drawn at 1536 px one pixel is 0.065 mm, so everything narrower than about 7.7 px is "narrower than the smallest feature" and is removed (`geometry.clean_layer`, an opening by half the feature). A pencil face is drawn in lines 3 to 5 px wide. The heavy outline and the solid hair survive; the face does not. Lowering the setting to 0.15 mm brought the face back in a test picture.
+2. **A stroke that wobbles across the limit breaks into dashes.** Every stretch narrower than the limit is cut out. In a test, one continuous stroke whose width wandered between 3.8 and 9 px came back as 5 pieces at 0.5 mm and 7 at 0.3 mm.
+3. **Thin grey strokes never reach the tracer.** The colour step (`pixels.reduce_colours`) decides white or ink by the nearer centre, which puts the cut near the middle grey (about L 50), treats anything within 12 of white as white, and then runs a fringe clean-up of up to 3 px. A thin pencil stroke is mostly in-between pixels. In a patch of test hatching, 6,450 pixels were clearly darker than paper; 547 (8%) were still ink after the colour step at the defaults, and only 3,307 (51%) with the fringe clean-up switched off. Lowering the smallest feature cannot bring them back, because they are gone before it applies.
+
+On your drawing, reading by darkness showed where the split is: darker than about L 45 to 60 is the face (eyes, brows, nose, lips, creases) and the outline; the torso's shading is lighter than about L 60 and turns to speckle only when the cut is raised to L 75.
+
+I also tried the proposal below on that picture before writing this (a throwaway script, not in the repository, 1.4 s for both settings): with the 0.15 mm setting the face came back as fine lines with a dot pattern for the shading, and with 0.5 mm the face came back as clean thickened lines with no dashes.
+
+### 41.2 What you chose
+
+* **Engrave or Cut** (your answer: both, depending on the job): one choice on the form that sets sensible values for each; the numbers stay editable.
+* **Thin lines are thickened** to the smallest feature (your answer, the recommended one), not deleted.
+* **Tone becomes dots** (your answer): shading is turned into a pattern of dots whose size follows how dark the shading is, as a layer of its own.
+
+### 41.3 The design
+
+**A new option, `use`**, `cut` (the default) or `engrave`. It decides, where the request does not say otherwise: the smallest feature (**0.5 mm** for Cut, **0.15 mm** for Engrave), the thin-line rule (thicken, both), tone (**dots** for Engrave, none for Cut), and the **wording of the drawing's recipe** (§41.5). Two more options hold what it chose and can be set by themselves: `thin_lines` (`thicken` or `drop`) and `tone` (`dots` or `none`), and `dot_pitch_mm` (0.5 by default, 0.2 to 2) is the spacing of the dots. The engine's own defaults are `drop` and `none`, so a job that sets none of them gives exactly today's output; **the server defaults `thin_lines` to `thicken` when a request does not say** (so the page as it is gets the fix before its form has the control), and from the form `use` chooses the values.
+
+**Reading the picture (replaces the cut near middle grey, for thicken).** With `thin_lines = thicken` the colour step is given a bias towards the ink: a pixel is white only if it is clearly nearer white than the ink (a pixel at about L 58 or darker is ink for a black ink), the near-white rule stays (L within 12 of white is white), and for a picture of **one ink** the fringe clean-up is off (window 1), because the only edges are between the ink and white and the clean-up would take the thin strokes themselves. With several inks the clean-up stays: it is what keeps a thin ribbon of a third colour from appearing between two inks, and widening such a ribbon would make a stripe. The bias is the same step for every number of colours; there is no second path.
+
+**Specks (still removed).** A connected piece of ink that is shorter than twice the smallest feature in both directions and is not a solid blob (its area is under that of a disc one feature across) is a speck and is removed before anything is widened, so noise does not become blots or dots. Nothing is a speck here that the old removal would have kept (a disc exactly one feature across is the smallest spot the opening keeps); they are counted as before (`removed.specks`).
+
+**Thickening.** After the specks, every part of an ink narrower than the smallest feature is widened to that width and nothing else is changed: a point of ink whose widest inscribed circle has radius ρ, smaller than half the feature, grows by (half the feature − ρ). A thin stroke ends up the smallest feature wide, and a little more, wherever it was thin, so it stays one unbroken line; a wide shape does not move. It is done on the pixels with an exact distance transform limited to the distance that matters (numpy only, no new library), with a pixel added to each side: a strip exactly the smallest feature wide shrinks to nothing in the opening that follows (measured: a 1 px line widened to exactly the feature came out empty), so the result is **strictly wider than the smallest feature, by between 1 and 3 pixels** (about 0.07 to 0.2 mm on a 100 mm sheet drawn at 1536 px). If the feature is more than 32 px across in the drawing (over 2 mm on a 100 mm sheet) it is not done, thin parts are removed as before, and a note says so. The later clean-up (`clean_layer`) stays as the safety net and still flags gaps between lines that are narrower than the feature.
+
+**Tone.** With `tone = dots` and one ink (colours = 2), the pixels that are not a line and are darker than paper (between about L 58 and L 93 for a black ink) are tone. Tone is averaged over about 1.5 dot spacings (normalised so that a line beside it does not darken it), which is also what turns pencil hatching into a smooth tone instead of lines. Dots sit on a 45° lattice at `dot_pitch_mm`; a dot's area is the average tone, at most 62% of its cell, and a dot whose diameter is under the smallest feature is left out. A dot that would touch a line is left out too, so that no spot is engraved twice. The dots are one **layer of their own**, named *tone*, in its own exact colour (the ink's, moved by the smallest step, as §31.12.3 item 2 does for any clash), so that the laser program can give it its own power. Dots work only with colours = 2, layers by colour and side by side: the server refuses another combination in words (`422`), and the form turns those off while Tone is on. At most 40,000 dots are made; beyond that the spacing is raised until they fit and a note says what it became (a 1536 px picture at 0.5 mm on a 100 mm sheet made 1,865 dots).
+
+**The check and its notes** say what happened in plain words: how many thin lines were widened, to what width; how many dots, at what spacing; and, as before, the specks removed and the gaps left. `check.json` gains `use`, `thin_lines`, `tone` and `widened`, and a `dots` count on the tone layer.
+
+### 41.4 The page
+
+The Vector form gets **Use: Engrave | Cut** at the top, remembered like the other fields; the first time it is Cut, which keeps today's numbers. Choosing one sets the smallest feature, **Thin lines** (Thicken | Drop), **Shading** (Dots | Leave out) and **Dot spacing** to its values, each of which can then be changed. Shading and its spacing are shown only with 2 colours; while Shading is Dots the shape and stacked arrangements are off, with the reason beside them. The viewer's layer list shows the tone layer with its dot count; the card's one-line summary says *Engrave* or *Cut*.
+
+### 41.5 The drawing's recipe
+
+`vector/recipe.py` asks the model for flat, shadeless artwork and forbids shading, hatching, thin lines and tiny details (§31.5, `NEGATIVE`). That is right for a cutter and wrong for an engraver who wants a face. For **Engrave** the recipe asks for *a clean ink line drawing with fine detail and soft pencil shading, on plain white* and keeps the rest of the forbidden list (colour, text, frame, photograph, 3D, transparency); **Cut** is unchanged. How well Qwen-Image follows the new wording is not known and cannot be tried without the Spark; the clean-up works on whatever it draws, and your own prompt still comes first.
+
+### 41.6 Acceptance criteria (continue §40.6)
+
+318. **A Vector run has a use, Engrave or Cut**, that sets the smallest feature, the thin-line rule, tone and the recipe where the request does not; the numbers stay editable; a request with none of them behaves as before 1.23. (1.23)
+319. **A line narrower than the smallest feature is widened to just over it and stays one unbroken line**; a stroke whose width wanders around the limit does not come back as dashes; a shape that is wide enough does not move. (1.23)
+320. **Thin dark strokes are kept**: with thicken, a stroke 3 px wide drawn in dark grey is traced, and the fringe clean-up does not remove strokes thinner than 3 px. (1.23)
+321. **Specks are still removed and counted**, before anything is widened, so that noise does not become blots or dots. (1.23)
+322. **Tone becomes a layer of dots**: on a 45° lattice at the chosen spacing, sized by the local average tone, none inside or touching a line, none smaller than the smallest feature, in an exact colour of its own, named *tone*, and no spot covered by two layers. (1.23)
+323. **Hatching is averaged, not traced**: fine grey hatching gives dots whose size follows how dense it is, and no lines. (1.23)
+324. **Dots are capped**: at most 40,000; the spacing is raised until they fit and a note says so. (1.23)
+325. **Dots need one ink, by colour, side by side**; another combination is refused in words and the form turns it off. (1.23)
+326. **The old behaviour is still there**: `thin_lines = drop` and `tone = none` give today's output byte for byte (a test compares with the engine before 1.23). (1.23)
+327. **The result is the same every time**: the same picture and options give the same bytes. (1.23)
+328. **The check says what it did**: lines widened and to what width, dots and their spacing, specks removed, gaps left. (1.23)
+329. **The form has Use, Thin lines, Shading and Dot spacing**, remembered, with Shading and the arrangements disabled where §41.3 says. (1.23)
+330. **Engrave asks the model for a fine line drawing with soft shading; Cut is unchanged.** (1.23)
+331. **It is tested without a GPU** on constructed pictures and on a pencil-like picture made in the test, and mutation-checked like the rest of the clean-up. (1.23)
+
+### 41.7 Choices I made (tell me if you want any changed)
+
+1. **Your three answers**, above (§41.2).
+2. **`use` is an option of the run, not only a form preset**, because the recipe has to know it, and the card shows it.
+3. **The engine's defaults stay as they were** (`drop`, `none`) so nothing that does not ask changes; the server and the form send `thicken`, and `dots` for Engrave.
+4. **A bias in the colour step, not a second pipeline**, so that three or more colours get the same benefit (thin strokes are kept) and nothing is duplicated.
+5. **Thickening is done on pixels and limited to 32 px**, with no new library; beyond that, thin parts are removed as before, and a note says so.
+6. **A black ink's line/tone split is at about L 58** (a pixel darker than that is a line, lighter than L 93 is paper). It comes from your drawing and my test pictures; it is a constant in one place, and the first thing to tune on your own pictures.
+7. **Dots are circles, 0.5 mm apart by default, at most 62% of their cell**; the spacing is an option. These are guesses until a test is burnt (see 10).
+8. **The tone layer's colour is the ink's moved by one step.** A laser program tells layers apart by colour, and §31.12.3 item 2 already does this for a clash. If you would rather have a clearly different colour (a blue for the dots, say), it is one line.
+9. **Tone works with one ink only.** Shading in a picture of several colours has no sensible meaning for dots; the form hides it.
+10. **Not built, and the next thing I would do after burning a test:** a strip on the laser test sheet (§31.9) with five dot spacings and three dot sizes, so that you can see what your laser makes of dots and pick the defaults from that, and per-picture tuning (a slider for the line/tone split) if the one constant is not enough.
+
+### 41.8 What was tried, and what was not
+
+**Built and measured (the thin-line fix):** `backend/tests/test_vector_engine_lines.py` (47 tests: the pieces, specks, distance and widening arithmetic checked against plain slow versions, the label map, and the whole clean-up on a constructed pencil-like picture, including that `drop` still writes, byte for byte, what the engine before 1.23 wrote); the server's tests of the new option, its default and its refusal; the contract fixture and the page's types. Whole backend suite 3,361 passed and 3 skipped; page unit tests 2,001 passed; the two Vector browser specs 52 passed; 17 mutations of the new rules, 15 killed at once and the other 2 killed after their tests were strengthened. On the picture cut from your screenshot the real engine took about a second at 0.5 mm and at 0.15 mm, and about 2.5 s at the largest smallest feature it widens to.
+
+
+**Tried (before this section was written):** the three causes of §41.1 on constructed pictures and on a picture cut from your screenshot; the proposal in §41.3, as a throwaway script, on that picture at both settings (1.4 s, 1,865 dots, the face and the shading recovered).
+**Not tried:** your real PNG (the picture used was cut from a screenshot, shrunk to about 60% and enlarged again, so thin lines were softer than the real ones); any picture from the Engrave recipe; what a laser makes of the dots (the spacing and sizes are guesses); a picture with more than one ink.
+
+## 42. Ideas to consider (proposed 2026-11-14; NOT decided; nothing here is built or has a decision number)
+
+You asked what ten things we have not added, given what is built, would make results better or the studio easier to run, and asked for them to be written here so that you can review them and start on a few. I checked each against this document, so none of them is built, and none is something you have already ruled out. **Nothing in this section is a decision.** A number is only given (a decision in §3, a section of its own) when you choose one, and I would write that section first, with its questions answered and the choices I made listed for you to overrule, as for Speech (§38) and the Vector fix (§41).
+
+**Effort**, roughly: **S** a day or two, **M** a few days, **L** a week or more. **Model-dependent** means that only an experiment on your Spark can say whether it works, so I would not promise it before the experiment.
+
+### 42.1 Better results
+
+**Idea 1. Masks and local edits (inpainting).**
+* *What:* fix one hand, one sign or one face without redrawing the whole picture: mark a region (a circle, a rectangle or a brush stroke), say what it should be, and only that region changes. The card shows the original and the marked picture.
+* *Why:* probably the biggest quality gain for images, because most "nearly right" pictures are wrong in one place.
+* *Builds on:* **M5d**, which §21 describes and shelved: criteria 29 and 30 of §21 are written ("a circle or brush mark baked into an image changes only that region", and a mask's polarity as found in M5c) and nothing is built. The editing page (1.6) already carries input pictures.
+* *Not known:* whether the editing model can change a region without disturbing the rest, and which mask polarity it expects (M5c, `SPARK_TEST.md` §18). **Model-dependent.**
+* *Questions I would ask first:* brush, circle or rectangle, or all three; a soft edge or a hard one; whether the original is always kept beside the result.
+* *Effort:* L.
+
+**Idea 2. Variations and A/B compare.**
+* *What:* a **More like this** button on a result that makes N variations (new seeds, optionally a small change to the words), and a viewer that shows two pictures side by side or with a slider, so that a winner can be picked.
+* *Why:* today you re-run with Reuse and flip between cards by eye.
+* *Builds on:* Reuse, seeds, the viewer, Keep.
+* *Questions I would ask first:* how many variations; seed only, or a prompt change as well; whether picking a winner Keeps it and bins the rest.
+* *Effort:* M.
+
+**Idea 3. Batches and sweeps.**
+* *What:* paste 20 prompts, or choose prompts × seeds/steps/guidance, and queue them all; the results come back as a contact sheet.
+* *Why:* it is how settings are found, and it pairs with overnight runs. Nothing like it exists.
+* *Builds on:* the queue (§40) and, for the cap, `STUDIO_QUEUE_CAP`.
+* *Questions I would ask first:* the input (one prompt a line, a file, a grid of settings); a limit on how many; whether a batch jumps the queue or waits behind it; where the sheet is downloaded from.
+* *Effort:* M.
+
+**Idea 4. Audiobook polish for Speech.**
+* *What:* a **pronunciation list** (a word and how it is said); **several voices in one text** (a voice per speaker or per paragraph); **chapter marks** in the exported audio.
+* *Why:* it turns reading a PDF aloud into something you would listen to for hours.
+* *Builds on:* §38, which defers each of them by name ("a pronunciation list is a later step"; several voices, a style per paragraph and styles suggested by your Ollama model are listed as not built).
+* *Questions I would ask first:* whether a pronunciation list belongs to a voice, an engine or to everything; how a speaker is marked in the text; whether chapters come from headings.
+* *Effort:* M for the pronunciation list and chapter marks, L for dialogue.
+
+### 42.2 Easier to run
+
+**Idea 5. HTTPS, with recording in the page.**
+* *What:* a certificate for the studio (for example through Tailscale, or a small reverse proxy), so that the page is served over https.
+* *Why:* the Add my voice dialog says recording happens outside the page, because browsers only allow the microphone on https; that is a limit we built around. https also gives phone install, wake-lock and browser notifications (idea 8).
+* *Not known:* which way you would rather reach the Spark (Tailscale or not).
+* *Effort:* M. The risk is the setup on your side, not the code.
+
+**Idea 6. Queue smarts, building on the Queue panel (§40).**
+* *What:* **time estimates** ("about 3 min", "done by 14:20") from how long similar jobs took; **Pause and Resume**, because the Spark also runs Hermes on the same GPU and you would want a hold button; **Run next** (a job to the front in one click); and, optionally, **swap-aware ordering** that groups jobs by model, because a music track between two image jobs costs a model swap.
+* *Builds on:* the Queue panel and `GET /api/queue`; the jobs' own timings.
+* *Questions I would ask first:* whether Pause stops after the current job or in the middle of it (the second is not always possible); whether swap-aware ordering is on by default or an option.
+* *Effort:* S to M.
+
+**Idea 7. Keep-warm models.**
+* *What:* with 128 GB a memory budget could keep the two or three models you use warm and evict the least recently used, instead of one resident model and a load at every switch.
+* *Why:* you asked why the speech model keeps reloading. It would also make cross-model reordering far cheaper.
+* *Builds on:* the memory pre-flight (§9a) and the load progress (§39).
+* *Not known:* how much memory Hermes and the others leave free at the moments that matter. **Model-dependent.**
+* *Effort:* L, because the worker holds one pipeline today.
+
+**Idea 8. Finish notifications.**
+* *What:* a ping when a job, a reading or the whole queue is done: a webhook or ntfy to your phone (which works over plain http), and browser notifications once https is in.
+* *Why:* the long jobs (first downloads, music, readings) are the ones you walk away from. Nothing like it exists.
+* *Questions I would ask first:* which events (each job, or only when the queue is empty); ntfy, a webhook, or both; quiet hours.
+* *Effort:* S.
+
+**Idea 9. Search and tags across history.**
+* *What:* full-text search over prompts, titles and notes, tags, and a filter by model, size and seed.
+* *Why:* the Prompt builder has search for saved prompts (§37), but runs have none, and a month of history is a lot of scrolling for "that lighthouse".
+* *Builds on:* the Kept view and project folders (§29, §32); the FTS the Prompt builder's database already uses.
+* *Questions I would ask first:* whether tags are typed by you or suggested; whether notes are a new field on a run.
+* *Effort:* M.
+
+**Idea 10. Storage and backup health.**
+* *What:* a panel showing what is using disk (data, models, images, readings, the bin); a **Reclaim space** button; a warning before the disk fills; and the **backup status** (when the last backup ran and how old it is, with a nudge after a week).
+* *Why:* the backup scripts and the cron job work, but nothing in the app says whether they ran, and a 70 GB backup on a full disk is a bad surprise.
+* *Builds on:* `scripts/backup.sh` and `restore.sh`, the bin (§30), the retention rules.
+* *Questions I would ask first:* what **Reclaim space** may delete (the bin only, or caches too); where the app learns that a backup ran (a marker file the script writes).
+* *Effort:* S to M.
+
+### 42.3 Left out of the ten on purpose
+
+* **A shared token or PIN for the LAN.** §2 and §11 reserve an optional shared-token hook. Anyone on your network can open the studio today and delete things.
+* **Speech-to-text**, to check a voice clone against its passage, or to feed a recording to the Prompt builder.
+* **Music extend and remix.**
+* **Qwen "redrawing" (§28.5) and the OmniSVG engine (Engine B, §31.2)**, both in the backlog and both needing Spark experiments first.
+
+### 42.4 The order I would suggest
+
+1. **Queue smarts (idea 6):** small, and it builds on what you are using now.
+2. **HTTPS and recording (idea 5):** it unlocks a few other things (idea 8's browser notifications, phone install).
+3. **Masks (idea 1):** the biggest quality jump, but it needs a Spark experiment first.
+
+The Vector work of §41 (the Engrave or Cut choice, the dots, the Engrave recipe) is already specified and is not one of the ten.
+
+### 42.5 How to take one forward
+
+Tell me which ones to start. For each I would write its own section first (the questions above answered with you, the choices I made listed so that you can overrule them, acceptance criteria numbered on from §41.6), and build only after you have read it. Where the idea is model-dependent (1, 7), the first step would be a small experiment script for the Spark, as was done for Make 4K (§27) and Enlarge (§28), and a spec after its result.

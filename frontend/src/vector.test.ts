@@ -42,8 +42,9 @@ const ODD: VectorLimits = {
   layers_by: ["shape", "colour"],
   arrangements: ["stacked", "side_by_side"],
   stack_orders: ["palette", "area_asc", "area_desc"],
+  thin_lines: ["thicken", "drop"],
   presets: [{ id: "bench", name: "Bench", width_mm: 400, height_mm: 250 }],
-  defaults: { kind: "line", layers_by: "shape", arrangement: "stacked", stack_order: "palette" },
+  defaults: { kind: "line", layers_by: "shape", arrangement: "stacked", stack_order: "palette", thin_lines: "drop" },
   recipe_max_chars: 500,
 };
 const ODD_CAPS: Capabilities = { ...CAPS, limits: { ...CAPS.limits, vector: ODD } };
@@ -143,7 +144,7 @@ describe("the types match the contract file", () => {
     };
     same(run, c.run);
     const options: Record<keyof VectorOptionsSnapshot, true> = {
-      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, stack_order: true, bleed_mm: true, min_feature_mm: true, kerf_mm: true,
+      colours: true, palette: true, kind: true, width_mm: true, height_mm: true, layers_by: true, arrangement: true, stack_order: true, bleed_mm: true, min_feature_mm: true, kerf_mm: true, thin_lines: true,
       steps: true, seed: true, num_images: true, recipe: true, seed_was_random: true, negative: true, draw_width: true, draw_height: true,
     };
     same(options, c.run.options);
@@ -153,7 +154,7 @@ describe("the types match the contract file", () => {
     };
     same(item, c.run.vectors[0]);
     const check: Record<keyof VectorCheck, true> = {
-      colours_asked: true, colours_found: true, white: true, size_mm: true, layers_by: true, arrangement: true, stack_order: true, svg_bytes: true, layers: true, smallest_feature_mm: true,
+      colours_asked: true, colours_found: true, white: true, size_mm: true, layers_by: true, arrangement: true, stack_order: true, svg_bytes: true, layers: true, smallest_feature_mm: true, thin_lines: true, widened: true,
       removed: true, mm_per_pixel: true, notes: true,
     };
     same(check, c.run.vectors[0].check);
@@ -178,7 +179,7 @@ describe("the types match the contract file", () => {
     // `png_px` is the page's own optional extra (the contract does not carry the PNG range): every other key of the type is the contract's
     const limits: Record<Exclude<keyof VectorLimits, "png_px">, true> = {
       colours: true, size_mm: true, versions: true, min_feature_mm: true, kerf_mm: true, bleed_mm: true, shape_layer_cap: true, kinds: true, layers_by: true,
-      arrangements: true, stack_orders: true, presets: true, defaults: true, recipe_max_chars: true,
+      arrangements: true, stack_orders: true, thin_lines: true, presets: true, defaults: true, recipe_max_chars: true,
     };
     same(limits, c.capabilities.limits_vector);
     const availability: Record<keyof VectorAvailability, true> = { available: true, reason: true, hint: true };

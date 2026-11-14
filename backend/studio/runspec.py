@@ -64,6 +64,7 @@ class RunOptions(BaseModel):
     bleed_mm: Optional[float] = None
     min_feature_mm: Optional[float] = None
     kerf_mm: Optional[float] = None
+    thin_lines: Optional[str] = None  # `thicken` (the default) or `drop`: what happens to a stroke narrower than the smallest feature (DESIGN.md §41.3)
     recipe: Optional[str] = None  # the page's edited text for what the studio sends; None means the server builds it (`vector.build_recipe`)
 
 
@@ -162,6 +163,7 @@ class ResolvedRun:
                 "bleed_mm": options.bleed_mm,
                 "min_feature_mm": options.min_feature_mm,
                 "kerf_mm": options.kerf_mm,
+                "thin_lines": options.thin_lines,
                 "steps": self.steps,
                 "seed": self.seed,
                 "num_images": self.num_images,
@@ -201,7 +203,7 @@ class ResolvedRun:
 
 # The options that mean something only for a Vector run: sending one with another kind of run is a mistake the page should hear about, as it is for
 # the music options in `resolve_run`.
-_ONLY_FOR_VECTOR = ("colours", "palette", "kind", "width_mm", "height_mm", "layers_by", "arrangement", "stack_order", "bleed_mm", "min_feature_mm", "kerf_mm", "recipe")
+_ONLY_FOR_VECTOR = ("colours", "palette", "kind", "width_mm", "height_mm", "layers_by", "arrangement", "stack_order", "bleed_mm", "min_feature_mm", "kerf_mm", "thin_lines", "recipe")
 
 
 def _vector_only_errors(sent: set[str]) -> list[tuple[tuple[Any, ...], str]]:
@@ -350,6 +352,7 @@ def _resolve_vector(req: RunCreate, settings: Settings) -> ResolvedRun:
         bleed_mm=opts.bleed_mm if opts.bleed_mm is not None else V.BLEED_MM_DEFAULT,
         min_feature_mm=opts.min_feature_mm if opts.min_feature_mm is not None else V.MIN_FEATURE_MM_DEFAULT,
         kerf_mm=opts.kerf_mm if opts.kerf_mm is not None else V.KERF_MM_DEFAULT,
+        thin_lines=opts.thin_lines if opts.thin_lines is not None else V.THIN_LINES_REQUEST_DEFAULT,  # type: ignore[arg-type]
     )
     errors.extend((("options", name), message) for name, message in V.check_options(chosen))
 

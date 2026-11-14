@@ -230,6 +230,8 @@ export type VectorLayersBy = "colour" | "shape";
 export type VectorArrangement = "side_by_side" | "stacked";
 /** Which colour is the back sheet of a stacked run (DESIGN.md §35.3 item 11): the most ink (today's rule), the least, or the first ink of the form's list. */
 export type VectorStackOrder = "area_desc" | "area_asc" | "palette";
+/** What the clean-up does with a stroke narrower than the smallest feature (DESIGN.md §41.3): widen it to the smallest feature (`thicken`) or remove it (`drop`). */
+export type VectorThinLines = "thicken" | "drop";
 
 /** What a Vector run asked for, and what the server added when it made it. This is what Reuse and Retry restore (§31.12.6). */
 export interface VectorOptionsSnapshot {
@@ -244,6 +246,7 @@ export interface VectorOptionsSnapshot {
   bleed_mm: number;
   min_feature_mm: number;
   kerf_mm: number;
+  thin_lines?: VectorThinLines; // a run made before 1.23 has none: its thin parts were removed, as `drop` does (§41.3)
   steps: number;
   seed: number;
   num_images: number; // the versions
@@ -286,6 +289,8 @@ export interface VectorCheck {
   layers: VectorLayer[];
   smallest_feature_mm: number | null; // the smallest feature that remains; null if the clean-up found none
   removed: { specks: number; thin_parts: number };
+  thin_lines?: VectorThinLines; // what was asked of thin strokes; a check made before 1.23 has none (§41.3)
+  widened?: number; // how many thin lines were widened to the smallest feature (0 for `drop`); none before 1.23
   mm_per_pixel: number;
   notes: VectorNote[];
 }
@@ -475,8 +480,9 @@ export interface VectorLimits {
   layers_by: VectorLayersBy[];
   arrangements: VectorArrangement[];
   stack_orders: VectorStackOrder[]; // which colour can be the back sheet of a stacked run (§35.4)
+  thin_lines: VectorThinLines[]; // the ways to treat a stroke narrower than the smallest feature (§41.3)
   presets: VectorPreset[];
-  defaults: { kind: VectorKind; layers_by: VectorLayersBy; arrangement: VectorArrangement; stack_order: VectorStackOrder };
+  defaults: { kind: VectorKind; layers_by: VectorLayersBy; arrangement: VectorArrangement; stack_order: VectorStackOrder; thin_lines: VectorThinLines };
   recipe_max_chars: number; // the longest edited recipe the server accepts
   // The PNG size range (the long side, in pixels). The contract's `limits_vector` does not carry it (it is in the route's description, §31.12.7: 16 to
   // 8192), so it is optional here: the page uses it if the server ever sends it and VECTOR_PNG_RANGE (vector.ts) otherwise.

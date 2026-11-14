@@ -109,9 +109,10 @@ def vector_limits() -> dict[str, Any]:
         "layers_by": list(V.LAYERS_BY),
         "arrangements": list(V.ARRANGEMENTS),
         "stack_orders": list(V.STACK_ORDERS),
+        "thin_lines": list(V.THIN_LINES),
         "presets": [dict(preset) for preset in V.PRESETS],
         "defaults": {"kind": V.KIND_DEFAULT, "layers_by": V.LAYERS_BY_DEFAULT, "arrangement": V.ARRANGEMENT_DEFAULT,
-                     "stack_order": V.STACK_ORDER_DEFAULT},
+                     "stack_order": V.STACK_ORDER_DEFAULT, "thin_lines": V.THIN_LINES_REQUEST_DEFAULT},
         "recipe_max_chars": V.RECIPE_MAX_CHARS,
     }
 
