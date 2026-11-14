@@ -11,6 +11,7 @@ from conftest import create_run, wait_for
 
 from studio.db import Database
 from studio.runfilter import COUNTED, KINDS, NO_PROJECT, RunFilter, counted_within
+from studio.runsearch import match_string, search_terms
 
 TABLE = json.loads((Path(__file__).parent / "filter_cases.json").read_text())
 
@@ -23,14 +24,19 @@ def same_as_the_table(counts: dict, expected: dict) -> None:
 
 # One run as the database wants it (a dict of columns). The letter names the run (a to f), `seq` fixes how old it is, `deleted` puts it in the bin,
 # and `project` is the project it is filed in (the table's own short names, "x" and "y": the database takes any text there).
-def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False, project: str | None = None, family: str | None = None) -> dict:
+def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False, project: str | None = None, family: str | None = None, more: dict | None = None) -> dict:
+    """One run as the database wants it. `more` is what the table says of the run besides its state (DESIGN.md §45): its words, lyrics, source, model, size and the moment it was made;
+    each left out takes the default the table's `about` names (the words "run <letter>", a model called "fake-pipeline", 256 by 256, a moment from `seq`). Tags and notes are not
+    columns: the fixture writes them through the database's own calls."""
+    more = more or {}
+    options = {"source": more["source"]} if "source" in more else {}  # a reading records where its text came from in its options (the index reads it there)
     return {
         # the letter of the run this one is a variation of, as that run's id (the first run of its family: DESIGN.md §43.4), or none
         "family_id": id_of(family) if family else None,
-        "id": f"{ord(letter):032x}", "created_at": f"2026-10-01T00:00:{seq:02d}Z", "status": status, "mode": mode,
-        "prompt": f"run {letter}", "effective_prompt": f"run {letter}", "steps": 3, "seed": seq, "num_images": 1,
-        "model_id": "fake-pipeline", "options_json": json.dumps({}), "width": 256, "height": 256, "pinned": int(pinned),
-        "deleted_at": "2026-10-02T00:00:00.000Z" if deleted else None, "project_id": project,
+        "id": f"{ord(letter):032x}", "created_at": more.get("made", f"2026-10-01T00:00:{seq:02d}Z"), "status": status, "mode": mode,
+        "prompt": more.get("prompt", f"run {letter}"), "effective_prompt": f"run {letter}", "steps": 3, "seed": seq, "num_images": 1,
+        "model_id": more.get("model", "fake-pipeline"), "options_json": json.dumps(options), "width": more.get("width", 256), "height": more.get("height", 256), "pinned": int(pinned),
+        "deleted_at": "2026-10-02T00:00:00.000Z" if deleted else None, "project_id": project, "lyrics": more.get("lyrics"),
     }
 
 
@@ -66,9 +72,14 @@ def db(tmp_path):
     database = Database(tmp_path / "studio.sqlite")
     # the table lists the runs newest first; they are made oldest first
     for seq, entry in enumerate(reversed(TABLE["runs"]), start=1):
-        made = row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"], entry["project"], entry.get("family"))
+        made = row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"], entry["project"], entry.get("family"), entry)
         assert database.insert_run_if_capacity(made, cap=100)
         put_items_in_the_bin(database, made, entry["items_in_bin"])
+        # the person's own words: tags and a note, written as the routes write them (a run in the bin cannot have them changed, and the table gives none to such a run)
+        if entry.get("tags"):
+            assert database.set_run_tags(made["id"], entry["tags"]) == "ok"
+        if entry.get("notes"):
+            assert database.set_run_notes(made["id"], entry["notes"], "2026-10-02T00:00:00.000Z") == "ok"
     yield database
     database.close()
 
@@ -100,6 +111,12 @@ def test_the_counts_are_the_tables(db):
 @pytest.mark.parametrize("project", sorted(TABLE["counts_by_project"]))
 def test_the_counts_within_a_project_are_the_tables(db, project):
     same_as_the_table(db.run_counts(counted_within(project)), TABLE["counts_by_project"][project])
+
+
+# ... and within a search and the filters (criterion 414): the numbers on the filter bar describe what is on the screen, so each is the table's count for that scope
+@pytest.mark.parametrize("entry", TABLE["counts_by_scope"], ids=[entry["name"] for entry in TABLE["counts_by_scope"]])
+def test_the_counts_within_a_scope_are_the_tables(db, entry):
+    same_as_the_table(db.run_counts(counted_within(**entry["scope"])), entry["counts"])
 
 
 # a filter with no project is `COUNTED` itself, and a project is added to every counted filter without losing what each already says

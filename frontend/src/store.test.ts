@@ -311,9 +311,9 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
   it("the counts are kept as the server gave them, with the project they describe", () => {
     const counts = { image: { all: 3, kept: 1, deleted: 1, deleted_items: 0 }, music: { all: 2, kept: 0, deleted: 0, deleted_items: 0 }, vector: { all: 1, kept: 0, deleted: 0, deleted_items: 0 },
       speech: { all: 1, kept: 1, deleted: 0, deleted_items: 0 } };
-    expect(reducer(initialState, { type: "counts", counts, project: null })).toMatchObject({ counts, countsProject: null });
+    expect(reducer(initialState, { type: "counts", counts, scope: null })).toMatchObject({ counts, countsScope: null });
     // within a project the counts say which: a number for one project must never be shown as another's
-    expect(reducer(initialState, { type: "counts", counts, project: "p1" })).toMatchObject({ counts, countsProject: "p1" });
+    expect(reducer(initialState, { type: "counts", counts, scope: "p1" })).toMatchObject({ counts, countsScope: "p1" });
   });
 
   it("the whole history's counts are kept apart from a project's, for Empty bin", () => {
@@ -322,7 +322,7 @@ describe("one view for each filter (DESIGN.md §29.5)", () => {
     const inProject = { image: { all: 2, kept: 2, deleted: 0, deleted_items: 0 }, music: { all: 0, kept: 0, deleted: 0, deleted_items: 0 }, vector: { all: 0, kept: 0, deleted: 0, deleted_items: 0 },
       speech: { all: 0, kept: 0, deleted: 0, deleted_items: 0 } };
     let state = reducer(initialState, { type: "totals", counts: whole });
-    state = reducer(state, { type: "counts", counts: inProject, project: "p1" });
+    state = reducer(state, { type: "counts", counts: inProject, scope: "p1" });
     expect(state.totals).toEqual(whole);
     expect(state.counts).toEqual(inProject);
   });
@@ -516,5 +516,21 @@ describe("the words for the bin (DESIGN.md §30.1, §30.4)", () => {
     expect(emptiedText(12)).toBe("Emptied the bin: 12 runs deleted for good.");
     expect(emptiedText(1)).toBe("Emptied the bin: 1 run deleted for good.");
     expect(emptiedText(0)).toBe("The bin was already empty.");
+  });
+});
+
+// Tags and notes change what a search finds, so a run whose tags or note changed makes the counts stale (DESIGN.md §45.7): the numbers of a search are asked for again.
+describe("a run whose tags or note changed", () => {
+  it("makes the counts stale, and a run that changed in no way that counts does not", () => {
+    const run = makeRun({ id: "t1" });
+    let state = reducer(initialState, { type: "runUpsert", run });
+    const stale = state.countsStale;
+    state = reducer(state, { type: "runUpsert", run: { ...run, status: "done", tags: ["fox"], finished_at: "2026-10-02T11:00:00.000Z" } });
+    expect(state.countsStale).toBe(stale + 1); // tags
+    const next = state.countsStale;
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.t1, notes: "why", finished_at: "2026-10-02T11:00:01.000Z" } });
+    expect(state.countsStale).toBe(next + 1); // a note
+    state = reducer(state, { type: "runUpsert", run: { ...state.runs.t1, finished_at: "2026-10-02T11:00:02.000Z" } });
+    expect(state.countsStale).toBe(next + 1); // nothing that counts
   });
 });

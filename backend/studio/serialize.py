@@ -210,6 +210,8 @@ def run_payload(
     reading: Optional[dict[str, Any]] = None,
     variation_of: Optional[dict[str, Any]] = None,
     variation_count: int = 0,
+    tags: Optional[list[str]] = None,
+    notes: str = "",
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -231,6 +233,10 @@ def run_payload(
         "deleted_at": row["deleted_at"],  # when it went to the bin (DESIGN.md §30), else null
         "purge_at": purge_at,  # when it will be deleted for good
         "project_id": row["project_id"],  # the project it is filed in (DESIGN.md §32), else null; a filed run is always kept
+        # The person's own words about the run (DESIGN.md §45.7): its tags (A to Z) and its note ("" for none). On every kind of run, because every tab's card shows them, so they are
+        # not behind `mode` as the keys below are.
+        "tags": tags or [],
+        "notes": notes,
         "prompt_ref": prompt_ref,  # the saved prompt and version it was made from (DESIGN.md §37.3 rule 3), else null: {id, title, version, deleted, edited}
         "queue_position": queue_position if row["status"] == "queued" else None,
         "progress": progress if row["status"] == "running" else None,

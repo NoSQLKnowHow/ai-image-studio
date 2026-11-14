@@ -21,7 +21,7 @@ const C = SPEECH_CONTRACT;
 
 const RUN: Keys<SpeechRun> = {
   id: true, status: true, prompt: true, effective_prompt: true, model_id: true, created_at: true, started_at: true, finished_at: true, error: true, pinned: true,
-  expires_at: true, deleted_at: true, purge_at: true, project_id: true, prompt_ref: true, queue_position: true, progress: true, canceling: true, mode: true,
+  expires_at: true, deleted_at: true, purge_at: true, project_id: true, prompt_ref: true, tags: true, notes: true, queue_position: true, progress: true, canceling: true, mode: true,
   options: true, lyrics: true, inputs: true, images: true, binned_images: true, tracks: true, binned_tracks: true, vectors: true, binned_vectors: true, hidden: true,
   reading: true,
 };

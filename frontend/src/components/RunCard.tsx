@@ -4,6 +4,7 @@ import { largerTarget, resolutionLabel } from "../options";
 import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState, WorkerStatus } from "../types";
 import { FourKButton } from "./FourKButton";
 import { RefineButton, RunFrom } from "../promptLinks";
+import { RunAnnotations } from "./RunAnnotations";
 import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, FolderIcon, MoreLikeThisIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 import { canMoreLikeThis, countChip, familyOf, sourceChip } from "../variations";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
@@ -191,6 +192,7 @@ export function RunCard({ run, now, workerState, worker, canEdit, making4k, enla
         )}
         <p className="run-meta">{meta.join(" · ")}</p>
         <RunFrom run={run} />
+        <RunAnnotations run={run} />
 
         {run.status === "running" && <ProgressBlock run={run} workerState={workerState} worker={worker} />}
 

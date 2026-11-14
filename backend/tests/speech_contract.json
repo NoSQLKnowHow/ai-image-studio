@@ -452,6 +452,7 @@
     "lyrics": null,
     "mode": "speech",
     "model_id": "fake-speech",
+    "notes": "",
     "options": {
       "chars": 222,
       "engine": "fake",
@@ -594,6 +595,7 @@
     },
     "started_at": "2026-11-14T10:44:43.024Z",
     "status": "done",
+    "tags": [],
     "tracks": [],
     "vectors": []
   },

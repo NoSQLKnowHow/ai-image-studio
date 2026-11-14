@@ -3,6 +3,7 @@ import { binNote, canceledText, deleteRunTitle, duration, expiryText, keepLocked
 import type { VectorItem, VectorRun, WorkerState, WorkerStatus } from "../types";
 import { bytesText, kindLabel, layersCount, placeLabel, vectorMeta, vectorPhases, vectorProgressText, vectorTitle } from "../vector";
 import { RunFrom } from "../promptLinks";
+import { RunAnnotations } from "./RunAnnotations";
 import { AlertIcon, CopyIcon, DownloadIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon, VectorIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 import { VersionFacts } from "./VersionFacts";
@@ -188,6 +189,7 @@ export function VectorCard({ run, now, workerState, worker, transient, viewScope
         )}
         <p className="run-meta">{vectorMeta(run, took).join(" · ")}</p>
         <RunFrom run={run} />
+        <RunAnnotations run={run} />
 
         {run.status === "running" && <VectorProgress run={run} workerState={workerState} worker={worker} />}
 

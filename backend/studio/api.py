@@ -12,7 +12,7 @@ import json
 from typing import Any, AsyncIterator, Literal, Optional
 
 from fastapi import FastAPI, Query, Request
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import UnidentifiedImageError
@@ -46,9 +46,12 @@ from .naming import (
 )
 from .projects import BadProjectName
 from .runfilter import RunFilter, counted_within
+from . import tagsuggest
+from .builder.ollama import OllamaError
+from .runsearch import NOTES_CHARS, SEARCH_CHARS, SEARCH_WORDS, TAG_CHARS, TAGS_MAX, clean_notes, clean_tags
 from .runspec import RecipeRequest, RunCreate, RunRequestError, resolve_recipe, resolve_run
 from .security import SecurityMiddleware
-from .serialize import PREVIEW_SIZE, parse_ts, utcnow, variations_status, vector_limits
+from .serialize import PREVIEW_SIZE, format_ts, parse_ts, utcnow, variations_status, vector_limits
 from .storage import Storage, StorageError, check_id
 from .upscaler import UpscalerError
 
@@ -131,6 +134,22 @@ class RunProject(BaseModel):
     project_id: str
 
 
+class RunTags(BaseModel):
+    """The tags a run is to have (DESIGN.md §45.7): the whole list, which replaces the one it had. Each is cleaned by `runsearch.clean_tags`; the raw list is only bounded here, so that
+    a request cannot be made to carry a great many."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    tags: list[str] = Field(max_length=TAGS_MAX * 3)
+
+
+class RunNotes(BaseModel):
+    """A run's note (DESIGN.md §45.7), or an empty text to clear it. The text is cleaned and measured by the route, so that the page is told in words how far over the limit it is;
+    the bound here only stops a request from carrying a great deal more than that."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    notes: str = Field(max_length=NOTES_CHARS * 5)
+
+
 UPSCALE_AT_ONCE = 2  # pictures being made through POST /api/upscale at the same moment
 VECTOR_PNG_AT_ONCE = 2  # PNGs being drawn from an SVG at the same moment (DESIGN.md §31.12.7): at 8192 pixels each is a lot of memory
 # What a vector's SVG is served with (DESIGN.md §31.12.7, §31.6): a policy that allows nothing at all (no script, no fetching, no framing, a sandbox) so
@@ -141,6 +160,25 @@ VECTOR_PNG_SIZE = {"min": 16, "max": 8192}  # `?size=` of the PNG route: the lon
 # What `?project=` may be (DESIGN.md §32.4): the word `none` (runs in no project) or a project's id, which is 32 hex digits like every id. Anything
 # else is a 422 from the framework; an id that is well formed but unknown is not an error, it matches no run.
 PROJECT_PATTERN = r"^(none|[0-9a-f]{32})$"
+# What `?size=` and `?since=`, `?until=` may be (DESIGN.md §45.5, §45.7): two whole numbers joined by `x`, and a UTC instant. The page makes the instants from the person's own days in
+# the person's own time zone; the server compares instants and never guesses a zone.
+SIZE_PATTERN = r"^[0-9]{1,5}x[0-9]{1,5}$"
+INSTANT_PATTERN = r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$"
+
+
+def _scope(q: Optional[str], model: Optional[str], size: Optional[str], since: Optional[str], until: Optional[str]) -> tuple[dict[str, Optional[str]], Optional[JSONResponse]]:
+    """The search and the filters of a request as the fields of a `RunFilter` (DESIGN.md §45.7), or the refusal to send. An empty text is no filter. An instant is read and written
+    again in the studio's own form (milliseconds, `Z`), because `created_at` is stored in it and is compared as text: `…:00Z` would sort after `…:00.123Z` and be wrong. A range that ends
+    before it begins is refused, since it could only be empty."""
+    moments: dict[str, Optional[str]] = {}
+    for name, value in (("since", since), ("until", until)):
+        try:
+            moments[name] = format_ts(parse_ts(value)) if value else None
+        except ValueError:
+            return {}, _error(422, f"“{name}” is not a date and time.", "bad_range")
+    if moments["since"] and moments["until"] and moments["until"] <= moments["since"]:
+        return {}, _error(422, "The range ends before it begins.", "bad_range")
+    return {"q": q or None, "model": model or None, "size": size or None, **moments}, None
 
 
 def _png_size(data: bytes) -> Optional[tuple[int, int]]:
@@ -265,6 +303,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
                 "size": {"min": P.SIZE_MIN, "max": P.SIZE_MAX, "multiple": P.SIZE_MULTIPLE, "max_pixels": P.MAX_PIXELS},
                 "vector": vector_limits(),
                 "builder": builder_limits(),
+                "annotations": {"tags_max": TAGS_MAX, "tag_chars": TAG_CHARS, "notes_chars": NOTES_CHARS, "search_chars": SEARCH_CHARS, "search_words": SEARCH_WORDS, "suggest_max": settings.tag_suggestions},  # §45.7
                 "speech": speech_limits(settings),
                 "music": {
                     "duration": {"min": P.MUSIC_DURATION_MIN, "max": settings.music_max_seconds, "default": P.MUSIC_DEFAULT_SECONDS},
@@ -283,6 +322,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             # experiment has been looked at. `reason` is what the dialog says beside the greyed choice.
             "variations": variations_status(settings, "edit" in jobs.modes()),
             "builder": request.app.state.builder.cached(),  # the Prompt builder (§37.4): set up? what is known of Ollama (null until something has looked)
+            "annotations": {  # tags, notes and search of runs (DESIGN.md §45.7): whether a search is by words or a plain match, and whether Suggest can be used (settings only: no network)
+                "search": "words" if request.app.state.db.has_run_fts else "plain",
+                "suggest": tagsuggest.suggest_status(settings, request.app.state.builder),
+            },
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
         }
@@ -375,9 +418,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         kind: Optional[Literal["image", "music", "vector", "speech"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
         prompt: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a saved prompt's id: only the runs made from it (DESIGN.md §37.4)"),
         family: Optional[str] = Query(None, pattern=r"^[0-9a-f]{32}$", description="a run's id: that run and every variation made from it (DESIGN.md §43.4)"),
+        q: Optional[str] = Query(None, max_length=SEARCH_CHARS, description=f"search: every word (at most {SEARCH_WORDS}) must be the start of a word in the run's words, notes or tags (DESIGN.md §45.4)"),
+        model: Optional[str] = Query(None, max_length=SEARCH_CHARS, description="a model's name: only the runs that model made"),
+        size: Optional[str] = Query(None, pattern=SIZE_PATTERN, description="WIDTHxHEIGHT: only the picture runs of exactly that size"),
+        since: Optional[str] = Query(None, pattern=INSTANT_PATTERN, description="a UTC instant: only runs made at or after it (DESIGN.md §45.5)"),
+        until: Optional[str] = Query(None, pattern=INSTANT_PATTERN, description="a UTC instant: only runs made before it"),
     ) -> Any:
+        scope, problem = _scope(q, model, size, since, until)
+        if problem is not None:
+            return problem
         try:
-            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project, prompt=prompt, family=family), kind)
+            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project, prompt=prompt, family=family, **scope), kind)
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
 
@@ -385,10 +436,29 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     async def run_counts(
         request: Request,
         project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="count only this project's runs ('none': runs in no project)"),
+        q: Optional[str] = Query(None, max_length=SEARCH_CHARS, description="count only the runs a search finds"),
+        model: Optional[str] = Query(None, max_length=SEARCH_CHARS),
+        size: Optional[str] = Query(None, pattern=SIZE_PATTERN),
+        since: Optional[str] = Query(None, pattern=INSTANT_PATTERN),
+        until: Optional[str] = Query(None, pattern=INSTANT_PATTERN),
     ) -> Any:
         """How many runs each tab holds and how many are kept or in the bin (DESIGN.md §29.6), within one project when `project` is given
-        (§32.5). Declared before `/api/runs/{run_id}`, which would take it."""
-        return request.app.state.db.run_counts(counted_within(project))
+        (§32.5), and within a search and the filters when they are (§45.7): the numbers on the filter bar describe what is on the screen. Declared before `/api/runs/{run_id}`,
+        which would take it."""
+        scope, problem = _scope(q, model, size, since, until)
+        if problem is not None:
+            return problem
+        return request.app.state.db.run_counts(counted_within(project, **scope))
+
+    @app.get("/api/runs/facets")
+    async def run_facets(request: Request, kind: Literal["image", "music", "vector", "speech"] = Query(..., description="the tab")) -> Any:
+        """What the Model and Size drop-downs offer for one tab: the models that made its runs and (Images only) the sizes, each with how many runs (DESIGN.md §45.7)."""
+        return await asyncio.to_thread(request.app.state.db.run_facets, kind)
+
+    @app.get("/api/tags")
+    async def list_tags(request: Request) -> Any:
+        """The tags in use on runs in the history, most used first, with how many runs have each: what the tag editor's autocomplete offers (DESIGN.md §45.4 rule 9)."""
+        return {"tags": await asyncio.to_thread(request.app.state.db.tag_counts)}
 
     @app.get("/api/runs/{run_id}")
     async def get_run(run_id: str, request: Request) -> Any:
@@ -408,6 +478,66 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             # a run in a project stays kept (DESIGN.md §32.3): it has to be taken out of the project before it can stop being kept
             return _error(409, str(exc), "run_in_project")
         return jobs_of(request).payload(run_id)
+
+    # ------------------------------------------------------------------ tags and notes (DESIGN.md §45.7)
+    @app.put("/api/runs/{run_id}/tags")
+    async def put_run_tags(run_id: str, body: RunTags, request: Request) -> Any:
+        """Replace a run's tags. Each is cleaned like a saved prompt's tag (lower case, 30 characters, no comma), each once; more than 12 is a 422; a run in the bin is a 409."""
+        tags = clean_tags(body.tags)
+        if len(tags) > TAGS_MAX:
+            return _error(422, f"A run can have at most {TAGS_MAX} tags (each at most {TAG_CHARS} characters).", "too_many_tags")
+        try:
+            check_id(run_id)
+            await jobs_of(request).set_tags(run_id, tags)
+        except (StorageError, RunNotFound):
+            return _error(404, "Run not found.", "not_found")
+        except RunConflict as exc:
+            return _error(409, str(exc), "run_in_bin")
+        return jobs_of(request).payload(run_id)
+
+    @app.put("/api/runs/{run_id}/notes")
+    async def put_run_notes(run_id: str, body: RunNotes, request: Request) -> Any:
+        """Set a run's note, or clear it with an empty text. Cleaned (line breaks kept, control characters removed, ends trimmed); more than 2000 characters is a 422."""
+        notes = clean_notes(body.notes)
+        if len(notes) > NOTES_CHARS:
+            return _error(422, f"A note is at most {NOTES_CHARS} characters; this one is {len(notes)}.", "notes_too_long")
+        try:
+            check_id(run_id)
+            await jobs_of(request).set_notes(run_id, notes)
+        except (StorageError, RunNotFound):
+            return _error(404, "Run not found.", "not_found")
+        except RunConflict as exc:
+            return _error(409, str(exc), "run_in_bin")
+        return jobs_of(request).payload(run_id)
+
+    @app.post("/api/runs/{run_id}/tags/suggest")
+    async def suggest_run_tags(run_id: str, request: Request) -> Any:
+        """Ask the Prompt builder's model for a few tags for a run (DESIGN.md §45.6). Nothing is stored or applied: the answer is `{"suggestions": [..]}` for the page to show. 409
+        `suggest_off` and `builder_not_set_up`; 503 with the Ollama client's own words (`code` is its kind) when the model cannot be asked or its answer cannot be read."""
+        status = tagsuggest.suggest_status(settings, request.app.state.builder)
+        if not status["available"]:
+            return _error(409, status["reason"], "suggest_off" if settings.tag_suggestions <= 0 else "builder_not_set_up")
+        try:
+            check_id(run_id)
+        except StorageError:
+            return _error(404, "Run not found.", "not_found")
+        db = request.app.state.db
+        row = db.get_run(run_id)
+        if row is None or row["hidden"]:
+            return _error(404, "Run not found.", "not_found")
+        tags = db.tags_for_runs([run_id])[run_id]
+        notes = db.notes_for_runs([run_id]).get(run_id, "")
+        known = [entry["tag"] for entry in db.tag_counts(tagsuggest.KNOWN_SENT)]
+        slots: asyncio.Semaphore = request.app.state.builder_slots  # one reply at a time: Ollama has one GPU to share (DESIGN.md §37.3 rule 9)
+        try:
+            async with slots:
+                found = await asyncio.to_thread(tagsuggest.suggest, request.app.state.builder, row, tags, notes, known, settings.tag_suggestions)
+        except OllamaError as exc:
+            content = {"detail": exc.message, "code": exc.kind}
+            if exc.hint:
+                content["hint"] = exc.hint
+            return JSONResponse(status_code=503, content=content)
+        return {"suggestions": found}
 
     # ------------------------------------------------------------------ projects (DESIGN.md §32.4)
     @app.get("/api/projects")

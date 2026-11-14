@@ -28,7 +28,12 @@ import {
   binContents, binnedText, emptiedText, filedText, itemBinnedText, itemDeletedText, itemRestoredText, leftTheViewText, movedText, restoredText, takenOutText,
   unkeptText, type BinContents, type ItemRef, type ViewScope,
 } from "./format";
-import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withFamily, withProject, working, type HistoryFilter, type TabKind } from "./history";
+import {
+  NO_FILTER, NO_PROJECT, canBin, countsScope, filterKey, hasSearchOrFilters, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withFamily, withProject, withoutSearch,
+  working, type HistoryFilter, type TabKind,
+} from "./history";
+import { AnnotationsContext } from "./annotations";
+import { useAnnotationActions } from "./useAnnotationActions";
 import { copyText, useNow, useToasts } from "./hooks";
 import { PICTURES_ON_IMAGES_TAB, STILL_UPSCALING, takePictures } from "./paste";
 import { useCopyVectorSvg } from "./useCopyVectorSvg";
@@ -61,8 +66,8 @@ import {
 import { initialState, reducer } from "./store";
 import { editCost, followedPosition, inputRefs, insertReference, shapeFromForRequest, submitBlock, type KnownImage } from "./tray";
 import {
-  isImageRun, isMusicRun, isSpeechRun, isVectorRun, type BinnedImage, type BinnedTrack, type BinnedVectorItem, type CreateRunBody, type FourKTarget, type ImageInfo, type ImageRun, type MusicRun,
-  type Project, type Run,
+  isImageRun, isMusicRun, isSpeechRun, isVectorRun, type BinnedImage, type BinnedTrack, type BinnedVectorItem, type CreateRunBody, type Facets, type FourKTarget, type ImageInfo, type ImageRun,
+  type MusicRun, type Project, type Run,
 } from "./types";
 import { VECTOR_PNG_RANGE, pngRange } from "./vector";
 import { useEventStream } from "./useEvents";
@@ -72,6 +77,7 @@ import { refOf, usePromptUse, type FromPrompt } from "./usePromptUse";
 import { viewerItems, viewerKnown } from "./viewer";
 
 const NO_PROJECTS: Project[] = []; // the list of projects before it has arrived: one array, so nothing re-renders for a new empty one
+const NO_FACETS: Record<TabKind, { model: string | null; size: string | null }> = { image: { model: null, size: null }, music: { model: null, size: null }, vector: { model: null, size: null }, speech: { model: null, size: null } };
 // The three calls that send one picture, track or version to the bin, take it out again, and delete it for good (DESIGN.md §33.3, §35.4). One table, so that the
 // handlers below are the same for all three and a new kind of item is a new row.
 const ITEM_API = {
@@ -136,12 +142,19 @@ export default function App() {
   const [builderCommand, setBuilderCommand] = useState<BuilderCommand | null>(null); // something for the Prompt builder to do: open a prompt, refine a picture, help write an edit
   const [fromPrompt, setFromPrompt] = useState<FromPrompt | null>(null); // the saved prompt the Images prompt box came from: the next Generate carries it (DESIGN.md §37.3 rule 3)
   const builderAttach = useRef<((files: File[]) => void) | null>(null); // the chat's way of taking pictures that are pasted
-  const [filter, setFilter] = useState<HistoryFilter>(() => readFilter(store)); // All or Kept, for both tabs (DESIGN.md §29), remembered
+  const [sharedFilter, setSharedFilter] = useState<HistoryFilter>(() => readFilter(store)); // Show, Project, the search and the dates, for every tab (DESIGN.md §29, §45.4 rule 7); Show and Project are remembered
+  // The Model and the Size are each tab's own (§45.4 rule 7): a model of the Images tab is not a model of the Music tab. They are not remembered (rule 8).
+  const [facetChoice, setFacetChoice] = useState<Record<TabKind, { model: string | null; size: string | null }>>(NO_FACETS);
+  const [facets, setFacets] = useState<Record<TabKind, Facets | null>>({ image: null, music: null, vector: null, speech: null }); // what the Model and Size drop-downs offer, by tab
   const [filterProblem, setFilterProblem] = useState<string | null>(null); // why the filtered list could not be loaded
   const [managingProjects, setManagingProjects] = useState(false); // the Manage projects dialog is open (DESIGN.md §32.1)
   const [loadOlderFailed, setLoadOlderFailed] = useState(false);
   const { toasts, push, dismiss } = useToasts();
   const now = useNow(30_000);
+  // what the tab being looked at is called in the counts (`Counts` has a key for each)
+  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : tab === "speech" ? "speech" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
+  // The filter of the tab being looked at: what every tab shares, with this tab's own Model and Size (DESIGN.md §45.4 rule 7). Everything below reads this one.
+  const filter = useMemo<HistoryFilter>(() => ({ ...sharedFilter, model: facetChoice[tabKind].model, size: facetChoice[tabKind].size }), [sharedFilter, facetChoice, tabKind]);
   const promptRef = useRef<HTMLTextAreaElement>(null);
   const caretKnown = useRef(false); // the prompt has been focused at least once, so its caret means something
   const { caps, status } = state;
@@ -171,21 +184,19 @@ export default function App() {
     if (id) window.setTimeout(() => cardReuseButton(id)?.focus(), 0);
   };
   const reader = listening && listeningRun && isSpeechRun(listeningRun) ? { run: listeningRun, turn: listening.turn, pieces: speechPieces, onClose: closeReader } : undefined;
-  // what the tab being looked at is called in the counts (`Counts` has a key for each)
-  const tabKind: TabKind = tab === "music" ? "music" : tab === "vector" ? "vector" : tab === "speech" ? "speech" : "image"; // (the Prompt builder has no history of runs: it shows nothing of this)
   const tabRuns = tab === "music" ? musicRuns : tab === "vector" ? vectorRuns : tab === "speech" ? speechRuns : imageRuns;
   // the name the server counts this filter under (null: it has no count)
   const countName = filter.deleted === true && filter.kept === null ? "deleted" : filter.deleted === false ? (filter.kept === true ? "kept" : filter.kept === null ? "all" : null) : null;
   // The counts are asked for within the project that is chosen (DESIGN.md §32.5), so they are only used for the filter they describe: a number
   // that arrived for another project must never decide that this one is empty
-  const scopedCounts = state.countsProject === filter.project ? state.counts : null;
+  const scopedCounts = state.countsScope === countsScope(filter) ? state.counts : null;
   const knownEmpty = !!scopedCounts && countName !== null && scopedCounts[tabKind][countName] === 0; // the server says this tab has none
   // The project folders (DESIGN.md §32), and which kind of filter is on: it decides what a card shown only while it works says (§29.3, §32.1)
   const projects = state.projects ?? NO_PROJECTS;
   const projectNameMax = caps?.limits.project_name_max ?? 60;
   const speechEngines = caps?.speech.engines;
   const engineTitles = useMemo(() => engineTitlesOf(speechEngines), [speechEngines]); // for the places that say which model is loading (DESIGN.md §39.7)
-  const viewScope: ViewScope = filter.project !== null ? "project" : "kept";
+  const viewScope: ViewScope = hasSearchOrFilters(filter) ? "filters" : filter.project !== null ? "project" : "kept";
   const nameOfProject = (id: string | null): string | null => (id === null ? null : projects.find((project) => project.id === id)?.name ?? null);
   const lookingForMore = runsReady && tabRuns.length === 0 && more && !knownEmpty && !loadOlderFailed; // none on this tab yet: the next page may have some
   const waitingList = status?.queue.enlarge_waiting;
@@ -976,7 +987,9 @@ export default function App() {
 
   // Choosing a filter: switch to it and remember the choice. The effect below reads its first page.
   const changeFilter = (next: HistoryFilter) => {
-    setFilter(next);
+    // the Model and the Size belong to the tab being looked at; the rest is shared by every tab
+    setSharedFilter({ ...next, model: null, size: null });
+    setFacetChoice((all) => ({ ...all, [tabKind]: { model: next.model, size: next.size } }));
     saveFilter(next, store);
   };
 
@@ -996,8 +1009,9 @@ export default function App() {
   }, [key, state.connection, loadFirstPage]);
 
   // The counts on the filter bar are the server's; asked for again, after a short pause, whenever a run is made, deleted, kept, un-kept or
-  // filed. With a project chosen the bar's numbers are the project's (DESIGN.md §32.5), so two are read: the whole history's (which Empty bin
-  // needs, since it empties the whole bin) and the project's. Each is stored with the project it describes.
+  // filed. With a project, a search or a filter chosen the bar's numbers are theirs (DESIGN.md §32.5, §45.7), so two are read: the whole history's (which Empty bin
+  // needs, since it empties the whole bin) and the narrowed one. Each is stored with the scope it describes.
+  const scopeNow = countsScope(filter);
   useEffect(() => {
     if (state.connection !== "open") return;
     let stale = false; // another change, or another project, has made this answer out of date
@@ -1007,10 +1021,10 @@ export default function App() {
           const whole = await api.runCounts(null);
           if (stale) return;
           dispatch({ type: "totals", counts: whole });
-          if (filter.project === null) dispatch({ type: "counts", counts: whole, project: null });
+          if (scopeNow === null) dispatch({ type: "counts", counts: whole, scope: null });
           else {
-            const within = await api.runCounts(filter.project);
-            if (!stale) dispatch({ type: "counts", counts: within, project: filter.project });
+            const within = await api.runCounts(filter);
+            if (!stale) dispatch({ type: "counts", counts: within, scope: scopeNow });
           }
         } catch {
           /* the numbers stay as they were; the next change asks again */
@@ -1021,7 +1035,21 @@ export default function App() {
       stale = true;
       clearTimeout(timer);
     };
-  }, [state.connection, state.countsStale, filter.project]);
+  }, [state.connection, state.countsStale, scopeNow]);
+
+  // What the Model and Size drop-downs offer for the tab being looked at (DESIGN.md §45.7): read when the page connects, when the tab changes, and, after a short pause, whenever the
+  // counts are asked for again (a run was made, deleted, filed, tagged...).
+  useEffect(() => {
+    if (state.connection !== "open" || tab === "builder") return;
+    let stale = false;
+    const timer = setTimeout(() => {
+      void api.runFacets(tabKind).then((answer) => { if (!stale) setFacets((all) => ({ ...all, [tabKind]: answer })); }).catch(() => undefined);
+    }, facets[tabKind] === null ? 0 : 250);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [state.connection, state.countsStale, tabKind, tab]);
 
   // The project folders (DESIGN.md §32): read when the page connects (at once: the filter and the cards need the names), and again, after a
   // short pause, whenever the server says a project or what is filed in one changed.
@@ -1061,6 +1089,10 @@ export default function App() {
     refocus.current = false;
     if (!document.activeElement || document.activeElement === document.body) focusFilterBar();
   }, [visible]);
+
+  // Tags and notes (DESIGN.md §45): how a card and the viewer reach the server for them, given to them through a context. A run that stops matching the view because of what was written
+  // leaves it with a toast and Undo, and focus goes to the filter bar, as it does when Keep takes a card out of the Kept view.
+  const annotationActions = useAnnotationActions({ caps, filter, dispatch, push, refocus });
 
   // A run that is in a filtered view only while it works leaves it when it is done, unless it was kept; the page says so (§29.3).
   const watched = useRef<ReadonlySet<string>>(new Set());
@@ -1104,13 +1136,14 @@ export default function App() {
   const filterBar = (
     <FilterBar filter={filter} keptCount={scopedCounts?.[tabKind].kept ?? null} deletedCount={scopedCounts?.[tabKind].deleted ?? null} binTotal={bin}
       projects={state.projects} tab={tabKind} onChange={changeFilter} onEmptyBin={() => setPendingEmptyBin(true)} onManageProjects={() => setManagingProjects(true)}
-      familyLabel={familyRoot ? cut(familyRoot.prompt) : null} />
+      familyLabel={familyRoot ? cut(familyRoot.prompt) : null} facets={facets[tabKind]} aspectNames={caps?.aspect_ratios} searchMax={caps?.limits.annotations?.search_chars}
+      resultCount={countName !== null && scopedCounts ? scopedCounts[tabKind][countName] : null} />
   );
   // what replaces "Loading…" when the first page of a filtered list could not be read: the reason, and a way to try again
   const problem =
     filterProblem && !isDefault(filter) ? (
       <div className="empty-state" role="alert">
-        <p className="empty-title">{filter.deleted === true ? "Couldn't load your deleted runs" : "Couldn't load your kept runs"}</p>
+        <p className="empty-title">{hasSearchOrFilters(filter) ? "Couldn't search your history" : filter.deleted === true ? "Couldn't load your deleted runs" : "Couldn't load your kept runs"}</p>
         <p>{filterProblem}</p>
         <button type="button" className="button small" onClick={() => void loadFirstPage(filter)}>Try again</button>
       </div>
@@ -1119,7 +1152,7 @@ export default function App() {
   const emptyFor = (kind: TabKind) =>
     lookingForMore ? <p className="loading" role="status">Looking through your older runs…</p> : (
       <EmptyHistory kind={kind} filter={filter} binDays={binDays} project={filter.project === null || filter.project === NO_PROJECT ? null : projects.find((project) => project.id === filter.project) ?? null}
-        onShowAll={() => changeFilter(NO_FILTER)} onShowAnyProject={() => changeFilter(withProject(filter, null))} />
+        onShowAll={() => changeFilter(NO_FILTER)} onShowAnyProject={() => changeFilter(withProject(filter, null))} onClearSearch={() => changeFilter(withoutSearch(filter))} />
     );
   const musicAvailable = !!caps?.modes.includes("music");
   const canEdit = !!caps?.modes.includes("edit");
@@ -1128,6 +1161,7 @@ export default function App() {
 
   return (
     <PromptLinksContext.Provider value={promptLinks}>
+      <AnnotationsContext.Provider value={annotationActions}>
       <EngineTitlesContext.Provider value={engineTitles}>
         <a className="skip-link" href="#prompt">Skip to the prompt</a>
         <Header status={status} now={now} busy={modelBusy} tab={tab === "music" ? "music" : tab === "speech" ? "speech" : "image"} musicAvailable={musicAvailable}
@@ -1374,6 +1408,7 @@ export default function App() {
           onCreate={createProject} onRename={renameProject} onDelete={deleteProject} />
         <Toasts toasts={toasts} onDismiss={dismiss} />
       </EngineTitlesContext.Provider>
+      </AnnotationsContext.Provider>
     </PromptLinksContext.Provider>
   );
 }

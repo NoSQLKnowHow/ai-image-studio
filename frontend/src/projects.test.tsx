@@ -14,6 +14,9 @@ import { NO_FILTER, NO_PROJECT, ONLY_KEPT, withProject, type HistoryFilter } fro
 import { makeMusicRun, makeRun } from "./testdata";
 import type { Project } from "./types";
 
+// What a filter written out in a test says about the search and the three filters of release 1.26 (DESIGN.md §45): none of them.
+const NONE = { q: null, model: null, size: null, since: null, until: null } as const;
+
 // Project folders on the page (DESIGN.md §32.1, §32.3): the words, the card's drop-down, the Manage dialog, the lock on Keep, and the questions.
 
 afterEach(cleanup);
@@ -439,26 +442,26 @@ describe("the Project drop-down and the Manage button in the filter bar act (DES
   it("chooses a project, 'no project' or any project, and keeps Kept or Deleted as it was", () => {
     const { onChange, select } = draw(ONLY_KEPT);
     fireEvent.change(select, { target: { value: LOGO.id } });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null }); // (a filter also says which family it is in, if any: none here, §43.4)
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null, ...NONE }); // (a filter also says which family it is in, if any: none here, §43.4)
     fireEvent.change(select, { target: { value: NO_PROJECT } });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: NO_PROJECT, family: null });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: NO_PROJECT, family: null, ...NONE });
   });
 
   // "" is the drop-down's value for Any project; the filter's is null (an empty id would be sent to the server as ?project=)
   it("sends Any project as no project at all, not as an empty id", () => {
     const { onChange, select } = draw(withProject(ONLY_KEPT, LOGO.id));
     fireEvent.change(select, { target: { value: "" } });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: null, family: null });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: null, family: null, ...NONE });
   });
 
   it("keeps the chosen project when All, Kept or Deleted is chosen, by click and by arrow key", () => {
     const { onChange } = draw(withProject(NO_FILTER, LOGO.id));
     fireEvent.click(screen.getByRole("radio", { name: /^Kept/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null, ...NONE });
     fireEvent.click(screen.getByRole("radio", { name: /^Deleted/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ kept: null, deleted: true, project: LOGO.id, family: null });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: null, deleted: true, project: LOGO.id, family: null, ...NONE });
     fireEvent.keyDown(screen.getByRole("radio", { name: /^All/ }), { key: "ArrowRight" });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null, ...NONE });
   });
 
   it("opens the Manage projects dialog when Manage is pressed", () => {

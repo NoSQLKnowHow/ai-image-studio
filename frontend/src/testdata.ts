@@ -57,10 +57,12 @@ export const CAPS: Capabilities = {
       preferences_max: 50, preference_chars: 300,
     },
     speech: structuredClone(speechContract.limits_speech) as unknown as SpeechLimits, // the contract's own limits
+    annotations: { tags_max: 12, tag_chars: 30, notes_chars: 2000, search_chars: 200, search_words: 10 },
   },
   music: { available: true, state: "done", reason: null, hint: null, model: "fake-music" },
   vector: structuredClone(contract.capabilities.vector), // available: the libraries import and the image pipeline can generate
   builder: { available: true, configured: true, reachable: true, model: "fake-builder", vision: true },
+  annotations: { search: "words", suggest: { available: true, reason: null } }, // DESIGN.md §45.7
   speech: structuredClone(speechContract.capabilities_speech) as unknown as SpeechCaps, // the two fake engines, both ready
   upscaler: { available: true, model: "fake", reason: null, hint: null, max_enlargement: 4 },
   queue_cap: 10,
@@ -118,6 +120,8 @@ export function makeRun(overrides: Partial<ImageRun> = {}): ImageRun {
     purge_at: null,
     project_id: null,
     prompt_ref: null,
+    tags: [],
+    notes: "",
     queue_position: null,
     progress: null,
     canceling: false,
@@ -155,6 +159,8 @@ export function makeMusicRun(overrides: Partial<MusicRun> = {}): MusicRun {
     purge_at: null,
     project_id: null,
     prompt_ref: null,
+    tags: [],
+    notes: "",
     queue_position: null,
     progress: null,
     canceling: false,
@@ -206,7 +212,7 @@ export function makeVectorRun(overrides: Partial<VectorRun> = {}): VectorRun {
 }
 
 export const STATUS: Status = {
-  version: "1.25",
+  version: "1.26",
   worker: { state: "ready", detail: null, hint: null, pipeline: "fake", model: "image", pid: 1, unload_at: null, idle_timeout_min: 30, device: null, probe: "done" },
   queue: { running: null, queued: 0, cap: 10, enlarge_waiting: [] },
   memory: { total_gb: 119, available_gb: 80, min_free_gb: null, music_min_free_gb: null, worker_rss_gb: null },

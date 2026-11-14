@@ -418,11 +418,12 @@ class JobManager:
         variation_refs = self.db.variation_refs_for_runs(rows)  # the run each was made More like this of, if any (§43.4)
         variation_counts = self.db.variation_counts_for_runs(ids)  # and how many variations each has
         readings = self.speech.readings(rows)  # a Speech run's parts, and how far each has got (§38.9)
+        tags, notes = self.db.tags_for_runs(ids), self.db.notes_for_runs(ids)  # the person's own words about each run (§45.7)
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
                         r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r),
                         binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]], binned_vectors[r["id"]], prompt_refs.get(r["id"]),
-                        readings.get(r["id"]), variation_refs.get(r["id"]), variation_counts.get(r["id"], 0))
+                        readings.get(r["id"]), variation_refs.get(r["id"]), variation_counts.get(r["id"], 0), tags[r["id"]], notes.get(r["id"], ""))
             for r in rows
         ]
 
@@ -664,6 +665,25 @@ class JobManager:
             raise RunConflict("This run is in a project, so it stays kept. Take it out of the project first.")
         if result == "always_kept":
             raise RunAlwaysKept("A reading is always kept: it never expires, so there is no Keep to turn off.")
+        self._publish_run(run_id)
+
+    # ------------------------------------------------------------ tags and notes (DESIGN.md §45)
+    async def set_tags(self, run_id: str, tags: list[str]) -> None:
+        """Replace a run's tags (already cleaned and counted by the route). `RunNotFound` for a run that is not there, `RunConflict` for one in the bin (it only reads, §45.4 rule 12).
+        Every open page is told the run changed, as for Keep."""
+        result = await asyncio.to_thread(self.db.set_run_tags, run_id, tags)
+        self._after_annotation(run_id, result)
+
+    async def set_notes(self, run_id: str, notes: str) -> None:
+        """Set a run's note, or clear it with an empty text (already cleaned and checked by the route). Raises and tells the pages as `set_tags` does."""
+        result = await asyncio.to_thread(self.db.set_run_notes, run_id, notes, utcnow())
+        self._after_annotation(run_id, result)
+
+    def _after_annotation(self, run_id: str, result: str) -> None:
+        if result == "not_found":
+            raise RunNotFound(run_id)
+        if result == "in_bin":
+            raise RunConflict("This run is in the bin, which only reads. Restore it before changing its tags or its note.")
         self._publish_run(run_id)
 
     # ------------------------------------------------------------ projects (DESIGN.md §32)

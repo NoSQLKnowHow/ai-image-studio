@@ -6,6 +6,7 @@ import { zipUrl } from "../speechApi";
 import type { SpeechRun } from "../types";
 import { DownloadIcon, FolderIcon, PlayIcon, RestoreIcon, ReuseIcon, SpeakerIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
+import { RunAnnotations } from "./RunAnnotations";
 import { AudiobookControl } from "./AudiobookControl";
 import type { AudiobookCaps } from "../speechTypes";
 
@@ -78,6 +79,7 @@ export function ReadingCard({ run, now, transient, viewScope, projects, audioboo
 
         <p className="run-prompt reading-title">{title}</p>
         <p className="run-meta">{readingFacts(run)}</p>
+        <RunAnnotations run={run} />
         {/* the pronunciation list a reading was made with, when it changed any word (DESIGN.md §44.3); it keeps that list, so this stays true whatever the list becomes */}
         {pronunciationLine(reading?.pronunciations) && <p className="run-meta" data-note="pronunciation">{pronunciationLine(reading?.pronunciations)}</p>}
         {/* who speaks besides the main voice (§44.5): the reading keeps its cast */}

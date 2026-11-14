@@ -59,14 +59,14 @@ def database_as_1_24(tmp_path):
     return path, fresh
 
 
-def test_the_schema_is_12_and_a_new_database_has_the_table_and_the_column_last(tmp_path):
-    assert SCHEMA_VERSION == 12
+def test_the_schema_is_at_least_12_and_a_new_database_has_the_table_and_the_column_last(tmp_path):
+    assert SCHEMA_VERSION >= 12  # schema 12 added these; 1.26 went on to 13 (its tables are test_annotations_schema.py's), so this file names the CURRENT version where it used to say 12
     path = tmp_path / "studio.sqlite"
     Database(path).close()
     assert "speech_pronunciations" in table_names(path)
     assert columns(path, "speech_pieces")[-1] == ("speaker", "TEXT")  # last, so that ALTER TABLE on an older database gives the same table
     assert [c[0] for c in columns(path, "speech_pronunciations")] == ["id", "word", "word_key", "say", "match_case", "created_at", "updated_at"]
-    assert stored_version(path) == "12"
+    assert stored_version(path) == str(SCHEMA_VERSION)
 
 
 def test_a_schema_11_database_is_upgraded_after_a_copy_and_keeps_every_row(tmp_path):
@@ -80,7 +80,7 @@ def test_a_schema_11_database_is_upgraded_after_a_copy_and_keeps_every_row(tmp_p
 
     migrated = Database(path)
     try:
-        assert stored_version(path) == "12"
+        assert stored_version(path) == str(SCHEMA_VERSION)  # an upgrade from 11 goes on to the current schema in the same start
         # the two tables are what a new database makes, in the same order of columns
         assert columns(path, "speech_pieces") == columns(fresh, "speech_pieces")
         assert columns(path, "speech_pronunciations") == columns(fresh, "speech_pronunciations")
@@ -92,7 +92,7 @@ def test_a_schema_11_database_is_upgraded_after_a_copy_and_keeps_every_row(tmp_p
         assert sqlite3.connect(path).execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
         migrated.close()
-    copy = tmp_path / "studio.sqlite.before-schema-12"
+    copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"  # named for the version the upgrade went TO
     assert copy.exists() and stored_version(copy) == "11" and "speaker" not in dict(columns(copy, "speech_pieces"))  # the database as 1.24 left it: a way back
     assert [r[0] for r in sqlite3.connect(copy).execute("SELECT id FROM runs")] == [run_row(1)["id"]]
 
@@ -100,7 +100,7 @@ def test_a_schema_11_database_is_upgraded_after_a_copy_and_keeps_every_row(tmp_p
 def test_a_second_start_changes_nothing_and_makes_no_second_copy(tmp_path):
     path, _ = database_as_1_24(tmp_path)
     Database(path).close()
-    copy = tmp_path / "studio.sqlite.before-schema-12"
+    copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"
     first_copy = copy.read_bytes()
     shape = sqlite3.connect(path).execute("SELECT group_concat(sql) FROM sqlite_master ORDER BY name").fetchone()
     Database(path).close()

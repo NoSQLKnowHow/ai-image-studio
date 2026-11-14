@@ -1,7 +1,7 @@
 import { filenameFromDisposition } from "./fourk";
-import { NO_FILTER, filterParams, type Counts, type HistoryFilter } from "./history";
+import { NO_FILTER, filterParams, scopeParams, type Counts, type HistoryFilter, type TabKind } from "./history";
 import type {
-  Capabilities, CreateMusicBody, CreateRunBody, CreateVectorBody, ImageRun, ModelName, MusicRun, Project, QueueListing, QueueMove, Run, RunsPage, Status, UploadResult,
+  Capabilities, CreateMusicBody, CreateRunBody, CreateVectorBody, Facets, ImageRun, ModelName, MusicRun, Project, QueueListing, QueueMove, Run, RunsPage, Status, TagCount, UploadResult,
   VectorRecipe, VectorRecipeRequest, VectorRun, WithPromptRef, WithVariation,
 } from "./types";
 
@@ -179,8 +179,20 @@ export const api = {
     return request<RunsPage>(`/api/runs?${query}`);
   },
   // The counts on the filter bar: per tab, how many runs there are and how many are kept or deleted. With a project (an id, or "none"), the
-  // counts are within it (DESIGN.md §32.5); without, they are the whole history's.
-  runCounts: (project: string | null = null) => request<Counts>(`/api/runs/counts${project === null ? "" : `?${new URLSearchParams({ project })}`}`),
+  // counts are within it (DESIGN.md §32.5); with a search or filters they are within those too (§45.7); without, they are the whole history's.
+  runCounts: (scope: Pick<HistoryFilter, "project" | "q" | "model" | "size" | "since" | "until"> | null = null) => {
+    const query = new URLSearchParams(scope === null ? {} : { ...(scope.project === null ? {} : { project: scope.project }), ...scopeParams(scope) });
+    return request<Counts>(`/api/runs/counts${query.size === 0 ? "" : `?${query}`}`);
+  },
+  // What the Model and Size drop-downs offer for one tab (DESIGN.md §45.7)
+  runFacets: (kind: TabKind) => request<Facets>(`/api/runs/facets?${new URLSearchParams({ kind })}`),
+  // The tags in use on the history's runs, most used first: the tag editor's autocomplete (§45.4 rule 9)
+  listTags: () => request<{ tags: TagCount[] }>("/api/tags").then((answer) => answer.tags),
+  // A run's tags (the whole list, which replaces the one it had) and its note ("" clears it); the answer is the run (DESIGN.md §45.7)
+  putRunTags: (id: string, tags: string[]) => request<Run>(`/api/runs/${encodeURIComponent(id)}/tags`, { method: "PUT", body: JSON.stringify({ tags }) }),
+  putRunNotes: (id: string, notes: string) => request<Run>(`/api/runs/${encodeURIComponent(id)}/notes`, { method: "PUT", body: JSON.stringify({ notes }) }),
+  // Ask the Prompt builder's model for a few tags for a run (§45.6): nothing is stored, the answer is only shown
+  suggestTags: (id: string) => request<{ suggestions: string[] }>(`/api/runs/${encodeURIComponent(id)}/tags/suggest`, { method: "POST" }).then((answer) => answer.suggestions),
   createRun: (body: WithPromptRef<WithVariation<CreateRunBody>>) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createMusicRun: (body: WithPromptRef<CreateMusicBody>) => request<MusicRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createVectorRun: (body: WithPromptRef<CreateVectorBody>) => request<VectorRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),

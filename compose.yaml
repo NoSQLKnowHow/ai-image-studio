@@ -104,6 +104,7 @@ services:
       STUDIO_SPEECH_TEMP_HOURS: ${STUDIO_SPEECH_TEMP_HOURS:-24}
       STUDIO_SPEECH_AUDIOBOOK_KBPS: ${STUDIO_SPEECH_AUDIOBOOK_KBPS:-64}
       STUDIO_VARIATIONS_FROM_PICTURE: ${STUDIO_VARIATIONS_FROM_PICTURE:-false}
+      STUDIO_TAG_SUGGESTIONS: ${STUDIO_TAG_SUGGESTIONS:-5}
       HF_TOKEN: ${HF_TOKEN:-}
     # The server finishes or fails the current image and stops the worker cleanly on SIGTERM.
     stop_grace_period: 30s

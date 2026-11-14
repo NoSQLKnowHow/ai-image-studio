@@ -1,6 +1,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useReturnFocus } from "../hooks";
+import { ViewerAnnotationsButton, ViewerAnnotationsPanel, panelEscape } from "./RunAnnotations";
 import type { BinnedVectorItem, VectorItem, VectorRun } from "../types";
 import { DEFAULT_PNG_PX, binnedVersionName, bytesText, drawingCaption, isStacked, mmText, pngDownloadUrl, viewerSummary } from "../vector";
 import type { ViewerNotice } from "./Dialogs";
@@ -29,6 +30,13 @@ export function VectorViewer({ run, index, readOnly, pngRange, notice, onIndex, 
 }) {
   const id = useId();
   const { props: returnFocus } = useReturnFocus();
+  // The tags and notes panel (DESIGN.md §45.3), closed until its button opens it and closed again for another run
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesButton = useRef<HTMLButtonElement>(null);
+  const notesPanel = useId();
+  useEffect(() => {
+    setNotesOpen(false);
+  }, [run?.id]);
   // the versions to page through: the run's, by place; or, for a look at the Deleted view, the ones that are in the bin
   const versions: (VectorItem | BinnedVectorItem)[] = run ? (readOnly && run.deleted_at === null ? run.binned_vectors : [...run.vectors].sort((a, b) => a.idx - b.idx)) : [];
   const count = versions.length;
@@ -40,8 +48,8 @@ export function VectorViewer({ run, index, readOnly, pngRange, notice, onIndex, 
   useEffect(() => {
     if (!run || count < 2) return;
     const onKey = (e: KeyboardEvent) => {
-      // a range or number box in the viewer uses the arrows itself (the stack view's control, the PNG size)
-      if (e.target instanceof HTMLInputElement) return;
+      // a range or number box in the viewer uses the arrows itself (the stack view's control, the PNG size), and so does a text box (the tag box, the note: DESIGN.md §45.3)
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === "ArrowRight") onIndex((index + 1) % count);
       if (e.key === "ArrowLeft") onIndex((index - 1 + count) % count);
     };
@@ -60,7 +68,8 @@ export function VectorViewer({ run, index, readOnly, pngRange, notice, onIndex, 
     <Dialog.Root open={!!run && !!item} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay dark" />
-        <Dialog.Content className="lightbox vector-viewer" aria-describedby={undefined} {...returnFocus}>
+        <Dialog.Content className="lightbox vector-viewer" aria-describedby={undefined} {...returnFocus}
+          onEscapeKeyDown={(event) => { panelEscape(event, notesOpen, () => { setNotesOpen(false); notesButton.current?.focus(); }); }}>
           {run && item && (
             <>
               <div className="lightbox-bar">
@@ -68,6 +77,7 @@ export function VectorViewer({ run, index, readOnly, pngRange, notice, onIndex, 
                   {binned ? `${binnedVersionName(item)} · deleted` : viewerSummary(item, position, count)}
                 </Dialog.Title>
                 <div className="lightbox-actions">
+                  <ViewerAnnotationsButton run={run} open={notesOpen} panelId={notesPanel} buttonRef={notesButton} onToggle={() => setNotesOpen(!notesOpen)} />
                   {/* Delete version: only on a version that is in the run now, of a run that has stopped working and is in the history (§35.3 item 1) */}
                   {!readOnly && !working && (
                     <button type="button" className="button small danger" data-action="delete-version" onClick={() => onDeleteVersion(item, position, count)}
@@ -149,6 +159,7 @@ export function VectorViewer({ run, index, readOnly, pngRange, notice, onIndex, 
                   {isStacked(item.check) && item.layer_urls.length > 0 && <StackView key={item.id} item={item} />}
                 </div>
               </div>
+              {notesOpen && <ViewerAnnotationsPanel run={run} panelId={notesPanel} />}
               <div className="lightbox-notice-region" role="status">
                 {notice && <p className={`lightbox-notice${notice.kind === "error" ? " error" : ""}`}>{notice.text}</p>}
               </div>

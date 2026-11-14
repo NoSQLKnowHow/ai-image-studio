@@ -103,13 +103,14 @@ export function unkeptText(
 
 /** What keeps a card in a filtered view when it is not the filter's kind of run: it works, and a job you started stays visible (§29.3). It
  *  leaves when it is done unless it has become one of the filter's runs, which is a different act for each filter: Keep it (the Kept view),
- *  or file it in the project (a project's view, DESIGN.md §32). */
-export type ViewScope = "kept" | "project";
+ *  or file it in the project (a project's view, DESIGN.md §32), or, with a search or a filter on (§45.8), match it: there is nothing to do for that but wait and see. */
+export type ViewScope = "kept" | "project" | "filters";
 
 /** The toast when a run that was shown in a filtered view only while it worked has finished without joining it (§29.3, §32). */
 export function leftTheViewText(run: { prompt: string; status: string }, scope: ViewScope = "kept"): string {
   const what = run.status === "done" ? "is done" : run.status === "failed" ? "failed" : "was canceled";
-  return `“${shorten(run.prompt)}” ${what}. ${scope === "kept" ? "It is not kept, so it is not in this view." : "It is not in this project, so it is not in this view."}`;
+  const why = scope === "kept" ? "It is not kept, so it is not in this view." : scope === "project" ? "It is not in this project, so it is not in this view." : "It does not match this view, so it is not in it.";
+  return `“${shorten(run.prompt)}” ${what}. ${why}`;
 }
 
 /** The note on a card that is in the Kept view only because it is working (§29.3). */
@@ -118,8 +119,11 @@ export const WORKING_IN_KEPT_NOTE = "Shown while it works. It stays in this view
 /** The same note in a project's view (§32): a job you start while a project is chosen stays visible, and stays only if it is filed there. */
 export const WORKING_IN_PROJECT_NOTE = "Shown while it works. It stays in this view only if you add it to this project.";
 
+/** The same note with a search or a filter on (DESIGN.md §45.8): the run stays only if it matches. */
+export const WORKING_IN_FILTERS_NOTE = "Shown while it works. It stays in this view only if it matches.";
+
 /** The note for a card that is in a filtered view only because it is working, whichever filter it is. */
-export const workingNote = (scope: ViewScope): string => (scope === "kept" ? WORKING_IN_KEPT_NOTE : WORKING_IN_PROJECT_NOTE);
+export const workingNote = (scope: ViewScope): string => (scope === "kept" ? WORKING_IN_KEPT_NOTE : scope === "project" ? WORKING_IN_PROJECT_NOTE : WORKING_IN_FILTERS_NOTE);
 
 /** The toast after a run was moved to the bin (DESIGN.md §30.1). */
 export function binnedText(run: { prompt: string; mode?: string; vectors?: readonly unknown[] }, binDays: number): string {

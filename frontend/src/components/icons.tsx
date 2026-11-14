@@ -65,3 +65,7 @@ export const VectorIcon = () => <Icon><path d="M6 18C6 9 12 15 18 6" /><rect x="
 export const QueueIcon = () => <Icon><path d="M4 6h13M4 12h13M4 18h8" /><path d="M19 15l2.5 3-2.5 3" /></Icon>;
 export const ChevronUpIcon = () => <Icon><path d="M6 15l6-6 6 6" /></Icon>;
 export const LockIcon = () => <Icon><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></Icon>;
+// a magnifying glass: the icon of the history's search box (DESIGN.md §45.3)
+export const SearchIcon = () => <Icon><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5L21 21" /></Icon>;
+// a price tag: the icon of the tags and notes button on a card and in the viewer (§45.3)
+export const TagIcon = () => <Icon><path d="M3 12V4h8l10 10-8 8z" /><circle cx="7.5" cy="8.5" r="1.2" fill="currentColor" /></Icon>;

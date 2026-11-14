@@ -177,6 +177,8 @@ interface RunBase {
   purge_at: string | null; // when it will be deleted for good; null if it is not in the bin
   project_id: string | null; // the project it is filed in (DESIGN.md §32); null if it is in none. A filed run is always kept.
   prompt_ref: PromptRef | null; // the saved prompt and version it was made from (DESIGN.md §37.3 rule 3), else null
+  tags: string[]; // the person's own tags on the run, A to Z (DESIGN.md §45); on every kind of run
+  notes: string; // the person's note on the run: "" for none
   queue_position: number | null;
   progress: Progress | null;
   canceling: boolean; // running, and the user has asked it to stop (it stops at the next step)
@@ -571,6 +573,7 @@ export interface Capabilities {
     vector: VectorLimits;
     builder: BuilderLimits; // DESIGN.md §37.4
     speech: SpeechLimits; // DESIGN.md §38.9
+    annotations?: AnnotationLimits; // DESIGN.md §45.7; missing from a server of before 1.26
   };
   music: MusicAvailability;
   vector: VectorAvailability;
@@ -579,8 +582,32 @@ export interface Capabilities {
   upscaler: UpscalerStatus;
   /** More like this (§43.6): whether Variations of this picture can be made here, and the reason if not. Missing from a server of before 1.24, which has no More like this. */
   variations?: { from_picture: boolean; reason: string | null };
+  /** Tags, notes and search of runs (DESIGN.md §45.7): whether a search is by `words` (the word index) or a `plain` match (a SQLite without FTS5), and whether Suggest can be used here, with the
+   *  reason in words when it cannot. Missing from a server of before 1.26. */
+  annotations?: { search: "words" | "plain"; suggest: { available: boolean; reason: string | null } };
   queue_cap: number;
   device: WorkerStatus["device"];
+}
+
+/** What a person may type about a run, and how much of a search is used (DESIGN.md §45.7): the server's numbers, so the page does not repeat them. */
+export interface AnnotationLimits {
+  tags_max: number; // tags on one run
+  tag_chars: number; // characters in one tag
+  notes_chars: number; // characters in a note
+  search_chars: number; // characters of a search the server takes
+  search_words: number; // distinct words of a search that are used
+}
+
+/** One tag in use, with how many runs have it (`GET /api/tags`): what the tag editor's autocomplete offers. */
+export interface TagCount {
+  tag: string;
+  count: number;
+}
+
+/** What the Model and Size drop-downs offer for one tab (`GET /api/runs/facets`, DESIGN.md §45.7). `sizes` is empty except on the Images tab. */
+export interface Facets {
+  models: { value: string; count: number }[];
+  sizes: { width: number; height: number; count: number }[];
 }
 
 /** How an edit names one of its images: an upload that is waiting, or an image from an earlier run. */

@@ -1,5 +1,5 @@
 import * as Dialog from "@radix-ui/react-dialog";
-import { useEffect } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { deleteItemQuestion, deleteItemTitle, emptyBinQuestion, type BinContents, type ItemRef } from "../format";
 import { useReturnFocus } from "../hooks";
 import { RefineButton } from "../promptLinks";
@@ -8,6 +8,7 @@ import type { KnownImage } from "../tray";
 import type { FourKTarget, ImageInfo, ImageRun, Run, UpscalerStatus } from "../types";
 import { viewerItems, viewerKnown, viewerTitle } from "../viewer";
 import { FourKButton } from "./FourKButton";
+import { ViewerAnnotationsButton, ViewerAnnotationsPanel, panelEscape } from "./RunAnnotations";
 import { ChevronLeft, ChevronRight, CloseIcon, CompareIcon, DownloadIcon, EditIcon, EnlargeIcon, MoreLikeThisIcon, TrashIcon } from "./icons";
 
 /** What the viewer says about a request made from it. The page behind a modal, toasts included, is hidden from
@@ -46,10 +47,19 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
   const item = items[index];
   const count = items.length;
   const { props: returnFocus, redirectTo } = useReturnFocus();
+  // The tags and notes panel (DESIGN.md §45.3): closed until its button opens it, and closed again when the viewer moves to another run
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesButton = useRef<HTMLButtonElement>(null);
+  const notesPanel = useId();
+  useEffect(() => {
+    setNotesOpen(false);
+  }, [run?.id]);
 
   useEffect(() => {
     if (!run || count < 2) return;
     const onKey = (e: KeyboardEvent) => {
+      // the arrow keys of a text box (the tag box, the note) move its caret and the list under it: they must not turn the page of the viewer as well (DESIGN.md §45.3)
+      if ((e.target as HTMLElement | null)?.closest?.("input, textarea, select, [role=combobox]")) return;
       if (e.key === "ArrowRight") onIndex((index + 1) % count);
       if (e.key === "ArrowLeft") onIndex((index - 1 + count) % count);
     };
@@ -65,7 +75,8 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
     <Dialog.Root open={!!run && !!item} onOpenChange={(open) => !open && onClose()}>
       <Dialog.Portal>
         <Dialog.Overlay className="overlay dark" />
-        <Dialog.Content className="lightbox" aria-describedby={undefined} {...returnFocus}>
+        <Dialog.Content className="lightbox" aria-describedby={undefined} {...returnFocus}
+          onEscapeKeyDown={(event) => { panelEscape(event, notesOpen, () => { setNotesOpen(false); notesButton.current?.focus(); }); }}>
           {run && item && shown && (
             <>
               <div className="lightbox-bar">
@@ -107,6 +118,7 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
                     </>
                   )}
                   {result && !readOnly && <RefineButton run={run} image={result} className="button small" compact />}
+                  <ViewerAnnotationsButton run={run} open={notesOpen} panelId={notesPanel} buttonRef={notesButton} onToggle={() => setNotesOpen(!notesOpen)} />
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}
                   {/* Delete picture (DESIGN.md §33.1): on a RESULT of a finished run that is not in the bin; never on an edit's source, which is the run's
                       input, and never while Make 4K or Enlarge is working on this picture (the copy being written would be left behind) */}
@@ -134,6 +146,7 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
               <div className={`lightbox-stage${shown.has_alpha ? " checker" : ""}`}>
                 <img src={shown.url} alt={source ? `Source image ${source.position}` : run.prompt} />
               </div>
+              {notesOpen && <ViewerAnnotationsPanel run={run} panelId={notesPanel} />}
               <div className="lightbox-notice-region" role="status">
                 {notice && <p className={`lightbox-notice${notice.kind === "error" ? " error" : ""}`}>{notice.text}</p>}
               </div>

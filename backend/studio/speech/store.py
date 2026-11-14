@@ -25,6 +25,7 @@ class SpeechStore:
             if c.execute("SELECT COUNT(*) FROM runs WHERE status='queued'").fetchone()[0] >= cap:
                 return "full"
             c.execute(f"INSERT INTO runs ({', '.join(run)}) VALUES ({', '.join('?' for _ in run)})", tuple(run.values()))
+            self.db.index_run(c, run["id"])  # a reading's title and source name are searchable from the start (DESIGN.md §45.7)
             c.executemany("INSERT INTO speech_parts (run_id, idx, title, chars) VALUES (:run_id, :idx, :title, :chars)", parts)
             # `speaker` is optional in a piece (the narrator's pieces, and everything made before 1.25, have none): a piece that does not say is the narrator's
             c.executemany("INSERT INTO speech_pieces (run_id, part_idx, idx, kind, text, chars, continues, seed, speaker) "
