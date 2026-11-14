@@ -30,6 +30,12 @@ class SpeechPiece:
     seed: int
     out: str  # where the WAV goes, relative to the data directory, under speech/
     pause_ms: int  # the silence added after the speech, so that pieces joined one after the other have their pauses already in them
+    # A speaker with a voice of their own (DESIGN.md §44.5): when `own_voice` these replace the job's voice, reference clip and style for this piece. A piece with none of them,
+    # the narrator's, is spoken with the job's, so a job with no speakers is what it always was.
+    own_voice: bool = False
+    voice: str = ""
+    ref: Optional[VoiceRef] = None
+    style: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -85,7 +91,21 @@ class SpeechJob:
             target = (data_dir / out).resolve()
             if speech_root not in target.parents:
                 raise ValueError(f"{out!r} is not inside the speech folder")
-            pieces.append(SpeechPiece(key=key, text=text, kind=kind, seed=seed, out=out, pause_ms=pause))
+            own_ref: Optional[VoiceRef] = None
+            own_ref_raw = item.get("ref")
+            if own_ref_raw is not None:
+                if not isinstance(own_ref_raw, dict) or not isinstance(own_ref_raw.get("path"), str) or not isinstance(own_ref_raw.get("text"), str):
+                    raise ValueError("a speaker's saved voice needs the path and the words of its reference clip")
+                own_path = (data_dir / own_ref_raw["path"]).resolve()
+                if (speech_root / "voices") not in own_path.parents or not own_path.is_file():
+                    raise ValueError("a speaker's reference clip must be a file inside the voices folder")
+                own_ref = VoiceRef(path=str(own_path), text=own_ref_raw["text"], kind=str(own_ref_raw.get("kind") or "cloned"))
+            own_voice_id = item.get("voice") or ""
+            own_style = item.get("style")
+            if not isinstance(own_voice_id, str) or (own_style is not None and not isinstance(own_style, str)):
+                raise ValueError("a piece's voice and style must be text")
+            pieces.append(SpeechPiece(key=key, text=text, kind=kind, seed=seed, out=out, pause_ms=pause, own_voice=bool(own_voice_id) or own_ref is not None,
+                                      voice=own_voice_id, ref=own_ref, style=own_style or None))
 
         voice = raw.get("voice") or ""
         ref_raw = raw.get("ref")

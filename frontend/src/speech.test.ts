@@ -37,7 +37,7 @@ const engine = (overrides: Partial<SpeechEngine> = {}): SpeechEngine => ({ ...FU
 /** A draft of parts, each given as [title, [paragraph texts], include?]. */
 const draft = (...parts: [string, string[], boolean?][]): DraftPart[] =>
   parts.map(([title, texts, include = true], key) => ({
-    key, title, include, note: null, paragraphs: texts.map((text) => ({ kind: "paragraph" as const, text, skipped: null, edited: false })),
+    key, title, include, note: null, paragraphs: texts.map((text) => ({ kind: "paragraph" as const, text, skipped: null, edited: false, speaker: null, label: null })),
   }));
 
 describe("the fixtures are the server's", () => {
@@ -83,7 +83,7 @@ describe("the draft of a review", () => {
 
   it("counts the characters that will be read: words as they stand, a space between them once, skipped paragraphs not at all", () => {
     const part = draft(["P", ["a  b   c", "  dd "]])[0];
-    part.paragraphs.push({ kind: "paragraph", text: "a code block that is not read", skipped: "code", edited: false });
+    part.paragraphs.push({ kind: "paragraph", text: "a code block that is not read", skipped: "code", edited: false, speaker: null, label: null });
     expect(partChars(part)).toBe(5 + 2);
   });
 });
@@ -530,7 +530,7 @@ describe("keys of the player", () => {
 describe("which piece is being spoken", () => {
   const rate = 1000; // a rate that makes a frame a millisecond, so a start is easy to read
   const piece = (idx: number, start: number | null, extra: Partial<PartPiece> = {}): PartPiece => ({
-    idx, kind: "paragraph", text: `p${idx}`, continues: false, status: start === null ? "pending" : "done", frames: 1000, start_frame: start, error: null, url: null, ...extra,
+    idx, kind: "paragraph", text: `p${idx}`, continues: false, speaker: null, status: start === null ? "pending" : "done", frames: 1000, start_frame: start, error: null, url: null, ...extra,
   });
   const pieces = [piece(0, 0), piece(1, 2000), piece(2, 5000), piece(3, null), piece(4, null)];
 
@@ -789,12 +789,17 @@ describe("whether the review has been changed", () => {
 });
 
 describe("the switches", () => {
-  const made = { clean: true, readExtras: false };
+  const made = { clean: true, readExtras: false, speakers: true };
   it("are the same as the ones the review was asked for with, or have changed since", () => {
-    expect(switchesChanged(made, { clean: true, readExtras: false })).toBe(false);
-    expect(switchesChanged(made, { clean: false, readExtras: false })).toBe(true);
-    expect(switchesChanged(made, { clean: true, readExtras: true })).toBe(true);
-    expect(switchesChanged(made, { clean: false, readExtras: true })).toBe(true);
+    expect(switchesChanged(made, { clean: true, readExtras: false, speakers: true })).toBe(false);
+    expect(switchesChanged(made, { clean: false, readExtras: false, speakers: true })).toBe(true);
+    expect(switchesChanged(made, { clean: true, readExtras: true, speakers: true })).toBe(true);
+    expect(switchesChanged(made, { clean: false, readExtras: true, speakers: true })).toBe(true);
+  });
+
+  it("include the one that finds speakers (§44.5): turning it off or on is a change the review has to be asked again for", () => {
+    expect(switchesChanged(made, { clean: true, readExtras: false, speakers: false })).toBe(true);
+    expect(switchesChanged({ ...made, speakers: false }, { clean: true, readExtras: false, speakers: true })).toBe(true);
   });
 });
 
@@ -857,9 +862,13 @@ describe("asking for a sample", () => {
 
 describe("what is said when a reading is queued", () => {
   it("has its title, its parts and about how long", () => {
+    // a reading that used the pronunciation list says how much, last (§44.3); one that used none says nothing of it
     const run = makeSpeechRun();
-    expect(queuedText(run)).toBe("Queued “A test reading”: 2 parts, less than a minute.");
-    const long = makeSpeechRun({ reading: { ...(run.reading as ReadingInfo), parts_total: 12, seconds_total: 40800 } });
+    const listed = makeSpeechRun({ reading: { ...(run.reading as ReadingInfo), pronunciations: { entries: 2, uses: 14 } } });
+    expect(queuedText(listed)).toBe("Queued “A test reading”: 2 parts, less than a minute. Pronunciation list: 2 entries, 14 words said your way.");
+    const unlisted = makeSpeechRun({ reading: { ...(run.reading as ReadingInfo), pronunciations: { entries: 0, uses: 0 } } });
+    expect(queuedText(unlisted)).toBe("Queued “A test reading”: 2 parts, less than a minute.");
+    const long = makeSpeechRun({ reading: { ...(unlisted.reading as ReadingInfo), parts_total: 12, seconds_total: 40800 } });
     expect(queuedText(long)).toBe("Queued “A test reading”: 12 parts, about 11 h 20 min.");
     expect(queuedText(makeSpeechRun({ reading: { ...(run.reading as ReadingInfo), parts_total: 1 } }))).toMatch(/: 1 part, /);
   });
@@ -877,7 +886,7 @@ describe("what is said when a reading is queued", () => {
 describe("what the player plays and where it goes", () => {
   const rate = 1000; // a frame is a millisecond, so a start can be read off
   const piece = (idx: number, start: number | null, frames = 2000): PartPiece => ({
-    idx, kind: "paragraph", text: `p${idx}`, continues: false, status: start === null ? "pending" : "done", frames: start === null ? null : frames,
+    idx, kind: "paragraph", text: `p${idx}`, continues: false, speaker: null, status: start === null ? "pending" : "done", frames: start === null ? null : frames,
     start_frame: start, error: null, url: start === null ? null : `/p/${idx}.wav`,
   });
   // a part with `made` of five pieces made, two seconds each, and none of it whole

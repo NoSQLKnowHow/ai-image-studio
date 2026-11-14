@@ -695,8 +695,8 @@ def test_a_track_of_a_run_that_has_not_finished_is_refused(client):
 
 
 # ------------------------------------------------------------------ schema 6
-def test_the_schema_is_11():
-    assert SCHEMA_VERSION == 11  # 1.24's More like this made it 11 (runs.variation_json and runs.family_id); 1.15 made it 6 (this file's columns); 1.17's Vector made it 7, 1.18's versions in the bin 8, 1.19's Prompt builder 9 and 1.20's Speech tab 10; all keep them
+def test_the_schema_is_12():
+    assert SCHEMA_VERSION == 12  # 1.25's pronunciation list and speakers made it 12 (speech_pronunciations and speech_pieces.speaker); 1.24's More like this made it 11 (runs.variation_json and runs.family_id); 1.15 made it 6 (this file's columns); 1.17's Vector made it 7, 1.18's versions in the bin 8, 1.19's Prompt builder 9 and 1.20's Speech tab 10; all keep them
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:

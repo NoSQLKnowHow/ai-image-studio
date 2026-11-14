@@ -25,10 +25,11 @@ from .speech.schema import SPEECH_SCHEMA
 from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
 
+# 12: speech_pieces.speaker and the speech_pronunciations table (§44.6); 11: runs.variation_json and runs.family_id, for More like this (§43.4);
 # 10: mode 'speech', runs.queue_key and runs.hidden, and the Speech tab's tables (§38.8); 9: the Prompt builder's tables and runs.prompt_id, runs.prompt_version (§37.4); 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
 # 5: the projects table and runs.project_id, for project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
 # 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 log = logging.getLogger("studio.db")
 
 # A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
@@ -203,6 +204,7 @@ class Database:
             self._add_prompt_columns()
             self._add_speech_columns()
             self._add_variation_columns()
+            self._add_piece_speaker_column()
             self.has_fts5 = self._add_prompt_search()
             self._record_version(previous)
             self._queue_order = QUEUE_ORDER
@@ -327,6 +329,14 @@ class Database:
             if column not in have:
                 self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
         self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_family ON runs(family_id)")
+
+    def _add_piece_speaker_column(self) -> None:
+        """Schema 12: the LAST column of `speech_pieces` (DESIGN.md §44.5), added to a table that lacks it. `speaker` is the name of the speaker a piece belongs to (null for the
+        narrator and for every piece made before 1.25). It is the last column, in the order `SPEECH_SCHEMA` has it, so that ALTER TABLE gives the same table as CREATE TABLE
+        does. The new table of schema 12, `speech_pronunciations`, needs no step here: `_SCHEMA` creates what is missing."""
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(speech_pieces)")}
+        if "speaker" not in have:
+            self._conn.execute("ALTER TABLE speech_pieces ADD COLUMN speaker TEXT")
 
     def _add_prompt_search(self) -> bool:
         """Schema 9: the word index over prompts (DESIGN.md §37.4). Returns whether this SQLite has FTS5; where it has not, the studio keeps working and

@@ -1,13 +1,23 @@
 import { useId, useRef, useState } from "react";
 import { PART_TITLE_MAX, mergeProblem, partChars, partLengthText, reviewLine, skippedText, type DraftPart } from "../speech";
+import type { VoiceOffer } from "../speakers";
 import type { SpeechLimits } from "../speechTypes";
 import type { SpeechSource } from "../useSpeechSource";
+import { SpeechSpeakers } from "./SpeechSpeakers";
 
 // The review of a text before it is read (DESIGN.md §38.2): what will be spoken, divided into parts. Each part can be included or left out, renamed, joined to the
 // next, and opened to read and change its paragraphs. What the studio leaves out (code, tables) is shown greyed, with the reason. Nothing is made from here.
 
 /** A part of a very long book can have hundreds of paragraphs; they are shown in pages so that opening one does not put thousands of boxes on the page. */
 const PARAGRAPHS_AT_A_TIME = 100;
+
+/** Which voices the speakers can be given: what the engine can use together with the main voice (`voicesFor`), and the main voice's name for the first choice of each list. */
+export interface SpeakerVoices {
+  offer: VoiceOffer;
+  mainName: string;
+}
+
+const NO_VOICES: SpeakerVoices = { offer: { presets: [], saved: [], note: null }, mainName: "the main voice" };
 
 interface RowProps {
   part: DraftPart;
@@ -75,8 +85,16 @@ function PartRow({ part, index, parts, limits, source }: RowProps) {
                   <span className="badge">{skippedText(paragraph.skipped)}</span>
                 </>
               ) : (
+                <>
+                {/* a line of a speaker shows whose it is: the name is not in the words and is not read; a name turned off is read as written, so its line is shown as text */}
+                {paragraph.speaker && (
+                  <span className="badge speech-paragraph-speaker" data-speaker={paragraph.speaker}>
+                    {source.cast[paragraph.speaker]?.on ?? true ? paragraph.speaker : `${paragraph.label ?? paragraph.speaker} read as text`}
+                  </span>
+                )}
                 <textarea value={paragraph.text} rows={Math.min(12, Math.max(1, Math.ceil(paragraph.text.length / 70)))}
                   aria-label={`${paragraph.kind === "heading" ? "Heading" : "Paragraph"} ${j + 1} of part ${number}`} onChange={(e) => source.edit(index, j, e.target.value)} />
+                </>
               )}
             </li>
           ))}
@@ -93,7 +111,7 @@ function PartRow({ part, index, parts, limits, source }: RowProps) {
   );
 }
 
-export function SpeechReview({ source, limits }: { source: SpeechSource; limits: SpeechLimits }) {
+export function SpeechReview({ source, limits, voices = NO_VOICES }: { source: SpeechSource; limits: SpeechLimits; voices?: SpeakerVoices }) {
   const { prepared, parts } = source;
   if (!prepared) return null;
   return (
@@ -126,6 +144,8 @@ export function SpeechReview({ source, limits }: { source: SpeechSource; limits:
           <ul>{prepared.cleaning.map((line, i) => <li key={i}>{line}</li>)}</ul>
         </details>
       )}
+
+      <SpeechSpeakers speakers={prepared.speakers ?? []} cast={source.cast} offer={voices.offer} mainName={voices.mainName} max={limits.speakers_max} onChange={source.setChoice} />
 
       <ol className="speech-parts" aria-label="Parts">
         {parts.map((part, index) => <PartRow key={part.key} part={part} index={index} parts={parts} limits={limits} source={source} />)}

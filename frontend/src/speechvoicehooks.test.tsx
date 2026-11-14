@@ -217,7 +217,7 @@ describe("designing a voice", () => {
     await act(settle);
     expect(t.result.current.phase).toBe("done");
     expect(t.result.current.clips.map((c) => c.index)).toEqual([0, 1, 2]);
-    expect(t.result.current.clips[0].url).toBe("/api/speech/candidates/7f6108c5034732e60e81230e03fd5041/0.wav");
+    expect(t.result.current.clips[0].url).toBe(DESIGN.files.find((f) => f.index === 0)?.url); // the contract's own address (its id changes each time the contract is made again)
   });
 
   it("finds out by asking when the event was missed", async () => {

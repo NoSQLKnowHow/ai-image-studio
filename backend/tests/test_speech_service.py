@@ -60,10 +60,11 @@ class Env:
         row = self.db.get_run(run_id)
         return self.service.accept_piece(row, {"key": f"{part}-{idx}", "path": self.write_piece(run_id, part, idx), **event})
 
-    def add_voice(self, voice_id: str = "v" * 32, kind: str = "cloned", engine: str = "fake") -> str:
+    def add_voice(self, voice_id: str = "v" * 32, kind: str = "cloned", engine: str = "fake", name: str = "My voice") -> str:
+        """A saved voice row. `name` is only needed when a test makes more than one: two voices may not share a name (release 1.25 added it for the speakers' voices)."""
         with self.db.tx() as c:
-            c.execute("INSERT INTO voices (id, name, name_key, kind, engine, ref_text, ref_path, seconds, created_at) VALUES (?, 'My voice', 'my voice', ?, ?, "
-                      "'the words said', ?, 20.0, '2026-11-08T10:00:00.000Z')", (voice_id, kind, engine, f"speech/voices/{voice_id}/reference.wav"))
+            c.execute("INSERT INTO voices (id, name, name_key, kind, engine, ref_text, ref_path, seconds, created_at) VALUES (?, ?, ?, ?, ?, "
+                      "'the words said', ?, 20.0, '2026-11-08T10:00:00.000Z')", (voice_id, name, name.casefold(), kind, engine, f"speech/voices/{voice_id}/reference.wav"))
         return voice_id
 
 

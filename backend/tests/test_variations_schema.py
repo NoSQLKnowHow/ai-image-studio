@@ -5,7 +5,12 @@ What these protect: a database made by the 1.22 studio (schema 10) is upgraded a
 second start changes nothing and makes no second copy; and the link works once the columns are there.
 
 A schema 10 database is made by taking a current one and putting it back: the index and the two columns dropped and the version set to 10. That is the table 1.22 had, and
-it is what the upgrade is built to find."""
+it is what the upgrade is built to find.
+
+1.25 moved the schema on to 12 (DESIGN.md §44.6: `speech_pieces.speaker` and the `speech_pronunciations` table), so what these tests pin, deliberately, is now: the
+version a database ends at is 12; the copy kept before an upgrade is named for the version it was upgraded TO (`before-schema-12`) and holds the database as it was
+(still version 10); and the schema 10 database they start from has what schema 12 added taken away as well, so that it is a faithful 1.22 database. The two columns of schema 11
+are still the ones this file is about. Schema 12's own checks are in test_speech_schema12.py."""
 
 from __future__ import annotations
 
@@ -26,9 +31,12 @@ def indexes_of(path) -> set[str]:
 
 
 def as_schema_10(path) -> None:
-    """Put a current database back to what schema 10 left: no family index, no `variation_json` or `family_id`, version 10."""
+    """Put a current database back to what schema 10 left: no family index, no `variation_json` or `family_id`, version 10. Since 1.25 that also means no
+    `speech_pieces.speaker` and no `speech_pronunciations` table (schema 12), which a 1.22 database never had."""
     conn = sqlite3.connect(path)
     try:
+        conn.execute("DROP TABLE speech_pronunciations")
+        conn.execute("ALTER TABLE speech_pieces DROP COLUMN speaker")
         conn.execute("DROP INDEX idx_runs_family")
         conn.execute("ALTER TABLE runs DROP COLUMN variation_json")
         conn.execute("ALTER TABLE runs DROP COLUMN family_id")
@@ -52,12 +60,12 @@ def database_as_1_22(tmp_path):
     return path, fresh
 
 
-def test_the_schema_is_11_and_a_new_database_has_the_two_columns_last_and_the_index(tmp_path):
-    assert SCHEMA_VERSION == 11
+def test_a_new_database_has_the_two_columns_of_schema_11_last_and_the_index(tmp_path):
+    assert SCHEMA_VERSION == 12  # schema 11 added these columns; 1.25 is at 12 (test_speech_schema12.py)
     path = tmp_path / "studio.sqlite"
     Database(path).close()
     assert columns(path, "runs")[-2:] == NEW_COLUMNS
-    assert stored_version(path) == "11" and "idx_runs_family" in indexes_of(path)
+    assert stored_version(path) == "12" and "idx_runs_family" in indexes_of(path)
 
 
 def test_a_schema_10_database_is_upgraded_after_a_copy_and_keeps_every_run(tmp_path):
@@ -70,7 +78,7 @@ def test_a_schema_10_database_is_upgraded_after_a_copy_and_keeps_every_run(tmp_p
 
     migrated = Database(path)
     try:
-        assert stored_version(path) == "11"
+        assert stored_version(path) == "12"
         assert columns(path, "runs") == columns(fresh, "runs")  # the same table as a new database makes, in the same order
         after = [dict(r) for r in migrated.read_all("SELECT * FROM runs ORDER BY seq")]
         assert [{k: v for k, v in row.items() if k not in ("variation_json", "family_id")} for row in after] == before  # every run, every column it had
@@ -80,7 +88,7 @@ def test_a_schema_10_database_is_upgraded_after_a_copy_and_keeps_every_run(tmp_p
         assert migrated.get_run(run_row(1)["id"])["pinned"] == 1  # a column that is easy to lose in a careless rebuild
     finally:
         migrated.close()
-    copy = tmp_path / "studio.sqlite.before-schema-11"
+    copy = tmp_path / "studio.sqlite.before-schema-12"  # named for the version the upgrade went TO
     assert copy.exists() and stored_version(copy) == "10" and "variation_json" not in dict(columns(copy, "runs"))  # the database as 1.22 left it: a way back
     assert [r[0] for r in sqlite3.connect(copy).execute("SELECT id FROM runs ORDER BY seq")] == [run_row(n)["id"] for n in (1, 2)]
 
@@ -105,7 +113,7 @@ def test_after_the_upgrade_a_link_can_be_stored_read_back_and_listed_by_family(t
 def test_a_second_start_changes_nothing_and_makes_no_second_copy(tmp_path):
     path, _ = database_as_1_22(tmp_path)
     Database(path).close()
-    copy = tmp_path / "studio.sqlite.before-schema-11"
+    copy = tmp_path / "studio.sqlite.before-schema-12"
     first_copy = copy.read_bytes()
     shape = sqlite3.connect(path).execute("SELECT group_concat(sql) FROM sqlite_master ORDER BY name").fetchone()
     Database(path).close()
@@ -113,10 +121,10 @@ def test_a_second_start_changes_nothing_and_makes_no_second_copy(tmp_path):
     assert sqlite3.connect(path).execute("SELECT group_concat(sql) FROM sqlite_master ORDER BY name").fetchone() == shape
 
 
-def test_a_1_19_database_reaches_schema_11_in_one_start(tmp_path):
+def test_a_1_19_database_reaches_the_current_schema_in_one_start(tmp_path):
     """An old database goes through the rebuild of schema 10 and ends with the new columns too: the rebuild uses the current definition, which has them."""
     from test_speech_schema import database_as_1_19
 
     path, fresh, _before, _prompt = database_as_1_19(tmp_path)
     Database(path).close()
-    assert stored_version(path) == "11" and columns(path, "runs") == columns(fresh, "runs") and columns(path, "runs")[-2:] == NEW_COLUMNS
+    assert stored_version(path) == "12" and columns(path, "runs") == columns(fresh, "runs") and columns(path, "runs")[-2:] == NEW_COLUMNS

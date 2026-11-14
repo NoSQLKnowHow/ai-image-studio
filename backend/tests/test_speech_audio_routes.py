@@ -182,7 +182,10 @@ def test_the_zip_has_every_part_stored_and_a_playlist_in_order(client, done):
     archive = zipfile.ZipFile(io.BytesIO(response.content))
     assert archive.testzip() is None  # every CRC is right
     names = archive.namelist()
-    assert len(names) == 3 and names[2] == "playlist.m3u" and names[0].startswith("reading_test-reading_part01_anna_") and names[1].startswith("reading_test-reading_part02_")
+    # 1.25 added two chapter lists AFTER the parts and the playlist (DESIGN.md §44.4); what was there before is where it was, in the same order, so this test has changed
+    # in one place only: the count and the tail. The chapter lists themselves are tested in test_speech_audiobook.py.
+    assert len(names) == 5 and names[2] == "playlist.m3u" and names[0].startswith("reading_test-reading_part01_anna_") and names[1].startswith("reading_test-reading_part02_")
+    assert names[3:] == ["chapters.txt", "chapters.ffmetadata"]
     assert all(info.compress_type == zipfile.ZIP_STORED for info in archive.infolist())  # audio does not shrink, and a book is large (criterion 286)
     for n, name in enumerate(names[:2]):
         assert archive.read(name) == part_wav(client, done["id"], n).content  # the same bytes the player gets

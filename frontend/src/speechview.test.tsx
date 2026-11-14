@@ -17,7 +17,7 @@ import type { SpeechRun } from "./types";
 
 const RATE = 1000; // a frame is a millisecond
 const piece = (idx: number, start: number | null, part = 0, extra: Partial<PartPiece> = {}): PartPiece => ({
-  idx, kind: "paragraph", text: `Paragraph ${idx + 1} of part ${part + 1}.`, continues: false, status: start === null ? "pending" : "done", frames: start === null ? null : 2000,
+  idx, kind: "paragraph", text: `Paragraph ${idx + 1} of part ${part + 1}.`, continues: false, speaker: null, status: start === null ? "pending" : "done", frames: start === null ? null : 2000,
   start_frame: start, error: null, url: start === null ? null : `/p${part}/${idx}.wav`, ...extra,
 });
 const whole = (part = 0): PartDetail => makePartDetail({
@@ -121,6 +121,16 @@ describe("the reading view", () => {
     expect(paragraph("Paragraph 2 of part 1.").getAttribute("aria-current")).toBe("true");
     expect(paragraph("Paragraph 1 of part 1.").hasAttribute("aria-current")).toBe(false);
     expect(document.querySelectorAll('[aria-current="true"].piece')).toHaveLength(1);
+  });
+
+  it("shows whose a paragraph is when a speaker speaks it, and nothing before the others (§44.5)", async () => {
+    const details = makePartDetail({ ...whole(0), pieces: [piece(0, 0), piece(1, 2000, 0, { speaker: "Alice" }), piece(2, 4000, 0, { speaker: "Bob" })] });
+    await open([details]);
+    const spoken = paragraph("Paragraph 2 of part 1.");
+    expect(spoken.querySelector(".piece-speaker")?.textContent).toBe("Alice: "); // the colon is there for a screen reader (it is not drawn), then a space before the words
+    expect(spoken.querySelector(".piece-speaker .sr-only")?.textContent).toBe(":");
+    expect(paragraph("Paragraph 3 of part 1.").querySelector(".piece-speaker")?.textContent).toBe("Bob: ");
+    expect(paragraph("Paragraph 1 of part 1.").querySelector(".piece-speaker")).toBeNull(); // the narrator's has no name
   });
 
   it("dims a paragraph that is not made, says so to a screen reader, and does not play it when pressed", async () => {
@@ -941,5 +951,20 @@ describe("editing a paragraph, in the details", () => {
     fireEvent.click(button("Cancel"));
     edit();
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+// ------------------------------------------------------------------ the audiobook button in the player (DESIGN.md §44.4)
+describe("the audiobook button", () => {
+  it("is in the player once a part is finished, with the server's reason where the file cannot be made", async () => {
+    await open([whole(0)], { audiobook: { available: false, reason: "The audiobook file needs ffmpeg with an AAC encoder, and this server's ffmpeg has none.", hint: null } });
+    const button = screen.getByRole("button", { name: "Make audiobook (M4B)" });
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText(/AAC encoder/)).toBeTruthy();
+  });
+
+  it("is not in the player of a reading with nothing finished", async () => {
+    await open([whole(0)], {}, runOf({}, { parts_done: 0 }));
+    expect(screen.queryByRole("button", { name: /audiobook/i })).toBeNull();
   });
 });

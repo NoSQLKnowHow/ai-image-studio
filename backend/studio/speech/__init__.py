@@ -15,6 +15,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from .text.speakers import MAX_SPEAKERS
+from .pronounce import ENTRIES_MAX, SAY_MAX, TRY_CHARS, WORD_MAX, WORD_WORDS_MAX
+
 # About how many characters of English a narrator speaks in a second (150 words a minute at about 5.7 characters a word, spaces included). The page and
 # the disk check turn a text's length into the length of its audio with this; the engines' measured speeds replace it for the time to make it.
 SPOKEN_CHARS_PER_SECOND = 14.0
@@ -31,5 +34,8 @@ def speech_limits(settings: Any) -> dict[str, Any]:
         "voice_seconds": {"min": settings.speech_voice_min_seconds, "max": settings.speech_voice_max_seconds},
         "recording_mb": settings.speech_recording_max_mb,
         "chars_per_second": SPOKEN_CHARS_PER_SECOND,
+        # the limits of the pronunciation list (DESIGN.md §44.3), so that the page says them and repeats no number of its own
+        "pronunciation": {"word_max": WORD_MAX, "words_max": WORD_WORDS_MAX, "say_max": SAY_MAX, "entries_max": ENTRIES_MAX, "try_chars": TRY_CHARS},
+        "speakers_max": MAX_SPEAKERS,  # the most speakers one reading has (DESIGN.md §44.5)
     }
 

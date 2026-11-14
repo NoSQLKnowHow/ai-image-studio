@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { ApiError } from "./api";
+import { initialCast, withChoice, type Cast, type SpeakerChoice } from "./speakers";
 import {
   draftFromPrepared, editParagraph as editParagraphIn, fileProblem, mergeWithNext as mergeIn, normalizeUrl, renamePart as renameIn, reviewChanged, setInclude as includeIn,
   switchesChanged, urlProblem, type DraftPart, type Switches,
@@ -32,6 +33,10 @@ export interface SpeechSource {
   setClean: (clean: boolean) => void;
   readExtras: boolean;
   setReadExtras: (readExtras: boolean) => void;
+  speakers: boolean; // find the speakers: lines that begin with a name and a colon (§44.5)
+  setSpeakers: (speakers: boolean) => void;
+  cast: Cast; // what the person chose for each name the review found
+  setChoice: (name: string, change: Partial<SpeakerChoice>) => void;
   phase: Phase;
   problem: Problem | null;
   prepared: Prepared | null;
@@ -68,6 +73,8 @@ export function useSpeechSource(limits: Pick<SpeechLimits, "upload_mb"> | undefi
   const [file, setFile] = useState<File | null>(null);
   const [clean, setClean] = useState(true);
   const [readExtras, setReadExtras] = useState(false);
+  const [speakers, setSpeakers] = useState(true);
+  const [cast, setCast] = useState<Cast>({});
   const [phase, setPhase] = useState<Phase>("idle");
   const [problem, setProblem] = useState<Problem | null>(null);
   const [prepared, setPrepared] = useState<Prepared | null>(null);
@@ -79,13 +86,15 @@ export function useSpeechSource(limits: Pick<SpeechLimits, "upload_mb"> | undefi
   const controller = useRef<AbortController | null>(null);
 
   // the person's own changes: to the parts (left out, renamed, joined, edited) or to the title of the whole reading
-  const changed = useMemo(() => !!prepared && (reviewChanged(parts, prepared) || title !== prepared.title), [parts, prepared, title]);
-  const switchesStale = !!prepared && !!made && switchesChanged(made, { clean, readExtras });
+  // (a name turned off, or given a voice of its own, is the person's work too: it is asked about before it is thrown away, §44.5)
+  const castChanged = useMemo(() => Object.values(cast).some((c) => !c.on || c.voice !== null), [cast]);
+  const changed = useMemo(() => !!prepared && (reviewChanged(parts, prepared) || title !== prepared.title || castChanged), [parts, prepared, title, castChanged]);
+  const switchesStale = !!prepared && !!made && switchesChanged(made, { clean, readExtras, speakers });
 
   /** Ask the server, and take the answer if it is still the one wanted. A failure leaves the review as it was: work already done on it is not thrown away
    *  because a second source could not be read. */
   const run = useCallback(async (call: (signal: AbortSignal) => Promise<Prepared>) => {
-    const asked = { clean, readExtras }; // what this question is asked with, kept to compare the switches with later
+    const asked = { clean, readExtras, speakers }; // what this question is asked with, kept to compare the switches with later
     const mine = ++newest.current;
     controller.current?.abort();
     const mineController = new AbortController();
@@ -99,6 +108,7 @@ export function useSpeechSource(limits: Pick<SpeechLimits, "upload_mb"> | undefi
       setPrepared(result);
       setMade(asked);
       setParts(draftFromPrepared(result));
+      setCast(initialCast(result.speakers ?? [])); // a new review has new names: every one starts on, with the main voice (§44.8 choice 13)
       setTitle(result.title);
       setPhase("ready");
     } catch (error) {
@@ -106,7 +116,7 @@ export function useSpeechSource(limits: Pick<SpeechLimits, "upload_mb"> | undefi
       setPhase(prepared ? "ready" : "idle");
       if (!isAbort(error)) setProblem(toProblem(error));
     }
-  }, [prepared, clean, readExtras]);
+  }, [prepared, clean, readExtras, speakers]);
 
   /** Start something that replaces the review: at once, or after the person has said so when the review holds changes of theirs. */
   const replacing = useCallback((start: () => void) => {
@@ -121,23 +131,23 @@ export function useSpeechSource(limits: Pick<SpeechLimits, "upload_mb"> | undefi
 
   const prepareText = useCallback(() => {
     if (!text.trim()) return fail("Paste the text to read.");
-    replacing(() => void run(() => speechApi.prepare({ source: "text", text, clean, read_extras: readExtras })));
-  }, [text, clean, readExtras, replacing, run]);
+    replacing(() => void run(() => speechApi.prepare({ source: "text", text, clean, read_extras: readExtras, speakers })));
+  }, [text, clean, readExtras, speakers, replacing, run]);
 
   const prepareUrl = useCallback(() => {
     const wrong = urlProblem(url);
     if (wrong) return fail(wrong);
     const address = normalizeUrl(url);
     setUrl(address);
-    replacing(() => void run(() => speechApi.prepare({ source: "url", url: address, clean, read_extras: readExtras })));
-  }, [url, clean, readExtras, replacing, run]);
+    replacing(() => void run(() => speechApi.prepare({ source: "url", url: address, clean, read_extras: readExtras, speakers })));
+  }, [url, clean, readExtras, speakers, replacing, run]);
 
   const chooseFile = useCallback((chosen: File) => {
     const wrong = fileProblem(chosen, { upload_mb: limits?.upload_mb ?? 50 });
     if (wrong) return fail(wrong);
     setFile(chosen);
-    replacing(() => void run((signal) => speechApi.prepareFile(chosen, { clean, read_extras: readExtras }, signal)));
-  }, [limits, clean, readExtras, replacing, run]);
+    replacing(() => void run((signal) => speechApi.prepareFile(chosen, { clean, read_extras: readExtras, speakers }, signal)));
+  }, [limits, clean, readExtras, speakers, replacing, run]);
 
   const prepareAgain = useCallback(() => {
     if (way === "file" && file) chooseFile(file);
@@ -150,7 +160,8 @@ export function useSpeechSource(limits: Pick<SpeechLimits, "upload_mb"> | undefi
   const stop = useCallback(() => controller.current?.abort(), []);
 
   return {
-    way, setWay: setWayState, text, setText, url, setUrl, file, clean, setClean, readExtras, setReadExtras, phase, problem, prepared, parts, title, setTitle,
+    way, setWay: setWayState, text, setText, url, setUrl, file, clean, setClean, readExtras, setReadExtras, speakers, setSpeakers, cast,
+    setChoice: (name, change) => setCast((current) => withChoice(current, name, change)), phase, problem, prepared, parts, title, setTitle,
     changed, switchesStale, replacing: pending !== null, prepareText, prepareUrl, chooseFile, prepareAgain, confirmReplace, keepReview, stop,
     include: (index, include) => setParts((current) => includeIn(current, index, include)),
     rename: (index, name) => setParts((current) => renameIn(current, index, name)),

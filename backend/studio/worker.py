@@ -387,8 +387,9 @@ class Worker:
             self.emit("progress", run_id=job.run_id, image=index + 1, of=total, step=index + 1, steps=total, stage="speak")
             started = time.monotonic()
             try:
-                request = PieceRequest(text=piece.text, voice=job.voice, ref=job.ref, style=job.style, language=job.language,
-                                       seed=piece.seed, design=job.design)
+                # a speaker with a voice of their own is spoken in it (DESIGN.md §44.5); every other piece in the job's voice
+                request = PieceRequest(text=piece.text, voice=piece.voice if piece.own_voice else job.voice, ref=piece.ref if piece.own_voice else job.ref,
+                                       style=piece.style if piece.own_voice else job.style, language=job.language, seed=piece.seed, design=job.design)
                 speech = self.pipeline.synthesize(request, cancelled)
                 # The pause after the piece is part of its audio, so that the pieces of a part, laid end to end, are the part (DESIGN.md §38.7).
                 silence = bytes(2 * (speech.sample_rate * piece.pause_ms // 1000))

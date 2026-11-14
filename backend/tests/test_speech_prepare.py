@@ -41,7 +41,7 @@ def test_the_review_lists_the_parts_the_cleaning_and_the_length():
     assert texts == ["A Great Title", "See the docs for more."]
     assert review["cleaning"] and any("markup" in line for line in review["cleaning"]) and any("citation" in line for line in review["cleaning"])
     assert review["chars"] == sum(len(t) for t in texts) and review["minutes"] == round(review["chars"] / 14 / 60, 1)
-    assert review["source"] == {"kind": "text"} and review["options"] == {"clean": True, "read_extras": False}
+    assert review["source"] == {"kind": "text"} and review["options"] == {"clean": True, "read_extras": False, "speakers": True}  # "speakers" is new in 1.25 (on by default)
 
 
 def test_cleaning_can_be_switched_off_and_the_raw_text_is_kept():
@@ -210,7 +210,7 @@ def test_the_route_prepares_pasted_text(client):
     response = client.post("/api/speech/prepare", json={"source": "text", "text": f"# A Title\n\n{LONG}\n\n{LONG}\n"})
     assert response.status_code == 200, response.text
     review = response.json()
-    assert review["parts"][0]["paragraphs"][0] == {"kind": "heading", "text": "A Title", "skipped": None} and review["source"] == {"kind": "text"}
+    assert review["parts"][0]["paragraphs"][0] == {"kind": "heading", "text": "A Title", "skipped": None, "speaker": None, "label": None} and review["source"] == {"kind": "text"}
 
 
 @pytest.mark.parametrize("body, status, code", [

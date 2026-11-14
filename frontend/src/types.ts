@@ -378,6 +378,11 @@ export interface SpeechOptionsSnapshot {
   licence?: SpeechLicence;
   sample_rate?: number;
   chars?: number;
+  /** The pronunciation entries this reading's words use, as they were when it was made, and how many words they changed (DESIGN.md §44.3): the reading keeps them. */
+  pronunciations?: { word: string; say: string; match_case: boolean }[];
+  pronunciation_uses?: number;
+  /** The speakers of the reading and the voice of each (§44.5): `voice` null means the main voice; `styleable` says whether the voice takes a style note. */
+  speakers?: { name: string; voice: ReadingVoice | null; styleable: boolean }[];
 }
 
 /** A reading (DESIGN.md §38.9). The short jobs behind a voice sample or a voice being designed are speech runs too, but they are `hidden` and no list or

@@ -90,6 +90,12 @@ class Storage:
         """Where a reading keeps the audio of its pieces: <data>/speech/readings/<run>/<part>/<piece>.wav (DESIGN.md §38.8)."""
         return self.speech / "readings" / check_id(run_id)
 
+    @property
+    def audiobooks_dir(self) -> Path:
+        """Where the M4B audiobook files that were made on request are kept for a while: <data>/speech/audiobooks/<run>-<signature>.m4b (DESIGN.md §44.4). They are made
+        again whenever they are asked for, so they are not backed up and are removed after `STUDIO_SPEECH_TEMP_HOURS`."""
+        return self.speech / "audiobooks"
+
     def vector_dir(self, run_id: str) -> Path:
         """Where a vector run keeps its drawings and what was made of them (DESIGN.md §31.12.6)."""
         return self.vector / check_id(run_id)
@@ -182,6 +188,9 @@ class Storage:
         shutil.rmtree(self.audio / run_id, ignore_errors=True)
         shutil.rmtree(self.vector / run_id, ignore_errors=True)
         shutil.rmtree(self.speech / "readings" / run_id, ignore_errors=True)
+        # a reading deleted for good takes its audiobook files (and any half-made one) with it (DESIGN.md §44.4)
+        for audiobook in self.audiobooks_dir.glob(f"{run_id}-*"):
+            audiobook.unlink(missing_ok=True)
         shutil.rmtree(self.thumbs / run_id, ignore_errors=True)
         shutil.rmtree(self.inputs / run_id, ignore_errors=True)
 

@@ -67,11 +67,13 @@ class Paragraph:
     will not be (`SKIP_CODE`, `SKIP_TABLE`): the page greys it and a switch reads it anyway."""
 
     kind: str  # "heading" or "paragraph"
-    text: str
+    text: str  # for a speaker's line, the words WITHOUT the name that began the line
     skipped: Optional[str] = None
+    speaker: Optional[str] = None  # the name of the speaker whose line it is (DESIGN.md §44.5); None for the narrator's
+    label: Optional[str] = None  # the words that began the line (`Alice:`), kept so that turning the name off can put them back
 
     def as_dict(self) -> dict[str, Any]:
-        return {"kind": self.kind, "text": self.text, "skipped": self.skipped}
+        return {"kind": self.kind, "text": self.text, "skipped": self.skipped, "speaker": self.speaker, "label": self.label}
 
 
 @dataclass
@@ -101,3 +103,4 @@ class PieceSpec:
     kind: str  # "heading" or "paragraph"
     text: str
     continues: bool = False  # true for a piece that carries on a paragraph begun in the piece before it
+    speaker: Optional[str] = None  # whose line it is (§44.5): a change of speaker is never inside one piece

@@ -18,13 +18,20 @@ from test_speech_recording import tone, wav
 from test_speech_server import wait_for_engines
 from test_speech_voices import design, sample, saved_cloned_voice, saved_designed_voice, upload, wait_job
 
-from studio.speech import routes, voice_routes
+from studio.speech import pronunciation_routes, routes, voice_routes
 
 CONTRACT = Path(__file__).parent / "speech_contract.json"
 
 # Pasted text with a heading and two paragraphs: enough to be a review with a part, a title and no warnings.
 TEXT = ("A short test chapter\n\nThe quick brown fox jumps over the lazy dog, again and again, until the dog gives up.\n\n"
         "A second paragraph follows, long enough to stand as a piece of its own in the review.\n")
+
+# A script: two names with two lines each, so that the review has speakers (DESIGN.md §44.5) and the keys of a speaker, and of a paragraph that is a speaker's, are in the contract.
+SCRIPT = ("A short scene\n\nThe sea went on all night, and nobody on the quay spoke of it until morning.\n\n"
+          "Alice: Did you hear the sea last night? It was loud enough to wake the house.\n"
+          "Bob: I did, and I did not sleep at all, not for a minute of the night.\n"
+          "Alice: Then we should go down to the quay and look at what it has left.\n"
+          "Bob: Yes, let us go.\n")
 
 
 def key_paths(value: Any, prefix: str = "") -> set[str]:
@@ -66,9 +73,11 @@ def kinds(value: Any, prefix: str = "") -> dict[str, set[str]]:
 # The bodies the page sends. Each is a model that refuses a key it does not know (`extra="forbid"`), so the names of its fields are the contract of the request: the
 # page's tests check that what it builds has exactly these, no more and no fewer.
 REQUEST_MODELS = {
-    "prepare": routes.PrepareBody, "reading": routes.ReadingBody, "reading_part": routes.PartBody, "reading_paragraph": routes.ParagraphBody, "piece": routes.PieceBody,
+    "prepare": routes.PrepareBody, "reading": routes.ReadingBody, "reading_part": routes.PartBody, "reading_paragraph": routes.ParagraphBody, "reading_speaker": routes.SpeakerBody, "piece": routes.PieceBody,
     "position": routes.PositionBody, "sample": voice_routes.SampleBody, "design": voice_routes.DesignBody, "save_voice": voice_routes.SaveVoiceBody,
     "save_voice_candidate": voice_routes.CandidateRef, "rename_voice": voice_routes.RenameBody,
+    # the pronunciation list (DESIGN.md §44.3)
+    "pronunciation": pronunciation_routes.EntryBody, "pronunciation_change": pronunciation_routes.EntryChange, "pronunciation_try": pronunciation_routes.TryBody,
 }
 
 
@@ -78,11 +87,23 @@ def build(client) -> dict[str, Any]:
     out: dict[str, Any] = {"capabilities_speech": caps["speech"], "limits_speech": caps["limits"]["speech"]}
     out["requests"] = {name: sorted(model.model_fields) for name, model in REQUEST_MODELS.items()}
     out["prepared"] = client.post("/api/speech/prepare", json={"source": "text", "text": TEXT}).json()
+    out["prepared_script"] = client.post("/api/speech/prepare", json={"source": "text", "text": SCRIPT}).json()
 
-    reading = finished_reading(client, parts=[part("One", 1, 2), part("Two", 3, 1)], style="calm and slow", language="English")
+    # one entry the reading below uses ("quick" is in its words), so that the keys of an entry kept in a reading's options are in the contract too
+    out["pronunciation_entry"] = client.post("/api/speech/pronunciations", json={"word": "quick", "say": "kwik", "match_case": False}).json()
+    out["pronunciations"] = client.get("/api/speech/pronunciations").json()
+    out["pronunciation_try"] = client.post("/api/speech/pronunciations/try", json={"text": "The quick brown fox."}).json()
+    # a reading with a cast: Alice has a voice of her own, Bob is read by the main voice (his `voice` is null), so both shapes of a speaker are in the contract
+    parts = [part("One", 1, 2), part("Two", 3, 1)]
+    parts[0]["paragraphs"][1]["speaker"] = "Alice"
+    parts[1]["paragraphs"][0]["speaker"] = "Bob"
+    reading = finished_reading(client, parts=parts, style="calm and slow", language="English", speakers=[{"name": "Alice", "voice": "bea"}, {"name": "Bob"}])
     assert client.put(f"/api/readings/{reading['id']}/position", json={"part": 0, "piece": 1, "offset_ms": 500}).status_code == 204
     out["reading_run"] = client.get(f"/api/runs/{reading['id']}").json()
     out["part_detail"] = client.get(f"/api/readings/{reading['id']}/parts/0").json()
+    # where the reading's audiobook (M4B) stands before anyone has asked for it (DESIGN.md §44.4): idle, with the keys of every state present. Asking for a file would need
+    # ffmpeg, which no contract capture may (criterion 291); the keys are the same whatever the state.
+    out["audiobook_status"] = client.get(f"/api/speech/{reading['id']}/audiobook").json()
 
     out["sample_answer_queued"] = sample(client, expect=202, voice="anna")  # the first press: a job to wait for
     out["sample_job"] = wait_job(client, out["sample_answer_queued"]["job"]["id"])
@@ -121,4 +142,15 @@ def test_the_contract_covers_each_state_the_page_has_to_draw(client):
     assert {v["kind"] for v in (stored["saved_voice_designed"], stored["saved_voice_cloned"])} == {"designed", "cloned"}
     assert stored["design_job"]["files"] and stored["design_job"]["task"] == "design" and stored["sample_job"]["task"] == "sample"
     assert stored["prepared"]["parts"] and stored["prepared"]["parts"][0]["paragraphs"]
+    assert stored["audiobook_status"]["state"] == "idle" and stored["audiobook_status"]["chapters"] == 2 and set(stored["capabilities_speech"]["audiobook"]) == {"available", "reason", "hint"}
     assert stored["capabilities_speech"]["engines"] and stored["sample_answer_queued"]["job"] and stored["sample_answer_ready"]["url"]
+    # the pronunciation list: an entry, the list, Try it with an entry that changed something, and an entry kept in a reading's options
+    assert stored["pronunciations"]["entries"] and stored["pronunciation_try"]["used"] and stored["pronunciation_try"]["changed"] is True
+    assert stored["reading_run"]["options"]["pronunciations"] and stored["reading_run"]["reading"]["pronunciations"]["uses"] > 0
+    # several voices: a review with speakers whose paragraphs name them, a reading that keeps its cast (one with a voice, one without) and pieces that know whose they are
+    script = stored["prepared_script"]
+    assert [s["name"] for s in script["speakers"]] == ["Alice", "Bob"] and any(q["speaker"] == "Alice" and q["label"] == "Alice:" for p in script["parts"] for q in p["paragraphs"])
+    cast = stored["reading_run"]["reading"]["speakers"]
+    assert [s["name"] for s in cast] == ["Alice", "Bob"] and cast[0]["voice"]["id"] == "bea" and cast[1]["voice"] is None
+    assert [s["name"] for s in stored["reading_run"]["options"]["speakers"]] == ["Alice", "Bob"]
+    assert {p["speaker"] for p in stored["part_detail"]["pieces"]} >= {None, "Alice"}

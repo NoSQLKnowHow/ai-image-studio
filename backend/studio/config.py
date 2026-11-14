@@ -94,7 +94,8 @@ class Settings:
     speech_recording_max_mb: int = 30  # the biggest recording of a voice that may be uploaded (a minute of stereo WAV at 48 kHz is under 12 MB)
     speech_ffmpeg: str = "ffmpeg"  # the program that reads a recording that is not a plain WAV (MP3, M4A, OGG, FLAC, WebM); found on the PATH unless a path is given
     speech_decode_timeout_s: int = 30  # how long it may take to read one recording
-    speech_temp_hours: int = 24  # how long the candidates of a voice design and an uploaded recording that was not saved are kept
+    speech_temp_hours: int = 24  # how long the candidates of a voice design and an uploaded recording that was not saved are kept; and an audiobook file after it was made or last taken
+    speech_audiobook_kbps: int = 64  # the bit rate of the M4B audiobook file (mono AAC), in kilobits a second (DESIGN.md §44.4)
     fake_step_delay_ms: int = 30
     static_dir: Optional[Path] = None  # built web UI; None = <repo>/frontend/dist if present
 
@@ -326,6 +327,7 @@ class Settings:
             speech_ffmpeg=text("STUDIO_SPEECH_FFMPEG", cls.speech_ffmpeg),
             speech_decode_timeout_s=integer("STUDIO_SPEECH_DECODE_TIMEOUT_S", cls.speech_decode_timeout_s, 2, 300),
             speech_temp_hours=integer("STUDIO_SPEECH_TEMP_HOURS", cls.speech_temp_hours, 1, 720),
+            speech_audiobook_kbps=integer("STUDIO_SPEECH_AUDIOBOOK_KBPS", cls.speech_audiobook_kbps, 16, 320),
             fake_step_delay_ms=integer("STUDIO_FAKE_STEP_DELAY_MS", cls.fake_step_delay_ms, 0, 10_000),
             static_dir=Path(env["STUDIO_STATIC_DIR"]).expanduser() if env.get("STUDIO_STATIC_DIR", "").strip() else None,
         )

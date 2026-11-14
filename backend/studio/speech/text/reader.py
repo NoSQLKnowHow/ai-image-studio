@@ -30,14 +30,14 @@ def apply_limits(memory_bytes: int, cpu_seconds: int) -> None:
     resource.setrlimit(resource.RLIMIT_FSIZE, (8 * 1024 * 1024, 8 * 1024 * 1024))
 
 
-def read(kind: str, path: str, charset: Optional[str]) -> Extracted:
-    """The chapters of a source of the given kind."""
+def read(kind: str, path: str, charset: Optional[str], speakers: bool = True) -> Extracted:
+    """The chapters of a source of the given kind. With `speakers` on, the readers that join lines (plain text, Markdown, PDF) start a paragraph at each speaker's line."""
     from .extract_text import decode_text, extract_markdown, extract_plain
 
     if kind == "txt":
-        return extract_plain(decode_text(Path(path).read_bytes()))
+        return extract_plain(decode_text(Path(path).read_bytes()), speakers)
     if kind == "md":
-        return extract_markdown(decode_text(Path(path).read_bytes()))
+        return extract_markdown(decode_text(Path(path).read_bytes()), speakers)
     if kind == "html":
         from .extract_html import extract_html
 
@@ -57,7 +57,7 @@ def read(kind: str, path: str, charset: Optional[str]) -> Extracted:
     if kind == "pdf":
         from .extract_pdf import extract_pdf
 
-        return extract_pdf(path)
+        return extract_pdf(path, speakers)
     raise PrepareError("unsupported", f"A {kind} file cannot be read.")
 
 
@@ -72,14 +72,15 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--chars-per-second", type=float, required=True)
     parser.add_argument("--no-clean", action="store_true")
     parser.add_argument("--read-extras", action="store_true")
+    parser.add_argument("--no-speakers", action="store_true", help="do not look for speakers (DESIGN.md section 44.5)")
     parser.add_argument("--memory-mb", type=int, default=2048)
     parser.add_argument("--cpu-seconds", type=int, default=60)
     args = parser.parse_args(argv)
     apply_limits(args.memory_mb * 1024 * 1024, args.cpu_seconds)
     try:
-        extracted = read(args.kind, args.path, args.charset)
+        extracted = read(args.kind, args.path, args.charset, speakers=not args.no_speakers)
         review = build_review(extracted, Limits(args.max_chars, args.part_max_chars, args.chars_per_second), json.loads(args.source),
-                              clean=not args.no_clean, read_extras=args.read_extras)
+                              clean=not args.no_clean, read_extras=args.read_extras, speakers=not args.no_speakers)
         answer = {"ok": True, "review": review}
     except PrepareError as exc:
         answer = {"ok": False, "error": exc.as_dict()}
