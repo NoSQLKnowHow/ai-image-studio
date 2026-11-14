@@ -19,12 +19,16 @@ import { Tray } from "./components/Tray";
 import { BuilderPanel, type BuilderCommand, type HistoryPicture } from "./components/BuilderPanel";
 import { VectorPanel } from "./components/VectorPanel";
 import { VectorViewer } from "./components/VectorViewer";
+import { CompareBar } from "./components/CompareBar";
+import { CompareView } from "./components/CompareView";
+import { MoreLikeThisDialog, type MoreLikeThisTarget } from "./components/MoreLikeThisDialog";
+import { basketReplaceFirst, basketSwap, basketToggle, cut, resolveBasketItem, variationRequest, type Basket, type ComparePicture, type MoreLikeThisAsk } from "./variations";
 import { enlargeFailedText, enlargedText, fourKFailedText, fourKMadeText, saveBlob, upscaleFailedText, upscaledText } from "./fourk";
 import {
   binContents, binnedText, emptiedText, filedText, itemBinnedText, itemDeletedText, itemRestoredText, leftTheViewText, movedText, restoredText, takenOutText,
   unkeptText, type BinContents, type ItemRef, type ViewScope,
 } from "./format";
-import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withProject, working, type HistoryFilter, type TabKind } from "./history";
+import { NO_FILTER, NO_PROJECT, canBin, filterKey, isDefault, matches, readFilter, saveFilter, showsWorking, visibleRuns, watchWorking, withFamily, withProject, working, type HistoryFilter, type TabKind } from "./history";
 import { copyText, useNow, useToasts } from "./hooks";
 import { PICTURES_ON_IMAGES_TAB, STILL_UPSCALING, takePictures } from "./paste";
 import { useCopyVectorSvg } from "./useCopyVectorSvg";
@@ -97,6 +101,15 @@ export default function App() {
   useEffect(() => {
     lightboxOpen.current = lightbox !== null;
   }, [lightbox]);
+  // More like this (DESIGN.md §43.3): what the dialog was opened for, the server's words if it refused, and whether a request is out
+  const [moreTarget, setMoreTarget] = useState<MoreLikeThisTarget | null>(null);
+  const [moreError, setMoreError] = useState<string | null>(null);
+  const [moreMaking, setMoreMaking] = useState(false);
+  // The compare basket (§43.5): two pictures at most, from any runs. It lives here and is gone on a reload. `replaceOffered`: a full basket refused a third picture, so the viewer offers
+  // to put it in place of the first; `comparing`: the compare view is open.
+  const [basket, setBasket] = useState<Basket>([]);
+  const [replaceOffered, setReplaceOffered] = useState(false);
+  const [comparing, setComparing] = useState(false);
   // The viewer of a Vector run's versions (DESIGN.md §35.2). `binned`: it is on the versions that are in the bin (the Deleted view), read-only, and its places are theirs.
   const [vectorView, setVectorView] = useState<{ runId: string; index: number; notice?: ViewerNotice; binned?: boolean } | null>(null);
   const vectorViewOpen = useRef(false);
@@ -397,6 +410,47 @@ export default function App() {
         tell("error", err.status === 429 ? err.message : `Couldn't regenerate: ${err.message}`);
       }
     });
+
+  // More like this (DESIGN.md §43.3). The button opens the dialog for a run (from a card) or for a picture of it (from the viewer); Make builds an ordinary run from the answer and queues it. A
+  // refusal is shown inside the dialog in the server's words and the dialog stays open, as the viewer's answers stay in the viewer. On success the dialog and the viewer close, since the new
+  // run's card is on the page, with a note saying so.
+  const openMoreLikeThis = (run: ImageRun, image: ImageInfo | null) => {
+    setMoreError(null);
+    setMoreTarget({ run, image });
+  };
+  const makeMoreLikeThis = async (ask: MoreLikeThisAsk) => {
+    if (!moreTarget || moreMaking) return;
+    setMoreMaking(true);
+    setMoreError(null);
+    try {
+      dispatch({ type: "runUpsert", run: await api.createRun(variationRequest(moreTarget.run, ask)) });
+      setMoreTarget(null);
+      setLightbox(null);
+      push("info", `Queued ${ask.count} ${ask.count === 1 ? "picture" : "pictures"} more like this.`);
+    } catch (error) {
+      const err = error as ApiError;
+      setMoreError(err.status === 429 ? err.message : `Couldn't make them: ${err.message}`);
+    } finally {
+      setMoreMaking(false);
+    }
+  };
+
+  // The compare basket (§43.5). Add to compare is a toggle. A third picture is refused in words and the viewer offers to put it in place of the first (`replaceOffered`).
+  const tellInViewer = (text: string | undefined) =>
+    setLightbox((current) => (current ? { ...current, notice: text ? { kind: "info", text } : undefined } : current));
+  const toggleCompare = (picture: { id: string }) => {
+    if (!lightbox) return;
+    const answer = basketToggle(basket, { runId: lightbox.runId, imageId: picture.id });
+    setBasket(answer.basket);
+    setReplaceOffered(answer.full);
+    tellInViewer(answer.full ? "The compare basket holds two pictures. Press Replace the first to put this one in." : undefined);
+  };
+  const replaceCompare = (picture: { id: string }) => {
+    if (!lightbox) return;
+    setBasket(basketReplaceFirst(basket, { runId: lightbox.runId, imageId: picture.id }));
+    setReplaceOffered(false);
+    tellInViewer("Put in the compare basket, in place of the first picture.");
+  };
 
   // Make the 4K copy of one result image (DESIGN.md §27). The answer is the run, with the image's `four_k` filled in. As for
   // Regenerate larger, the answer is a toast on a card and a note inside the viewer when it is open when the answer comes.
@@ -1033,6 +1087,14 @@ export default function App() {
   // the Vector viewer shows the run's own versions; from a card of deleted versions it shows THOSE (§35.2). A run with none left to show closes it.
   const foundVector = vectorView ? state.runs[vectorView.runId] : undefined;
   const vectorViewRun = foundVector && isVectorRun(foundVector) && (vectorView?.binned ? foundVector.binned_vectors.length > 0 : foundVector.vectors.length > 0) ? foundVector : null;
+  // The compare basket's pictures, found among the runs the page holds: one whose run or picture has gone since (deleted, or sent to the bin) is simply not there, so the count and the view
+  // never show a picture that cannot be shown. Keep this one keeps the run the picture is in (§43.5), and does nothing for a run that is kept already.
+  const comparePictures = basket.map((item) => resolveBasketItem(state.runs, item)).filter((picture): picture is ComparePicture => picture !== null);
+  const keepFromCompare = (runId: string) => {
+    const run = state.runs[runId];
+    if (run && !run.pinned) void toggleKeep(run);
+  };
+  const familyRoot = filter.family !== null ? state.runs[filter.family] : undefined; // the run a family view is named for, for its pill, when the page holds it
   const transient = (run: Run) => showsWorking(filter) && working(run) && !matches(run, filter); // in this view only while it works (§29.3)
   // the whole bin, both tabs, whatever project is chosen: what Empty bin deletes (the counts on the bar are for the tab and the project shown)
   const bin = state.totals ? state.totals.image.deleted + state.totals.music.deleted + state.totals.vector.deleted + state.totals.speech.deleted : null; // (every tab's bin: Empty bin empties all of it)
@@ -1041,7 +1103,8 @@ export default function App() {
   // the one filter bar, shown above the list on both tabs (the Music tab is handed it)
   const filterBar = (
     <FilterBar filter={filter} keptCount={scopedCounts?.[tabKind].kept ?? null} deletedCount={scopedCounts?.[tabKind].deleted ?? null} binTotal={bin}
-      projects={state.projects} tab={tabKind} onChange={changeFilter} onEmptyBin={() => setPendingEmptyBin(true)} onManageProjects={() => setManagingProjects(true)} />
+      projects={state.projects} tab={tabKind} onChange={changeFilter} onEmptyBin={() => setPendingEmptyBin(true)} onManageProjects={() => setManagingProjects(true)}
+      familyLabel={familyRoot ? cut(familyRoot.prompt) : null} />
   );
   // what replaces "Loading…" when the first page of a filtered list could not be read: the reason, and a way to try again
   const problem =
@@ -1171,6 +1234,8 @@ export default function App() {
                         onDelete={() => setPendingDelete(run)}
                         onCopy={() => void copy(run)}
                         onOpenImage={(index) => setLightbox({ runId: id, index })}
+                        onMoreLikeThis={() => openMoreLikeThis(run, null)}
+                        onShowFamily={(family) => changeFilter(withFamily(filter, family))}
                       />
                     );
                   })
@@ -1288,8 +1353,18 @@ export default function App() {
           onDeletePicture={(image, position, of) => lightboxRun && askDeleteItem(lightboxRun, "image", image, position, of)}
           onIndex={(index) => setLightbox((current) => (current ? { ...current, index, notice: undefined } : current))}
           onRegenerateLarger={(image) => lightboxRun && void regenerateLarger(lightboxRun, image)}
-          onClose={() => setLightbox(null)}
+          onMoreLikeThis={(image) => lightboxRun && openMoreLikeThis(lightboxRun, image)}
+          inCompare={(imageId) => basket.some((item) => item.imageId === imageId)}
+          replaceOffered={replaceOffered}
+          onToggleCompare={toggleCompare}
+          onReplaceCompare={replaceCompare}
+          onClose={() => { setLightbox(null); setReplaceOffered(false); }}
         />
+        <MoreLikeThisDialog target={moreTarget} caps={caps} error={moreError} making={moreMaking} onMake={(ask) => void makeMoreLikeThis(ask)}
+          onClose={() => { setMoreTarget(null); setMoreError(null); }} />
+        <CompareBar count={comparePictures.length} onCompare={() => setComparing(true)} onClear={() => { setBasket([]); setReplaceOffered(false); setComparing(false); }} />
+        <CompareView open={comparing} first={comparePictures[0] ?? null} second={comparePictures[1] ?? null}
+          onSwap={() => setBasket((current) => basketSwap(current))} onKeep={keepFromCompare} onClose={() => setComparing(false)} />
         <ConfirmCancel run={pendingCancel} onBack={() => setPendingCancel(null)} onConfirm={confirmCancel} />
         <ConfirmDelete run={pendingDelete} binDays={binDays} projectName={nameOfProject(pendingDelete?.project_id ?? null)} onCancel={() => setPendingDelete(null)} onConfirm={() => void confirmDelete()} />
         <ConfirmDeleteItem ask={pendingItem} binDays={binDays} projectName={nameOfProject(pendingItem?.run.project_id ?? null)} onCancel={() => setPendingItem(null)} onConfirm={() => void confirmDeleteItem()} />

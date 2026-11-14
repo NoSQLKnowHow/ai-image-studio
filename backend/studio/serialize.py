@@ -94,6 +94,17 @@ def track_payload(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
+def variations_status(settings: Any, can_edit: bool) -> dict[str, Any]:
+    """`capabilities.variations` (DESIGN.md §43.6): `{from_picture, reason}`. *More takes of the prompt* needs nothing and is not listed. *Variations of this picture* is an edit
+    run, so it needs editing to be available here and the setting that says the Spark experiment of §43.9 has been looked at; where it is not on, `reason` is what the dialog
+    says beside the greyed choice, and the server refuses a run that asks for it (`resolve_run`)."""
+    if not can_edit:
+        return {"from_picture": False, "reason": "Editing is not available on this machine."}
+    if not settings.variations_from_picture:
+        return {"from_picture": False, "reason": "Not tried on this machine yet."}
+    return {"from_picture": True, "reason": None}
+
+
 def vector_limits() -> dict[str, Any]:
     """`capabilities.limits.vector` (DESIGN.md §31.12.7): the Vector form's limits, from the constants the engine, the server and the page share
     (`studio/vector/__init__.py`), in the shape of `capabilities.limits_vector` in tests/vector_contract.json."""
@@ -197,6 +208,8 @@ def run_payload(
     binned_vectors: Optional[list[sqlite3.Row]] = None,
     prompt_ref: Optional[dict[str, Any]] = None,
     reading: Optional[dict[str, Any]] = None,
+    variation_of: Optional[dict[str, Any]] = None,
+    variation_count: int = 0,
 ) -> dict[str, Any]:
     error = None
     if row["error_message"]:
@@ -235,6 +248,14 @@ def run_payload(
         "vectors": [vector_payload(vec) for vec in vectors or []],
         "binned_vectors": [] if row["deleted_at"] else [binned_vector_payload(vec, bin_days) for vec in binned_vectors or []],
     }
+    if row["mode"] in ("generate", "edit"):
+        # Three keys only a picture run has (DESIGN.md §43.6), for the same reason as the Speech keys below: the other tabs' payloads stay the contracts of
+        # 1.17 to 1.19 byte for byte. `variation_of` says what the run is More like this of (`{run_id, image_id, how, source: {prompt, state}}`, else null);
+        # `family_id` is the id of the first run of its family (else null: every run that is not a variation); `variation_count` is how many variations a
+        # family's first run has in the history (0 for every other run).
+        payload["variation_of"] = variation_of
+        payload["family_id"] = row["family_id"]
+        payload["variation_count"] = variation_count
     if row["mode"] == "speech":
         # Two keys only a Speech run has (DESIGN.md §38.9). They are not on the other tabs' runs, whose payloads are the contracts of 1.17 to 1.19 byte for
         # byte: a page for one of those tabs never meets them, and the Speech page reads them only where `mode` says speech.

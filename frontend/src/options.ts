@@ -2,7 +2,7 @@
 // (DESIGN.md §6). Every saved field is validated on its own, so a corrupt or outdated value can
 // only ever reset that one field to its default, never break the page.
 
-import type { Capabilities, CreateRunBody, FullSize, ImageMode, ImageRun, InputRef, Mode, Range } from "./types";
+import type { Capabilities, CreateRunBody, FullSize, ImageMode, ImageRun, InputRef, Mode, Range, WithVariation } from "./types";
 
 export const OPTIONS_KEY = "studio.options.v1";
 export const PROMPT_KEY = "studio.prompt.v1";
@@ -460,12 +460,16 @@ function editOptionsFromRun(run: ImageRun, caps: Capabilities, current: Options)
   return sanitizeOptions(merged, caps).options;
 }
 
-/** Retry: exactly the same request again, same seed included. */
-export function retryRequest(run: ImageRun): CreateRunBody {
+/** Retry: exactly the same request again, same seed included. A variation keeps its link (DESIGN.md §43.4, criterion 339) while the run it came from is still in the history: the server
+ *  refuses a source that is in the bin or gone, and a retry that was refused for that would be no retry. (The same rule is `keepsLink` in variations.ts, which imports this file and so cannot be
+ *  imported here.) */
+export function retryRequest(run: ImageRun): WithVariation<CreateRunBody> {
   const o = run.options;
+  const link = run.variation_of;
   return {
     mode: run.mode,
     prompt: run.prompt,
+    ...(link && link.source.state === "present" ? { variation_of: { run_id: link.run_id, image_id: link.image_id, how: link.how } } : {}),
     // An edit's images are named by their ids: the run owns copies, and the server copies them again for the new run.
     ...(run.mode === "edit" ? { input_images: run.inputs.map((input) => ({ image_id: input.id, role: input.role })) } : {}),
     options: {

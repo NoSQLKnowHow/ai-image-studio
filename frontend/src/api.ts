@@ -2,7 +2,7 @@ import { filenameFromDisposition } from "./fourk";
 import { NO_FILTER, filterParams, type Counts, type HistoryFilter } from "./history";
 import type {
   Capabilities, CreateMusicBody, CreateRunBody, CreateVectorBody, ImageRun, ModelName, MusicRun, Project, QueueListing, QueueMove, Run, RunsPage, Status, UploadResult,
-  VectorRecipe, VectorRecipeRequest, VectorRun, WithPromptRef,
+  VectorRecipe, VectorRecipeRequest, VectorRun, WithPromptRef, WithVariation,
 } from "./types";
 
 /** What sending a picture, track or version to the bin answers (DESIGN.md §33.3, §35.4): what moved, and the run as it is now. A run's last one is not deleted
@@ -181,7 +181,7 @@ export const api = {
   // The counts on the filter bar: per tab, how many runs there are and how many are kept or deleted. With a project (an id, or "none"), the
   // counts are within it (DESIGN.md §32.5); without, they are the whole history's.
   runCounts: (project: string | null = null) => request<Counts>(`/api/runs/counts${project === null ? "" : `?${new URLSearchParams({ project })}`}`),
-  createRun: (body: WithPromptRef<CreateRunBody>) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
+  createRun: (body: WithPromptRef<WithVariation<CreateRunBody>>) => request<ImageRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createMusicRun: (body: WithPromptRef<CreateMusicBody>) => request<MusicRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   createVectorRun: (body: WithPromptRef<CreateVectorBody>) => request<VectorRun>("/api/runs", { method: "POST", body: JSON.stringify(body) }),
   // The words the studio will send for a Vector idea, for the form to show (DESIGN.md §31.12.7). Pure text: no model, no database.

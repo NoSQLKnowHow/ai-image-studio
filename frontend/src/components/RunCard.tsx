@@ -4,7 +4,8 @@ import { largerTarget, resolutionLabel } from "../options";
 import type { FourKTarget, ImageRun, UpscalerStatus, WorkerState, WorkerStatus } from "../types";
 import { FourKButton } from "./FourKButton";
 import { RefineButton, RunFrom } from "../promptLinks";
-import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, FolderIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { AlertIcon, CopyIcon, DownloadIcon, EditIcon, EnlargeIcon, FolderIcon, MoreLikeThisIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
+import { canMoreLikeThis, countChip, familyOf, sourceChip } from "../variations";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 import { loadView } from "../loadProgress";
 import { LoadProgressView } from "./LoadProgress";
@@ -34,6 +35,9 @@ interface Props {
   onDelete: () => void;
   onCopy: () => void;
   onOpenImage: (index: number) => void;
+  // More like this (DESIGN.md section 43). Both are optional, so a card that is shown without them (a test, a read-only list) has neither the button nor the chips' links:
+  onMoreLikeThis?: () => void; // open the dialog for this run (from a card it means "more takes of this run")
+  onShowFamily?: (familyId: string) => void; // the Variations chips: show this run and everything made from it
 }
 
 const MAX_THUMBS = 4;
@@ -124,8 +128,12 @@ function Media({ run, offset, onOpenImage }: { run: ImageRun; offset: number; on
   );
 }
 
-export function RunCard({ run, now, workerState, worker, canEdit, making4k, enlarging, enlargeWaiting, transient, viewScope, projects, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onRestore, onDelete, onCopy, onOpenImage }: Props) {
+export function RunCard({ run, now, workerState, worker, canEdit, making4k, enlarging, enlargeWaiting, transient, viewScope, projects, upscaler, onReuse, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onRetry, onCancel, onToggleKeep, onRestore, onDelete, onCopy, onOpenImage, onMoreLikeThis, onShowFamily }: Props) {
   const [expanded, setExpanded] = useState(false);
+  // The two chips of a variation (§43.4): where it came from, and how many it has. Each opens the family, which is the first run and everything made from it.
+  const fromChip = sourceChip(run);
+  const countText = countChip(run);
+  const family = familyOf(run);
   const long = run.prompt.length > 240;
   const edit = run.mode === "edit";
   const meta = edit
@@ -160,6 +168,15 @@ export function RunCard({ run, now, workerState, worker, canEdit, making4k, enla
           {run.options.draft && <span className="badge badge-draft" title="A small, quick try. The full-size image will look different.">Draft</span>}
           {run.mode === "edit" && <span className="badge">Edit</span>}
           {run.options.transparent && <span className="badge">Transparent</span>}
+          {/* where a variation came from, and how many variations this run has: each shows the family (the first run and what was made from it) */}
+          {fromChip && family && (
+            <button type="button" className="badge badge-variation" data-chip="variation-of" onClick={onShowFamily && (() => onShowFamily(family))} disabled={!onShowFamily}
+              title="Show this run and the runs made from it">{fromChip}</button>
+          )}
+          {countText && family && (
+            <button type="button" className="badge badge-variation" data-chip="variations" onClick={onShowFamily && (() => onShowFamily(family))} disabled={!onShowFamily}
+              title="Show this run and the runs made from it">{countText}</button>
+          )}
           <time dateTime={run.created_at} title={new Date(run.created_at).toLocaleString()}>{timeAgo(run.created_at, now)}</time>
         </div>
 
@@ -227,6 +244,13 @@ export function RunCard({ run, now, workerState, worker, canEdit, making4k, enla
             title="Load this prompt and its options, with the seed locked">
             <ReuseIcon /> Reuse
           </button>
+          {/* More like this (§43.3): more pictures from this run. Only for a finished run that has a picture; from a card it means the run, not one picture */}
+          {onMoreLikeThis && canMoreLikeThis(run) && (
+            <button type="button" className="button small ghost" data-action="more-like-this" onClick={onMoreLikeThis}
+              title="Make more pictures like this one: more takes of the prompt, with new seeds">
+              <MoreLikeThisIcon /> More like this
+            </button>
+          )}
           <RefineButton run={run} image={run.images[0] ?? null} />
           {target && (
             <button type="button" className="button small ghost" data-action="regenerate-larger" onClick={onRegenerateLarger}

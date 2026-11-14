@@ -59,8 +59,8 @@ def test_a_new_database_has_the_speech_tables_and_the_two_last_columns(tmp_path)
     path = tmp_path / "studio.sqlite"
     db = Database(path)
     try:
-        assert SPEECH_TABLES <= table_names(path) and stored_version(path) == str(SCHEMA_VERSION) == "10"
-        assert columns(path, "runs")[-2:] == [("queue_key", "REAL"), ("hidden", "INTEGER")]
+        assert SPEECH_TABLES <= table_names(path) and stored_version(path) == str(SCHEMA_VERSION) and SCHEMA_VERSION >= 10
+        assert columns(path, "runs")[-4:-2] == [("queue_key", "REAL"), ("hidden", "INTEGER")]  # schema 11 adds its two after these (test_variations_schema.py)
         assert sqlite3.connect(path).execute("PRAGMA foreign_key_check").fetchall() == []
         db.read_one("SELECT * FROM runs WHERE mode='speech'")  # the query is valid; and the mode is one a run may have:
         with db.tx() as c:
@@ -108,12 +108,12 @@ def test_a_1_19_database_is_upgraded_after_a_copy_and_keeps_everything(tmp_path)
 
     migrated = Database(path)
     try:
-        assert stored_version(path) == "10" and SPEECH_TABLES <= table_names(path)
+        assert stored_version(path) == str(SCHEMA_VERSION) and SPEECH_TABLES <= table_names(path)
         assert columns(path, "runs") == columns(fresh, "runs")  # the same columns, types and order as a new database: the rebuild gave what CREATE gives
         after = [dict(r) for r in migrated.read_all("SELECT * FROM runs ORDER BY seq")]
-        without_new = lambda rows: [{k: v for k, v in row.items() if k not in ("queue_key", "hidden")} for row in rows]  # noqa: E731
+        without_new = lambda rows: [{k: v for k, v in row.items() if k not in ("queue_key", "hidden", "variation_json", "family_id")} for row in rows]  # noqa: E731
         assert without_new(after) == without_new(before)  # every run, every column it had (`before` was read while the database still had the two new ones)
-        assert all(row["queue_key"] is None and row["hidden"] == 0 for row in after)
+        assert all(row["queue_key"] is None and row["hidden"] == 0 and row["variation_json"] is None and row["family_id"] is None for row in after)
         assert {"idx_runs_status", "idx_runs_deleted", "idx_runs_project", "idx_runs_prompt"} <= indexes_of(path)  # the rebuild dropped them; they are back
         assert [p["name"] for p in migrated.list_projects()] == ["Logo"] and migrated.list_projects()[0]["counts"]["music"] == 1
         assert BuilderStore(migrated).versions(prompt) and NEW_TABLES <= table_names(path)  # the Prompt builder's data is untouched
@@ -126,7 +126,7 @@ def test_a_1_19_database_is_upgraded_after_a_copy_and_keeps_everything(tmp_path)
         assert migrated.get_run(run["id"])["mode"] == "speech"
     finally:
         migrated.close()
-    copy = tmp_path / "studio.sqlite.before-schema-10"
+    copy = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"
     assert copy.exists() and stored_version(copy) == "9" and not (SPEECH_TABLES & table_names(copy))  # the database as 1.19 left it: a way back
     assert [r[0] for r in sqlite3.connect(copy).execute("SELECT id FROM runs ORDER BY seq")] == [run_row(n)["id"] for n in (1, 2, 3, 4)]
 
@@ -154,7 +154,7 @@ def test_an_existing_copy_is_never_replaced_by_a_later_attempt(tmp_path):
     path = tmp_path / "studio.sqlite"
     Database(path).close()
     as_schema_9(path)
-    keep = tmp_path / "studio.sqlite.before-schema-10"
+    keep = tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}"
     keep.write_bytes(b"the oldest copy")
     Database(path).close()
     assert keep.read_bytes() == b"the oldest copy"
@@ -163,10 +163,10 @@ def test_an_existing_copy_is_never_replaced_by_a_later_attempt(tmp_path):
 def test_a_second_start_changes_nothing_and_makes_no_second_copy(tmp_path):
     path, _, _, _ = database_as_1_19(tmp_path)
     Database(path).close()
-    first = (tmp_path / "studio.sqlite.before-schema-10").read_bytes()
+    first = (tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}").read_bytes()
     schema_after_first = sqlite3.connect(path).execute("SELECT group_concat(sql) FROM sqlite_master ORDER BY name").fetchone()
     Database(path).close()
-    assert (tmp_path / "studio.sqlite.before-schema-10").read_bytes() == first
+    assert (tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}").read_bytes() == first
     assert sqlite3.connect(path).execute("SELECT group_concat(sql) FROM sqlite_master ORDER BY name").fetchone() == schema_after_first
 
 

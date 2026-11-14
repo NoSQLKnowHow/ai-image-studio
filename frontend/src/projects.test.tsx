@@ -439,26 +439,26 @@ describe("the Project drop-down and the Manage button in the filter bar act (DES
   it("chooses a project, 'no project' or any project, and keeps Kept or Deleted as it was", () => {
     const { onChange, select } = draw(ONLY_KEPT);
     fireEvent.change(select, { target: { value: LOGO.id } });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null }); // (a filter also says which family it is in, if any: none here, §43.4)
     fireEvent.change(select, { target: { value: NO_PROJECT } });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: NO_PROJECT });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: NO_PROJECT, family: null });
   });
 
   // "" is the drop-down's value for Any project; the filter's is null (an empty id would be sent to the server as ?project=)
   it("sends Any project as no project at all, not as an empty id", () => {
     const { onChange, select } = draw(withProject(ONLY_KEPT, LOGO.id));
     fireEvent.change(select, { target: { value: "" } });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: null });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: null, family: null });
   });
 
   it("keeps the chosen project when All, Kept or Deleted is chosen, by click and by arrow key", () => {
     const { onChange } = draw(withProject(NO_FILTER, LOGO.id));
     fireEvent.click(screen.getByRole("radio", { name: /^Kept/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null });
     fireEvent.click(screen.getByRole("radio", { name: /^Deleted/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ kept: null, deleted: true, project: LOGO.id });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: null, deleted: true, project: LOGO.id, family: null });
     fireEvent.keyDown(screen.getByRole("radio", { name: /^All/ }), { key: "ArrowRight" });
-    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id });
+    expect(onChange).toHaveBeenLastCalledWith({ kept: true, deleted: false, project: LOGO.id, family: null });
   });
 
   it("opens the Manage projects dialog when Manage is pressed", () => {

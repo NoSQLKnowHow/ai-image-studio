@@ -88,6 +88,18 @@ class PromptRef(BaseModel):
     version: int = Field(ge=1)
 
 
+class VariationOf(BaseModel):
+    """Which run, and which of its pictures, a run was made from with More like this (DESIGN.md §43.3, §43.6). `how` is `seeds` (more takes of the same words, with
+    new seeds) or `picture` (an edit of the picked picture); `image_id` is the picture that was on the screen, or None when the button was on a card. The server checks that
+    the run and the picture exist when the run is queued, and keeps the link."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    run_id: str = Field(pattern=_ID.pattern)
+    image_id: Optional[str] = Field(default=None, pattern=_ID.pattern)
+    how: Literal["seeds", "picture"]
+
+
 class RunCreate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
@@ -97,6 +109,7 @@ class RunCreate(BaseModel):
     input_images: Optional[list[InputRef]] = None  # Edit only, in the order the model sees them
     lyrics: Optional[str] = None  # Music only: absent, empty or blank means instrumental (DESIGN.md §26.1)
     prompt_ref: Optional[PromptRef] = None  # all kinds: the saved prompt this run is made from (§37.4)
+    variation_of: Optional[VariationOf] = None  # Generate and Edit only: the run this one is More like this of (§43.6)
 
 
 class RunRequestError(Exception):
@@ -136,6 +149,7 @@ class ResolvedRun:
     # `negative_prompt` the fixed negative, `width` and `height` the drawing's pixel size and `cfg_scale` the guidance (§31.12.6).
     vector: Optional[V.VectorOptions] = None
     prompt_ref: Optional[PromptRef] = None  # the saved prompt and version this run is made from (§37.4); checked and recorded when it is queued
+    variation_of: Optional[VariationOf] = None  # the run this one is More like this of (§43.6); checked and recorded when it is queued
 
     @property
     def instrumental(self) -> bool:
@@ -394,9 +408,35 @@ def _resolve_vector(req: RunCreate, settings: Settings) -> ResolvedRun:
     )
 
 
+def _variation_errors(req: RunCreate, settings: Settings) -> list[tuple[tuple[Any, ...], str]]:
+    """What is wrong with the `variation_of` of a request, from the request alone (the run and the picture it names are looked up when it is queued, §43.6): it is only for
+    pictures, so not for music or a drawing; and a variation made from a picture is an edit run, and is only allowed once it has been switched on (`STUDIO_VARIATIONS_FROM_PICTURE`)."""
+    link = req.variation_of
+    if link is None:
+        return []
+    if req.mode not in ("generate", "edit"):
+        return [(("variation_of",), "Only used for pictures.")]
+    if link.how == "picture":
+        if not settings.variations_from_picture:
+            return [(("variation_of", "how"), "Variations of a picture have not been switched on on this machine.")]
+        if req.mode != "edit":
+            return [(("variation_of", "how"), "A variation made from a picture is an edit of it: use the Edit mode and give the picture as the input.")]
+    return []
+
+
 def resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:
-    resolved = _resolve_run(req, settings)
-    return replace(resolved, prompt_ref=req.prompt_ref) if req.prompt_ref is not None else resolved
+    errors = _variation_errors(req, settings)
+    try:
+        resolved = _resolve_run(req, settings)
+    except RunRequestError as other:  # the request's other problems are told together with this one, so that the form can show them all at once
+        raise RunRequestError([*errors, *other.errors]) from other
+    if errors:
+        raise RunRequestError(errors)
+    if req.prompt_ref is not None:
+        resolved = replace(resolved, prompt_ref=req.prompt_ref)
+    if req.variation_of is not None:
+        resolved = replace(resolved, variation_of=req.variation_of)
+    return resolved
 
 
 def _resolve_run(req: RunCreate, settings: Settings) -> ResolvedRun:

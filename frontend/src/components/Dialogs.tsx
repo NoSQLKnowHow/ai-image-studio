@@ -8,7 +8,7 @@ import type { KnownImage } from "../tray";
 import type { FourKTarget, ImageInfo, ImageRun, Run, UpscalerStatus } from "../types";
 import { viewerItems, viewerKnown, viewerTitle } from "../viewer";
 import { FourKButton } from "./FourKButton";
-import { ChevronLeft, ChevronRight, CloseIcon, DownloadIcon, EditIcon, EnlargeIcon, TrashIcon } from "./icons";
+import { ChevronLeft, ChevronRight, CloseIcon, CompareIcon, DownloadIcon, EditIcon, EnlargeIcon, MoreLikeThisIcon, TrashIcon } from "./icons";
 
 /** What the viewer says about a request made from it. The page behind a modal, toasts included, is hidden from
  *  screen readers, so the answer is shown inside the viewer instead (DESIGN.md §24.2). */
@@ -17,7 +17,7 @@ export interface ViewerNotice {
   text: string;
 }
 
-export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enlarging, enlargeWaiting, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onDeletePicture, onClose }: {
+export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enlarging, enlargeWaiting, upscaler, onIndex, onRegenerateLarger, onMake4K, onEnlarge, onEditThis, onDeletePicture, onClose, onMoreLikeThis, inCompare, replaceOffered, onToggleCompare, onReplaceCompare }: {
   run: ImageRun | null;
   index: number;
   notice: ViewerNotice | null;
@@ -34,6 +34,12 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
   onEditThis: (image: KnownImage) => boolean; // whether it was added (the tray may be full)
   onDeletePicture: (image: ImageInfo, position: number, of: number) => void; // Delete picture (DESIGN.md §33.1): which result of how many
   onClose: () => void;
+  // More like this and A/B compare (DESIGN.md section 43). All optional, so a viewer shown without them has none of the buttons:
+  onMoreLikeThis?: (image: ImageInfo) => void; // open the dialog for the picture on the screen
+  inCompare?: (imageId: string) => boolean; // whether this picture is in the compare basket
+  replaceOffered?: boolean; // the basket was full when this picture was added: offer to put it in place of the first
+  onToggleCompare?: (picture: { id: string }) => void; // put this picture in the basket, or take it out
+  onReplaceCompare?: (picture: { id: string }) => void; // put this picture in place of the basket's first
 }) {
   const target = run ? largerTarget(run) : null; // the same rule as the run's card
   const items = run ? viewerItems(run) : []; // an edit's sources, then its results
@@ -79,6 +85,26 @@ export function Lightbox({ run, index, notice, canEdit, readOnly, making4k, enla
                       title="Add this picture to the images you are editing">
                       <EditIcon /> Edit this
                     </button>
+                  )}
+                  {/* More like this (§43.3): for the picture on the screen; only a finished run's results, and never one in the bin */}
+                  {result && !readOnly && run.status === "done" && onMoreLikeThis && (
+                    <button type="button" className="button small" data-action="more-like-this" onClick={() => onMoreLikeThis(result)}
+                      title="Make more pictures like this one">
+                      <MoreLikeThisIcon /> More like this
+                    </button>
+                  )}
+                  {/* A/B compare (§43.5): the basket holds two pictures from any runs; an edit's source pictures can go in too. A toggle; once the basket has refused a third, it offers to replace the first */}
+                  {shown && !readOnly && onToggleCompare && inCompare && (
+                    <>
+                      <button type="button" className="button small" data-action="compare-toggle" aria-pressed={inCompare(shown.id)} onClick={() => onToggleCompare(shown)}
+                        title={inCompare(shown.id) ? "Take this picture out of the compare basket" : "Put this picture in the compare basket (two at most)"}>
+                        <CompareIcon /> {inCompare(shown.id) ? "In compare" : "Add to compare"}
+                      </button>
+                      {replaceOffered && !inCompare(shown.id) && onReplaceCompare && (
+                        <button type="button" className="button small" data-action="compare-replace" onClick={() => onReplaceCompare(shown)}
+                          title="Put this picture in the basket in place of the first one">Replace the first</button>
+                      )}
+                    </>
                   )}
                   {result && !readOnly && <RefineButton run={run} image={result} className="button small" compact />}
                   {result && <a className="button small" href={result.download_url} download><DownloadIcon /> Download</a>}

@@ -137,6 +137,29 @@ export interface PromptRunRef {
 /** Any create body, with the saved prompt it is made from (DESIGN.md §37.4). A wrapper and not a field of the three bodies, which the contract pins key for key. */
 export type WithPromptRef<T> = T & { prompt_ref?: PromptRunRef };
 
+/** The two kinds of More like this (DESIGN.md §43.3): `seeds` makes more takes of the same words with new seeds; `picture` is an edit of the picked picture. */
+export type VariationHow = "seeds" | "picture";
+
+/** What the server says of a run that was made More like this of another (§43.6): where it came from, and what has become of that run. `image_id` is the picture that was on the screen
+ *  when the button was pressed, or null when it was pressed on a card. `source.prompt` is the source's words (null once it is deleted for good), and `state` says whether it is still in the
+ *  history, is in the bin, or is gone. */
+export interface VariationLink {
+  run_id: string;
+  image_id: string | null;
+  how: VariationHow;
+  source: { prompt: string | null; state: "present" | "in_bin" | "gone" };
+}
+
+/** What a run is asked to be made More like this of (§43.6). */
+export interface VariationRunRef {
+  run_id: string;
+  image_id: string | null;
+  how: VariationHow;
+}
+
+/** Any create body, with the run it is More like this of. A wrapper, like `WithPromptRef`, so the bodies the contract pins key for key stay as they are. */
+export type WithVariation<T> = T & { variation_of?: VariationRunRef };
+
 /** What every run has, pictures or music. */
 interface RunBase {
   id: string;
@@ -176,6 +199,10 @@ export interface ImageRun extends RunBase {
   binned_tracks: [];
   vectors: []; // always present, and empty, on a run that is not a Vector run (§31.12.7)
   binned_vectors: [];
+  // Only a picture run has these three (§43.6); a server from before 1.24 sends none of them, so each may be missing
+  variation_of?: VariationLink | null; // what this run is More like this of, else null
+  family_id?: string | null; // the first run of its family, else null: the id the family view asks for
+  variation_count?: number; // how many variations this run has in the history (0 for a run that is not a family's first)
 }
 
 /** One finished track of a music run (DESIGN.md §26.3). `seconds` is what the model really made. */
@@ -545,6 +572,8 @@ export interface Capabilities {
   builder: BuilderCaps; // the Prompt builder: set up? what is known of Ollama (§37.4)
   speech: SpeechCaps; // the Speech tab: can it work here, and what each engine says (§38.3, §38.9)
   upscaler: UpscalerStatus;
+  /** More like this (§43.6): whether Variations of this picture can be made here, and the reason if not. Missing from a server of before 1.24, which has no More like this. */
+  variations?: { from_picture: boolean; reason: string | null };
   queue_cap: number;
   device: WorkerStatus["device"];
 }
