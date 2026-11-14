@@ -52,7 +52,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 6 | **Music 1.9** | **Built and merged** (#21, #22; §26.13): the Music tab, with the fields and preview, lyrics, tracks with a player, and Load/Unload per tab | Your run of `SPARK_TEST.md` §20, including the page |
 | 7 | **M8** | The Spark smoke test together | Everything above |
 
-**Open questions for you:** any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2).
+**Open questions for you:** any veto on drafts jumping the queue (#34), the WebP thumbnail (#35) or raw-body uploads (§21.6); the Spark measurements listed in §18 and §21.12; and, as always, whether your use of the model's licence is covered (§18 item 2). **Ten ideas for what to build next are written up in §42, for you to review; none of them is decided.**
 
 ## 1. Purpose
 
@@ -3338,3 +3338,100 @@ The Vector form gets **Use: Engrave | Cut** at the top, remembered like the othe
 
 **Tried (before this section was written):** the three causes of §41.1 on constructed pictures and on a picture cut from your screenshot; the proposal in §41.3, as a throwaway script, on that picture at both settings (1.4 s, 1,865 dots, the face and the shading recovered).
 **Not tried:** your real PNG (the picture used was cut from a screenshot, shrunk to about 60% and enlarged again, so thin lines were softer than the real ones); any picture from the Engrave recipe; what a laser makes of the dots (the spacing and sizes are guesses); a picture with more than one ink.
+
+## 42. Ideas to consider (proposed 2026-11-14; NOT decided; nothing here is built or has a decision number)
+
+You asked what ten things we have not added, given what is built, would make results better or the studio easier to run, and asked for them to be written here so that you can review them and start on a few. I checked each against this document, so none of them is built, and none is something you have already ruled out. **Nothing in this section is a decision.** A number is only given (a decision in §3, a section of its own) when you choose one, and I would write that section first, with its questions answered and the choices I made listed for you to overrule, as for Speech (§38) and the Vector fix (§41).
+
+**Effort**, roughly: **S** a day or two, **M** a few days, **L** a week or more. **Model-dependent** means that only an experiment on your Spark can say whether it works, so I would not promise it before the experiment.
+
+### 42.1 Better results
+
+**Idea 1. Masks and local edits (inpainting).**
+* *What:* fix one hand, one sign or one face without redrawing the whole picture: mark a region (a circle, a rectangle or a brush stroke), say what it should be, and only that region changes. The card shows the original and the marked picture.
+* *Why:* probably the biggest quality gain for images, because most "nearly right" pictures are wrong in one place.
+* *Builds on:* **M5d**, which §21 describes and shelved: criteria 29 and 30 of §21 are written ("a circle or brush mark baked into an image changes only that region", and a mask's polarity as found in M5c) and nothing is built. The editing page (1.6) already carries input pictures.
+* *Not known:* whether the editing model can change a region without disturbing the rest, and which mask polarity it expects (M5c, `SPARK_TEST.md` §18). **Model-dependent.**
+* *Questions I would ask first:* brush, circle or rectangle, or all three; a soft edge or a hard one; whether the original is always kept beside the result.
+* *Effort:* L.
+
+**Idea 2. Variations and A/B compare.**
+* *What:* a **More like this** button on a result that makes N variations (new seeds, optionally a small change to the words), and a viewer that shows two pictures side by side or with a slider, so that a winner can be picked.
+* *Why:* today you re-run with Reuse and flip between cards by eye.
+* *Builds on:* Reuse, seeds, the viewer, Keep.
+* *Questions I would ask first:* how many variations; seed only, or a prompt change as well; whether picking a winner Keeps it and bins the rest.
+* *Effort:* M.
+
+**Idea 3. Batches and sweeps.**
+* *What:* paste 20 prompts, or choose prompts × seeds/steps/guidance, and queue them all; the results come back as a contact sheet.
+* *Why:* it is how settings are found, and it pairs with overnight runs. Nothing like it exists.
+* *Builds on:* the queue (§40) and, for the cap, `STUDIO_QUEUE_CAP`.
+* *Questions I would ask first:* the input (one prompt a line, a file, a grid of settings); a limit on how many; whether a batch jumps the queue or waits behind it; where the sheet is downloaded from.
+* *Effort:* M.
+
+**Idea 4. Audiobook polish for Speech.**
+* *What:* a **pronunciation list** (a word and how it is said); **several voices in one text** (a voice per speaker or per paragraph); **chapter marks** in the exported audio.
+* *Why:* it turns reading a PDF aloud into something you would listen to for hours.
+* *Builds on:* §38, which defers each of them by name ("a pronunciation list is a later step"; several voices, a style per paragraph and styles suggested by your Ollama model are listed as not built).
+* *Questions I would ask first:* whether a pronunciation list belongs to a voice, an engine or to everything; how a speaker is marked in the text; whether chapters come from headings.
+* *Effort:* M for the pronunciation list and chapter marks, L for dialogue.
+
+### 42.2 Easier to run
+
+**Idea 5. HTTPS, with recording in the page.**
+* *What:* a certificate for the studio (for example through Tailscale, or a small reverse proxy), so that the page is served over https.
+* *Why:* the Add my voice dialog says recording happens outside the page, because browsers only allow the microphone on https; that is a limit we built around. https also gives phone install, wake-lock and browser notifications (idea 8).
+* *Not known:* which way you would rather reach the Spark (Tailscale or not).
+* *Effort:* M. The risk is the setup on your side, not the code.
+
+**Idea 6. Queue smarts, building on the Queue panel (§40).**
+* *What:* **time estimates** ("about 3 min", "done by 14:20") from how long similar jobs took; **Pause and Resume**, because the Spark also runs Hermes on the same GPU and you would want a hold button; **Run next** (a job to the front in one click); and, optionally, **swap-aware ordering** that groups jobs by model, because a music track between two image jobs costs a model swap.
+* *Builds on:* the Queue panel and `GET /api/queue`; the jobs' own timings.
+* *Questions I would ask first:* whether Pause stops after the current job or in the middle of it (the second is not always possible); whether swap-aware ordering is on by default or an option.
+* *Effort:* S to M.
+
+**Idea 7. Keep-warm models.**
+* *What:* with 128 GB a memory budget could keep the two or three models you use warm and evict the least recently used, instead of one resident model and a load at every switch.
+* *Why:* you asked why the speech model keeps reloading. It would also make cross-model reordering far cheaper.
+* *Builds on:* the memory pre-flight (§9a) and the load progress (§39).
+* *Not known:* how much memory Hermes and the others leave free at the moments that matter. **Model-dependent.**
+* *Effort:* L, because the worker holds one pipeline today.
+
+**Idea 8. Finish notifications.**
+* *What:* a ping when a job, a reading or the whole queue is done: a webhook or ntfy to your phone (which works over plain http), and browser notifications once https is in.
+* *Why:* the long jobs (first downloads, music, readings) are the ones you walk away from. Nothing like it exists.
+* *Questions I would ask first:* which events (each job, or only when the queue is empty); ntfy, a webhook, or both; quiet hours.
+* *Effort:* S.
+
+**Idea 9. Search and tags across history.**
+* *What:* full-text search over prompts, titles and notes, tags, and a filter by model, size and seed.
+* *Why:* the Prompt builder has search for saved prompts (§37), but runs have none, and a month of history is a lot of scrolling for "that lighthouse".
+* *Builds on:* the Kept view and project folders (§29, §32); the FTS the Prompt builder's database already uses.
+* *Questions I would ask first:* whether tags are typed by you or suggested; whether notes are a new field on a run.
+* *Effort:* M.
+
+**Idea 10. Storage and backup health.**
+* *What:* a panel showing what is using disk (data, models, images, readings, the bin); a **Reclaim space** button; a warning before the disk fills; and the **backup status** (when the last backup ran and how old it is, with a nudge after a week).
+* *Why:* the backup scripts and the cron job work, but nothing in the app says whether they ran, and a 70 GB backup on a full disk is a bad surprise.
+* *Builds on:* `scripts/backup.sh` and `restore.sh`, the bin (§30), the retention rules.
+* *Questions I would ask first:* what **Reclaim space** may delete (the bin only, or caches too); where the app learns that a backup ran (a marker file the script writes).
+* *Effort:* S to M.
+
+### 42.3 Left out of the ten on purpose
+
+* **A shared token or PIN for the LAN.** §2 and §11 reserve an optional shared-token hook. Anyone on your network can open the studio today and delete things.
+* **Speech-to-text**, to check a voice clone against its passage, or to feed a recording to the Prompt builder.
+* **Music extend and remix.**
+* **Qwen "redrawing" (§28.5) and the OmniSVG engine (Engine B, §31.2)**, both in the backlog and both needing Spark experiments first.
+
+### 42.4 The order I would suggest
+
+1. **Queue smarts (idea 6):** small, and it builds on what you are using now.
+2. **HTTPS and recording (idea 5):** it unlocks a few other things (idea 8's browser notifications, phone install).
+3. **Masks (idea 1):** the biggest quality jump, but it needs a Spark experiment first.
+
+The Vector work of §41 (the Engrave or Cut choice, the dots, the Engrave recipe) is already specified and is not one of the ten.
+
+### 42.5 How to take one forward
+
+Tell me which ones to start. For each I would write its own section first (the questions above answered with you, the choices I made listed so that you can overrule them, acceptance criteria numbered on from §41.6), and build only after you have read it. Where the idea is model-dependent (1, 7), the first step would be a small experiment script for the Spark, as was done for Make 4K (§27) and Enlarge (§28), and a spec after its result.
