@@ -1177,3 +1177,80 @@ button.badge-variation:disabled { cursor: default; }
 .compare-keep-side { opacity: 0.7; }
 /* on a phone the two pictures stack, one above the other, and the buttons wrap and stay in reach */
 @media (max-width: 700px) { .compare-sides { grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr 1fr; } }
+
+/* ------------------------------------------------------------------ search, filters, tags and notes (DESIGN.md §45) */
+/* the search box in the filter bar: a box with a magnifying glass and a clear button, and the live region that says how many runs were found. It wraps with the bar. */
+.filter-search { display: flex; align-items: center; gap: 4px 8px; flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.filter-search-box { position: relative; display: inline-flex; align-items: center; min-width: 0; }
+.filter-search-box > svg { position: absolute; left: 8px; color: var(--text-3); pointer-events: none; }
+.filter-search-input {
+  min-height: 30px; width: 16rem; max-width: 100%; padding: 0 28px 0 28px; border: 1px solid var(--border-strong); border-radius: 8px;
+  background: var(--surface); color: var(--text); font: inherit; font-size: 13px;
+}
+.filter-search-input::-webkit-search-cancel-button, .filter-search-input::-webkit-search-decoration { -webkit-appearance: none; appearance: none; } /* the page has its own clear button */
+.filter-search-input:focus-visible { outline: none; box-shadow: var(--focus); }
+.filter-search-clear { position: absolute; right: 2px; display: grid; place-items: center; width: 26px; height: 26px; border: 0; border-radius: 6px; background: none; color: var(--text-3); cursor: pointer; }
+.filter-search-clear:hover { color: var(--text); background: var(--surface-2); }
+.filter-result { color: var(--text-2); font-size: 13px; font-variant-numeric: tabular-nums; min-height: 1em; }
+.filter-toggle { gap: 4px; }
+.filter-chevron { display: inline-grid; transition: transform 0.15s; }
+.filter-chevron.open { transform: rotate(180deg); }
+/* the second row of the bar: Model, Size, From, To and Clear filters. A full-width row of its own, wrapping inside, so that nothing makes the bar wider than it was. */
+.filter-more { flex: 1 0 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); min-width: 0; }
+.filter-more[hidden] { display: none; }
+.filter-field { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.filter-date { max-width: 9.5rem; }
+.filter-select[aria-invalid="true"] { border-color: var(--danger, #c0392b); }
+.filter-problem { flex: 1 0 100%; color: var(--danger, #c0392b); font-size: 13px; }
+@media (max-width: 520px) {
+  .filter-search { flex: 1 0 100%; }
+  .filter-search-box { flex: 1 1 12rem; }
+  .filter-search-input { width: 100%; }
+  .filter-field { flex: 1 1 100%; }
+  .filter-field .filter-select { flex: 1 1 8rem; max-width: none; }
+}
+
+/* the tags and the note on a card: the chips and the note's first lines, and the button that opens the editor in place */
+.annotations { display: grid; gap: 6px; justify-items: start; min-width: 0; max-width: 100%; }
+.annotations-view { display: grid; gap: 4px; justify-items: start; min-width: 0; max-width: 100%; }
+.tag-list { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0; padding: 0; list-style: none; max-width: 100%; }
+.tag-chip { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; padding: 1px 8px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); font-size: 12px; overflow-wrap: anywhere; }
+.tag-chip.editable { padding-right: 2px; }
+.tag-remove { display: grid; place-items: center; width: 20px; height: 20px; border: 0; border-radius: 999px; background: none; color: var(--text-3); cursor: pointer; font-size: 11px; }
+.tag-remove:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+.tag-remove:disabled { cursor: not-allowed; opacity: 0.5; }
+.run-notes { font-size: 13px; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; border-left: 3px solid var(--border-strong); padding-left: 8px; max-width: 100%; }
+.annotations-toggle { display: inline-flex; align-items: center; gap: 4px; }
+/* the editor: the tag box with its list of the tags you use, and the note */
+.annotations-editor { display: grid; gap: 8px; width: 100%; min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.annotation-label { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.tag-add { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.tag-combo { position: relative; flex: 1 1 auto; min-width: 0; }
+.tag-input, .note-input {
+  width: 100%; min-height: 32px; padding: 4px 8px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px;
+}
+.note-input { resize: vertical; min-height: 64px; }
+.tag-input:focus-visible, .note-input:focus-visible { outline: none; box-shadow: var(--focus); }
+.tag-options {
+  position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 2px); max-height: 12rem; overflow: auto; margin: 0; padding: 4px; list-style: none;
+  background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: var(--shadow-sm);
+}
+.tag-options li { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; border-radius: 6px; font-size: 13px; cursor: pointer; }
+.tag-options li:hover, .tag-options li.active { background: var(--surface-3); }
+.tag-option-count { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.annotation-note { display: grid; gap: 4px; }
+.note-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.note-count { margin-right: auto; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.annotation-status { font-size: 12px; color: var(--text-2); min-height: 1em; }
+.annotation-problem { font-size: 13px; color: var(--danger, #c0392b); }
+/* in the viewer: a panel over the foot of the picture, with its own scroll, so that it never changes the room the picture has (DESIGN.md §45.3) */
+.lightbox-panel {
+  position: absolute; z-index: 4; left: 14px; bottom: 14px; width: min(34rem, calc(100vw - 28px)); max-height: min(60vh, 28rem); overflow: auto; padding: 12px; border-radius: var(--radius);
+  background: var(--surface); color: var(--text); box-shadow: var(--shadow-md, 0 8px 28px rgb(0 0 0 / 35%));
+}
+.lightbox-panel .annotations-editor { padding: 0; border: 0; background: none; }
+@media (max-width: 520px) { .lightbox-panel { left: 8px; right: 8px; bottom: 8px; width: auto; } }
+/* Suggest: the row of suggested tags, each a button that adds that one tag (DESIGN.md §45.3) */
+.tag-suggestions { display: grid; gap: 4px; justify-items: start; }
+.tag-chip.suggestion { border: 1px dashed var(--border-strong); background: var(--surface); cursor: pointer; font: inherit; font-size: 12px; color: var(--text); }
+.tag-chip.suggestion:hover:not(:disabled) { border-color: var(--accent); }

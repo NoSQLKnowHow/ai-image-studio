@@ -63,6 +63,11 @@ def script(messages: list[dict[str, Any]], think: Optional[bool], schema: Option
     """The answer, as a dict, for this conversation. The same conversation always gets the same answer."""
     system = messages[0]["content"]
     users = [m for m in messages[1:] if m["role"] == "user"]
+    # Suggest tags for a run (DESIGN.md §45.6): the same answer for the same words: the first three longer words of the item's own words, and a tag that says it was scripted
+    if schema and set(schema.get("properties", {})) == {"tags"}:
+        found = re.search(r"^(?:Words|Title): (.*)$", users[-1]["content"], flags=re.M)
+        picked = [w for w in re.findall(r"[a-z]{4,}", (found.group(1) if found else "").lower())]
+        return {"tags": [*dict.fromkeys(picked)][:3] + ["scripted"]}
     last = users[-1]["content"]
     kind = (_KIND.search(system) or [None, "images"])[1]
     markers = {m.group(1): m.group(2) for m in _MARKER.finditer(last)}

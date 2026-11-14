@@ -79,6 +79,8 @@
     "deleted_at": null,
     "purge_at": null,
     "project_id": null,
+    "tags": [],
+    "notes": "",
     "prompt_ref": null,
     "queue_position": null,
     "progress": null,

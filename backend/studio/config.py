@@ -53,6 +53,7 @@ class Settings:
     # "Variations of this picture" (DESIGN.md §43.3): off until a Spark experiment (§43.9) has shown that the editing model makes a recognisable variation of a
     # picture. While it is off the dialog shows the choice greyed with a reason, and the server refuses a run that asks for it.
     variations_from_picture: bool = False
+    tag_suggestions: int = 5  # how many tags Suggest asks the Prompt builder's model for; 0 switches Suggest off (DESIGN.md §45.6)
     hub_mode: str = "auto"  # where model files come from (DESIGN.md §26.11): "auto" cache first, "offline" never online, "online" as before
     music_model: str = "MiniMaxAI/MiniMax-Music3"
     music_min_free_gb: Optional[float] = None  # like min_free_gb, for the music model (about 24 GB loaded)
@@ -290,6 +291,7 @@ class Settings:
             min_free_gb=optional_float("STUDIO_MIN_FREE_GB", 0.0),
             cpu_offload=boolean("STUDIO_CPU_OFFLOAD", cls.cpu_offload),
             variations_from_picture=boolean("STUDIO_VARIATIONS_FROM_PICTURE", cls.variations_from_picture),
+            tag_suggestions=integer("STUDIO_TAG_SUGGESTIONS", cls.tag_suggestions, 0, 8),
             hub_mode=hub("STUDIO_LOCAL_FILES_ONLY", cls.hub_mode),
             music_model=text("STUDIO_MUSIC_MODEL", cls.music_model),
             music_min_free_gb=optional_float("STUDIO_MUSIC_MIN_FREE_GB", 0.0),

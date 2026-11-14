@@ -12,8 +12,8 @@ export interface State {
   runs: Record<string, Run>;
   order: string[]; // newest first
   views: Record<string, View>; // one per history filter (DESIGN.md §29.5): has its first page arrived, and where does the next start
-  counts: Counts | null; // how many runs each tab holds and how many are kept, from the server (§29.6), within the project `countsProject`
-  countsProject: string | null; // the project `counts` is about: null for the whole history (DESIGN.md §32.5). A count is only used for the filter it describes.
+  counts: Counts | null; // how many runs each tab holds and how many are kept, from the server (§29.6), within the scope `countsScope`
+  countsScope: string | null; // what `counts` is about (`countsScope` in history.ts): null for the whole history, a project's id for a project (DESIGN.md §32.5), a longer name for a search or filters (§45.7). A count is only used for the filter it describes.
   totals: Counts | null; // the same counts for the whole history, whatever project is chosen: Empty bin empties the whole bin, so it needs these
   countsStale: number; // goes up whenever a run is made, deleted, kept, un-kept or filed, so the page asks for the counts again
   projects: Project[] | null; // the project folders, A to Z, with how many runs each holds (DESIGN.md §32); null until the first answer
@@ -30,7 +30,7 @@ export const initialState: State = {
   order: [],
   views: {},
   counts: null,
-  countsProject: null,
+  countsScope: null,
   totals: null,
   countsStale: 0,
   projects: null,
@@ -45,7 +45,7 @@ export type Action =
   | { type: "status"; status: Status }
   | { type: "worker"; worker: WorkerStatus }
   | { type: "runsLoaded"; page: RunsPage; append: boolean; filter?: HistoryFilter } // append: an older page; otherwise the newest (a snapshot)
-  | { type: "counts"; counts: Counts; project: string | null } // the counts within a project (null: the whole history)
+  | { type: "counts"; counts: Counts; scope: string | null } // the counts within a scope: a project, a search, filters (null: the whole history)
   | { type: "totals"; counts: Counts } // the counts for the whole history
   | { type: "projects"; projects: Project[] }
   | { type: "projectsChanged" } // the server says a project, or what is filed in one, changed: read the list again
@@ -118,7 +118,7 @@ export function reducer(state: State, action: Action): State {
       return { ...state, runs, order: newestFirst(runs), views: { ...state.views, [key]: view } };
     }
     case "counts":
-      return { ...state, counts: action.counts, countsProject: action.project };
+      return { ...state, counts: action.counts, countsScope: action.scope };
     case "totals":
       return { ...state, totals: action.counts };
     case "projects":
@@ -135,8 +135,10 @@ export function reducer(state: State, action: Action): State {
       const projectChange = !!current && current.project_id !== run.project_id;
       // a picture, track or version sent to the bin or restored moves the Deleted count too (it counts things, DESIGN.md §33.1, §35.2)
       const itemsInTheBin = (r: Run) => r.binned_images.length + r.binned_tracks.length + r.binned_vectors.length;
+      // the words a search finds a run by: its tags and its note. A search's count moves when they do (DESIGN.md §45.7)
+      const wordsChange = !!current && (current.notes !== run.notes || current.tags.join("\n") !== run.tags.join("\n"));
       const countsChange = !current || current.pinned !== run.pinned || (current.deleted_at === null) !== (run.deleted_at === null) || projectChange
-        || itemsInTheBin(current) !== itemsInTheBin(run); // a new run, or one kept, un-kept, deleted, restored, filed, or with a picture deleted or restored: the counts have moved
+        || itemsInTheBin(current) !== itemsInTheBin(run) || wordsChange; // a new run, or one kept, un-kept, deleted, restored, filed, with a picture deleted or restored, or tagged or noted: the counts have moved
       return {
         ...state, runs, order: current ? state.order : newestFirst(runs),
         countsStale: state.countsStale + (countsChange ? 1 : 0),

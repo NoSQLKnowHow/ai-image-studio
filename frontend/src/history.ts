@@ -4,6 +4,10 @@
 // Adding a filter: a field here and in `filterKey`, `filterParams` and `matches`; a control in `components/FilterBar.tsx`; and a case in the
 // table. The store keeps one view per filter (`filterKey`), so nothing there changes. (`project` is the first filter that holds a value
 // and not a yes-or-no: a project's id, "none", or null for any.)
+//
+// Release 1.26 (DESIGN.md §45) adds a search and three filters: `q`, `model`, `size`, and a date range as two UTC instants (`since`, `until`). The server is the authority for what a
+// search finds (a first page, and each page after it, comes from its word index); `matches` is the page's own rule for the runs it already holds (what a view shows, what a run that
+// arrives while a search is on does), and the two are tested against one table of cases, so they agree on everything the table says.
 
 import type { KeyValueStore } from "./options";
 import type { Run } from "./types";
@@ -22,23 +26,50 @@ export interface HistoryFilter {
   deleted: boolean | null;
   project: string | null;
   family: string | null;
+  /** A search (DESIGN.md §45.4): the words the person typed, trimmed and with white space made single; `null` for none. Not remembered, and shared by every tab. */
+  q: string | null;
+  /** A model's name (`model_id`): only the runs that model made. `null` = any. Each tab has its own (§45.4 rule 7); not remembered. */
+  model: string | null;
+  /** `WIDTHxHEIGHT`: only the picture runs of exactly that size (the Images tab's, §45.4 rule 6). `null` = any. Each tab has its own; not remembered. */
+  size: string | null;
+  /** A UTC instant (`2026-11-01T05:00:00.000Z`): only runs made at or after it (§45.5). Made by the page from the person's own day in their own time zone (`dates.ts`). `null` = no start. */
+  since: string | null;
+  /** A UTC instant: only runs made before it. `null` = no end. */
+  until: string | null;
 }
 
 // The filters the page offers: everything, only the runs that are kept, and only the runs in the bin (the Deleted view, DESIGN.md §30).
 // None of them names a project: the Project drop-down adds that to whichever of these is chosen (`withProject`). None names a family either: a Variations chip does (`withFamily`).
-export const NO_FILTER: HistoryFilter = { kept: null, deleted: false, project: null, family: null };
-export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false, project: null, family: null };
-export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true, project: null, family: null };
+const NO_SEARCH = { q: null, model: null, size: null, since: null, until: null } as const; // none of the search, the three filters and the range
+export const NO_FILTER: HistoryFilter = { kept: null, deleted: false, project: null, family: null, ...NO_SEARCH };
+export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false, project: null, family: null, ...NO_SEARCH };
+export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true, project: null, family: null, ...NO_SEARCH };
 
 export const FILTER_KEY = "studio.history.filter.v1";
 
-export const isDefault = (filter: HistoryFilter): boolean => filter.kept === null && filter.deleted === false && filter.project === null && filter.family === null;
+export const isDefault = (filter: HistoryFilter): boolean =>
+  filter.kept === null && filter.deleted === false && filter.project === null && filter.family === null && !hasSearchOrFilters(filter);
+
+/** Whether the search, the Model, the Size or the date range is on: what makes a view "narrowed" in the words of an empty list and of a card that is shown only while it works. */
+export const hasSearchOrFilters = (filter: HistoryFilter): boolean => filter.q !== null || filter.model !== null || filter.size !== null || filter.since !== null || filter.until !== null;
+
+/** How many of the filters of the Filters row are on (Model, Size, From, To; the search has a box of its own): the number beside the button. A range counts once, whether it has one end or two. */
+export const filtersOn = (filter: HistoryFilter): number => (filter.model !== null ? 1 : 0) + (filter.size !== null ? 1 : 0) + (filter.since !== null || filter.until !== null ? 1 : 0);
+
+/** The same filter with the search and the three filters and the range taken off: what "Clear search and filters" goes back to. Show, Project and a family are as they were. */
+export const withoutSearch = (filter: HistoryFilter): HistoryFilter => ({ ...filter, ...NO_SEARCH });
 
 /** The same filter, looking at another project: what the Project drop-down does. Kept and Deleted stay as they were. */
 export const withProject = (filter: HistoryFilter, project: string | null): HistoryFilter => ({ ...filter, project });
 
 /** A family on its own: what a Variations chip opens (the whole history, narrowed to one run and what was made from it), and with null, what its pill's close button does: back to the whole history. */
 export const withFamily = (filter: HistoryFilter, family: string | null): HistoryFilter => (family === null ? { ...filter, family: null } : { ...NO_FILTER, family });
+
+/** The text of a search as it is kept in a filter: trimmed, white space made single, and `null` when no word is left in it (a text of only punctuation searches nothing, §45.4 rule 2). */
+export function searchText(raw: string): string | null {
+  const text = raw.trim().replace(/\s+/g, " ");
+  return searchTokens(text).length === 0 ? null : text;
+}
 
 /** A stable name for a filter: the key of its view in the store, and what the browser remembers. */
 export function filterKey(filter: HistoryFilter): string {
@@ -48,7 +79,14 @@ export function filterKey(filter: HistoryFilter): string {
   const deleted = filter.deleted === null ? "any" : filter.deleted ? "deleted" : "";
   const project = filter.project === null ? "" : `project:${filter.project}`;
   const family = filter.family === null ? "" : `family:${filter.family}`;
-  return [kept, deleted, project, family].filter(Boolean).join("+") || "all";
+  // The search words and the model's name can hold any character, including the "+" and ":" this name is made of, so they are percent-encoded: no text can make one filter's name another's.
+  const parts = [kept, deleted, project, family];
+  if (filter.q !== null) parts.push(`q:${encodeURIComponent(filter.q)}`);
+  if (filter.model !== null) parts.push(`model:${encodeURIComponent(filter.model)}`);
+  if (filter.size !== null) parts.push(`size:${encodeURIComponent(filter.size)}`);
+  if (filter.since !== null) parts.push(`since:${filter.since}`);
+  if (filter.until !== null) parts.push(`until:${filter.until}`);
+  return parts.filter(Boolean).join("+") || "all";
 }
 
 /** The query parameters of `GET /api/runs` for a filter: only what is not the default. `deleted=any` is not a thing the server takes,
@@ -59,7 +97,28 @@ export function filterParams(filter: HistoryFilter): Record<string, string> {
     ...(filter.deleted ? { deleted: "true" } : {}),
     ...(filter.project === null ? {} : { project: filter.project }),
     ...(filter.family === null ? {} : { family: filter.family }),
+    ...scopeParams(filter),
   };
+}
+
+/** The query parameters of the search and the filters alone (and the project, which the counts take too): what `GET /api/runs/counts` is asked, so the numbers on the bar describe what is on
+ *  the screen (DESIGN.md §45.7). */
+export function scopeParams(filter: Pick<HistoryFilter, "q" | "model" | "size" | "since" | "until">): Record<string, string> {
+  return {
+    ...(filter.q === null ? {} : { q: filter.q }),
+    ...(filter.model === null ? {} : { model: filter.model }),
+    ...(filter.size === null ? {} : { size: filter.size }),
+    ...(filter.since === null ? {} : { since: filter.since }),
+    ...(filter.until === null ? {} : { until: filter.until }),
+  };
+}
+
+/** What the numbers on the filter bar are about, as one name: `null` for the whole history, a project's id for a project alone (as it always was, §32.5), and for a search or a filter a
+ *  name made of all of them. A count is only used for the filter it describes, so one that arrived for another search or another project is never taken for this one. */
+export function countsScope(filter: HistoryFilter): string | null {
+  const rest = scopeParams(filter);
+  if (Object.keys(rest).length === 0) return filter.project;
+  return JSON.stringify([filter.project, rest]); // a name no project id can be (an id is 32 hex digits)
 }
 
 /** Whether a run has a picture, a track or a version of its own in the bin while it is itself in the history (DESIGN.md §33.1, §35.4). Each kind of run has
@@ -69,7 +128,8 @@ export const hasItemsInTheBin = (run: Pick<Run, "binned_images" | "binned_tracks
 
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
 export function matches(
-  run: Pick<Run, "id" | "pinned" | "deleted_at" | "project_id" | "binned_images" | "binned_tracks" | "binned_vectors"> & { family_id?: string | null },
+  run: Pick<Run, "id" | "pinned" | "deleted_at" | "project_id" | "binned_images" | "binned_tracks" | "binned_vectors" | "prompt" | "lyrics" | "model_id" | "created_at" | "tags" | "notes" | "mode" | "options" | "images">
+    & { family_id?: string | null },
   filter: HistoryFilter,
 ): boolean {
   // The history (`deleted: false`) is every run that is not in the bin, whatever it has in the bin. The Deleted view (`true`) is every run that is
@@ -82,7 +142,65 @@ export function matches(
   const projectOk = filter.project === null || (filter.project === NO_PROJECT ? run.project_id === null : run.project_id === filter.project);
   // a family: the run it is named for, or any run made from it (its `family_id`, which a run that is not a picture run does not have: undefined is never equal to an id)
   const familyOk = filter.family === null || run.id === filter.family || run.family_id === filter.family;
-  return keptOk && deletedOk && projectOk && familyOk;
+  return keptOk && deletedOk && projectOk && familyOk && searchOk(run, filter);
+}
+
+// ------------------------------------------------------------------ the search and the three filters (DESIGN.md §45.4)
+/** At most this many distinct words of a search are used (the server's `SEARCH_WORDS`). */
+export const SEARCH_WORDS = 10;
+
+/** Lower case with the accents taken off (`Café` is `cafe`), the way the server's word index reads text: decompose, drop the combining marks, lower-case (not `toLocaleLowerCase`, which depends
+ *  on the browser's language). `ø` and `ß` have no decomposition and stay as they are, as in the index. The server's `fold` is the same steps. */
+export function foldText(text: string): string {
+  return text.normalize("NFC").normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
+/** Every word of a text, folded, in order: runs of letters and digits (the underscore, a quote, `*`, `-`, `:` and the rest are not part of a word). */
+export const wordsOf = (text: string): string[] => foldText(text).match(/[\p{L}\p{N}]+/gu) ?? [];
+
+/** The words of a search: each once, at most `limit` of them. No word at all is no search. The server's `search_terms` is the same rule. */
+export function searchTokens(text: string | null, limit = SEARCH_WORDS): string[] {
+  const found: string[] = [];
+  for (const word of wordsOf(text ?? "")) if (!found.includes(word)) found.push(word);
+  return found.slice(0, limit);
+}
+
+/** Where a reading's text came from, as its options record it: a file's name, or a web address and its host. A search finds these (§45.4 rule 1). */
+function sourceWords(run: Pick<Run, "mode" | "options">): string {
+  if (run.mode !== "speech") return "";
+  const source = (run.options as { source?: unknown }).source;
+  if (typeof source !== "object" || source === null) return "";
+  return ["name", "host", "url"].map((key) => (source as Record<string, unknown>)[key]).filter((value): value is string => typeof value === "string").join(" ");
+}
+
+/** The words a run is found by: its prompt (a reading's title), a music run's lyrics, a reading's source, its notes and its tags (and nothing else: not the negative prompt, the settings or a
+ *  Vector run's recipe). The server's index holds the same, `index_fields` and the two tables. */
+export const searchableWords = (run: Pick<Run, "prompt" | "lyrics" | "mode" | "options" | "notes" | "tags">): string[] =>
+  wordsOf([run.prompt, run.lyrics ?? "", sourceWords(run), run.notes, run.tags.join(" ")].join(" "));
+
+/** The size of a picture run, as its card says it (`sizeText`): the first picture the card shows, else the size that was asked for; null for any other kind of run, which has none
+ *  (a Vector run's own size is in millimetres, a track and a reading have no size). `WIDTHxHEIGHT`, the form the filter and the server take. */
+export function sizeOf(run: Pick<Run, "mode" | "options" | "images">): string | null {
+  if (run.mode !== "generate" && run.mode !== "edit") return null;
+  const picture = run.images[0];
+  if (picture) return `${picture.width}x${picture.height}`;
+  const { width, height } = run.options as { width?: number | null; height?: number | null };
+  return width && height ? `${width}x${height}` : null;
+}
+
+/** The search and the three filters of `HistoryFilter`, as the server's `RunFilter` has them: a search needs every word to be the start of a word in the run's words, a model is `model_id`,
+ *  a size is a picture run's exactly, and the range is of instants (a run made AT `since` is in, one made AT `until` is out). */
+function searchOk(run: Parameters<typeof matches>[0], filter: HistoryFilter): boolean {
+  const words = searchTokens(filter.q);
+  if (words.length > 0) {
+    const have = searchableWords(run);
+    if (!words.every((word) => have.some((found) => found.startsWith(word)))) return false;
+  }
+  if (filter.model !== null && run.model_id !== filter.model) return false;
+  if (filter.size !== null && sizeOf(run) !== filter.size) return false;
+  if (filter.since !== null && !(Date.parse(run.created_at) >= Date.parse(filter.since))) return false;
+  if (filter.until !== null && !(Date.parse(run.created_at) < Date.parse(filter.until))) return false;
+  return true;
 }
 
 /** Whether a filter shows runs that are working whether or not they match it (DESIGN.md §29.3): every filter but the default and the
@@ -136,7 +254,7 @@ export function parseFilterKey(text: string): HistoryFilter | null {
   }
   // the bin on its own (kept must be unset) or the history; "either" is not something the page offers
   if (deleted === null || (deleted === true && kept !== null)) return null;
-  return { kept, deleted, project, family: familyId };
+  return { kept, deleted, project, family: familyId, ...NO_SEARCH };
 }
 
 /** What the browser remembers is read defensively: a name this version does not know is the default. */
@@ -146,8 +264,9 @@ export function readFilter(store: KeyValueStore): HistoryFilter {
 }
 
 export function saveFilter(filter: HistoryFilter, store: KeyValueStore): void {
-  // A family is a place you went to from a chip, not a setting: a reload should not land inside one, so it is left out of what is remembered.
-  store.set(FILTER_KEY, filterKey({ ...filter, family: null }));
+  // A family is a place you went to from a chip, not a setting: a reload should not land inside one, so it is left out of what is remembered. So are the search, the Model, the Size and
+  // the dates (DESIGN.md §45.4 rule 8): they are a question being asked now, and reopening the page on yesterday's would show a history that looks empty for no reason.
+  store.set(FILTER_KEY, filterKey({ ...withoutSearch(filter), family: null }));
 }
 
 // ------------------------------------------------------------------ views

@@ -138,3 +138,14 @@ describe("what an empty list says in a project (DESIGN.md §32.1)", () => {
     expect(empty("image", ONLY_KEPT)).not.toContain("Show any project");
   });
 });
+
+// A card that is in a view with a search or a filter only while it works says what keeps it there (DESIGN.md §45.8)
+import { WORKING_IN_FILTERS_NOTE, leftTheViewText, workingNote } from "./format";
+describe("the words for a run shown while it works with a search on", () => {
+  it("says it stays only if it matches, and says when it left", () => {
+    expect(WORKING_IN_FILTERS_NOTE).toBe("Shown while it works. It stays in this view only if it matches.");
+    expect(workingNote("filters")).toBe(WORKING_IN_FILTERS_NOTE);
+    expect(leftTheViewText({ prompt: "a lighthouse", status: "done" }, "filters")).toBe("“a lighthouse” is done. It does not match this view, so it is not in it.");
+    expect(workingNote("kept")).not.toBe(workingNote("filters"));
+  });
+});

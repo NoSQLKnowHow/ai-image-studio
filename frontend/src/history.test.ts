@@ -7,7 +7,12 @@ import {
 } from "./history";
 import type { KeyValueStore } from "./options";
 import { makeBinnedImage, makeBinnedTrack, makeBinnedVector, makeMusicRun, makeRun, makeSpeechRun, makeVectorRun } from "./testdata";
+import type { SourceInfo } from "./speechTypes";
 import type { Run, RunStatus } from "./types";
+
+// What a filter written out in a test says about the search and the three filters of release 1.26 (DESIGN.md §45): none of them. Added to each literal filter below, so that a test of
+// Show and Project is about those and still builds a whole `HistoryFilter`.
+const NONE = { q: null, model: null, size: null, since: null, until: null } as const;
 
 // ------------------------------------------------------------------ the table both sides are tested against (DESIGN.md §29.5, criterion 120)
 // The server runs each case through its SQL (backend/tests/test_runfilter.py); here the page's `matches` gets the same runs.
@@ -17,17 +22,30 @@ const STATUSES: Record<string, RunStatus> = { queued: "queued", running: "runnin
 // build a page `Run` from one row of the shared table (music rows become music runs; a deleted row is in the bin; `items_in_bin` is how many of its
 // own pictures, tracks for a music run, or versions for a vector run, are in the bin, as `binned_images`, `binned_tracks` or `binned_vectors`)
 // `family` is the id (a letter, here) of the first run of the family a picture run belongs to, when it does (DESIGN.md §43.4)
-type TableRun = { id: string; mode: string; status: string; pinned: boolean; deleted: boolean; project: string | null; items_in_bin: number; family?: string };
-function tableRun(entry: TableRun): Run {
-  const extra = { id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned, deleted_at: entry.deleted ? "2026-10-02T00:00:00.000Z" : null, project_id: entry.project };
+// Release 1.26 (DESIGN.md §45): a row may also give the run's words (`prompt`, `lyrics`, `notes`, `tags`, a reading's `source`), its `model`, its `width` and `height` and the moment it was
+// `made`; each left out is what the table's `about` says it is. `position` is the run's place counting from the oldest (1), which is what its moment comes from when it has none.
+type TableRun = {
+  id: string; mode: string; status: string; pinned: boolean; deleted: boolean; project: string | null; items_in_bin: number; family?: string;
+  prompt?: string; lyrics?: string; notes?: string; tags?: string[]; source?: Record<string, string>; model?: string; width?: number; height?: number; made?: string;
+};
+function tableRun(entry: TableRun, position: number): Run {
+  const extra = {
+    id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned, deleted_at: entry.deleted ? "2026-10-02T00:00:00.000Z" : null, project_id: entry.project,
+    prompt: entry.prompt ?? `run ${entry.id}`, notes: entry.notes ?? "", tags: entry.tags ?? [], model_id: entry.model ?? "fake-pipeline",
+    created_at: entry.made ?? `2026-10-01T00:00:${String(position).padStart(2, "0")}Z`,
+  };
   const items = Array.from({ length: entry.items_in_bin }, (_, i) => i);
-  // a reading has nothing of its own to put in the bin (DESIGN.md §38.8): its row is the run alone
-  if (entry.mode === "speech") return makeSpeechRun(extra);
+  // a reading has nothing of its own to put in the bin (DESIGN.md §38.8): its row is the run alone; where its text came from is in its options
+  if (entry.mode === "speech") {
+    const reading = makeSpeechRun(extra);
+    return entry.source ? { ...reading, options: { ...reading.options, source: entry.source as unknown as SourceInfo } } : reading;
+  }
   // a Vector row's items are its versions (DESIGN.md §35.4)
   if (entry.mode === "vector") return makeVectorRun({ ...extra, binned_vectors: items.map((i) => makeBinnedVector(i + 1)) });
-  return entry.mode === "music"
-    ? makeMusicRun({ ...extra, binned_tracks: items.map((i) => makeBinnedTrack(i)) })
-    : makeRun({ ...extra, mode: entry.mode as "generate" | "edit", binned_images: items.map((i) => makeBinnedImage(i)), family_id: entry.family ?? null });
+  if (entry.mode === "music") return makeMusicRun({ ...extra, lyrics: entry.lyrics ?? null, binned_tracks: items.map((i) => makeBinnedTrack(i)) });
+  // a picture run's size is what was asked for until it has a picture the card shows (every picture the table gives a run is in the bin): the table's width and height, 256 by 256 unless it says
+  const options = { ...makeRun().options, width: entry.width ?? 256, height: entry.height ?? 256 };
+  return makeRun({ ...extra, options, mode: entry.mode as "generate" | "edit", binned_images: items.map((i) => makeBinnedImage(i)), family_id: entry.family ?? null });
 }
 
 // which tab a run belongs to, as the server's counts name it
@@ -46,12 +64,12 @@ describe("hasItemsInTheBin", () => {
 });
 
 describe("the shared table of cases", () => {
-  const runs = cases.runs.map(tableRun); // newest first, as the table lists them
+  const runs = cases.runs.map((entry, index) => tableRun(entry as TableRun, cases.runs.length - index)); // newest first, as the table lists them
 
   for (const entry of cases.cases) {
     it(entry.name, () => {
       // a case lists only what it sets, and the server's RunFilter defaults the rest: so does this (a family left out is no family, which is `null` and not "undefined")
-      const filter = { family: null, ...entry.filter } as HistoryFilter;
+      const filter = { family: null, ...NONE, ...entry.filter } as HistoryFilter;
       expect(runs.filter((run) => matches(run, filter)).map((run) => run.id)).toEqual(entry.expect);
     });
   }
@@ -79,6 +97,26 @@ describe("the shared table of cases", () => {
       expect(all(project), `within ${project}`).toEqual(expected);
     }
   });
+
+  // ... and within a search and the filters (DESIGN.md §45.7): the numbers on the bar describe what is on the screen. The page counts the table with `matches` as the server counts it in SQL.
+  for (const entry of cases.counts_by_scope) {
+    it(`the page's counts within ${entry.name} agree with the server's`, () => {
+      const scope = { ...NONE, ...entry.scope } as Partial<HistoryFilter>;
+      const within = (filter: HistoryFilter) => ({ ...filter, ...scope, project: (scope as { project?: string }).project ?? filter.project }) as HistoryFilter;
+      const of = (kind: Kind) => {
+        const inKind = runs.filter((run) => kindOf(run) === kind);
+        const history = inKind.filter((run) => matches(run, within(NO_FILTER)));
+        const items = history.reduce((sum, run) => sum + run.binned_images.length + run.binned_tracks.length + run.binned_vectors.length, 0);
+        return {
+          all: history.length,
+          kept: inKind.filter((run) => matches(run, within(ONLY_KEPT))).length,
+          deleted: inKind.filter((run) => matches(run, within({ ...NO_FILTER, deleted: null })) && run.deleted_at !== null).length + items,
+          deleted_items: items,
+        };
+      };
+      expect(Object.fromEntries((Object.keys(entry.counts) as Kind[]).map((kind) => [kind, of(kind)]))).toEqual(entry.counts);
+    });
+  }
 });
 
 // ------------------------------------------------------------------ projects (DESIGN.md §32)
@@ -100,7 +138,7 @@ describe("the project of a history filter", () => {
   });
 
   it("changes only the project: Kept and Deleted stay as they were", () => {
-    expect(withProject(ONLY_KEPT, ID)).toEqual({ kept: true, deleted: false, project: ID, family: null });
+    expect(withProject(ONLY_KEPT, ID)).toEqual({ kept: true, deleted: false, project: ID, family: null, ...NONE });
     expect(withProject(withProject(ONLY_DELETED, ID), null)).toEqual(ONLY_DELETED);
   });
 
@@ -144,7 +182,7 @@ describe("the stored form of a filter with a project", () => {
   };
 
   it("round-trips every choice of Show combined with a project", () => {
-    for (const base of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED]) {
+    for (const base of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null, ...NONE }, ONLY_DELETED]) {
       for (const project of [ID, NO_PROJECT]) {
         const store = memory();
         saveFilter(withProject(base, project), store);
@@ -172,8 +210,8 @@ describe("the stored form of a filter with a project", () => {
   });
 
   it("reads the parts in any order, because only the page writes them in one", () => {
-    expect(parseFilterKey(`project:${ID}+kept`)).toEqual({ kept: true, deleted: false, project: ID, family: null });
-    expect(parseFilterKey(`deleted+project:${ID}`)).toEqual({ kept: null, deleted: true, project: ID, family: null });
+    expect(parseFilterKey(`project:${ID}+kept`)).toEqual({ kept: true, deleted: false, project: ID, family: null, ...NONE });
+    expect(parseFilterKey(`deleted+project:${ID}`)).toEqual({ kept: null, deleted: true, project: ID, family: null, ...NONE });
   });
 });
 
@@ -182,7 +220,7 @@ describe("a history filter", () => {
   it("is named, and the default is only 'either'", () => {
     // every filter the page can build, and some it cannot (kept in the bin, either): each must have a name of its own, since each gets its
     // own view in the store
-    const filters: HistoryFilter[] = [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED, { kept: true, deleted: true, project: null, family: null }, { kept: null, deleted: null, project: null, family: null }];
+    const filters: HistoryFilter[] = [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null, ...NONE }, ONLY_DELETED, { kept: true, deleted: true, project: null, family: null, ...NONE }, { kept: null, deleted: null, project: null, family: null, ...NONE }];
     expect(filters.map(filterKey)).toEqual(["all", "kept", "not-kept", "deleted", "kept+deleted", "any"]);
     expect(new Set(filters.map(filterKey)).size).toBe(filters.length); // every filter has a name of its own: a view each
     expect(filters.map(isDefault)).toEqual([true, false, false, false, false, false]);
@@ -191,16 +229,16 @@ describe("a history filter", () => {
   it("asks the server for what it is, and for nothing when it is the default", () => {
     expect(filterParams(NO_FILTER)).toEqual({});
     expect(filterParams(ONLY_KEPT)).toEqual({ kept: "true" });
-    expect(filterParams({ kept: false, deleted: false, project: null, family: null })).toEqual({ kept: "false" });
+    expect(filterParams({ kept: false, deleted: false, project: null, family: null, ...NONE })).toEqual({ kept: "false" });
     expect(filterParams(ONLY_DELETED)).toEqual({ deleted: "true" });
-    expect(filterParams({ kept: true, deleted: true, project: null, family: null })).toEqual({ kept: "true", deleted: "true" });
+    expect(filterParams({ kept: true, deleted: true, project: null, family: null, ...NONE })).toEqual({ kept: "true", deleted: "true" });
   });
 
   it("is a rule about one thing: whether the run is kept, whatever else it is", () => {
     for (const status of ["queued", "running", "done", "failed", "canceled"] as const) {
       expect(matches(makeRun({ status, pinned: true }), ONLY_KEPT)).toBe(true);
       expect(matches(makeRun({ status, pinned: false }), ONLY_KEPT)).toBe(false);
-      expect(matches(makeRun({ status, pinned: false }), { kept: false, deleted: false, project: null, family: null })).toBe(true);
+      expect(matches(makeRun({ status, pinned: false }), { kept: false, deleted: false, project: null, family: null, ...NONE })).toBe(true);
       expect(matches(makeRun({ status, pinned: true }), NO_FILTER)).toBe(true);
     }
   });
@@ -213,11 +251,11 @@ describe("a history filter", () => {
     expect([NO_FILTER, ONLY_KEPT].map((filter) => matches(inBin, filter))).toEqual([false, false]);
     expect([NO_FILTER, ONLY_KEPT].map((filter) => matches(plain, filter))).toEqual([true, true]);
     expect([matches(inBin, ONLY_DELETED), matches(plain, ONLY_DELETED)]).toEqual([true, false]);
-    expect(matches(inBin, { kept: null, deleted: null, project: null, family: null })).toBe(true); // either
+    expect(matches(inBin, { kept: null, deleted: null, project: null, family: null, ...NONE })).toBe(true); // either
   });
 
   it("shows working runs in every filtered view but the bin, where nothing works", () => {
-    expect([NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED].map(showsWorking)).toEqual([false, true, true, false]);
+    expect([NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null, ...NONE }, ONLY_DELETED].map(showsWorking)).toEqual([false, true, true, false]);
   });
 
   it("knows what is working", () => {
@@ -257,7 +295,7 @@ describe("what the browser remembers", () => {
   };
 
   it("round-trips", () => {
-    for (const filter of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED]) {
+    for (const filter of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null, ...NONE }, ONLY_DELETED]) {
       const store = memory();
       saveFilter(filter, store);
       expect(readFilter(store)).toEqual(filter);
@@ -460,7 +498,7 @@ describe("which runs have left the Kept view (DESIGN.md §29.3)", () => {
   });
 
   it("is told apart by what the filter says: with 'not kept' a kept working run is the one that leaves", () => {
-    const filter: HistoryFilter = { kept: false, deleted: false, project: null, family: null };
+    const filter: HistoryFilter = { kept: false, deleted: false, project: null, family: null, ...NONE };
     const watched = watchWorking(none, table(run("w", { status: "running", pinned: true })), filter).watched;
     expect([...watched]).toEqual(["w"]);
     expect(watchWorking(watched, table(run("w", { status: "done", pinned: true })), filter).left.map((r) => r.id)).toEqual(["w"]);

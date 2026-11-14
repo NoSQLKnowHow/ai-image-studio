@@ -24,11 +24,13 @@ from .builder.schema import BUILDER_SCHEMA, PROMPT_SEARCH_SQL
 from .speech.schema import SPEECH_SCHEMA
 from .projects import name_key as project_name_key
 from .runfilter import KINDS, RunFilter
+from .runsearch import FACETS_LISTED, RUN_ANNOTATION_SCHEMA, RUN_HEIGHT, RUN_SEARCH_SQL, RUN_WIDTH, TAGS_LISTED, index_fields
 
-# 10: mode 'speech', runs.queue_key and runs.hidden, and the Speech tab's tables (§38.8); 9: the Prompt builder's tables and runs.prompt_id, runs.prompt_version (§37.4); 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
+# 13: the tables of tags, notes and the word index over runs (run_tags, run_notes, run_search; DESIGN.md §45.7), added to the end, so no run is touched; 12 is taken by another feature's schema;
+# 11: runs.variation_json and runs.family_id (§43.4); 10: mode 'speech', runs.queue_key and runs.hidden, and the Speech tab's tables (§38.8); 9: the Prompt builder's tables and runs.prompt_id, runs.prompt_version (§37.4); 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
 # 5: the projects table and runs.project_id, for project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
 # 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 13
 log = logging.getLogger("studio.db")
 
 # A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
@@ -154,7 +156,7 @@ CREATE TABLE IF NOT EXISTS run_inputs (
     role      TEXT NOT NULL DEFAULT 'reference' CHECK (role IN ('reference','marked','mask')),
     PRIMARY KEY (run_id, position)
 );
-""" + BUILDER_SCHEMA + SPEECH_SCHEMA
+""" + BUILDER_SCHEMA + SPEECH_SCHEMA + RUN_ANNOTATION_SCHEMA
 
 INTERRUPTED_MESSAGE = "Interrupted by a server restart."
 
@@ -204,6 +206,8 @@ class Database:
             self._add_speech_columns()
             self._add_variation_columns()
             self.has_fts5 = self._add_prompt_search()
+            self.has_run_fts = self._add_run_search()
+            self._index_existing_runs(previous)
             self._record_version(previous)
             self._queue_order = QUEUE_ORDER
 
@@ -338,6 +342,65 @@ class Database:
             return False
         return True
 
+    def _add_run_search(self) -> bool:
+        """Schema 13: the word index over runs (DESIGN.md §45.7). Returns whether this SQLite has FTS5; where it has not, the studio keeps working and searching runs falls back to a plain
+        match (`has_run_fts` is False). The tables of tags and notes are made by `_SCHEMA`; only this one can fail, so it is a statement of its own."""
+        try:
+            self._conn.execute(RUN_SEARCH_SQL)
+        except sqlite3.OperationalError as error:
+            log.warning("this SQLite has no FTS5 (%s): searching runs will use a plain match", error)
+            return False
+        return True
+
+    def _index_existing_runs(self, previous: Optional[int]) -> None:
+        """Index the runs that already exist (DESIGN.md §45.7): a search that found only new runs would be a bug. Done when the database is upgraded from before schema 13 (the index
+        is new, so it holds nothing), and again whenever the index does not hold one row for each run that is not a hidden job, which also repairs an index that something did by hand
+        left out of step. A new database has no runs, so it has nothing to do."""
+        if not self.has_run_fts:
+            return
+        if previous is not None and previous < 13:
+            log.info("indexed %d runs for search", self.reindex_runs())
+        elif self._run_search_count() != self._indexable_run_count():
+            log.warning("the runs' word index was not in step with the runs; indexed %d runs for search", self.reindex_runs())
+
+    def _run_search_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM run_search").fetchone()[0]
+
+    def _indexable_run_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM runs WHERE hidden = 0").fetchone()[0]
+
+    def reindex_runs(self) -> int:
+        """Make the word index match the runs, from scratch, in one transaction; returns how many runs it holds. The notes and tags are read once, not once for each run."""
+        if not self.has_run_fts:
+            return 0
+        with self.tx() as c:
+            c.execute("DELETE FROM run_search")
+            notes = {r["run_id"]: r["notes"] for r in c.execute("SELECT run_id, notes FROM run_notes")}
+            tags: dict[str, list[str]] = {}
+            for r in c.execute("SELECT run_id, tag FROM run_tags ORDER BY tag"):
+                tags.setdefault(r["run_id"], []).append(r["tag"])
+            rows = c.execute("SELECT id, mode, prompt, lyrics, options_json FROM runs WHERE hidden = 0").fetchall()
+            for r in rows:
+                prompt, extra = index_fields(r["mode"], r["prompt"], r["lyrics"], r["options_json"])
+                c.execute("INSERT INTO run_search (run_id, prompt, extra, notes, tags) VALUES (?, ?, ?, ?, ?)",
+                          (r["id"], prompt, extra, notes.get(r["id"], ""), " ".join(tags.get(r["id"], []))))
+            return len(rows)
+
+    def index_run(self, c: sqlite3.Connection, run_id: str) -> None:
+        """Write the one row of the word index for a run (DESIGN.md §45.7): its words, its lyrics or source, its note and its tags. Called INSIDE the transaction that makes the run or
+        changes its note or tags, so the index is never behind. A hidden job (the short work behind a voice sample) is not history and is not indexed. Where this SQLite has no FTS5
+        there is no index and nothing to do."""
+        if not self.has_run_fts:
+            return
+        c.execute("DELETE FROM run_search WHERE run_id=?", (run_id,))
+        run = c.execute("SELECT mode, prompt, lyrics, options_json, hidden FROM runs WHERE id=?", (run_id,)).fetchone()
+        if run is None or run["hidden"]:
+            return
+        prompt, extra = index_fields(run["mode"], run["prompt"], run["lyrics"], run["options_json"])
+        note = c.execute("SELECT notes FROM run_notes WHERE run_id=?", (run_id,)).fetchone()
+        tags = " ".join(r["tag"] for r in c.execute("SELECT tag FROM run_tags WHERE run_id=? ORDER BY tag", (run_id,)))
+        c.execute("INSERT INTO run_search (run_id, prompt, extra, notes, tags) VALUES (?, ?, ?, ?, ?)", (run_id, prompt, extra, note["notes"] if note else "", tags))
+
     def _record_version(self, previous: Optional[int]) -> None:
         with self.tx() as c:
             if previous is None:
@@ -392,6 +455,7 @@ class Database:
                     return "full"
                 columns = ", ".join(run)
                 c.execute(f"INSERT INTO runs ({columns}) VALUES ({', '.join('?' for _ in run)})", tuple(run.values()))
+                self.index_run(c, run["id"])  # findable by search from the moment it exists (DESIGN.md §45.7)
                 for item in inputs:
                     image = {k: v for k, v in item.items() if k not in ("position", "role")}
                     c.execute(f"INSERT INTO images ({', '.join(image)}) VALUES ({', '.join('?' for _ in image)})",
@@ -473,7 +537,7 @@ class Database:
         filter does not show (one un-kept since the page was loaded): it only says where to start."""
         # The filter's conditions come first. Each is a fixed SQL fragment with a placeholder; its values are bound, never pasted into the
         # text, so nothing the page sent can become SQL.
-        clauses, values = (run_filter or RunFilter()).conditions()
+        clauses, values = (run_filter or RunFilter()).conditions(self.has_run_fts)
         # The short jobs behind a voice sample or a designed voice are runs that are not history (DESIGN.md §38.4): no list or count shows them
         clauses.append("hidden = 0")
         # The tab is one more condition, on the run's `mode`: one `?` for each mode the tab holds, all bound. An unknown kind is a KeyError, which the
@@ -499,7 +563,7 @@ class Database:
         """(things in the bin, of which pictures or tracks) for one tab, within whatever else the filter says (kept, project). The runs in the
         bin count one each; a picture or track in the bin counts one when its run is still in the history (one in a run that is itself in the
         bin is not listed, §33.2 item 5, so it is not counted)."""
-        clauses, values = replace(run_filter, deleted=None).conditions()  # the filter without its bin rule: it is applied by hand below
+        clauses, values = replace(run_filter, deleted=None).conditions(self.has_run_fts)  # the filter without its bin rule: it is applied by hand below
         clauses.append("hidden = 0")
         clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
         args = (*values, *modes)
@@ -522,7 +586,7 @@ class Database:
                 if run_filter.deleted is True:
                     counts[kind][name], counts[kind][f"{name}_items"] = self._count_bin(run_filter, modes)
                     continue
-                clauses, values = run_filter.conditions()
+                clauses, values = run_filter.conditions(self.has_run_fts)
                 clauses.append("hidden = 0")
                 # restrict the count to the tab's modes: one `?` placeholder for each
                 clauses.append(f"mode IN ({', '.join('?' for _ in modes)})")
@@ -678,11 +742,14 @@ class Database:
     _EXPIRED = ("pinned=0 AND project_id IS NULL AND deleted_at IS NULL AND status IN ('done','failed','canceled') AND mode != 'speech' "
                 "AND COALESCE(restored_at, created_at) < ?")
 
-    @staticmethod
-    # the one place that removes a run and what hangs off it (its pictures, tracks and vector versions); every delete goes through here, so none
-    # forgets a table
-    def _delete_rows(c: sqlite3.Connection, ids: Sequence[str]) -> None:
+    # the one place that removes a run and what hangs off it (its pictures, tracks and vector versions, its tags and note, and its row of the word index); every delete goes
+    # through here, so none forgets a table, and the index is never left holding a run that is gone (DESIGN.md §45.7)
+    def _delete_rows(self, c: sqlite3.Connection, ids: Sequence[str]) -> None:
         for run_id in ids:
+            c.execute("DELETE FROM run_tags WHERE run_id=?", (run_id,))
+            c.execute("DELETE FROM run_notes WHERE run_id=?", (run_id,))
+            if self.has_run_fts:
+                c.execute("DELETE FROM run_search WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM images WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM tracks WHERE run_id=?", (run_id,))
             c.execute("DELETE FROM vectors WHERE run_id=?", (run_id,))
@@ -943,6 +1010,77 @@ class Database:
                 return "not_in_project"
             c.execute("UPDATE runs SET project_id=NULL" + ("" if keep or row["mode"] == "speech" else ", pinned=0") + " WHERE id=?", (run_id,))
             return "unfiled"
+
+    # ----------------------------------------------------- tags, notes and facets (DESIGN.md §45)
+    def tags_for_runs(self, run_ids: Sequence[str]) -> dict[str, list[str]]:
+        """The tags of each run in `run_ids`, A to Z; a run with none has an empty list."""
+        found: dict[str, list[str]] = {run_id: [] for run_id in run_ids}
+        if not run_ids:
+            return found
+        marks = ",".join("?" * len(run_ids))
+        for row in self._all(f"SELECT run_id, tag FROM run_tags WHERE run_id IN ({marks}) ORDER BY tag", tuple(run_ids)):
+            found[row["run_id"]].append(row["tag"])
+        return found
+
+    def notes_for_runs(self, run_ids: Sequence[str]) -> dict[str, str]:
+        """The note of each run in `run_ids` that has one; a run without a note is not in the answer."""
+        if not run_ids:
+            return {}
+        marks = ",".join("?" * len(run_ids))
+        return {r["run_id"]: r["notes"] for r in self._all(f"SELECT run_id, notes FROM run_notes WHERE run_id IN ({marks})", tuple(run_ids))}
+
+    def _annotatable(self, c: sqlite3.Connection, run_id: str) -> str:
+        """'ok' for a run whose tags and note may be changed, 'not_found' (no such run, or a hidden job, which is not history) or 'in_bin' (the bin only reads, DESIGN.md §45.4 rule 12)."""
+        row = c.execute("SELECT deleted_at, hidden FROM runs WHERE id=?", (run_id,)).fetchone()
+        if row is None or row["hidden"]:
+            return "not_found"
+        return "in_bin" if row["deleted_at"] is not None else "ok"
+
+    def set_run_tags(self, run_id: str, tags: Sequence[str]) -> str:
+        """Replace a run's tags with `tags` (already cleaned, each once, at most `TAGS_MAX`), and keep the word index in step, in one transaction. Returns 'ok', 'not_found' or 'in_bin'."""
+        with self.tx() as c:
+            outcome = self._annotatable(c, run_id)
+            if outcome != "ok":
+                return outcome
+            c.execute("DELETE FROM run_tags WHERE run_id=?", (run_id,))
+            c.executemany("INSERT INTO run_tags (run_id, tag) VALUES (?, ?)", [(run_id, tag) for tag in tags])
+            self.index_run(c, run_id)
+            return "ok"
+
+    def set_run_notes(self, run_id: str, notes: str, now: str) -> str:
+        """Set a run's note to `notes` (already cleaned and checked); an empty text clears it. Keeps the word index in step, in one transaction. Returns 'ok', 'not_found' or 'in_bin'."""
+        with self.tx() as c:
+            outcome = self._annotatable(c, run_id)
+            if outcome != "ok":
+                return outcome
+            if notes:
+                c.execute("INSERT INTO run_notes (run_id, notes, updated_at) VALUES (?, ?, ?) ON CONFLICT(run_id) DO UPDATE SET notes=excluded.notes, updated_at=excluded.updated_at",
+                          (run_id, notes, now))
+            else:
+                c.execute("DELETE FROM run_notes WHERE run_id=?", (run_id,))
+            self.index_run(c, run_id)
+            return "ok"
+
+    def tag_counts(self, limit: int = TAGS_LISTED) -> list[dict[str, Any]]:
+        """The tags in use, most used first (then A to Z), each with the number of runs that have it: [{tag, count}]. Only runs in the history count (not the bin, not a hidden job):
+        this is what the editor's autocomplete offers (DESIGN.md §45.4 rule 9)."""
+        rows = self._all(
+            "SELECT t.tag AS tag, COUNT(*) AS n FROM run_tags t JOIN runs r ON r.id = t.run_id WHERE r.deleted_at IS NULL AND r.hidden = 0 GROUP BY t.tag ORDER BY n DESC, t.tag LIMIT ?", (limit,))
+        return [{"tag": r["tag"], "count": r["n"]} for r in rows]
+
+    def run_facets(self, kind: str) -> dict[str, list[dict[str, Any]]]:
+        """What the Model and Size drop-downs offer for one tab (DESIGN.md §45.7): {models: [{value, count}], sizes: [{width, height, count}]}, most runs first, at most `FACETS_LISTED`
+        of each. Every run of the tab that is not a hidden job counts, in the history or in the bin, so a model that only the bin holds can still be chosen in the Deleted view. Sizes are
+        the picture runs' (the Images tab's); every other tab's list is empty."""
+        modes = KINDS[kind]
+        marks = ", ".join("?" for _ in modes)
+        models = self._all(f"SELECT model_id AS value, COUNT(*) AS n FROM runs WHERE hidden = 0 AND mode IN ({marks}) GROUP BY model_id ORDER BY n DESC, model_id LIMIT ?", (*modes, FACETS_LISTED))
+        sizes: list[sqlite3.Row] = []
+        if kind == "image":
+            sizes = self._all(
+                f"SELECT w, h, COUNT(*) AS n FROM (SELECT {RUN_WIDTH} AS w, {RUN_HEIGHT} AS h FROM runs WHERE hidden = 0 AND mode IN ('generate', 'edit')) "
+                "WHERE w IS NOT NULL AND h IS NOT NULL GROUP BY w, h ORDER BY n DESC, w DESC, h DESC LIMIT ?", (FACETS_LISTED,))
+        return {"models": [{"value": r["value"], "count": r["n"]} for r in models], "sizes": [{"width": r["w"], "height": r["h"], "count": r["n"]} for r in sizes]}
 
     def recover_interrupted(self, now: str) -> list[str]:
         """Runs left 'running' by a previous process become failed (their finished images are kept)."""

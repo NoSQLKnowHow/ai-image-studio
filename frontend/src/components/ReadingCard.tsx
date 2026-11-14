@@ -4,6 +4,7 @@ import { zipUrl } from "../speechApi";
 import type { SpeechRun } from "../types";
 import { DownloadIcon, FolderIcon, PlayIcon, RestoreIcon, ReuseIcon, SpeakerIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
+import { RunAnnotations } from "./RunAnnotations";
 
 // The card of a reading (DESIGN.md §38.2): one card for the whole reading however many parts it has, with its title, where the text came from, the engine and the
 // voice, a bar of how far it has got, and the buttons it needs: Listen, Cancel while it is waiting or being made, Continue after a Cancel, Retry after a failure,
@@ -73,6 +74,7 @@ export function ReadingCard({ run, now, transient, viewScope, projects, onListen
 
         <p className="run-prompt reading-title">{title}</p>
         <p className="run-meta">{readingFacts(run)}</p>
+        <RunAnnotations run={run} />
 
         {/* how far it has got: the part, the paragraph and how much is made (§38.2). Nothing to show until a piece is made, and then it stays: a finished reading
             says how long it is */}

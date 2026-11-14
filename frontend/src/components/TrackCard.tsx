@@ -3,6 +3,7 @@ import { binNote, duration, expiryText, keepLockedTitle, timeAgo, canceledText, 
 import { musicMeta, musicPhases, musicProgressText, musicTitle, trackLabel } from "../music";
 import type { MusicRun, TrackInfo, WorkerState, WorkerStatus } from "../types";
 import { RunFrom } from "../promptLinks";
+import { RunAnnotations } from "./RunAnnotations";
 import { CopyIcon, DownloadIcon, FolderIcon, NoteIcon, PinIcon, RestoreIcon, ReuseIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 import { loadView } from "../loadProgress";
@@ -124,6 +125,7 @@ export function TrackCard({ run, now, workerState, worker, transient, viewScope,
         )}
         <p className="run-meta">{musicMeta(run, took).join(" · ")}</p>
         <RunFrom run={run} />
+        <RunAnnotations run={run} />
 
         {run.status === "running" && <MusicProgress run={run} workerState={workerState} worker={worker} />}
 
