@@ -6,7 +6,10 @@ second start changes nothing and makes no second copy; and the link works once t
 
 A schema 10 database is made by taking a current one and putting it back: the index and the two columns dropped and the version set to 10. That is the table 1.22 had, and
 it is what the upgrade is built to find. (1.26 made the schema 13 with three tables of its own, `test_annotations_schema.py`; a database upgraded from 10 now goes on to 13 in the same
-start, so these tests name the CURRENT schema where they used to say 11, and still check that what schema 11 added is there and is last in `runs`: schema 13 added no column to it.)"""
+start, so these tests name the CURRENT schema where they used to say 11, and still check that what schema 11 added is there and is last in `runs`: schema 13 added no column to it.)
+
+1.25 had already moved the schema to 12 (DESIGN.md §44.6: `speech_pieces.speaker` and the `speech_pronunciations` table; its own checks are in test_speech_schema12.py), so a database upgraded from 10 passes through 12 on the way to 13.
+"""
 
 from __future__ import annotations
 
@@ -27,9 +30,12 @@ def indexes_of(path) -> set[str]:
 
 
 def as_schema_10(path) -> None:
-    """Put a current database back to what schema 10 left: no family index, no `variation_json` or `family_id`, version 10."""
+    """Put a current database back to what schema 10 left: no family index, no `variation_json` or `family_id`, version 10. Since 1.25 that also means no
+    `speech_pieces.speaker` and no `speech_pronunciations` table (schema 12), which a 1.22 database never had."""
     conn = sqlite3.connect(path)
     try:
+        conn.execute("DROP TABLE speech_pronunciations")
+        conn.execute("ALTER TABLE speech_pieces DROP COLUMN speaker")
         conn.execute("DROP INDEX idx_runs_family")
         conn.execute("ALTER TABLE runs DROP COLUMN variation_json")
         conn.execute("ALTER TABLE runs DROP COLUMN family_id")

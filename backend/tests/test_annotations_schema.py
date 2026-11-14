@@ -75,7 +75,7 @@ def found(db: Database, text: str) -> list[str]:
 
 
 def test_the_schema_is_13_and_a_new_database_has_the_three_tables_and_the_index(tmp_path):
-    assert SCHEMA_VERSION == 13  # 1.26: tags, notes and the word index (1.24 made it 11; 12 is another feature's)
+    assert SCHEMA_VERSION == 13  # 1.26: tags, notes and the word index (1.24 made it 11; 1.25's pronunciation list and speakers made it 12)
     path = tmp_path / "studio.sqlite"
     db = Database(path)
     try:
@@ -222,7 +222,7 @@ def test_a_fresh_database_with_fts5_and_one_without_have_the_same_ordinary_table
 
 @pytest.mark.parametrize("previous", ["12", "11"])
 def test_an_upgrade_from_12_or_11_indexes_every_run(tmp_path, previous):
-    """12 is another feature's schema, so a database may arrive at 13 from either: 'before 13' is the rule, not 'from 11'."""
+    """12 is 1.25's schema (the pronunciation list and speakers), so a database may arrive at 13 from either: 'before 13' is the rule, not 'from 11'."""
     path, _fresh = database_as_1_24(tmp_path)
     conn = sqlite3.connect(path)
     conn.execute("UPDATE meta SET value=? WHERE key='schema_version'", (previous,))

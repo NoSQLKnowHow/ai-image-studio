@@ -147,13 +147,18 @@ def check_image():
 def test_the_build_check_has_a_line_for_ffmpeg_and_one_for_every_real_engine(check_image):
     notes = check_image.speech_notes()
     assert notes[0].startswith("Speech: ") and "ffmpeg" in notes[0]
-    assert [n.split(":")[1].strip() for n in notes[1:]] == list(registry.REAL_ENGINES)  # in the order the page lists them, none missing, none named by the check itself
+    # Release 1.25 added a second line about ffmpeg, whether it can make the audiobook (M4B) file (DESIGN.md section 44.4); it is not an engine line, so it is set apart here
+    audiobook = [n for n in notes[1:] if "audiobook" in n]
+    assert len(audiobook) == 1 and audiobook[0].startswith("Speech: ")
+    engine_notes = [n for n in notes[1:] if "audiobook" not in n]
+    assert [n.split(":")[1].strip() for n in engine_notes] == list(registry.REAL_ENGINES)  # in the order the page lists them, none missing, none named by the check itself
     assert all(n.startswith("Speech: ") for n in notes)
 
 
 def test_an_engine_that_cannot_run_is_a_note_with_its_reason_and_never_a_problem(check_image):
     notes = check_image.speech_notes()
-    assert all("not available here" in n or "can run" in n for n in notes[1:])
+    # only the engine lines are about engines: the audiobook line (release 1.25) says whether ffmpeg can make the M4B file, in its own words
+    assert all("not available here" in n or "can run" in n for n in notes[1:] if "audiobook" not in n)
     kokoro = next(n for n in notes if "kokoro" in n)
     assert "Kokoro's libraries are not installed" in kokoro  # the engine's own words, as its pill will show them
 

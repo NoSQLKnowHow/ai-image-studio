@@ -37,12 +37,29 @@ export interface SpeechEngine {
   hint: string | null; // what to do about it
 }
 
+/** `capabilities.speech.audiobook` (DESIGN.md §44.4): whether this server can make the M4B audiobook file, and if not why, in words. The ZIP works either way. */
+export interface AudiobookCaps {
+  available: boolean;
+  reason: string | null;
+  hint: string | null;
+}
+
 /** `capabilities.speech` */
 export interface SpeechCaps {
   available: boolean; // at least one engine is usable
   reason: string | null;
   hint: string | null;
   engines: SpeechEngine[];
+  audiobook: AudiobookCaps;
+}
+
+/** The limits of the pronunciation list (DESIGN.md §44.3), which the server enforces and the page says. */
+export interface PronunciationLimits {
+  word_max: number; // the longest word or phrase an entry may name
+  words_max: number; // and the most words in it
+  say_max: number; // the longest respelling
+  entries_max: number; // the most entries in the list
+  try_chars: number; // the most text Try it takes
 }
 
 /** `capabilities.limits.speech`: the limits the text pipeline and the uploads obey, so the page says them and never repeats a number. */
@@ -55,6 +72,57 @@ export interface SpeechLimits {
   voice_seconds: { min: number; max: number }; // the length a recording of a voice may be
   recording_mb: number;
   chars_per_second: number; // how much text a narrator speaks in a second, for turning a length into minutes
+  pronunciation: PronunciationLimits;
+  speakers_max: number; // the most speakers one reading can have (§44.5)
+}
+
+// ---------------------------------------------------------------- the audiobook file (§44.4)
+/** Where a reading's M4B stands: `none` nothing is finished yet; `idle` it can be made; `waiting` another is being made first; `building`; `ready`; `failed`. */
+export type AudiobookState = "none" | "idle" | "waiting" | "building" | "ready" | "failed";
+
+/** `GET` and `POST /api/speech/{id}/audiobook` */
+export interface AudiobookStatus extends AudiobookCaps {
+  state: AudiobookState;
+  parts_made: number; // the finished parts the file holds (or would)
+  parts_total: number;
+  complete: boolean; // every part is finished
+  seconds: number; // the exact length of the finished parts end to end
+  chapters: number; // one for each finished part
+  kbps: number;
+  estimated_bytes: number;
+  progress: number | null; // 0 to 1 while it is being made
+  part: number | null; // the part (counting from 1) the samples are in
+  bytes: number | null; // the size of the file, once it is ready
+  url: string | null; // where to take it, once it is ready
+  error: { message: string; hint: string | null } | null;
+}
+
+// ---------------------------------------------------------------- the pronunciation list (§44.3)
+/** One entry of the list: a word (or a short phrase) and how it is said. The list is one list for every engine, voice and reading. */
+export interface PronunciationEntry {
+  id: string;
+  word: string;
+  say: string;
+  match_case: boolean; // matches capitals exactly (so `US` can leave `us` alone)
+  created_at: string;
+  updated_at: string;
+}
+
+/** `POST /api/speech/pronunciations` */
+export interface PronunciationBody {
+  word: string;
+  say: string;
+  match_case?: boolean;
+}
+
+/** `PATCH /api/speech/pronunciations/{id}`: any of the three; what is left out stays as it is. */
+export type PronunciationChange = Partial<PronunciationBody>;
+
+/** `POST /api/speech/pronunciations/try`: what would be spoken for a text with the list as it is, and which entries changed it. */
+export interface PronunciationTry {
+  spoken: string;
+  changed: boolean;
+  used: { word: string; say: string; count: number }[];
 }
 
 // ---------------------------------------------------------------- preparing a source (§38.5)
@@ -65,8 +133,17 @@ export type SkipReason = "code" | "table" | string;
 
 export interface PreparedParagraph {
   kind: "heading" | "paragraph";
-  text: string;
+  text: string; // for a speaker's line, the words WITHOUT the name that began the line
   skipped: SkipReason | null;
+  speaker: string | null; // the name of the speaker whose line it is (§44.5), or null for the narrator's
+  label: string | null; // the words that began the line (`Alice:`), so that turning the name off can put them back
+}
+
+/** A name the review found at the start of lines (§44.5): how many lines begin with it, and the first of them. */
+export interface PreparedSpeaker {
+  name: string;
+  lines: number;
+  sample: string;
 }
 
 export interface PreparedPart {
@@ -90,7 +167,8 @@ export interface Prepared {
   cleaning: string[]; // what the clean-up changed, one line each
   chars: number;
   minutes: number;
-  options: { clean: boolean; read_extras: boolean };
+  options: { clean: boolean; read_extras: boolean; speakers: boolean };
+  speakers: PreparedSpeaker[]; // the names found, in the order they first appear; empty when the text has none or the switch was off
   chapters_found: number;
 }
 
@@ -100,12 +178,21 @@ export interface PrepareTextBody {
   url?: string;
   clean?: boolean;
   read_extras?: boolean;
+  speakers?: boolean;
 }
 
 // ---------------------------------------------------------------- making a reading (§38.6, §38.9)
 export interface ReadingParagraphBody {
   kind: "heading" | "paragraph";
   text: string;
+  speaker?: string | null; // the name of a speaker listed in the request's `speakers` (§44.5)
+}
+
+/** One speaker of a reading and the voice that speaks for them: a preset's id, or a voice the person made; neither means the reading's main voice. */
+export interface ReadingSpeakerBody {
+  name: string;
+  voice: string;
+  saved_voice: string | null;
 }
 
 export interface ReadingPartBody {
@@ -122,6 +209,7 @@ export interface ReadingBody {
   saved_voice?: string | null;
   style?: string | null;
   language?: string | null;
+  speakers: ReadingSpeakerBody[];
   parts: ReadingPartBody[];
 }
 
@@ -171,6 +259,8 @@ export interface ReadingInfo {
   source: SourceInfo | null;
   licence: SpeechLicence | null;
   title: string | null;
+  pronunciations: { entries: number; uses: number }; // how much of the pronunciation list this reading used when it was made (§44.3)
+  speakers: { name: string; voice: ReadingVoice | null; lines: number }[]; // who speaks besides the main voice (§44.5); voice null = the main voice
   parts: ReadingPart[];
   parts_total: number;
   parts_done: number;
@@ -191,6 +281,7 @@ export interface PartPiece {
   kind: "heading" | "paragraph";
   text: string;
   continues: boolean; // carries on a paragraph begun in the piece before it
+  speaker: string | null; // whose line it is (§44.5); null for the narrator's
   status: "pending" | "done" | "failed" | string;
   frames: number | null;
   start_frame: number | null; // where it starts in the part's audio; null until it is made

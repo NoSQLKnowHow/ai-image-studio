@@ -28,11 +28,18 @@ export const voicesOf = (engine: string) => engine === "fake-basic"
   : { ...SPEECH_CONTRACT.engine_voices, engine };
 
 /** Answer every call with `answer(call)`; the calls are returned for the test to look at. The tab also asks for the voices of the engine it shows, which most tests are not
- *  about: those are answered with the contract's (or by `voices`), and are returned in `asked`. */
-export function server(answer: (call: Call) => Answer, voices: (engine: string) => Answer = (engine) => ({ body: voicesOf(engine) })): Call[] & { asked: string[] } {
-  const calls = [] as unknown as Call[] & { asked: string[] };
+ *  about: those are answered with the contract's (or by `voices`), and are returned in `asked`. Since 1.25 it also reads the pronunciation list when it opens (DESIGN.md
+ *  §44.3), which is just as little the business of most tests: that read is answered with the list given (empty unless a test says otherwise) and is not in the calls. */
+export function server(answer: (call: Call) => Answer, voices: (engine: string) => Answer = (engine) => ({ body: voicesOf(engine) }),
+  pronunciations: { entries: unknown[] } = { entries: [] }): Call[] & { asked: string[]; listReads: number } {
+  const calls = [] as unknown as Call[] & { asked: string[]; listReads: number };
   calls.asked = [];
+  calls.listReads = 0; // how many times the list was read: a tab that cannot make speech has no use for it
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: Call["init"]) => {
+    if (url === "/api/speech/pronunciations" && (!init?.method || init.method === "GET")) {
+      calls.listReads += 1;
+      return new Response(JSON.stringify(pronunciations), { status: 200 });
+    }
     if (url.startsWith("/api/speech/engines/")) {
       const engine = url.split("/")[4];
       calls.asked.push(engine);
@@ -49,7 +56,7 @@ export function server(answer: (call: Call) => Answer, voices: (engine: string) 
 
 export const part = (title: string, paragraphs: [string, string, (string | null)?][], extra: Partial<PreparedPart> = {}): PreparedPart => ({
   title, chars: paragraphs.filter((p) => !p[2]).reduce((n, p) => n + p[1].length, 0), minutes: 1, include: true, note: null,
-  paragraphs: paragraphs.map(([kind, text, skipped = null]) => ({ kind: kind as "heading" | "paragraph", text, skipped })), ...extra,
+  paragraphs: paragraphs.map(([kind, text, skipped = null]) => ({ kind: kind as "heading" | "paragraph", text, skipped, speaker: null, label: null })), ...extra,
 });
 export const prepared = (parts: PreparedPart[], extra: Partial<Prepared> = {}): Prepared => makePrepared({ title: "A short book", parts, warnings: [], cleaning: [], ...extra });
 export const BOOK = prepared([

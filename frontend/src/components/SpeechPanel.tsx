@@ -7,14 +7,18 @@ import {
   chooseEngine, engineUsable, findVoice, firstVoice, queuedText, readChoice, readingProblem, readingTotals, saveChoice, totalsLine, buildReadingBody, voiceName,
   type SpeechChoice, type VoicePick, type VoiceFilter,
 } from "../speech";
+import { speakersToSend, speakersUsed, voicesFor } from "../speakers";
 import { speechApi } from "../speechApi";
-import type { PresetVoice, ReadingPieceEvent, SavedVoice, SpeechJob } from "../speechTypes";
+import type { AudiobookCaps, PresetVoice, ReadingPieceEvent, SavedVoice, SpeechJob } from "../speechTypes";
 import { isSpeechRun, type Capabilities, type Run, type SpeechRun, type Status, type WorkerStatus } from "../types";
 import type { ViewScope } from "../format";
 import { useEngineVoices } from "../useEngineVoices";
 import { usePassage } from "../usePassage";
+import { usePronunciations } from "../usePronunciations";
+import { entryCountText, listButtonLabel } from "../pronunciation";
 import { useSampler } from "../useSampler";
 import { useSpeechSource, type Problem } from "../useSpeechSource";
+import { PronunciationDialog } from "./PronunciationDialog";
 import { SpeechEngines } from "./SpeechEngines";
 import { SpeechMake } from "./SpeechMake";
 import { SpeechReview } from "./SpeechReview";
@@ -83,7 +87,7 @@ export interface SpeechPanelProps {
 
 /** The readings made so far (DESIGN.md §38.2): one card each, newest first, under the filter bar the tabs share. They are shown whether or not speech can be made now,
  *  so that a reading made before an engine went away can still be listened to and downloaded. */
-function Readings({ history }: { history: SpeechHistory }) {
+function Readings({ history, audiobook }: { history: SpeechHistory; audiobook?: AudiobookCaps }) {
   const { runs } = history;
   return (
     <>
@@ -96,7 +100,7 @@ function Readings({ history }: { history: SpeechHistory }) {
           history.empty
         ) : (
           runs.map((run) => (
-            <ReadingCard key={run.id} run={run} now={history.now} transient={history.isTransient(run)} viewScope={history.viewScope} projects={history.projects} onListen={history.onListen}
+            <ReadingCard key={run.id} run={run} now={history.now} transient={history.isTransient(run)} viewScope={history.viewScope} projects={history.projects} audiobook={audiobook} onListen={history.onListen}
               onContinue={() => history.onContinue(run)} onCancel={() => history.onCancel(run)} onRestore={() => history.onRestore(run)} onDelete={() => history.onDelete(run)} />
           ))
         )}
@@ -120,6 +124,8 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
   const [makeProblem, setMakeProblem] = useState<Problem | null>(null);
   const [queued, setQueued] = useState<string | null>(null);
   const audio = useRef<HTMLAudioElement>(null);
+  const pronunciations = usePronunciations(speech.available); // the pronunciation list (DESIGN.md §44.3): one list for every engine and voice
+  const [pronunciationOpen, setPronunciationOpen] = useState(false);
   const sampler = useSampler({ audio, jobs });
   const { stop } = sampler;
 
@@ -192,6 +198,8 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
   const totals = engine ? readingTotals(source.parts, limits, engine.sample_rate) : null;
   const blocked = prepared ? readingProblem(source.parts, engine, voice) : null;
   const summary = engine && totals ? totalsLine(totals, engine.title, voice ? voiceName(voice) : "") : "";
+  // the voices the speakers can be given: those the engine can use together with the main voice (§44.5)
+  const offer = engine && usable ? voicesFor(engine, voice, presets, saved) : { presets: NO_PRESETS, saved: NO_SAVED, note: null };
 
   const make = async () => {
     if (!prepared || !engine || !voice || blocked) return;
@@ -199,7 +207,8 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
     setMakeProblem(null);
     setQueued(null);
     try {
-      const run = await speechApi.makeReading(buildReadingBody(source.title, prepared.source, source.parts, engine, voice, choice.style, choice.language));
+      const cast = speakersToSend(prepared.speakers ?? [], source.cast, speakersUsed(source.parts), offer);
+      const run = await speechApi.makeReading(buildReadingBody(source.title, prepared.source, source.parts, engine, voice, choice.style, choice.language, cast, source.cast));
       if (isSpeechRun(run)) {
         const text = queuedText(run);
         onQueued?.(run);
@@ -234,7 +243,7 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
       ) : (
         <>
           <SpeechSourceBox source={source} limits={limits} />
-          <SpeechReview source={source} limits={limits} />
+          <SpeechReview source={source} limits={limits} voices={{ offer, mainName: voice ? voiceName(voice) : "the main voice" }} />
           <section className="speech-voice-section" aria-labelledby="speech-voice-title">
             <h2 id="speech-voice-title">Voice</h2>
             <SpeechEngines engines={speech.engines} chosen={engineId} onChoose={chooseEngineById} />
@@ -249,8 +258,19 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
               </>
             )}
           </section>
+          <section className="speech-pronunciation" aria-labelledby="speech-pronunciation-title">
+            <h2 id="speech-pronunciation-title">Pronunciation</h2>
+            <p className="hint">
+              Words an engine says wrongly can be respelled once, for every engine and voice. It changes only what is spoken, never what you read.
+              {pronunciations.loaded ? ` ${entryCountText(pronunciations.entries.length)}.` : ""}
+            </p>
+            <div className="speech-actions">
+              <button type="button" className="button" onClick={() => setPronunciationOpen(true)}>{listButtonLabel(pronunciations.entries.length)}</button>
+            </div>
+          </section>
           {prepared && <SpeechMake summary={summary} blocked={blocked} making={making} problem={makeProblem} queued={queued} onMake={() => void make()} />}
           <audio ref={audio} preload="none" />
+          <PronunciationDialog open={pronunciationOpen} onOpenChange={setPronunciationOpen} list={pronunciations} limits={limits.pronunciation} />
           {engine && usable && (
             <>
               <DesignVoiceDialog open={maker === "design"} onOpenChange={(open) => !open && setMaker(null)} engine={engine} passage={passage} jobs={jobs} worker={speechWorker} onSaved={savedVoice} />
@@ -261,8 +281,8 @@ export function SpeechPanel({ hidden, caps, store, push, jobs = NO_JOBS, onEngin
         </>
       )}
       {/* a reading made before an engine went away can still be listened to, so the player does not depend on speech being available */}
-      {reader && <ReadingView key={`${reader.run.id}:${reader.turn}`} run={reader.run} pieces={reader.pieces} store={store} onClose={reader.onClose} />}
-      {history && <Readings history={history} />}
+      {reader && <ReadingView key={`${reader.run.id}:${reader.turn}`} run={reader.run} pieces={reader.pieces} store={store} audiobook={speech.audiobook} onClose={reader.onClose} />}
+      {history && <Readings history={history} audiobook={speech.audiobook} />}
     </div>
   );
 }

@@ -27,8 +27,9 @@ class SpeechStore:
             c.execute(f"INSERT INTO runs ({', '.join(run)}) VALUES ({', '.join('?' for _ in run)})", tuple(run.values()))
             self.db.index_run(c, run["id"])  # a reading's title and source name are searchable from the start (DESIGN.md §45.7)
             c.executemany("INSERT INTO speech_parts (run_id, idx, title, chars) VALUES (:run_id, :idx, :title, :chars)", parts)
-            c.executemany("INSERT INTO speech_pieces (run_id, part_idx, idx, kind, text, chars, continues, seed) "
-                          "VALUES (:run_id, :part_idx, :idx, :kind, :text, :chars, :continues, :seed)", pieces)
+            # `speaker` is optional in a piece (the narrator's pieces, and everything made before 1.25, have none): a piece that does not say is the narrator's
+            c.executemany("INSERT INTO speech_pieces (run_id, part_idx, idx, kind, text, chars, continues, seed, speaker) "
+                          "VALUES (:run_id, :part_idx, :idx, :kind, :text, :chars, :continues, :seed, :speaker)", [{"speaker": None, **piece} for piece in pieces])
             return "ok"
 
     # ------------------------------------------------------------------ reading what is there
@@ -75,6 +76,11 @@ class SpeechStore:
         if first is None:
             return []
         return self.db.read_all("SELECT * FROM speech_pieces WHERE run_id=? AND part_idx=? AND status='queued' ORDER BY idx", (run_id, first["part_idx"]))
+
+    def speaker_counts(self, run_id: str) -> dict[str, int]:
+        """How many pieces each speaker of a reading has (DESIGN.md §44.5), by name; the narrator's pieces are not counted."""
+        return {r["speaker"]: int(r["n"]) for r in self.db.read_all(
+            "SELECT speaker, COUNT(*) AS n FROM speech_pieces WHERE run_id=? AND speaker IS NOT NULL GROUP BY speaker", (run_id,))}
 
     def remaining(self, run_id: str) -> tuple[int, int]:
         """(characters, pieces) not yet made."""
@@ -137,10 +143,45 @@ class SpeechStore:
             return c.execute("DELETE FROM voices WHERE id=?", (voice_id,)).rowcount == 1
 
     def runs_using_voice(self, voice_id: str) -> int:
-        """How many readings and short jobs that are queued or running speak in this voice: a voice they need cannot be deleted from under them."""
+        """How many readings and short jobs that are queued or running speak in this voice: a voice they need cannot be deleted from under them. A reading
+        speaks in it when it is the main voice or the voice of any of its speakers (DESIGN.md §44.5)."""
         return int(self.db.read_one(
             "SELECT COUNT(*) AS n FROM runs WHERE mode='speech' AND status IN ('queued','running') "
-            "AND json_extract(options_json, '$.voice.id') = ?", (voice_id,))["n"])
+            "AND (json_extract(options_json, '$.voice.id') = ? "
+            "OR EXISTS (SELECT 1 FROM json_each(runs.options_json, '$.speakers') WHERE json_extract(value, '$.voice.id') = ?))", (voice_id, voice_id))["n"])
+
+    # ------------------------------------------------------------------ the pronunciation list (DESIGN.md §44.3)
+    def pronunciations(self) -> list[sqlite3.Row]:
+        """Every entry, in the order the page lists them: by word, ignoring case."""
+        return self.db.read_all("SELECT * FROM speech_pronunciations ORDER BY word_key, id")
+
+    def pronunciation(self, entry_id: str) -> Optional[sqlite3.Row]:
+        return self.db.read_one("SELECT * FROM speech_pronunciations WHERE id=?", (entry_id,))
+
+    def insert_pronunciation(self, row: dict[str, Any], cap: int) -> str:
+        """Add an entry. Returns "ok", "word_taken" (another entry has the same word once case is folded away) or "full" (`cap` entries already)."""
+        try:
+            with self.db.tx() as c:
+                if c.execute("SELECT COUNT(*) FROM speech_pronunciations").fetchone()[0] >= cap:
+                    return "full"
+                c.execute(f"INSERT INTO speech_pronunciations ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})", tuple(row.values()))
+        except sqlite3.IntegrityError:
+            return "word_taken"
+        return "ok"
+
+    def update_pronunciation(self, entry_id: str, word: str, key: str, say: str, match_case: bool, now: str) -> str:
+        """Change an entry. Returns "ok", "not_found" or "word_taken" (the new word is another entry's). Changing only the capitals of its own word is allowed."""
+        try:
+            with self.db.tx() as c:
+                changed = c.execute("UPDATE speech_pronunciations SET word=?, word_key=?, say=?, match_case=?, updated_at=? WHERE id=?",
+                                    (word, key, say, int(match_case), now, entry_id)).rowcount
+        except sqlite3.IntegrityError:
+            return "word_taken"
+        return "ok" if changed else "not_found"
+
+    def delete_pronunciation(self, entry_id: str) -> bool:
+        with self.db.tx() as c:
+            return c.execute("DELETE FROM speech_pronunciations WHERE id=?", (entry_id,)).rowcount == 1
 
     # ------------------------------------------------------------------ the short jobs behind a sample or a designed voice
     def hidden_jobs(self, statuses: Sequence[str]) -> list[sqlite3.Row]:

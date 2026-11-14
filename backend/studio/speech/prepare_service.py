@@ -32,7 +32,7 @@ def safe_name(name: str) -> str:
     return "".join(c for c in base if c.isprintable())[:120] or "file"
 
 
-def _run(settings: Settings, kind: str, data: bytes, source: dict[str, Any], *, charset: Optional[str], clean: bool, read_extras: bool) -> dict[str, Any]:
+def _run(settings: Settings, kind: str, data: bytes, source: dict[str, Any], *, charset: Optional[str], clean: bool, read_extras: bool, speakers: bool = True) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="studio-speech-") as folder:
         path = Path(folder) / f"source.{kind}"
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -46,17 +46,19 @@ def _run(settings: Settings, kind: str, data: bytes, source: dict[str, Any], *, 
             args.append("--no-clean")
         if read_extras:
             args.append("--read-extras")
+        if not speakers:
+            args.append("--no-speakers")
         return run_reader(args, timeout=READER_TIMEOUT_SECONDS)
 
 
-def prepare_text(settings: Settings, text: str, *, clean: bool = True, read_extras: bool = False) -> dict[str, Any]:
+def prepare_text(settings: Settings, text: str, *, clean: bool = True, read_extras: bool = False, speakers: bool = True) -> dict[str, Any]:
     """Pasted text."""
     if not text.strip():
         raise PrepareError("empty", "There is no text to read yet.", "Paste some text, give a web address, or choose a file.")
-    return _run(settings, "txt", text.encode("utf-8"), {"kind": "text"}, charset=None, clean=clean, read_extras=read_extras)
+    return _run(settings, "txt", text.encode("utf-8"), {"kind": "text"}, charset=None, clean=clean, read_extras=read_extras, speakers=speakers)
 
 
-def prepare_file(settings: Settings, name: str, data: bytes, *, clean: bool = True, read_extras: bool = False) -> dict[str, Any]:
+def prepare_file(settings: Settings, name: str, data: bytes, *, clean: bool = True, read_extras: bool = False, speakers: bool = True) -> dict[str, Any]:
     """A file the person chose. Its kind comes from its extension (the content is judged by the reader, which refuses what it cannot read)."""
     shown = safe_name(name)
     kind = FILE_KINDS.get(os.path.splitext(shown)[1].lower())
@@ -64,10 +66,10 @@ def prepare_file(settings: Settings, name: str, data: bytes, *, clean: bool = Tr
         raise PrepareError("unsupported", f"{shown} is not a kind of file that can be read.", "Choose a .txt, .md, .pdf, .epub or .docx file.")
     if not data:
         raise PrepareError("empty", f"{shown} is empty.")
-    return _run(settings, kind, data, {"kind": "file", "name": shown}, charset=None, clean=clean, read_extras=read_extras)
+    return _run(settings, kind, data, {"kind": "file", "name": shown}, charset=None, clean=clean, read_extras=read_extras, speakers=speakers)
 
 
-def prepare_url(settings: Settings, url: str, *, clean: bool = True, read_extras: bool = False, resolve: Optional[Resolver] = None,
+def prepare_url(settings: Settings, url: str, *, clean: bool = True, read_extras: bool = False, speakers: bool = True, resolve: Optional[Resolver] = None,
                 connector: Optional[Connector] = None) -> dict[str, Any]:
     """A web page (or a text or PDF file at a web address), fetched with the guards of `text/fetch.py`."""
     fetched = fetch_page(url, max_bytes=settings.speech_fetch_max_mb * 1024 * 1024, step_timeout=settings.speech_fetch_timeout_s,
@@ -76,4 +78,4 @@ def prepare_url(settings: Settings, url: str, *, clean: bool = True, read_extras
     from urllib.parse import urlsplit
 
     return _run(settings, kind, fetched.body, {"kind": "url", "url": fetched.url[:300], "host": urlsplit(fetched.url).hostname or ""},
-                charset=fetched.charset, clean=clean, read_extras=read_extras)
+                charset=fetched.charset, clean=clean, read_extras=read_extras, speakers=speakers)

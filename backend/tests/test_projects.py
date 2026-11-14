@@ -520,7 +520,7 @@ def test_the_daily_clean_up_leaves_a_filed_run_alone(seeded, client_factory):
 # table; 1.15 made it 6, images.deleted_at and tracks.deleted_at; 1.14 made it 5, the projects table and runs.project_id). When the next release changes it,
 # this is the line to move.
 def test_the_schema_is_13():
-    assert SCHEMA_VERSION == 13  # 1.26's tags, notes and word index made it 13 (three new tables; 12 is another feature's); 1.24's More like this made it 11: runs.variation_json and runs.family_id (1.20's Speech tab made it 10: mode 'speech', runs.queue_key, runs.hidden and its tables (1.19's Prompt builder made it 9))
+    assert SCHEMA_VERSION == 13  # 1.26's tags, notes and word index made it 13 (three new tables; 1.25's pronunciation list and speakers made it 12 before that); 1.24's More like this made it 11: runs.variation_json and runs.family_id (1.20's Speech tab made it 10: mode 'speech', runs.queue_key, runs.hidden and its tables (1.19's Prompt builder made it 9))
 
 
 def tables_and_indexes(path) -> tuple[set[str], set[str]]:

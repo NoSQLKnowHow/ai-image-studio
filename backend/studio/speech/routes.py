@@ -21,7 +21,8 @@ from ..storage import StorageError, check_id
 from ..wavfile import WavError
 from . import prepare_service
 from .audio import PartAudio, RangeNotSatisfiable, ZipMember, parse_range, piece_file, stream_zip
-from .service import ParagraphSpec, PartSpec, ReadingRefused, ReadingSpec, audio_info
+from .chapters import PartLength, chapters_of, chapters_txt, ffmetadata
+from .service import ParagraphSpec, PartSpec, ReadingRefused, ReadingSpec, SpeakerSpec, audio_info
 from .text.errors import PrepareError
 
 PREPARE_AT_ONCE = 2
@@ -36,12 +37,23 @@ class PrepareBody(BaseModel):
     url: Optional[str] = None
     clean: bool = True  # switch the cleaning rules off to read the raw text
     read_extras: bool = False  # read code blocks and tables as well
+    speakers: bool = True  # look for speakers: lines that begin with a name and a colon (DESIGN.md §44.5)
 
 
 class ParagraphBody(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     kind: Literal["heading", "paragraph"]
     text: str = Field(max_length=2_000_000)
+    speaker: Optional[str] = Field(default=None, max_length=200)  # the name of a speaker listed in the request's `speakers` (DESIGN.md §44.5)
+
+
+class SpeakerBody(BaseModel):
+    """A speaker of a reading and the voice that speaks for them: a preset's id or a voice the person made; neither means the main voice (DESIGN.md §44.5)."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    name: str = Field(max_length=200)
+    voice: str = ""
+    saved_voice: Optional[str] = None
 
 
 class PartBody(BaseModel):
@@ -61,6 +73,7 @@ class ReadingBody(BaseModel):
     saved_voice: Optional[str] = None
     style: Optional[str] = None
     language: Optional[str] = None
+    speakers: list[SpeakerBody] = Field(default_factory=list)
     parts: list[PartBody]
 
 
@@ -128,15 +141,15 @@ def add_routes(app: FastAPI, read_limited_body) -> None:
                     if body.text is None or len(body.text) > settings.speech_max_chars * 2:
                         raise PrepareError("too_large" if body.text else "empty", "Paste the text to read (up to a million words or so)." if not body.text
                                            else f"That is more than {settings.speech_max_chars * 2:,} characters; make two readings.")
-                    return await asyncio.to_thread(prepare_service.prepare_text, settings, body.text, clean=body.clean, read_extras=body.read_extras)
+                    return await asyncio.to_thread(prepare_service.prepare_text, settings, body.text, clean=body.clean, read_extras=body.read_extras, speakers=body.speakers)
                 if not body.url:
                     raise PrepareError("bad_address", "Give the web address of the page to read.")
-                return await asyncio.to_thread(prepare_service.prepare_url, settings, body.url, clean=body.clean, read_extras=body.read_extras)
+                return await asyncio.to_thread(prepare_service.prepare_url, settings, body.url, clean=body.clean, read_extras=body.read_extras, speakers=body.speakers)
         except PrepareError as exc:
             return failure(exc)
 
     @app.post("/api/speech/prepare/file")
-    async def prepare_file(request: Request, name: str, clean: bool = True, read_extras: bool = False) -> Any:
+    async def prepare_file(request: Request, name: str, clean: bool = True, read_extras: bool = False, speakers: bool = True) -> Any:
         """A file, prepared for review. The file is the request body (as for pictures, §21.6); its name, in the query, tells what kind it is."""
         settings = request.app.state.settings
         data = await read_limited_body(request, settings.speech_max_upload_mb)
@@ -144,7 +157,7 @@ def add_routes(app: FastAPI, read_limited_body) -> None:
             return data
         try:
             async with slots:
-                return await asyncio.to_thread(prepare_service.prepare_file, settings, name, data, clean=clean, read_extras=read_extras)
+                return await asyncio.to_thread(prepare_service.prepare_file, settings, name, data, clean=clean, read_extras=read_extras, speakers=speakers)
         except PrepareError as exc:
             return failure(exc)
 
@@ -167,7 +180,8 @@ def add_routes(app: FastAPI, read_limited_body) -> None:
     async def create_reading(body: ReadingBody, request: Request) -> Any:
         """Queue a reading: one entry in the queue however many parts it has (it goes back to the queue after each part, §38.6)."""
         spec = ReadingSpec(title=body.title, source=body.source, engine=body.engine, voice=body.voice, saved_voice=body.saved_voice, style=body.style,
-                           language=body.language, parts=[PartSpec(p.title, [ParagraphSpec(q.kind, q.text) for q in p.paragraphs]) for p in body.parts])
+                           language=body.language, parts=[PartSpec(p.title, [ParagraphSpec(q.kind, q.text, q.speaker) for q in p.paragraphs]) for p in body.parts],
+                           speakers=[SpeakerSpec(s.name, s.voice, s.saved_voice) for s in body.speakers])
         try:
             return await jobs_of(request).submit_reading(spec)
         except ReadingRefused as exc:
@@ -285,6 +299,7 @@ def add_routes(app: FastAPI, read_limited_body) -> None:
         speech = jobs_of(request).speech
         members: list[ZipMember] = []
         lines = ["#EXTM3U"]
+        lengths: list[PartLength] = []  # the finished parts' lengths in samples, for the chapter lists (DESIGN.md §44.4)
         for part in speech.store.parts(run_id):
             try:
                 audio = await asyncio.to_thread(part_audio, request, row, part["idx"])
@@ -295,15 +310,25 @@ def add_routes(app: FastAPI, read_limited_body) -> None:
             name = download_name(row, part["idx"], part["title"])
             members.append(ZipMember(name, audio.size, lambda a=audio: a.iter_bytes()))
             lines += [f"#EXTINF:{round(audio.seconds)},{part['title']}", name]
+            lengths.append(PartLength(part["title"], audio.data_bytes // (2 * audio.channels), audio.sample_rate))
         if not members:
             return error(409, "No part of this reading has been finished yet.", "not_finished")
         playlist = ("\n".join(lines) + "\n").encode("utf-8")
         members.append(ZipMember("playlist.m3u", len(playlist), lambda: iter([playlist])))
+        # The two chapter lists, after the parts and the playlist (which are as they were): the start of each part in the book played from its first part to its last, in
+        # the order of the playlist, from the lengths of the files that are in this ZIP (DESIGN.md §44.4)
+        chapters = chapters_of(lengths)
+        title = json.loads(row["options_json"]).get("title") or row["prompt"]
+        for file_name, text in (("chapters.txt", chapters_txt(chapters)), ("chapters.ffmetadata", ffmetadata(chapters, title))):
+            data = text.encode("utf-8")
+            members.append(ZipMember(file_name, len(data), lambda d=data: iter([d])))
         zip_name = naming.speech_filename(title=(json.loads(row["options_json"]).get("title") or row["prompt"]), part=0, voice="", created_at=parse_ts(row["created_at"]), ext=".zip")
         return StreamingResponse(stream_zip(members, stamp=parse_ts(row["created_at"]).timestamp()), media_type="application/zip",
                                  headers={"Content-Disposition": naming.content_disposition(zip_name, default="reading.zip")})
 
     # ------------------------------------------------------------------ voices (DESIGN.md §38.4): their own file, registered with the rest
-    from . import voice_routes  # (here and not at the top: voice_routes takes `error` and `refusal` from this module)
+    from . import audiobook_routes, pronunciation_routes, voice_routes  # (here and not at the top: all take `error` (and some `refusal`) from this module)
 
     voice_routes.add_routes(app, read_limited_body)
+    pronunciation_routes.add_routes(app)
+    audiobook_routes.add_routes(app)

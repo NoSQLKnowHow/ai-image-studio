@@ -64,7 +64,7 @@ describe("the Speech tab's calls", () => {
 
   it("making a reading, getting it, continuing it", async () => {
     let calls = answer(SPEECH_CONTRACT.reading_run, 201);
-    const body = { title: "T", source: { kind: "text" }, engine: "fake", voice: "anna", saved_voice: null, style: null, language: null, parts: [] };
+    const body = { title: "T", source: { kind: "text" }, engine: "fake", voice: "anna", saved_voice: null, style: null, language: null, speakers: [], parts: [] };
     await speechApi.makeReading(body);
     expect([calls[0].url, calls[0].init.method, JSON.parse(calls[0].init.body as string)]).toEqual(["/api/readings", "POST", body]);
 

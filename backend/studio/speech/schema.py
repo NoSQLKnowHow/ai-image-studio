@@ -6,6 +6,7 @@ A reading is a row of `runs` with mode 'speech' (so the queue, the bin, projects
   speech_positions  where the listener stopped, one for each reading
   speech_speeds     how fast each engine has been measured to work, to say how long a reading will take
   voices            the voices the person made (designed or cloned); the preset voices live in the engines, not here
+  speech_pronunciations  the pronunciation list (schema 12, §44.3); and `speech_pieces.speaker`, which names who speaks a piece (schema 12, §44.5)
 The run's own new columns, `queue_key` and `hidden`, are in db.py with the rest of `runs`.
 """
 
@@ -36,6 +37,7 @@ CREATE TABLE IF NOT EXISTS speech_pieces (
     bytes       INTEGER,
     path        TEXT,
     error       TEXT,
+    speaker     TEXT,
     PRIMARY KEY (run_id, part_idx, idx)
 );
 CREATE INDEX IF NOT EXISTS idx_speech_pieces_state ON speech_pieces(run_id, status, part_idx, idx);
@@ -69,5 +71,17 @@ CREATE TABLE IF NOT EXISTS voices (
     consent_text TEXT,
     consent_at   TEXT,
     created_at   TEXT NOT NULL
+);
+-- The pronunciation list (schema 12, DESIGN.md §44.3): one list for every engine, voice and reading. `word_key` is the word with its case folded away and is unique,
+-- so no two entries can claim the same text; `match_case` says that this entry matches capitals exactly (so `US` can leave `us` alone). A reading does not point at
+-- these rows: it copies the entries it used into its own options when it is made, so changing this list never changes a reading that exists.
+CREATE TABLE IF NOT EXISTS speech_pronunciations (
+    id         TEXT PRIMARY KEY,
+    word       TEXT NOT NULL,
+    word_key   TEXT NOT NULL UNIQUE,
+    say        TEXT NOT NULL,
+    match_case INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
 );
 """

@@ -1083,6 +1083,7 @@ fieldset.field { gap: 8px; }
 .piece[title] { cursor: pointer; }
 .piece[title]:hover { background: var(--surface-2); }
 .piece-heading { font-weight: 700; }
+.piece-speaker { font-weight: 600; color: var(--text-2); font-size: 0.85em; margin-right: 0.4em; }
 .piece-current { background: var(--accent-soft); border-left-color: var(--accent); }
 .piece-pending { opacity: 0.55; font-style: italic; }
 .piece-edit { justify-self: start; margin-bottom: 0.6em; }
@@ -1177,6 +1178,58 @@ button.badge-variation:disabled { cursor: default; }
 .compare-keep-side { opacity: 0.7; }
 /* on a phone the two pictures stack, one above the other, and the buttons wrap and stay in reach */
 @media (max-width: 700px) { .compare-sides { grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr 1fr; } }
+
+/* ---- the pronunciation list (DESIGN.md §44.3) ------------------------------------------------------------------------------------------------------------------------------------ */
+/* the button that opens it, in a section of its own on the Speech tab */
+.speech-pronunciation { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface); min-width: 0; }
+.speech-pronunciation p { margin: 0; }
+.speech-pronunciation .speech-actions { gap: 8px 12px; }
+@media (max-width: 520px) { .speech-pronunciation { padding: 12px; } }
+/* the dialog: the add form, the list, and Try it, one under another; it scrolls as a whole, so a list of a thousand is no taller than the screen */
+.pronunciation-dialog h3 { font-size: 15px; margin: 0 0 6px; }
+.pron-body { gap: 18px; }
+.pron-form { display: grid; gap: 8px; }
+.pron-field { display: grid; gap: 4px; min-width: 0; }
+.pron-field label { font-weight: 600; font-size: 14px; }
+.pron-case { display: flex; gap: 8px; align-items: center; }
+.pron-case input { flex: none; }
+.pron-said { margin: 0 0 6px; min-height: 1.3em; color: var(--success); font-weight: 600; }
+.pron-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.pron-row { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; min-width: 0; }
+.pron-row.editing { display: block; }
+.pron-text { min-width: 0; flex: 1 1 14em; overflow-wrap: anywhere; display: inline-flex; flex-wrap: wrap; gap: 4px 6px; align-items: baseline; }
+.pron-actions { display: inline-flex; gap: 6px; flex: none; }
+.pron-row .form-error { flex: 1 0 100%; margin: 0; }
+.pron-try { display: grid; gap: 8px; }
+.pron-try textarea { width: 100%; font: inherit; box-sizing: border-box; }
+.pron-answer p { margin: 0; overflow-wrap: anywhere; }
+.pron-spoken { font-style: italic; }
+.pron-used { margin: 6px 0 0; padding-left: 20px; color: var(--text-2); }
+
+/* ---- the audiobook (M4B) button of a reading (DESIGN.md §44.4) ---------------------------------------------------------------------------------------------------------------- */
+.audiobook { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin-top: 8px; min-width: 0; }
+.audiobook-note { margin: 0; flex: 1 1 14em; min-width: 0; overflow-wrap: anywhere; }
+.audiobook [aria-disabled="true"] { opacity: 0.6; cursor: not-allowed; }
+.audiobook [aria-busy="true"] { cursor: progress; }
+
+/* ---- several voices in one text (DESIGN.md §44.5) ---------------------------------------------------------------------------------------------------------------------------- */
+.speech-speakers { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2); min-width: 0; }
+.speech-speakers h3 { margin: 0; font-size: 15px; }
+.speech-speakers p { margin: 0; }
+.speech-speaker-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.speech-speaker { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; align-items: center; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); min-width: 0; }
+.speech-speaker.off { background: var(--surface-2); }
+.speech-speaker.off .speech-speaker-sample { text-decoration: line-through; }
+.speech-speaker-on { display: inline-flex; gap: 8px; align-items: center; min-width: 0; overflow-wrap: anywhere; }
+.speech-speaker-on input { flex: none; }
+.speech-speaker-lines { color: var(--text-2); font-size: 14px; white-space: nowrap; }
+.speech-speaker-sample { grid-column: 1 / -1; overflow-wrap: anywhere; }
+.speech-speaker-voice { grid-column: 1 / -1; display: grid; gap: 4px; }
+.speech-speaker-voice label { font-weight: 600; font-size: 14px; }
+.speech-speaker-voice select { width: 100%; min-width: 0; font: inherit; }
+/* in the text of a part: whose line a paragraph is */
+.speech-paragraph-speaker { display: inline-block; margin-bottom: 2px; }
+@media (max-width: 480px) { .speech-speaker { grid-template-columns: minmax(0, 1fr); } }
 
 /* ------------------------------------------------------------------ search, filters, tags and notes (DESIGN.md §45) */
 /* the search box in the filter bar: a box with a magnifying glass and a clear button, and the live region that says how many runs were found. It wraps with the bar. */

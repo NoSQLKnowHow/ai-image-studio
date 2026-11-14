@@ -24,6 +24,10 @@ from ..db import Database
 from ..serialize import utcnow
 from ..storage import Storage
 from . import SPOKEN_CHARS_PER_SECOND, registry
+from .audio import PartAudio, piece_file
+from .audiobook import Audiobooks, FinishedPart
+from .pronounce import Entry, Matcher, spoken_for, used_entries
+from .text.speakers import MAX_SPEAKERS, name_key
 from .refused import ReadingRefused, require_engine
 from .store import SpeechStore
 from .text.model import Paragraph
@@ -31,6 +35,7 @@ from .text.pieces import make_pieces
 from .voices import VoiceService
 
 MAX_PARTS = 1000
+MAX_SPEAKER_NAME = 40  # a speaker's name as the request spells it (the review finds names of at most 30 characters)
 MAX_TITLE_CHARS = 200
 MAX_STYLE_CHARS = 300
 MAX_PIECES = 60_000  # about 1,500,000 characters at the smallest allowance an engine has; a ceiling on rows, not a limit anyone should meet
@@ -43,6 +48,16 @@ SAMPLE_BYTES = 2  # 16-bit mono
 class ParagraphSpec:
     kind: str
     text: str
+    speaker: Optional[str] = None  # the name of a speaker listed in the request's `speakers` (DESIGN.md §44.5); None for the narrator's
+
+
+@dataclass
+class SpeakerSpec:
+    """A speaker of a reading and the voice that speaks for them: a preset's id, or a voice the person made; neither means the reading's main voice."""
+
+    name: str
+    voice: str = ""
+    saved_voice: Optional[str] = None
 
 
 @dataclass
@@ -63,6 +78,7 @@ class ReadingSpec:
     style: Optional[str] = None
     language: Optional[str] = None
     parts: list[PartSpec] = field(default_factory=list)
+    speakers: list[SpeakerSpec] = field(default_factory=list)
 
 
 @dataclass
@@ -93,6 +109,49 @@ class SpeechService:
         self.settings, self.db, self.storage = settings, db, storage
         self.store = SpeechStore(db)
         self.voices = VoiceService(settings, storage, self.store)  # presets, samples, designed and cloned voices (§38.4)
+        self.audiobooks = Audiobooks(settings, storage.audiobooks_dir, self)  # the M4B audiobook files made on request (§44.4)
+
+    # ------------------------------------------------------------------ the voices of a request
+    def _voice(self, engine_id: str, info: Any, presets: dict[str, Any], voice_id: str, saved_id: Optional[str], field: str) -> tuple[dict[str, Any], str, bool]:
+        """The voice a request names (a preset's id, or the id of a voice the person made), checked against the engine: as the record a reading keeps of it, the variant of the
+        engine that speaks it, and whether it takes a style note. Raises ReadingRefused naming `field`. The main voice and each speaker's voice are checked the same way."""
+        if saved_id:
+            saved_row = self.store.voice(saved_id)
+            if saved_row is None:
+                raise ReadingRefused(422, "unknown_voice", "That voice is not among the voices you made (it may have been deleted).", field)
+            if not info.can_clone or saved_row["engine"] != engine_id:
+                raise ReadingRefused(422, "voice_engine", f"That voice was made for another engine, so {info.title} cannot speak in it.", field)
+            # a saved voice is spoken through the clone variant, which takes no style note (DESIGN.md §38.1)
+            return ({"kind": "saved", "id": saved_row["id"], "label": saved_row["name"], "saved_kind": saved_row["kind"]}, registry.variant_for(info, "reading", True), False)
+        preset = presets.get(voice_id)
+        if preset is None:
+            raise ReadingRefused(422, "unknown_voice", f"{info.title} has no voice called {voice_id!r}.", field)
+        return ({"kind": "preset", "id": preset.id, "label": preset.label, "gender": preset.gender, "accent": preset.accent},
+                registry.variant_for(info, "reading", False), bool(info.can_style and preset.styleable))
+
+    def _cast(self, spec: ReadingSpec, info: Any, presets: dict[str, Any], main_variant: str) -> dict[str, dict[str, Any]]:
+        """The speakers of a request, by name (DESIGN.md §44.5): each with the voice that speaks for them, or None for the main voice. A speaker's voice has to be one the
+        engine can speak in the same reading as the main voice: an engine holds one variant in memory at a time, so a voice of the other kind (Qwen3-TTS's preset voices
+        and the voices you made are two checkpoints) is refused in words. Raises ReadingRefused naming the field `speakers`."""
+        if len(spec.speakers) > MAX_SPEAKERS:
+            raise ReadingRefused(422, "too_many_speakers", f"A reading has at most {MAX_SPEAKERS} speakers.", "speakers")
+        cast: dict[str, dict[str, Any]] = {}
+        for given in spec.speakers:
+            name = " ".join(given.name.split())
+            if not name or len(name) > MAX_SPEAKER_NAME:
+                raise ReadingRefused(422, "speaker_name", f"A speaker's name is between 1 and {MAX_SPEAKER_NAME} characters.", "speakers")
+            if name_key(name) in {name_key(n) for n in cast}:
+                raise ReadingRefused(422, "speaker_twice", f"The speaker {name!r} is listed twice.", "speakers")
+            if given.voice or given.saved_voice:
+                voice, variant, styleable = self._voice(spec.engine, info, presets, given.voice, given.saved_voice, "speakers")
+                if variant != main_variant:
+                    raise ReadingRefused(422, "speaker_variant", f"{info.title} speaks its own voices and the ones you made with different parts of the model, which cannot both be in memory "
+                                         f"for one reading, so {name!r} cannot have that voice with this main voice.", "speakers",
+                                         "Give every speaker a voice of the same kind as the main voice: its own voices, or the voices you made.")
+                cast[name] = {"name": name, "voice": voice, "styleable": styleable}
+            else:
+                cast[name] = {"name": name, "voice": None, "styleable": False}
+        return cast
 
     # ------------------------------------------------------------------ a request becomes a reading
     def build(self, spec: ReadingSpec, engines: dict[str, dict[str, Any]]) -> BuiltReading:
@@ -103,23 +162,8 @@ class SpeechService:
         info = registry.info(spec.engine)
         presets = {v.id: v for v in registry.presets(spec.engine)}
 
-        saved_row: Optional[sqlite3.Row] = None
-        if spec.saved_voice:
-            saved_row = self.store.voice(spec.saved_voice)
-            if saved_row is None:
-                raise ReadingRefused(422, "unknown_voice", "That voice is not among the voices you made (it may have been deleted).", "voice")
-            if not info.can_clone or saved_row["engine"] != spec.engine:
-                raise ReadingRefused(422, "voice_engine", f"That voice was made for another engine, so {info.title} cannot speak in it.", "voice")
-            variant = registry.variant_for(info, "reading", True)
-            voice = {"kind": "saved", "id": saved_row["id"], "label": saved_row["name"], "saved_kind": saved_row["kind"]}
-            styleable = False  # a saved voice is spoken through the clone variant, which takes no style note (DESIGN.md §38.1)
-        else:
-            preset = presets.get(spec.voice)
-            if preset is None:
-                raise ReadingRefused(422, "unknown_voice", f"{info.title} has no voice called {spec.voice!r}.", "voice")
-            variant = registry.variant_for(info, "reading", False)
-            voice = {"kind": "preset", "id": preset.id, "label": preset.label, "gender": preset.gender, "accent": preset.accent}
-            styleable = info.can_style and preset.styleable
+        voice, variant, styleable = self._voice(spec.engine, info, presets, spec.voice, spec.saved_voice, "voice")
+        cast = self._cast(spec, info, presets, variant)
         style = " ".join((spec.style or "").split()) or None
         if style is not None:
             if not styleable:
@@ -151,7 +195,11 @@ class SpeechService:
                 if text:
                     if len(text) > self.settings.speech_max_chars:
                         raise ReadingRefused(413, "too_large", "One paragraph is longer than a whole reading may be.", "parts")
-                    paragraphs.append(Paragraph(p.kind, text))
+                    speaker = " ".join(p.speaker.split()) if p.speaker else None
+                    if speaker is not None and (p.kind != "paragraph" or speaker not in cast):
+                        raise ReadingRefused(422, "unknown_speaker", f"A paragraph names the speaker {speaker!r}, who is not among the speakers of the request"
+                                             if p.kind == "paragraph" else "A heading has no speaker: it is read by the main voice.", "parts")
+                    paragraphs.append(Paragraph(p.kind, text, None, speaker=speaker))
             made = make_pieces(paragraphs, info.max_chars, info.min_chars)
             if not made:
                 continue  # a part with nothing to say is left out rather than refused: the page leaves out what the person unticked
@@ -163,7 +211,7 @@ class SpeechService:
             parts.append({"run_id": run_id, "idx": part_idx, "title": " ".join(given.title.split())[:MAX_TITLE_CHARS] or f"Part {part_idx + 1}", "chars": chars})
             for idx, m in enumerate(made):
                 pieces.append({"run_id": run_id, "part_idx": part_idx, "idx": idx, "kind": m.kind, "text": m.text, "chars": len(m.text),
-                               "continues": int(m.continues), "seed": (base_seed + len(pieces)) % (2 ** 31)})
+                               "continues": int(m.continues), "seed": (base_seed + len(pieces)) % (2 ** 31), "speaker": m.speaker})
         if not parts:
             raise ReadingRefused(422, "empty", "There is no text to read.", "parts", "Include at least one part that has some words in it.")
         if len(pieces) > MAX_PIECES:
@@ -175,10 +223,17 @@ class SpeechService:
         if free < needed:
             raise ReadingRefused(507, "storage_full", f"This reading needs about {needed / 1024 ** 3:.1f} GB of disk and {free / 1024 ** 3:.1f} GB is free.", None,
                                  "Delete readings you no longer need, or free disk space, and try again.")
+        # The pronunciation list (DESIGN.md §44.3): the reading keeps a COPY of the entries its words use, as they are now. The list is changed freely afterwards, and a
+        # reading that is queued, half made or finished goes on with what it began with; making the same text again picks the new list up.
+        listed = [Entry(row["word"], row["say"], bool(row["match_case"])) for row in self.store.pronunciations()]
+        used, uses = used_entries(listed, (p["text"] for p in pieces))
         options = {
             "task": "reading", "engine": spec.engine, "engine_title": info.title, "variant": variant, "voice": voice, "style": style, "language": language,
             "source": spec.source, "title": title, "pause_ms": self.settings.speech_pause_ms, "licence": info.licence.as_dict(),
             "sample_rate": info.sample_rate, "chars": total_chars,
+            "pronunciations": [entry.as_dict() for entry in used], "pronunciation_uses": uses,
+            # who speaks besides the main voice (DESIGN.md §44.5): every speaker of the request, with the voice or None for the main voice, and whether it takes a style note
+            "speakers": list(cast.values()),
         }
         run = {
             "id": run_id, "created_at": utcnow(), "status": "queued", "mode": "speech", "prompt": title, "effective_prompt": title, "negative_prompt": None,
@@ -217,13 +272,42 @@ class SpeechService:
         else:
             preset = voice["id"]
         pause = int(options.get("pause_ms", 450))
+        # What the engine is given is the SPOKEN text: the piece's words with the reading's pronunciation entries applied (DESIGN.md §44.3). The piece keeps its own
+        # words, so the highlight and the review are unaffected, and a piece corrected after a failure is spoken with the same entries as the rest.
+        matcher = Matcher(Entry.from_dict(e) for e in options.get("pronunciations", []))
+        own = self._speaker_voices(options)  # the voice, reference clip and style of each speaker who has a voice of their own (DESIGN.md §44.5)
+
+        def one(p: sqlite3.Row) -> dict[str, Any]:
+            piece = {"key": f"{p['part_idx']}-{p['idx']}", "text": spoken_for(p["text"], matcher), "kind": p["kind"], "seed": p["seed"],
+                     "out": f"speech/readings/{row['id']}/{p['part_idx']:04d}/{p['idx']:05d}.wav", "pause_ms": pause * 2 if p["kind"] == "heading" else pause}
+            if p["speaker"] in own:  # a speaker with a voice of their own: it replaces the job's for this piece; the narrator's pieces and the speakers with none carry nothing extra
+                piece.update(own[p["speaker"]])
+                piece["style"] = options.get("style") if own[p["speaker"]]["_styleable"] else None
+                del piece["_styleable"]
+            return piece
+
         return {
             "run_id": row["id"], "mode": "speech", "task": "reading", "engine": options["engine"], "variant": options["variant"], "voice": preset, "ref": ref,
             "style": options.get("style"), "language": options.get("language"),
-            "pieces": [{"key": f"{p['part_idx']}-{p['idx']}", "text": p["text"], "kind": p["kind"], "seed": p["seed"],
-                        "out": f"speech/readings/{row['id']}/{p['part_idx']:04d}/{p['idx']:05d}.wav", "pause_ms": pause * 2 if p["kind"] == "heading" else pause}
-                       for p in pieces],
+            "pieces": [one(p) for p in pieces],
         }
+
+    def _speaker_voices(self, options: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        """For each speaker of a reading who has a voice of their own: what a piece of theirs carries to the worker (`voice` for a preset, `ref` for a voice the person made).
+        Raises ValueError if a voice they use has been deleted, as for the main voice."""
+        out: dict[str, dict[str, Any]] = {}
+        for speaker in options.get("speakers") or []:
+            voice = speaker.get("voice")
+            if not voice:
+                continue
+            if voice["kind"] == "saved":
+                saved = self.store.voice(voice["id"])
+                if saved is None:
+                    raise ValueError(f"The voice {voice.get('label') or ''} that {speaker['name']} uses has been deleted, so the rest cannot be made.".replace("  ", " "))
+                out[speaker["name"]] = {"voice": "", "ref": {"path": saved["ref_path"], "text": saved["ref_text"], "kind": saved["kind"]}, "_styleable": False}
+            else:
+                out[speaker["name"]] = {"voice": voice["id"], "ref": None, "_styleable": bool(speaker.get("styleable"))}
+        return out
 
     # ------------------------------------------------------------------ taking in the worker's results
     def accept_piece(self, row: sqlite3.Row, event: dict[str, Any]) -> dict[str, int]:
@@ -282,10 +366,16 @@ class SpeechService:
             speed = self.store.speed(options["engine"], options["variant"])
             made_seconds = t["frames"] / rate
             position = self.store.position(row["id"])
+            counts = self.store.speaker_counts(row["id"]) if options.get("speakers") else {}  # (one query, and only for a reading that has speakers)
             out[row["id"]] = {
                 "engine": options["engine"], "engine_title": options.get("engine_title"), "variant": options["variant"], "voice": options["voice"],
                 "style": options.get("style"), "language": options.get("language"), "source": options.get("source"), "licence": options.get("licence"),
-                "title": options.get("title"), "parts": parts, "parts_total": len(parts), "parts_done": sum(1 for p in parts if p["state"] == "done"),
+                "title": options.get("title"),
+                # how much of the pronunciation list this reading used when it was made (DESIGN.md §44.3): entries, and how many words they changed in all
+                "pronunciations": {"entries": len(options.get("pronunciations") or []), "uses": int(options.get("pronunciation_uses") or 0)},
+                # who speaks besides the main voice, with how many pieces each has (DESIGN.md §44.5); `voice` None means the main voice
+                "speakers": [{"name": s["name"], "voice": s["voice"], "lines": counts.get(s["name"], 0)} for s in options.get("speakers") or []],
+                "parts": parts, "parts_total": len(parts), "parts_done": sum(1 for p in parts if p["state"] == "done"),
                 "pieces_total": t["pieces"], "pieces_done": t["made"], "seconds_made": round(made_seconds, 2), "bytes": t["bytes"], "sample_rate": rate,
                 # between two parts a reading is queued, with something made: the card says it is waiting for its turn and not that it has not started
                 "waiting": row["status"] == "queued" and t["made"] > 0,
@@ -305,7 +395,7 @@ class SpeechService:
         for p in pieces:
             done = p["status"] == "done"
             # pieces are made in order, so the ones that are made are a run from the start of the part, and each starts where the one before it ended
-            out.append({"idx": p["idx"], "kind": p["kind"], "text": p["text"], "continues": bool(p["continues"]), "status": p["status"], "frames": p["frames"],
+            out.append({"idx": p["idx"], "kind": p["kind"], "text": p["text"], "continues": bool(p["continues"]), "speaker": p["speaker"], "status": p["status"], "frames": p["frames"],
                         "start_frame": start if done else None, "error": p["error"],
                         "url": f"/api/speech/{row['id']}/parts/{part_idx}/pieces/{p['idx']}.wav" if done else None})
             if done:
@@ -315,6 +405,17 @@ class SpeechService:
         return {"idx": part["idx"], "title": part["title"], "chars": part["chars"], "complete": complete, "sample_rate": rate, "total_frames": start,
                 "url": f"/api/speech/{row['id']}/parts/{part_idx}.wav" if complete else None,
                 "download_url": f"/api/speech/{row['id']}/parts/{part_idx}.wav?download=1" if complete else None, "pieces": out}
+
+    def finished_parts(self, row: sqlite3.Row) -> list[FinishedPart]:
+        """Every finished part of a reading, in order, with its audio as one file that does not exist (§38.7): what the audiobook is made from (§44.4). A part that is
+        not finished is not in the list. Raises WavError or OSError for a piece file that cannot be read."""
+        out: list[FinishedPart] = []
+        info = audio_info(json.loads(row["options_json"]), "", row["created_at"])  # the note every WAV of the reading carries (the title in it is the part's, below)
+        for part in self.store.parts(row["id"]):
+            files = self.part_files(row, part["idx"])
+            if files:
+                out.append(FinishedPart(part["idx"], part["title"], PartAudio([piece_file(path) for path in files], {**info, "title": part["title"][:200]})))
+        return out
 
     def part_files(self, row: sqlite3.Row, part_idx: int) -> list[Path]:
         """The files of a complete part's pieces, in order. Empty if the part is not complete (or not there)."""

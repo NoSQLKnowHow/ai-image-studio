@@ -1,8 +1,8 @@
 import { request, toApiError } from "./api";
 import type { Run, Status } from "./types";
 import type {
-  EngineVoices, Passage, PartDetail, PositionBody, Prepared, PrepareTextBody, ReadingBody, SampleAnswer, SampleBody, SaveVoiceBody, SavedVoice, SpeechJob,
-  StagedRecording,
+  AudiobookStatus, EngineVoices, Passage, PartDetail, PositionBody, PronunciationBody, PronunciationChange, PronunciationEntry, PronunciationTry, Prepared, PrepareTextBody,
+  ReadingBody, SampleAnswer, SampleBody, SaveVoiceBody, SavedVoice, SpeechJob, StagedRecording,
 } from "./speechTypes";
 
 // The Speech tab's calls (DESIGN.md §38.9). Everything the server sends comes through `request` (or `sendFile`, which reads errors the same way), so a refusal is an
@@ -37,6 +37,7 @@ async function sendFile<T>(path: string, file: Blob, signal?: AbortSignal): Prom
 export interface PrepareFileOptions {
   clean: boolean;
   read_extras: boolean;
+  speakers?: boolean; // look for speakers (§44.5); left out, the server's own default (on)
 }
 
 export const speechApi = {
@@ -44,6 +45,7 @@ export const speechApi = {
   prepare: (body: PrepareTextBody) => request<Prepared>("/api/speech/prepare", post(body)),
   prepareFile: (file: File, options: PrepareFileOptions, signal?: AbortSignal) => {
     const query = new URLSearchParams({ name: file.name, clean: String(options.clean), read_extras: String(options.read_extras) });
+    if (options.speakers !== undefined) query.set("speakers", String(options.speakers));
     return sendFile<Prepared>(`/api/speech/prepare/file?${query}`, file, signal);
   },
 
@@ -66,6 +68,17 @@ export const speechApi = {
   saveVoice: (body: SaveVoiceBody) => request<SavedVoice>("/api/speech/voices", post(body)),
   renameVoice: (id: string, name: string) => request<SavedVoice>(`/api/speech/voices/${id}`, patch({ name })),
   deleteVoice: (id: string) => request<void>(`/api/speech/voices/${id}`, del()),
+
+  // the pronunciation list (§44.3): one list for every engine, voice and reading
+  pronunciations: () => request<{ entries: PronunciationEntry[] }>("/api/speech/pronunciations"),
+  addPronunciation: (body: PronunciationBody) => request<PronunciationEntry>("/api/speech/pronunciations", post(body)),
+  changePronunciation: (id: string, change: PronunciationChange) => request<PronunciationEntry>(`/api/speech/pronunciations/${id}`, patch(change)),
+  deletePronunciation: (id: string) => request<void>(`/api/speech/pronunciations/${id}`, del()),
+  tryPronunciation: (text: string) => request<PronunciationTry>("/api/speech/pronunciations/try", post({ text })),
+
+  // the M4B audiobook file (§44.4): ask how it stands, make it (answers at once; the build goes on), take it from `audiobookUrl`
+  audiobook: (id: string) => request<AudiobookStatus>(`/api/speech/${id}/audiobook`),
+  makeAudiobook: (id: string) => request<AudiobookStatus>(`/api/speech/${id}/audiobook`, post()),
 
   // loading and unloading an engine's model: the same routes as the other two models, which say which engine
   loadEngine: (engine: string, variant?: string) => request<Status>("/api/model/load", post({ model: "speech", engine, ...(variant ? { variant } : {}) })),

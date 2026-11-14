@@ -185,17 +185,26 @@ def join_lines(lines: list[str]) -> str:
     return joined
 
 
-def split_paragraphs(text: str, report: Optional[Report] = None) -> list[str]:
+def split_paragraphs(text: str, report: Optional[Report] = None, speaker_keys: Optional[set[str]] = None) -> list[str]:
     """The paragraphs of plain text: blocks separated by blank lines, each block's hard-wrapped lines joined (`join_wrapped_lines`), page-number lines
-    dropped. The result is raw, not yet cleaned: `clean_text` is applied to each by the caller."""
+    dropped. The result is raw, not yet cleaned: `clean_text` is applied to each by the caller.
+
+    `speaker_keys` (DESIGN.md §44.5) are the speakers the text has (`speakers.speaker_keys`): a line that begins with one of their labels starts a new paragraph even
+    with no blank line before it, which is how a script is written (`Alice: Hello` and `Bob: Hi` on consecutive lines). Without them, as in 1.24, such lines would be joined
+    into one paragraph. Wrapped lines after a label still belong to its paragraph."""
+    from .speakers import starts_speaker_line
+
     report = report or Report()
     paragraphs: list[str] = []
     for block in re.split(r"\n[ \t]*\n+", normalize(text, report).strip()):
-        lines = []
+        runs: list[list[str]] = [[]]
         for line in block.split("\n"):
             if is_page_number(line):
                 report.page_numbers += 1
-            else:
-                lines.append(line)
-        paragraphs.extend(join_wrapped_lines(lines))
+                continue
+            if speaker_keys and runs[-1] and starts_speaker_line(line, speaker_keys):
+                runs.append([])  # a speaker's line begins here
+            runs[-1].append(line)
+        for lines in runs:
+            paragraphs.extend(join_wrapped_lines(lines))
     return paragraphs

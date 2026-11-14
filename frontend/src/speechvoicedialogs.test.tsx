@@ -118,7 +118,8 @@ describe("Design a voice", () => {
     const audio = document.querySelector("audio") as HTMLAudioElement;
     press("Play sample 1");
     await flush();
-    expect(audio.getAttribute("src")).toBe("/api/speech/candidates/7f6108c5034732e60e81230e03fd5041/0.wav");
+    // the first clip's address as the server's own design job gave it (the contract file; its id changes each time the contract is made again, so it is read and not typed)
+    expect(audio.getAttribute("src")).toBe(DESIGN_DONE.files.find((f) => f.index === 0)?.url);
     expect(plays).toHaveBeenCalledTimes(1);
     expect(button("Stop sample 1").textContent).toBe("Stop");
     press("Stop sample 1");

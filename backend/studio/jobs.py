@@ -326,7 +326,9 @@ class JobManager:
         usable = any(e["state"] in ("ready", "needs_memory") for e in engines)
         reason = None if usable else ("The speech engines are still being checked." if any(e["state"] == "checking" for e in engines)
                                       else "No speech engine can run here." if engines else "No speech engine is switched on.")
-        return {"available": usable, "reason": reason, "hint": None if usable else "Each engine's own reason is below.", "engines": engines}
+        # whether the audiobook (M4B) file can be made here, and why not if it cannot (DESIGN.md §44.4): ffmpeg is looked at once and the answer kept, so this costs nothing
+        return {"available": usable, "reason": reason, "hint": None if usable else "Each engine's own reason is below.", "engines": engines,
+                "audiobook": self.speech.audiobooks.tools().as_dict()}
 
     def vector_status(self) -> dict[str, Any]:
         """Whether the Vector tab can work here (DESIGN.md §31.12.7): `capabilities.vector`, as `music_status` is for music. It needs both halves: the
@@ -1637,6 +1639,8 @@ class JobManager:
         # cannot even be imported is recorded without starting a process
         engines = speech_registry.engine_ids(self.settings.pipeline, self.settings.speech_engines)
         self._speech_probes = {engine_id: {"state": "checking"} for engine_id in engines}
+        # whether ffmpeg can make the audiobook file (DESIGN.md §44.4) is looked at now, off the event loop, so that the first `capabilities` request finds it known
+        await asyncio.to_thread(self.speech.audiobooks.tools)
         result, music, *speech = await asyncio.gather(
             self._probe_subprocess("image"), self._probe_subprocess("music"), *(self._probe_speech_engine(e) for e in engines))
         for engine_id, outcome in zip(engines, speech):
@@ -1813,8 +1817,11 @@ class JobManager:
         return self.speech.voices.job_status(row)
 
     async def sweep_speech_temp(self) -> dict[str, int]:
-        """Clear away what a voice feature left that was never kept (see `VoiceService.sweep`)."""
-        return await asyncio.to_thread(self.speech.voices.sweep)
+        """Clear away what a voice feature left that was never kept (see `VoiceService.sweep`), and the audiobook files kept past their day, and any half-made one that a
+        restart left (see `Audiobooks.sweep`, DESIGN.md §44.4)."""
+        removed = await asyncio.to_thread(self.speech.voices.sweep)
+        books = await asyncio.to_thread(self.speech.audiobooks.sweep)
+        return {**removed, "audiobooks": books["files"], "audiobooks_partial": books["partial"]}
 
     def _publish_projects(self) -> None:
         """Tell every open page that the projects, or how many runs each holds, changed: each page then asks for the list again (DESIGN.md §32.4).

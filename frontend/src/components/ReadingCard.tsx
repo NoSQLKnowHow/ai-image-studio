@@ -1,10 +1,14 @@
 import { binNote, timeAgo, workingNote, type ViewScope } from "../format";
 import { canListen, canceledLine, continueText, listenLabel, progressLine, readingFacts, readingTitle, toGoText } from "../speech";
+import { pronunciationLine } from "../pronunciation";
+import { castLine } from "../speakers";
 import { zipUrl } from "../speechApi";
 import type { SpeechRun } from "../types";
 import { DownloadIcon, FolderIcon, PlayIcon, RestoreIcon, ReuseIcon, SpeakerIcon, StopIcon, TrashIcon } from "./icons";
 import { ProjectMenu, projectOf, type ProjectControls } from "./ProjectMenu";
 import { RunAnnotations } from "./RunAnnotations";
+import { AudiobookControl } from "./AudiobookControl";
+import type { AudiobookCaps } from "../speechTypes";
 
 // The card of a reading (DESIGN.md §38.2): one card for the whole reading however many parts it has, with its title, where the text came from, the engine and the
 // voice, a bar of how far it has got, and the buttons it needs: Listen, Cancel while it is waiting or being made, Continue after a Cancel, Retry after a failure,
@@ -17,6 +21,7 @@ interface Props {
   transient: boolean; // in a filtered view only because it is working (DESIGN.md §29.3, §32)
   viewScope: ViewScope; // which filter that is, so the note says what keeps the card there
   projects: ProjectControls; // the project folders, and what the Project button does (§32)
+  audiobook?: AudiobookCaps; // whether this server can make the M4B file, and why not if it cannot (§44.4)
   onListen?: (run: SpeechRun) => void; // open the reading view; absent where there is no player
   onContinue: () => void; // Continue after a Cancel, Retry after a failure: both make the rest, from the first piece not made
   onCancel: () => void;
@@ -41,7 +46,7 @@ export function readingStatusLabel(run: SpeechRun): string {
   }
 }
 
-export function ReadingCard({ run, now, transient, viewScope, projects, onListen, onContinue, onCancel, onRestore, onDelete }: Props) {
+export function ReadingCard({ run, now, transient, viewScope, projects, audiobook, onListen, onContinue, onCancel, onRestore, onDelete }: Props) {
   const reading = run.reading;
   const label = readingStatusLabel(run);
   const title = readingTitle(run);
@@ -75,6 +80,10 @@ export function ReadingCard({ run, now, transient, viewScope, projects, onListen
         <p className="run-prompt reading-title">{title}</p>
         <p className="run-meta">{readingFacts(run)}</p>
         <RunAnnotations run={run} />
+        {/* the pronunciation list a reading was made with, when it changed any word (DESIGN.md §44.3); it keeps that list, so this stays true whatever the list becomes */}
+        {pronunciationLine(reading?.pronunciations) && <p className="run-meta" data-note="pronunciation">{pronunciationLine(reading?.pronunciations)}</p>}
+        {/* who speaks besides the main voice (§44.5): the reading keeps its cast */}
+        {castLine(reading?.speakers) && <p className="run-meta" data-note="speakers">{castLine(reading?.speakers)}</p>}
 
         {/* how far it has got: the part, the paragraph and how much is made (§38.2). Nothing to show until a piece is made, and then it stays: a finished reading
             says how long it is */}
@@ -126,7 +135,7 @@ export function ReadingCard({ run, now, transient, viewScope, projects, onListen
             </button>
           )}
           {(reading?.parts_done ?? 0) > 0 && (
-            <a className="button small" href={zipUrl(run.id)} download data-action="download" title="The finished parts, one WAV each, with a playlist for a phone's player">
+            <a className="button small" href={zipUrl(run.id)} download data-action="download" title="The finished parts, one WAV each, with a playlist for a phone's player and chapter lists (chapters.txt and chapters.ffmetadata)">
               <DownloadIcon /> Download
             </a>
           )}
@@ -149,6 +158,9 @@ export function ReadingCard({ run, now, transient, viewScope, projects, onListen
             </>
           )}
         </div>
+
+        {/* the audiobook file: one M4B with a chapter for each finished part, built when asked for (DESIGN.md §44.4); the bin only reads */}
+        {!inBin && (reading?.parts_done ?? 0) > 0 && reading && <AudiobookControl runId={run.id} reading={reading} audiobook={audiobook} />}
       </div>
     </article>
   );

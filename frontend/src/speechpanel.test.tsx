@@ -73,7 +73,7 @@ describe("pasted text", () => {
     expect(await screen.findByRole("heading", { name: "What will be read" })).toBeTruthy();
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe("/api/speech/prepare");
-    expect(jsonBody(calls[0])).toEqual({ source: "text", text: "Chapter one\n\nIt was a bright cold day in April.", clean: true, read_extras: false });
+    expect(jsonBody(calls[0])).toEqual({ source: "text", text: "Chapter one\n\nIt was a bright cold day in April.", clean: true, read_extras: false, speakers: true });
     expect((screen.getByLabelText("Title of the reading") as HTMLInputElement).value).toBe("A short book");
     expect(parts().map((li) => within(li).getByText(/^Chapter/).textContent)).toEqual(["Chapter one", "Chapter two", "Chapter three"]);
   });
@@ -196,7 +196,7 @@ describe("a web page", () => {
     address("  example.org/page ");
     press("Fetch");
     await screen.findByRole("heading", { name: "What will be read" });
-    expect(jsonBody(calls[0])).toEqual({ source: "url", url: "https://example.org/page", clean: true, read_extras: false });
+    expect(jsonBody(calls[0])).toEqual({ source: "url", url: "https://example.org/page", clean: true, read_extras: false, speakers: true });
     expect((screen.getByLabelText("Address of the web page") as HTMLInputElement).value).toBe("https://example.org/page");
   });
 
@@ -235,6 +235,46 @@ describe("a web page", () => {
   });
 });
 
+// ------------------------------------------------------------------ the pronunciation list (DESIGN.md §44.3)
+describe("the pronunciation list on the tab", () => {
+  const entries = [
+    { id: "1", word: "Nguyen", say: "win", match_case: false, created_at: "2026-11-14T00:00:00Z", updated_at: "2026-11-14T00:00:00Z" },
+    { id: "2", word: "US", say: "you ess", match_case: true, created_at: "2026-11-14T00:00:00Z", updated_at: "2026-11-14T00:00:00Z" },
+  ];
+
+  it("has a section of its own, whose button says how many entries there are, and says what the list is for", async () => {
+    server(() => ({ body: {} }), undefined, { entries });
+    show();
+    expect(screen.getByRole("heading", { name: "Pronunciation" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Pronunciation list (2)" })).toBeTruthy();
+    expect(screen.getByText(/It changes only what is spoken, never what you read\./)).toBeTruthy();
+    expect(screen.getByText(/2 entries\./)).toBeTruthy();
+  });
+
+  it("has no count on the button while the list is empty", async () => {
+    server(() => ({ body: {} }));
+    show();
+    expect(await screen.findByText(/No entries yet\./)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Pronunciation list" })).toBeTruthy();
+  });
+
+  it("opens the dialog with the list when the button is pressed, and is not on the tab when speech cannot be made", async () => {
+    server(() => ({ body: {} }), undefined, { entries });
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Pronunciation list (2)" }));
+    const dialog = await screen.findByRole("dialog", { name: "Pronunciation list" });
+    expect(within(dialog).getByRole("list", { name: "Your pronunciation list" })).toBeTruthy();
+  });
+
+  it("is not on the tab, and the list is not even read, when speech cannot be made", async () => {
+    const calls = server(() => ({ body: {} }), undefined, { entries });
+    show({ ...CAPS, speech: { ...CAPS.speech, available: false, reason: "No speech engine can run here." } });
+    await Promise.resolve();
+    expect(screen.queryByRole("button", { name: /Pronunciation list/ })).toBeNull(); // nothing to say words with
+    expect(calls.listReads).toBe(0);
+  });
+});
+
 // ------------------------------------------------------------------ a file
 describe("a file", () => {
   const openFile = () => {
@@ -253,7 +293,7 @@ describe("a file", () => {
     openFile();
     choose(file("my book & more.epub"));
     await screen.findByRole("heading", { name: "What will be read" });
-    expect(calls[0].url).toBe("/api/speech/prepare/file?name=my+book+%26+more.epub&clean=true&read_extras=false");
+    expect(calls[0].url).toBe("/api/speech/prepare/file?name=my+book+%26+more.epub&clean=true&read_extras=false&speakers=true");
     expect((calls[0].init.body as File).name).toBe("my book & more.epub");
     expect(screen.getByText("my book & more.epub")).toBeTruthy();
   });
@@ -528,7 +568,7 @@ describe("preparing again", () => {
     press("Prepare again");
     await waitFor(() => expect(calls).toHaveLength(2));
     expect(calls[1].url).toBe("/api/speech/prepare");
-    expect(jsonBody(calls[1])).toEqual({ source: "url", url: "https://example.org/a", clean: true, read_extras: true });
+    expect(jsonBody(calls[1])).toEqual({ source: "url", url: "https://example.org/a", clean: true, read_extras: true, speakers: true });
     await waitFor(() => expect(screen.queryByText(/switches above have changed/)).toBeNull());
     cleanup();
 
@@ -541,7 +581,7 @@ describe("preparing again", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: /Clean up the text/ }));
     press("Prepare again");
     await waitFor(() => expect(fileCalls).toHaveLength(2));
-    expect(fileCalls[1].url).toBe("/api/speech/prepare/file?name=book.epub&clean=false&read_extras=false");
+    expect(fileCalls[1].url).toBe("/api/speech/prepare/file?name=book.epub&clean=false&read_extras=false&speakers=true");
     expect(fileCalls[1].init.body).toBe(book); // the same file again, from the page's own copy
   });
 
