@@ -23,8 +23,10 @@ def same_as_the_table(counts: dict, expected: dict) -> None:
 
 # One run as the database wants it (a dict of columns). The letter names the run (a to f), `seq` fixes how old it is, `deleted` puts it in the bin,
 # and `project` is the project it is filed in (the table's own short names, "x" and "y": the database takes any text there).
-def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False, project: str | None = None) -> dict:
+def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bool = False, project: str | None = None, family: str | None = None) -> dict:
     return {
+        # the letter of the run this one is a variation of, as that run's id (the first run of its family: DESIGN.md §43.4), or none
+        "family_id": id_of(family) if family else None,
         "id": f"{ord(letter):032x}", "created_at": f"2026-10-01T00:00:{seq:02d}Z", "status": status, "mode": mode,
         "prompt": f"run {letter}", "effective_prompt": f"run {letter}", "steps": 3, "seed": seq, "num_images": 1,
         "model_id": "fake-pipeline", "options_json": json.dumps({}), "width": 256, "height": 256, "pinned": int(pinned),
@@ -35,6 +37,11 @@ def row(letter: str, seq: int, mode: str, status: str, pinned: bool, deleted: bo
 # the run's letter back from its id (an id is the letter's code point in hex, so ids sort and read easily)
 def letter(run_id: str) -> str:
     return chr(int(run_id, 16))
+
+
+# and the id of a letter, which is how a family in the table names its first run (a letter no run has is still an id: a family nobody is in)
+def id_of(run_letter: str) -> str:
+    return f"{ord(run_letter):032x}"
 
 
 # the pictures (or tracks, for a music run; versions, for a vector run) of a run that are in the bin: how many the table says, each a row with its own `deleted_at`
@@ -59,16 +66,16 @@ def db(tmp_path):
     database = Database(tmp_path / "studio.sqlite")
     # the table lists the runs newest first; they are made oldest first
     for seq, entry in enumerate(reversed(TABLE["runs"]), start=1):
-        made = row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"], entry["project"])
+        made = row(entry["id"], seq, entry["mode"], entry["status"], entry["pinned"], entry["deleted"], entry["project"], entry.get("family"))
         assert database.insert_run_if_capacity(made, cap=100)
         put_items_in_the_bin(database, made, entry["items_in_bin"])
     yield database
     database.close()
 
 
-# a case's filter, as written in the JSON table, becomes a RunFilter
+# a case's filter, as written in the JSON table, becomes a RunFilter (a family is written there as the letter of its first run, and is that run's id here)
 def as_filter(spec: dict) -> RunFilter:
-    return RunFilter(**spec)
+    return RunFilter(**{**spec, **({"family": id_of(spec["family"])} if spec.get("family") else {})})
 
 
 # Keep or un-keep a run through the API

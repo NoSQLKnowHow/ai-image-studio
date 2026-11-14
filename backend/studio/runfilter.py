@@ -37,6 +37,7 @@ class RunFilter:
     deleted: Optional[bool] = False  # False: the history (runs not in the bin); True: only the bin (§30, §33); None: either
     project: Optional[str] = None  # None: any project or none; NO_PROJECT: only runs in no project; a project's id: only that project (§32.4)
     prompt: Optional[str] = None  # None: any run; a saved prompt's id: only the runs made from it (`GET /api/runs?prompt=`, DESIGN.md §37.4)
+    family: Optional[str] = None  # None: any run; a run's id: that run and every variation made from it (`GET /api/runs?family=`, DESIGN.md §43.4)
 
     def conditions(self) -> tuple[list[str], list[Any]]:
         """The SQL conditions (to be joined with AND) and the values bound to their placeholders."""
@@ -65,6 +66,12 @@ class RunFilter:
         if self.prompt is not None:
             clauses.append("prompt_id = ?")
             values.append(self.prompt)
+        # A family is the run it started from and every run whose `family_id` is that run (a variation of a variation has the same `family_id` as the variation,
+        # which is the first run's id, so the family is flat however deep it goes). The one id is bound twice, once for each side of the OR; an id that is not a
+        # run matches nothing.
+        if self.family is not None:
+            clauses.append("(id = ? OR family_id = ?)")
+            values.extend([self.family, self.family])
         return clauses, values
 
 

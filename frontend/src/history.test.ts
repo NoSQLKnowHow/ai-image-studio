@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import cases from "../../backend/tests/filter_cases.json";
 import {
   FILTER_KEY, NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, canBin, filterKey, filterParams, hasItemsInTheBin, isDefault, matches, parseFilterKey, readFilter, saveFilter, showsWorking,
-  upNextFirst, visibleRuns, watchWorking, withProject, working,
+  upNextFirst, visibleRuns, watchWorking, withFamily, withProject, working,
   type HistoryFilter, type View,
 } from "./history";
 import type { KeyValueStore } from "./options";
@@ -16,7 +16,8 @@ const STATUSES: Record<string, RunStatus> = { queued: "queued", running: "runnin
 
 // build a page `Run` from one row of the shared table (music rows become music runs; a deleted row is in the bin; `items_in_bin` is how many of its
 // own pictures, tracks for a music run, or versions for a vector run, are in the bin, as `binned_images`, `binned_tracks` or `binned_vectors`)
-type TableRun = { id: string; mode: string; status: string; pinned: boolean; deleted: boolean; project: string | null; items_in_bin: number };
+// `family` is the id (a letter, here) of the first run of the family a picture run belongs to, when it does (DESIGN.md §43.4)
+type TableRun = { id: string; mode: string; status: string; pinned: boolean; deleted: boolean; project: string | null; items_in_bin: number; family?: string };
 function tableRun(entry: TableRun): Run {
   const extra = { id: entry.id, status: STATUSES[entry.status], pinned: entry.pinned, deleted_at: entry.deleted ? "2026-10-02T00:00:00.000Z" : null, project_id: entry.project };
   const items = Array.from({ length: entry.items_in_bin }, (_, i) => i);
@@ -26,7 +27,7 @@ function tableRun(entry: TableRun): Run {
   if (entry.mode === "vector") return makeVectorRun({ ...extra, binned_vectors: items.map((i) => makeBinnedVector(i + 1)) });
   return entry.mode === "music"
     ? makeMusicRun({ ...extra, binned_tracks: items.map((i) => makeBinnedTrack(i)) })
-    : makeRun({ ...extra, mode: entry.mode as "generate" | "edit", binned_images: items.map((i) => makeBinnedImage(i)) });
+    : makeRun({ ...extra, mode: entry.mode as "generate" | "edit", binned_images: items.map((i) => makeBinnedImage(i)), family_id: entry.family ?? null });
 }
 
 // which tab a run belongs to, as the server's counts name it
@@ -49,7 +50,8 @@ describe("the shared table of cases", () => {
 
   for (const entry of cases.cases) {
     it(entry.name, () => {
-      const filter = entry.filter as HistoryFilter;
+      // a case lists only what it sets, and the server's RunFilter defaults the rest: so does this (a family left out is no family, which is `null` and not "undefined")
+      const filter = { family: null, ...entry.filter } as HistoryFilter;
       expect(runs.filter((run) => matches(run, filter)).map((run) => run.id)).toEqual(entry.expect);
     });
   }
@@ -98,7 +100,7 @@ describe("the project of a history filter", () => {
   });
 
   it("changes only the project: Kept and Deleted stay as they were", () => {
-    expect(withProject(ONLY_KEPT, ID)).toEqual({ kept: true, deleted: false, project: ID });
+    expect(withProject(ONLY_KEPT, ID)).toEqual({ kept: true, deleted: false, project: ID, family: null });
     expect(withProject(withProject(ONLY_DELETED, ID), null)).toEqual(ONLY_DELETED);
   });
 
@@ -142,7 +144,7 @@ describe("the stored form of a filter with a project", () => {
   };
 
   it("round-trips every choice of Show combined with a project", () => {
-    for (const base of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null }, ONLY_DELETED]) {
+    for (const base of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED]) {
       for (const project of [ID, NO_PROJECT]) {
         const store = memory();
         saveFilter(withProject(base, project), store);
@@ -170,8 +172,8 @@ describe("the stored form of a filter with a project", () => {
   });
 
   it("reads the parts in any order, because only the page writes them in one", () => {
-    expect(parseFilterKey(`project:${ID}+kept`)).toEqual({ kept: true, deleted: false, project: ID });
-    expect(parseFilterKey(`deleted+project:${ID}`)).toEqual({ kept: null, deleted: true, project: ID });
+    expect(parseFilterKey(`project:${ID}+kept`)).toEqual({ kept: true, deleted: false, project: ID, family: null });
+    expect(parseFilterKey(`deleted+project:${ID}`)).toEqual({ kept: null, deleted: true, project: ID, family: null });
   });
 });
 
@@ -180,7 +182,7 @@ describe("a history filter", () => {
   it("is named, and the default is only 'either'", () => {
     // every filter the page can build, and some it cannot (kept in the bin, either): each must have a name of its own, since each gets its
     // own view in the store
-    const filters: HistoryFilter[] = [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null }, ONLY_DELETED, { kept: true, deleted: true, project: null }, { kept: null, deleted: null, project: null }];
+    const filters: HistoryFilter[] = [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED, { kept: true, deleted: true, project: null, family: null }, { kept: null, deleted: null, project: null, family: null }];
     expect(filters.map(filterKey)).toEqual(["all", "kept", "not-kept", "deleted", "kept+deleted", "any"]);
     expect(new Set(filters.map(filterKey)).size).toBe(filters.length); // every filter has a name of its own: a view each
     expect(filters.map(isDefault)).toEqual([true, false, false, false, false, false]);
@@ -189,16 +191,16 @@ describe("a history filter", () => {
   it("asks the server for what it is, and for nothing when it is the default", () => {
     expect(filterParams(NO_FILTER)).toEqual({});
     expect(filterParams(ONLY_KEPT)).toEqual({ kept: "true" });
-    expect(filterParams({ kept: false, deleted: false, project: null })).toEqual({ kept: "false" });
+    expect(filterParams({ kept: false, deleted: false, project: null, family: null })).toEqual({ kept: "false" });
     expect(filterParams(ONLY_DELETED)).toEqual({ deleted: "true" });
-    expect(filterParams({ kept: true, deleted: true, project: null })).toEqual({ kept: "true", deleted: "true" });
+    expect(filterParams({ kept: true, deleted: true, project: null, family: null })).toEqual({ kept: "true", deleted: "true" });
   });
 
   it("is a rule about one thing: whether the run is kept, whatever else it is", () => {
     for (const status of ["queued", "running", "done", "failed", "canceled"] as const) {
       expect(matches(makeRun({ status, pinned: true }), ONLY_KEPT)).toBe(true);
       expect(matches(makeRun({ status, pinned: false }), ONLY_KEPT)).toBe(false);
-      expect(matches(makeRun({ status, pinned: false }), { kept: false, deleted: false, project: null })).toBe(true);
+      expect(matches(makeRun({ status, pinned: false }), { kept: false, deleted: false, project: null, family: null })).toBe(true);
       expect(matches(makeRun({ status, pinned: true }), NO_FILTER)).toBe(true);
     }
   });
@@ -211,11 +213,11 @@ describe("a history filter", () => {
     expect([NO_FILTER, ONLY_KEPT].map((filter) => matches(inBin, filter))).toEqual([false, false]);
     expect([NO_FILTER, ONLY_KEPT].map((filter) => matches(plain, filter))).toEqual([true, true]);
     expect([matches(inBin, ONLY_DELETED), matches(plain, ONLY_DELETED)]).toEqual([true, false]);
-    expect(matches(inBin, { kept: null, deleted: null, project: null })).toBe(true); // either
+    expect(matches(inBin, { kept: null, deleted: null, project: null, family: null })).toBe(true); // either
   });
 
   it("shows working runs in every filtered view but the bin, where nothing works", () => {
-    expect([NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null }, ONLY_DELETED].map(showsWorking)).toEqual([false, true, true, false]);
+    expect([NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED].map(showsWorking)).toEqual([false, true, true, false]);
   });
 
   it("knows what is working", () => {
@@ -255,7 +257,7 @@ describe("what the browser remembers", () => {
   };
 
   it("round-trips", () => {
-    for (const filter of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null }, ONLY_DELETED]) {
+    for (const filter of [NO_FILTER, ONLY_KEPT, { kept: false, deleted: false, project: null, family: null }, ONLY_DELETED]) {
       const store = memory();
       saveFilter(filter, store);
       expect(readFilter(store)).toEqual(filter);
@@ -458,9 +460,83 @@ describe("which runs have left the Kept view (DESIGN.md §29.3)", () => {
   });
 
   it("is told apart by what the filter says: with 'not kept' a kept working run is the one that leaves", () => {
-    const filter: HistoryFilter = { kept: false, deleted: false, project: null };
+    const filter: HistoryFilter = { kept: false, deleted: false, project: null, family: null };
     const watched = watchWorking(none, table(run("w", { status: "running", pinned: true })), filter).watched;
     expect([...watched]).toEqual(["w"]);
     expect(watchWorking(watched, table(run("w", { status: "done", pinned: true })), filter).left.map((r) => r.id)).toEqual(["w"]);
+  });
+});
+
+// ------------------------------------------------------------------ a family (DESIGN.md section 43.4, criterion 337)
+// The view a Variations chip opens: one run and every run made from it. It is a filter like a project, except that it is chosen from a chip, narrows the whole history and is never remembered.
+describe("the family filter", () => {
+  const ROOT = "0123456789abcdef0123456789abcdef";
+  const OTHER = "fedcba9876543210fedcba9876543210";
+  const family = { ...NO_FILTER, family: ROOT };
+  const store = (): KeyValueStore & { saved: Record<string, string> } => {
+    const saved: Record<string, string> = {};
+    return { available: true, saved, get: (key) => saved[key] ?? null, set: (key, value) => { saved[key] = value; } };
+  };
+
+  it("is not the default, and withFamily goes into one and out of it", () => {
+    expect(isDefault(NO_FILTER)).toBe(true);
+    expect(isDefault(family)).toBe(false);
+    expect(withFamily(ONLY_KEPT, ROOT)).toEqual(family); // a family on its own: Kept (or a project) is not carried into it, so the view is the whole family
+    expect(withFamily({ ...ONLY_KEPT, project: OTHER }, ROOT)).toEqual(family);
+    expect(withFamily(family, null)).toEqual(NO_FILTER); // the pill's close button
+    expect(withFamily({ ...ONLY_KEPT, family: ROOT }, null)).toEqual(ONLY_KEPT); // leaving keeps what else was set
+  });
+
+  it("has a name of its own for its view in the store, after the other parts", () => {
+    expect(filterKey(family)).toBe(`family:${ROOT}`);
+    expect(filterKey({ ...ONLY_KEPT, project: OTHER, family: ROOT })).toBe(`kept+project:${OTHER}+family:${ROOT}`);
+    expect(filterKey(NO_FILTER)).toBe("all"); // nothing about a family when there is none
+  });
+
+  it("asks the server for it by id and for nothing else", () => {
+    expect(filterParams(family)).toEqual({ family: ROOT });
+    expect(filterParams(NO_FILTER)).toEqual({});
+    expect(filterParams({ ...ONLY_KEPT, family: ROOT })).toEqual({ kept: "true", family: ROOT });
+  });
+
+  it("matches the run it is named for and every run made from it, and no other", () => {
+    expect(matches(makeRun({ id: ROOT }), family)).toBe(true); // the first run itself
+    expect(matches(makeRun({ id: "child", family_id: ROOT }), family)).toBe(true);
+    expect(matches(makeRun({ id: "other", family_id: OTHER }), family)).toBe(false);
+    expect(matches(makeRun({ id: "alone", family_id: null }), family)).toBe(false);
+    expect(matches(makeRun({ id: "old" }), family)).toBe(false); // a run from a server before 1.24 has no family_id at all
+    expect(matches(makeMusicRun({ id: "m" }), family)).toBe(false); // other tabs' runs have none either
+    expect(matches(makeRun({ id: "child", family_id: ROOT, deleted_at: "2026-10-14T10:00:00.000Z" }), family)).toBe(false); // the bin is still not the history
+    expect(matches(makeRun({ id: "anyone" }), NO_FILTER)).toBe(true); // and no family means every run, as before
+  });
+
+  it("shows the runs that are working at the top, as every filter but the default does", () => {
+    expect(showsWorking(family)).toBe(true);
+  });
+
+  it("is read back from a name, and a bad id is not a family", () => {
+    expect(parseFilterKey(`family:${ROOT}`)).toEqual(family);
+    expect(parseFilterKey(`kept+family:${ROOT}`)).toEqual({ ...ONLY_KEPT, family: ROOT });
+    expect(parseFilterKey("family:nope")).toBeNull();
+    expect(parseFilterKey(`family:${ROOT}+family:${OTHER}`)).toBeNull(); // twice
+    expect(parseFilterKey("family:none")).toBeNull(); // unlike a project there is no "none"
+  });
+
+  it("is never remembered: a reload leaves the family and keeps the rest", () => {
+    const s = store();
+    saveFilter(family, s);
+    expect(s.saved).toEqual({ [FILTER_KEY]: "all" });
+    expect(readFilter(s)).toEqual(NO_FILTER);
+    saveFilter({ ...ONLY_KEPT, project: OTHER, family: ROOT }, s);
+    expect(readFilter(s)).toEqual({ ...ONLY_KEPT, project: OTHER });
+  });
+
+  it("shows a family from the cache within what its view has loaded", () => {
+    const root = makeRun({ id: ROOT, created_at: "2026-10-02T10:00:01.000Z" });
+    const child = makeRun({ id: "child1", family_id: ROOT, created_at: "2026-10-02T10:00:02.000Z" });
+    const stranger = makeRun({ id: "stranger", created_at: "2026-10-02T10:00:03.000Z" });
+    const runs: Record<string, Run> = { [ROOT]: root, child1: child, stranger };
+    const view: View = { ready: true, nextBefore: null, boundary: null };
+    expect(visibleRuns(runs, ["stranger", "child1", ROOT], view, family).map((r) => r.id)).toEqual(["child1", ROOT]); // newest first, the stranger left out
   });
 });

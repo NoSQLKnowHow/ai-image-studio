@@ -62,8 +62,9 @@ def test_a_new_database_has_the_builders_tables_and_runs_columns(tmp_path):
     db = Database(path)
     try:
         assert NEW_TABLES <= table_names(path) and "prompt_search" in table_names(path) and db.has_fts5 is True
-        assert [c for c in columns(path, "runs")][-5:] == [("project_id", "TEXT"), ("prompt_id", "TEXT"), ("prompt_version", "INTEGER"),
-                                                           ("queue_key", "REAL"), ("hidden", "INTEGER")]  # schema 10 adds its two after the builder's
+        assert [c for c in columns(path, "runs")][-7:] == [("project_id", "TEXT"), ("prompt_id", "TEXT"), ("prompt_version", "INTEGER"),
+                                                           ("queue_key", "REAL"), ("hidden", "INTEGER"), ("variation_json", "TEXT"),
+                                                           ("family_id", "TEXT")]  # schema 10 adds its two after the builder's, and schema 11 its two after those
         assert stored_version(path) == str(SCHEMA_VERSION)
         assert sqlite3.connect(path).execute("PRAGMA foreign_key_check").fetchall() == []
         assert not (tmp_path / f"studio.sqlite.before-schema-{SCHEMA_VERSION}").exists()  # a new database has nothing to keep a copy of

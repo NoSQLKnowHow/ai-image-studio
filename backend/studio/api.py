@@ -39,6 +39,7 @@ from .fourk import NotEligible
 from . import inputs as inputs_mod
 from .jobs import (
     ImageNotFound, InputStorageError, JobManager, ModelRefused, PictureConflict, ProjectNameTaken, ProjectNotFound, PromptRefRefused, QueueFull, QueueMoveRefused, RunAlwaysKept, RunConflict, RunNotFound,
+    VariationRefused,
 )
 from .naming import (
     content_disposition, download_filename, music_filename, source_filename, thumbnail_filename, upscale_filename, vector_filename,
@@ -47,7 +48,7 @@ from .projects import BadProjectName
 from .runfilter import RunFilter, counted_within
 from .runspec import RecipeRequest, RunCreate, RunRequestError, resolve_recipe, resolve_run
 from .security import SecurityMiddleware
-from .serialize import PREVIEW_SIZE, parse_ts, utcnow, vector_limits
+from .serialize import PREVIEW_SIZE, parse_ts, utcnow, variations_status, vector_limits
 from .storage import Storage, StorageError, check_id
 from .upscaler import UpscalerError
 
@@ -278,6 +279,9 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             "vector": jobs.vector_status(),  # the Vector tab (DESIGN.md §31.12.7): {available, reason, hint}, like `music`
             "speech": jobs.speech_status(),  # the Speech tab (DESIGN.md §38.9): {available, reason, hint, engines: [...]}
             "upscaler": jobs.upscaler_status(),  # Enlarge (DESIGN.md §28.3): whether it can run here, and if not why
+            # More like this (DESIGN.md §43.6): "More takes" always works; "Variations of this picture" needs the editing pipeline and the setting that says the Spark
+            # experiment has been looked at. `reason` is what the dialog says beside the greyed choice.
+            "variations": variations_status(settings, "edit" in jobs.modes()),
             "builder": request.app.state.builder.cached(),  # the Prompt builder (§37.4): set up? what is known of Ollama (null until something has looked)
             "queue_cap": settings.queue_cap,
             "device": jobs.worker_status().get("device"),
@@ -314,7 +318,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
             return _error(429, str(exc), "queue_full")
         except InputStorageError as exc:
             return _error(507, str(exc), "storage_full")
-        except PromptRefRefused as exc:
+        except (PromptRefRefused, VariationRefused) as exc:  # the run it is made from (a saved prompt, or More like this of) is not there, or is in the bin
             return _error(exc.status, exc.message, exc.code)
 
     async def read_limited_body(request: Request, megabytes: Optional[int] = None) -> Any:
@@ -370,9 +374,10 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
         project: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a project's id: only its runs; 'none': only runs in no project; absent: any"),
         kind: Optional[Literal["image", "music", "vector", "speech"]] = Query(None, description="only the runs of one tab (DESIGN.md §31.12.7); absent: every tab"),
         prompt: Optional[str] = Query(None, pattern=PROJECT_PATTERN, description="a saved prompt's id: only the runs made from it (DESIGN.md §37.4)"),
+        family: Optional[str] = Query(None, pattern=r"^[0-9a-f]{32}$", description="a run's id: that run and every variation made from it (DESIGN.md §43.4)"),
     ) -> Any:
         try:
-            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project, prompt=prompt), kind)
+            return runs_page(request, limit, before, RunFilter(kept=kept, deleted=bool(deleted), project=project, prompt=prompt, family=family), kind)
         except KeyError:
             return _error(400, "Unknown 'before' cursor.", "bad_cursor")
 

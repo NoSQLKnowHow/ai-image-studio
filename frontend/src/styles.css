@@ -484,8 +484,10 @@ fieldset.field { gap: 8px; }
 .lightbox-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .lightbox .button.ghost { color: #f3f3f6; }
 .lightbox .button.ghost:hover { background: rgb(255 255 255 / 12%); }
-.lightbox-stage { display: grid; place-items: center; padding: 0 16px 16px; min-height: 0; }
-.lightbox-stage img { max-width: 100%; max-height: calc(100vh - 80px); object-fit: contain; border-radius: var(--radius-sm); }
+.lightbox-stage { display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; padding: 0 16px 16px; min-height: 0; } /* one track as big as the stage, so a percentage of it means something (below) */
+/* The picture is never taller than the screen less a one-row bar (80px), and never taller than the room the stage really has: on a phone the bar wraps onto several rows (the viewer has more
+   buttons since 1.24: More like this, Add to compare), and the 80px guess alone let a tall picture run off the bottom. A percentage of the stage is the room left under however many rows. */
+.lightbox-stage img { max-width: 100%; max-height: min(calc(100vh - 80px), 100%); object-fit: contain; border-radius: var(--radius-sm); }
 .lightbox-stage.checker { background-clip: content-box; }
 .lightbox-notice-region { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); width: min(460px, calc(100vw - 32px)); pointer-events: none; }
 .lightbox-notice {
@@ -1118,3 +1120,60 @@ fieldset.field { gap: 8px; }
 .voice-save { display: grid; gap: 6px; }
 .voice-consent { display: flex; gap: 8px; align-items: flex-start; }
 .voice-consent input { margin-top: 4px; flex: none; }
+
+/* ---- More like this and A/B compare (DESIGN.md section 43) ---------------------------------------------------------------------------------------------------------------------- */
+/* the two chips of a variation on a card (where it came from, how many it has): a badge that is also a button, which shows the family */
+button.badge-variation { gap: 4px; cursor: pointer; border: 1px solid transparent; background: var(--surface-3); color: var(--text-2); max-width: 100%; font: inherit; }
+button.badge-variation:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+button.badge-variation:disabled { cursor: default; }
+/* the pill in the filter bar while a family is shown: what it is, and the way out */
+.filter-family { display: inline-flex; align-items: center; gap: 4px; padding: 2px 4px 2px 10px; border-radius: 999px; background: var(--surface-3); color: var(--text); font-size: 13px; max-width: 100%; }
+.filter-family-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* the dialog: two radio choices, a count, the words */
+.more-like-this-dialog { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
+.more-like-this { display: grid; gap: 14px; margin-top: 8px; }
+.mlt-choices { border: 0; margin: 0; padding: 0; display: grid; gap: 10px; }
+.mlt-choices legend { font-weight: 600; margin-bottom: 6px; padding: 0; }
+.mlt-choice { display: grid; grid-template-columns: auto 1fr; gap: 10px; align-items: start; cursor: pointer; }
+.mlt-choice[aria-disabled="true"] { cursor: not-allowed; opacity: 0.75; }
+.mlt-choice input { margin-top: 4px; }
+.mlt-choice .hint { display: block; margin: 2px 0 0; }
+.mlt-row { display: grid; grid-template-columns: 7rem minmax(0, 1fr); gap: 8px; align-items: start; }
+.mlt-row label { padding-top: 6px; font-weight: 600; }
+.mlt-words textarea { width: 100%; min-height: 5.5em; resize: vertical; box-sizing: border-box; }
+@media (max-width: 480px) { .mlt-row { grid-template-columns: minmax(0, 1fr); } .mlt-row label { padding-top: 0; } }
+/* the compare basket: a bar at the foot of the page while it holds anything */
+.compare-basket {
+  position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 40; display: flex; align-items: center; gap: 8px; max-width: calc(100vw - 24px);
+  padding: 8px 12px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-lg); font-size: 14px;
+}
+.compare-basket-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 480px) { .compare-basket { border-radius: var(--radius-sm); flex-wrap: wrap; justify-content: center; } .compare-basket-text { white-space: normal; text-align: center; } }
+/* the compare view: bar, the two pictures (side by side, or one over the other), and the two Keep buttons */
+.compare-view { position: fixed; inset: 0; z-index: 60; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; padding: 0 14px 12px; outline: none; color: #f3f3f6; }
+.compare-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 0 0; }
+.compare-title { font-size: 14px; font-weight: 600; }
+.compare-controls { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 12px; }
+.compare-controls [role="group"] { display: inline-flex; gap: 4px; }
+.compare-controls .button[aria-pressed="true"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+.compare-view .button.ghost { color: #f3f3f6; }
+.compare-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 0; }
+.compare-pane { margin: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 4px; min-height: 0; min-width: 0; }
+.compare-pane figcaption { font-size: 12px; text-align: center; color: #d7d7e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-scroll { min-height: 0; min-width: 0; overflow: auto; display: grid; place-items: center; border-radius: var(--radius-sm); }
+.compare-scroll.zoom-fit img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.compare-scroll.zoom-actual { place-items: start; }
+.compare-scroll.zoom-actual img { max-width: none; }
+/* the slider: the second picture below, the first over it and cut at the divider, which is the slider */
+.compare-slider { position: relative; min-height: 0; overflow: hidden; touch-action: none; user-select: none; border-radius: var(--radius-sm); background: rgb(255 255 255 / 4%); }
+.compare-slider img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+.compare-slider.zoom-actual { overflow: auto; }
+.compare-slider.zoom-actual img { width: auto; height: auto; max-width: none; object-fit: none; object-position: top left; }
+.compare-handle { position: absolute; top: 0; bottom: 0; width: 3px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 40%); cursor: ew-resize; touch-action: none; }
+.compare-handle::after { content: ""; position: absolute; top: 50%; left: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgb(0 0 0 / 40%), var(--shadow-lg); }
+.compare-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.compare-slider-note { margin: 0; text-align: center; color: #d7d7e0; }
+.compare-keeps { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.compare-keep-side { opacity: 0.7; }
+/* on a phone the two pictures stack, one above the other, and the buttons wrap and stay in reach */
+@media (max-width: 700px) { .compare-sides { grid-template-columns: minmax(0, 1fr); grid-template-rows: 1fr 1fr; } }

@@ -82,6 +82,14 @@ class PromptRefRefused(Exception):
         self.status, self.code, self.message = status, code, message
 
 
+class VariationRefused(Exception):
+    """A run was asked for as More like this of a run that is not there, or is in the bin (DESIGN.md §43.6). `status` and `code` are the response's."""
+
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
+
+
 class RunConflict(Exception):
     pass
 
@@ -405,12 +413,14 @@ class JobManager:
         positions = self.queue_positions() if any(r["status"] == "queued" for r in rows) else {}
         four_k = self._four_k_files([row for run_id in ids for row in (*images[run_id], *binned_images[run_id], *inputs[run_id])])
         prompt_refs = self.db.prompt_refs_for_runs(rows)  # the saved prompt each run was made from, if any (§37.3 rule 3)
+        variation_refs = self.db.variation_refs_for_runs(rows)  # the run each was made More like this of, if any (§43.4)
+        variation_counts = self.db.variation_counts_for_runs(ids)  # and how many variations each has
         readings = self.speech.readings(rows)  # a Speech run's parts, and how far each has got (§38.9)
         return [
             run_payload(r, images[r["id"]], self._progress.get(r["id"]), positions.get(r["id"]),
                         r["id"] in self._cancel_requested, self.expires_at(r), inputs[r["id"]], tracks[r["id"]], four_k, self.purge_at(r),
                         binned_images[r["id"]], binned_tracks[r["id"]], self.settings.bin_days, vectors[r["id"]], binned_vectors[r["id"]], prompt_refs.get(r["id"]),
-                        readings.get(r["id"]))
+                        readings.get(r["id"]), variation_refs.get(r["id"]), variation_counts.get(r["id"], 0))
             for r in rows
         ]
 
@@ -457,6 +467,7 @@ class JobManager:
         owned: list[dict[str, Any]] = []
         claims: list[str] = []
         filed_in, keep = self._check_prompt_ref(run)
+        family_id, variation_json = self._check_variation(run)
         if run.mode == "edit":
             sources, problems = inputs_mod.resolve_refs(self.db, self.storage, list(run.inputs))
             if problems:
@@ -489,6 +500,8 @@ class JobManager:
             "options_json": json.dumps(run.options_snapshot()),
             "lyrics": run.lyrics,
         }
+        if variation_json is not None:  # made with More like this (§43.4): where it came from, and the family it belongs to
+            row["variation_json"], row["family_id"] = variation_json, family_id
         if run.prompt_ref is not None:
             row["prompt_id"], row["prompt_version"] = run.prompt_ref.prompt_id, run.prompt_ref.version
             if filed_in is not None:  # made from a prompt that is in a project: filed there, and so kept (rule 4); a quick try is neither
@@ -518,6 +531,7 @@ class JobManager:
         payload = self.payload(run_id)
         assert payload is not None
         self.bus.publish("run.created", payload)
+        self._publish_family_of(family_id)  # the first run of its family has one more variation to show (§43.4)
         if filed_in is not None:
             self._publish_projects()  # a project now holds one more
         self._publish_queue()
@@ -572,6 +586,25 @@ class JobManager:
         if self.db.read_one("SELECT 1 FROM prompt_versions WHERE prompt_id=? AND n=?", (ref.prompt_id, ref.version)) is None:
             raise RunRequestError([(("prompt_ref", "version"), f"That prompt has no version {ref.version}.")])
         return (None, False) if run.draft else (prompt["project_id"], True)
+
+    def _check_variation(self, run: ResolvedRun) -> tuple[Optional[str], Optional[str]]:
+        """A run made with More like this (DESIGN.md §43.6): the run it is More like this of must be there (404) and not in the bin (409), must be a picture run, and the picture
+        it names, if one, must be one of its pictures (422). Returns the family the new run belongs to (the source's own family, or the source itself when it is the first
+        of one) and the link as it is stored, or (None, None) for a run that is not a variation. What `how` allows is checked earlier, from the request alone (`resolve_run`)."""
+        link = run.variation_of
+        if link is None:
+            return None, None
+        source = self.db.get_run(link.run_id)
+        if source is None:
+            raise VariationRefused(404, "variation_source_not_found", "The run to make more of is not there any more.")
+        if source["deleted_at"] is not None:
+            raise VariationRefused(409, "variation_source_in_bin", "That run is in the bin. Restore it first.")
+        if source["mode"] not in ("generate", "edit"):
+            raise RunRequestError([(("variation_of", "run_id"), "Only a picture run can have variations.")])
+        if link.image_id is not None and not self.db.picture_of_run(link.run_id, link.image_id):
+            raise RunRequestError([(("variation_of", "image_id"), "That picture is not one of the run's pictures.")])
+        family_id = source["family_id"] or source["id"]
+        return family_id, json.dumps({"run_id": link.run_id, "image_id": link.image_id, "how": link.how})
 
     @staticmethod
     def _shape_for(run: ResolvedRun, sources: list[inputs_mod.SourceImage]) -> tuple[Optional[int], Optional[int]]:
@@ -819,6 +852,7 @@ class JobManager:
                 self._publish_queue()
 
     async def delete(self, run_id: str) -> None:
+        family_id = self._family_id_of(run_id)  # read before the run is gone: its family's first run has one variation fewer to show
         result = self.db.delete_run(run_id)
         if result == "not_found":
             raise RunNotFound(run_id)
@@ -827,6 +861,7 @@ class JobManager:
         await asyncio.to_thread(self.storage.delete_run_files, run_id)
         self._progress.pop(run_id, None)
         self.bus.publish("run.deleted", {"id": run_id})
+        self._publish_family_of(family_id)
         self._publish_queue()
 
     # ------------------------------------------------------------ the bin (DESIGN.md §30)
@@ -838,6 +873,7 @@ class JobManager:
         if result == "not_finished":
             raise RunConflict("This run has not finished. Cancel it or wait for it to finish; a run that is only waiting can be deleted for good instead.")
         self._publish_run(run_id)
+        self._publish_family_of(self._family_id_of(run_id))  # a variation in the bin is not counted on its family's first run (§43.4)
 
     async def restore_run(self, run_id: str) -> None:
         """Take a run out of the bin: it goes back as it was, with a fresh expiry clock (§30.4)."""
@@ -847,6 +883,7 @@ class JobManager:
         if result == "not_in_bin":
             raise RunConflict("This run is not in the bin.")
         self._publish_run(run_id)
+        self._publish_family_of(self._family_id_of(run_id))  # and it is counted again once it is back
 
     async def empty_bin(self) -> tuple[int, int]:
         """Delete for good everything in the bin, with its files: every run in it, then every picture and track in it of a run that stays
@@ -1730,6 +1767,18 @@ class JobManager:
                 self.bus.publish("speech.job", self.speech.voices.job_status(row))
             return
         self.bus.publish("run.updated", payload)
+
+    def _family_id_of(self, run_id: str) -> Optional[str]:
+        """The first run of the family a run belongs to (DESIGN.md §43.4), or None for a run that is not a variation (or is not there)."""
+        row = self.db.get_run(run_id)
+        return row["family_id"] if row is not None else None
+
+    def _publish_family_of(self, family_id: Optional[str]) -> None:
+        """A family's first run shows how many variations it has, which changes when a variation is made, binned, restored or deleted for good: it is published again, so that an open
+        page's Variations (n) chip follows (without this the chip appeared only after a reload, which a browser test found). None, a run that is in no family, has nothing to refresh.
+        What this does not cover is the daily clean-up and Empty bin, which can take many runs at once: a count on an open page may be a moment behind after those, and a reload is right."""
+        if family_id:
+            self._publish_run(family_id)
 
     async def submit_hidden(self, run: dict[str, Any]) -> dict[str, Any]:
         """Queue the short job behind a sample or a voice design (DESIGN.md §38.4). It goes ahead of waiting readings like a Draft and is not in the history.

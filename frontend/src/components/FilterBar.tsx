@@ -1,6 +1,6 @@
 import { useId, useRef, type ReactNode } from "react";
-import { FolderIcon, TrashIcon } from "./icons";
-import { NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, withProject, type HistoryFilter, type TabKind } from "../history";
+import { CloseIcon, FolderIcon, TrashIcon } from "./icons";
+import { NO_FILTER, NO_PROJECT, ONLY_DELETED, ONLY_KEPT, withFamily, withProject, type HistoryFilter, type TabKind } from "../history";
 import type { Project } from "../types";
 
 // The filter bar above the history (DESIGN.md §29.1): one choice for both tabs. More controls join it as more filters are added
@@ -16,8 +16,9 @@ const OPTIONS: { id: "all" | "kept" | "deleted"; label: string; filter: HistoryF
  *  while that is not known; with a project chosen they are the project's (DESIGN.md §32.5). `binTotal` is the whole bin, both tabs, whatever
  *  project is chosen: **Empty bin** (shown while Deleted is chosen) empties all of it. `projects` are the project folders, with the numbers
  *  for the tab being looked at (`tab`), in the Project drop-down; null until the list has arrived. */
-export function FilterBar({ filter, keptCount, deletedCount, binTotal, projects, tab, onChange, onEmptyBin, onManageProjects }: {
+export function FilterBar({ filter, keptCount, deletedCount, binTotal, projects, tab, onChange, onEmptyBin, onManageProjects, familyLabel }: {
   filter: HistoryFilter;
+  familyLabel?: string | null; // the words of the run a family view is named for (DESIGN.md §43.4), for its pill; null when they are not known
   keptCount: number | null;
   deletedCount: number | null;
   binTotal: number | null;
@@ -89,6 +90,14 @@ export function FilterBar({ filter, keptCount, deletedCount, binTotal, projects,
           <FolderIcon /> Manage
         </button>
       </div>
+      {/* A family (§43.4): chosen from a Variations chip, not from this bar, so all that is here is what it is and the way out. The Show buttons also leave it. */}
+      {filter.family !== null && (
+        <span className="filter-family" data-filter-family>
+          <span className="filter-family-text">Variations of {familyLabel ? `“${familyLabel}”` : "a run"}</span>
+          <button type="button" className="button small ghost icon-only" data-action="leave-family" aria-label="Leave this view and show the whole history"
+            onClick={() => onChange(withFamily(filter, null))}><CloseIcon /></button>
+        </span>
+      )}
       {/* Empty bin is only offered while the bin is on show, and is disabled when the whole bin (both tabs) is already empty */}
       {filter.deleted === true && (
         <button type="button" className="button small danger" data-action="empty-bin" disabled={binTotal === 0} onClick={onEmptyBin}

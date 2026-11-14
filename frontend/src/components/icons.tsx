@@ -23,6 +23,10 @@ export const MoonIcon = () => <Icon><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0
 export const MonitorIcon = () => <Icon><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></Icon>;
 export const CloseIcon = () => <Icon><path d="M6 6l12 12M18 6L6 18" /></Icon>;
 export const ReuseIcon = () => <Icon><path d="M3 12a9 9 0 0 1 15.5-6.2L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16" /><path d="M3 21v-5h5" /></Icon>;
+// three pictures stacked, the one in front fanned out: the icon of More like this (DESIGN.md section 43)
+export const MoreLikeThisIcon = () => <Icon><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M5 16V6a2 2 0 0 1 2-2h10" /><path d="M2 12V4a2 2 0 0 1 2-2h8" /></Icon>;
+// two panes with a divider: the icon of Compare
+export const CompareIcon = () => <Icon><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M12 5v14" /><path d="M7 12h2M15 12h2" /></Icon>;
 export const DownloadIcon = () => <Icon><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Icon>;
 export const CopyIcon = () => <Icon><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a2 2 0 0 1 2-2h8" /></Icon>;
 // a circular arrow going back: the icon of Restore

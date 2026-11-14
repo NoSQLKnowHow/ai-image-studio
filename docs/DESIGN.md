@@ -36,6 +36,7 @@ Status labels: **DECIDED** = you chose it, or explicitly delegated it. **PROPOSE
 | 1.21 | **Load progress** (built, the server side and the page side, §39; **not yet seen on the Spark**): while a model loads, the status says how much of it has arrived in the cache, how long the load has taken and which model was unloaded to make room, for the image, music and speech models alike; the page shows it in the header pill and its panel, on the cards that wait for the model, in the Speech tab and in the Design a voice and Add my voice dialogs | §39 | #44 (the server side) and the pull request after it (the page side) | `docs/SPARK_TEST.md` section 32: watch a real first download and compare the size the Hub gave with the size on disk |
 | 1.22 | **Reorder the queue** (built; tried in unit tests, a real browser, with a finger sent by the protocol, and with the fake pipeline; **not yet seen on the Spark**; §40): a **Queue** panel opened from the header lists the job that is going and every waiting job from every tab; you drag a waiting job (or use its arrows) before or after another, and the worker takes them in that order, and the cards on each tab follow it; a job that has started cannot be moved | §40 | (this PR) | `docs/SPARK_TEST.md` section 33: reorder a real queue, on the Spark and on a phone |
 | 1.23 | **A Vector that keeps the drawing** (§41; **the thin-line fix is built, the rest is spec only**): an **Engrave or Cut** choice on the Vector form; thin lines are **widened to the smallest feature** instead of deleted (no more lost faces or dashed strokes); shading becomes a **layer of dots**; the colour step reads thin dark strokes instead of dropping them; the recipe for Engrave asks for a fine line drawing with soft shading | §41 | (not yet) | Your real source PNG, and a burnt test of the dot spacing (a strip on the laser test sheet, §41.7 item 10) |
+| 1.24 | **Variations and A/B compare** (§43; **built**, tried without a GPU: unit tests, the server's tests and a real browser on the fake pipeline): a **More like this** button in the viewer and on an image run's card that makes more takes of the prompt (fresh seeds) or, once a Spark experiment has shown the editing model does it well, variations of a picture; variations are linked to the run they came from (schema 11, a family view); a **compare** view for two pictures from any runs, side by side or with a slider, with a Keep for the winner | §43 | (not yet) | `docs/SPARK_TEST.md` section 34 (the checks with your models) and, for variations of a picture, the experiment of §43.9 |
 
 **Tests today (1.18):** backend 1804 (pytest, with 3 skipped; the three modules that need `torch` are skipped on this machine, and 65 more run only where `torch` is installed: 28 for the real music pipeline, which also needs `diffusers` 0.40.0, 17 for the upscaler probe's tiling, and 20 for Enlarge's real loading path, which also need `spandrel`; the Vector engine's tests need `vtracer` and `shapely`, and the Vector tests of the server do not), front end 858 (Vitest) and 281 (Playwright, in a real browser against the real server with the fake pipeline). Everything the studio does has been verified only against that fake pipeline, apart from what you ran yourself on the Spark; §15 says what the fake pipeline can and cannot show.
 
@@ -140,6 +141,7 @@ A containerised web app on the DGX Spark that generates and edits images with Qw
 | 60 | Load progress: show how far a model's download and load have got (1.21) | You designed a voice and the header said *Loading speech model…* for a long time with nothing to show it was working, and asked whether the window can show progress; I offered to build it as two pull requests (the server, then the page) and you said to go ahead and merge. | DECIDED (your answers); **built in 1.21: the server side (§39.1 to §39.6) and the page side (§39.7)**, not yet seen on the Spark. It measures the download from outside, in the cache, so nothing that downloads is hooked; loading into memory has no measure and is shown as time. |
 | 61 | Reorder the queue (1.22) | You asked to be able to drag and drop one queued job above or below another, and that a job that is under way or finished can no longer be moved. I asked four things that the queue as it works left open, and you took the recommended answer to each. | DECIDED (your answers): **a Queue panel** from the header (not the cards in each tab); **your order wins over drafts** (a new draft still joins the front of the line, but what you place stays where you put it); **a reading that has made a part is under way** (locked; others may be placed around it); **any job anywhere** (each row names the model it needs); and, asked after you tried it, **the cards on each tab follow the queue** (an up-next block on top). **Built in 1.22 (§40).** |
 | 62 | Vector quality: keep thin lines, tone as dots, Engrave or Cut (1.23) | You said the Vector tab "outputs unusable images" and showed a pencil drawing whose vector kept only the hair and the outline. I found three causes (§41.1: the smallest feature deletes thin lines, a wobbling stroke breaks into dashes, the colour step drops thin grey strokes) and asked three things. | DECIDED for your three answers: **both Engrave and Cut as a choice**, **thin lines thickened to the smallest feature**, **tone turned into dots**; the rest PROPOSED (§41.3, §41.7). **The thin-line fix is built; the rest is spec only.** |
+| 63 | Variations and A/B compare (1.24) | You chose idea 2 of §42 to go first. I asked four things the design left open: what More like this should make, where the button goes, whether variations are linked, and how compare works. | DECIDED for your four answers: **both meanings, chosen each time** (the picture-based one off until a Spark experiment), **in the viewer and on the card**, **linked**, **side by side and a slider with a Keep for the winner**; the rest PROPOSED (§43.3 to §43.8). **Built in 1.24** (the picture-based choice is built and switched off). |
 
 **Which decisions are built** (the Status column above says who decided; this says what is in the code):
 
@@ -469,6 +471,7 @@ The threat model is "trusted LAN, no login", so the goal is to limit accidents a
 | `STUDIO_SPEECH_RECORDING_MAX_MB` | `30` | **1.20:** the biggest recording of a voice that may be uploaded (a minute of stereo WAV at 48 kHz is under 12 MB) |
 | `STUDIO_SPEECH_FFMPEG`, `STUDIO_SPEECH_DECODE_TIMEOUT_S` | `ffmpeg`, `30` | **1.20:** the program that reads a recording that is not a plain WAV, and how long it may take for one (§38.11) |
 | `STUDIO_SPEECH_TEMP_HOURS` | `24` | **1.20:** how long the candidates of a voice design, an uploaded recording that was not saved, and the finished short jobs behind a sample are kept |
+| `STUDIO_VARIATIONS_FROM_PICTURE` | `false` | **1.24:** whether *Variations of this picture* (an edit of the picture, §43.3) may be used. Off until the experiment of §43.9 has been looked at: the dialog shows it greyed with a reason and the server refuses it with `422`. Passed on by `compose.yaml` and shown in `.env.example` (a test checks both) |
 | `STUDIO_STATIC_DIR` | `<repo>/frontend/dist` if built; `/app/static` in the image | The built web page (added in M2) |
 | `STUDIO_HOST` | `0.0.0.0` | Listen address inside the container (added in M1) |
 | `STUDIO_PORT` | `8081` (the app's own default, outside Docker, is `8080`) | In Docker: the port on the Spark that is published to the container's 8080. Outside Docker: the port the server listens on |
@@ -3355,7 +3358,7 @@ You asked what ten things we have not added, given what is built, would make res
 * *Questions I would ask first:* brush, circle or rectangle, or all three; a soft edge or a hard one; whether the original is always kept beside the result.
 * *Effort:* L.
 
-**Idea 2. Variations and A/B compare.**
+**Idea 2. Variations and A/B compare.** *(Taken forward: §43, decision 63.)*
 * *What:* a **More like this** button on a result that makes N variations (new seeds, optionally a small change to the words), and a viewer that shows two pictures side by side or with a slider, so that a winner can be picked.
 * *Why:* today you re-run with Reuse and flip between cards by eye.
 * *Builds on:* Reuse, seeds, the viewer, Keep.
@@ -3435,3 +3438,109 @@ The Vector work of §41 (the Engrave or Cut choice, the dots, the Engrave recipe
 ### 42.5 How to take one forward
 
 Tell me which ones to start. For each I would write its own section first (the questions above answered with you, the choices I made listed so that you can overrule them, acceptance criteria numbered on from §41.6), and build only after you have read it. Where the idea is model-dependent (1, 7), the first step would be a small experiment script for the Spark, as was done for Make 4K (§27) and Enlarge (§28), and a spec after its result.
+
+## 43. Version 1.24: Variations and A/B compare (decision 63 DECIDED for what you said; the rest PROPOSED; BUILT, not yet tried with your models)
+
+You chose idea 2 of §42 to go first: a **More like this** button that makes more pictures from one you like, and a way to put two pictures side by side and pick a winner. I asked four things that the design left open, and you answered each (§43.2). **It is built** (§43.9 says what was found while building it, and what is not tried); **Variations of this picture** is built and **off** until you have run the experiment.
+
+### 43.1 What exists today, so that the design fits it
+
+* **A run has one base seed, and its pictures use `seed`, `seed + 1`, …** (`ResolvedRun.seeds`). The same words, settings and seed make the same picture; a new seed makes a different one, **not a small change to the first**. A picture made again at a bigger size from the same seed is also a different picture (the tooltip of *Regenerate larger* says so).
+* **Reuse** puts a run's words and settings back in the form; **Retry** sends a run's own request again. **A run has no link to any other run.**
+* **The viewer** pages through a run's pictures and offers *Regenerate larger* and *Delete picture*. An **edit run** takes input pictures from earlier runs by id (§21.6, §36), which is the one way to feed a picture to a model.
+* **Keep is per run**: a kept run is never deleted automatically. A picture has no Keep of its own.
+* **The Prompt builder's *Try 3 wordings*** (§37) already varies the words of a prompt; it is not changed here.
+
+### 43.2 What you chose
+
+1. **Both meanings, chosen each time** (not one of them): *More takes of the prompt* and *Variations of this picture*. The picture-based one **stays switched off until a Spark experiment shows that the editing model does it well** (§43.3, §43.9).
+2. **The button is in the viewer and on the card.**
+3. **Variations are linked** to the run they came from.
+4. **A/B compare is side by side and a slider; picking a winner Keeps it** and touches nothing else.
+
+### 43.3 More like this
+
+A **More like this** button in the viewer (for the picture on the screen) and on an image run's card (for the run) opens a small dialog. It is not offered for music, drawings or readings, nor on a run in the bin (which only reads).
+
+* **Make:** *More takes of the prompt* or *Variations of this picture*.
+* **Pictures:** 1 to 4 (the run's own count, at most 4 and at most `STUDIO_MAX_IMAGES_PER_RUN`; 4 by default).
+* **Words:** a box holding the source run's words, which you may change (no words are added behind your back; to try other wordings of a prompt the Prompt builder's *Try 3 wordings* is the tool).
+* A line saying what will be made ("4 pictures at 2752×1536, 40 steps: the same as this run") and **Make**.
+
+**More takes** is the source run's own request again with the seeds not locked: a fresh random seed (never one of the source's, which would only make the same picture again), the same size, steps, guidance and negative words, and, for a run that was an edit, the same input pictures. In the viewer and on the card it is **the same request**; the viewer only records which picture you were looking at (§43.4). It uses the model that is loaded, so there is nothing new to try on the Spark.
+
+**Variations of this picture** is an **edit run**: the picked picture goes in as the input and the words are the dialog's. It needs editing to be available (`capabilities.modes` includes `edit`) and, more to the point, **an experiment first**: whether the editing model makes a recognisable variation, or hands back a copy, or drifts into something else, has never been run (the edit path itself has not run on a real GPU, M5c). So the choice is **off by default**: the dialog shows it greyed with the reason (*Not tried on this machine yet*), the server refuses it (`422`), and it is switched on with `STUDIO_VARIATIONS_FROM_PICTURE=1` after you have looked at the experiment's results (§43.9). The build is complete and tested with the fake pipeline either way.
+
+Both make an **ordinary run**: it joins the queue (§40), has a card, can be kept, filed in a project, regenerated larger, deleted. The page builds the request as it does for *Regenerate larger* (`largerRequest`); the server only checks and stores the link (§43.6).
+
+### 43.4 Linking and families
+
+* **What is stored.** `runs.variation_json`: `{run_id, image_id, how}` (`how` is `seeds` or `picture`; `image_id` is the picture in the viewer, or null from a card), and `runs.family_id`: the id of the first run of the family (the source's own `family_id`, or the source's id if it has none), **indexed**. **Schema 11**, made from a 10 with a copy of the database first, as for the earlier steps; a database made fresh and one migrated are the same (criterion 144's rule, §31.8).
+* **On a card:** a **Variation of “<words>”** chip (*Variation of a run in the bin* or *…of a run that is gone* where that is so), and on the source a **Variations (3)** chip. Clicking either shows the family.
+* **The family view** is a filter, like a project's: the source and every run that came from it, in the history's order, with a pill to clear it. `GET /api/runs?family=<run id>` answers it.
+* **Deleting.** A source in the bin keeps its link, and the chip says so; a source that has been deleted for good leaves the link in place (the id stays) and the chip says *gone*. Nothing breaks and nothing is removed from the variation.
+* **Retry** of a variation keeps its link (it is the same request again); **Reuse** is a fresh run and has none.
+
+### 43.5 A/B compare
+
+* **The compare basket.** The viewer has **Add to compare** (a toggle) on every picture of a run that is not in the bin, including an edit's source pictures. The basket holds **two** pictures **from any runs**; a third says the basket is full and offers *Replace the first*. A small bar (*Compare · 2 chosen*, with **Compare** and **Clear**) is shown while it holds anything. It lives in the page, and is gone on a reload.
+* **The compare view** opens as a viewer does. **Side by side** puts the two pictures next to each other; **Slider** lays one over the other with a draggable divider. Each side is labelled (the words cut short, the seed, the size), there is **Swap sides**, and **Fit** and **100%** zoom both pictures together, with panning that moves both.
+* **Pick a winner.** Each side has **Keep this one**: it **Keeps the run the picture is in** (Keep is per run, §43.1) and says *Kept*. It changes nothing else: the other picture, its run and the rest of the basket stay as they are.
+* **Operating it.** The divider is a slider (`role="slider"`, a value in percent): ← → move it 5%, Home and End to the ends, Escape closes the view; it drags by mouse, pen and finger (pointer events, `touch-action` off on the divider only). **On a phone (360 px)** side by side stacks one above the other, the slider works by touch, and the buttons stay in reach.
+
+### 43.6 The server
+
+* **`POST /api/runs`** takes an optional **`variation_of: {run_id, image_id?, how}`**. The server checks, **from the request alone** (and with the request's other problems, so that the form can show them together): that `variation_of` is only for pictures (`422` on `variation_of`, *Only used for pictures.*), that `how` is `seeds` or `picture`, and that **`picture` is allowed** (`422` on `variation_of.how`, *Variations of a picture have not been switched on on this machine.*; and it must be an edit run). Then, **when the run is queued**, that the source is there (`404`, code `variation_source_not_found`), **is not in the bin** (`409`, code `variation_source_in_bin`: a *new* variation needs its source in the history, though one that exists keeps its link when its source later goes to the bin or is deleted, §43.4), is a picture run (`422` on `variation_of.run_id`), and that `image_id`, if given, is one of its pictures that is not in the bin (`422` on `variation_of.image_id`). Those two refusals are `{"detail", "code"}` like the prompt reference's. It stores the link and sets `family_id`. Nothing else about the request changes: it is validated as any run.
+* **Run JSON** gains `variation_of` (null for an ordinary run), `family_id`, and, on a family's first run, `variation_count`.
+* **`GET /api/runs?family=<run id>`**, in the shape of the list's other filters (`prompt=`, `project=`).
+* **`GET /api/capabilities`** gains `variations: {from_picture: bool, reason: string | null}`.
+* **The setting** `STUDIO_VARIATIONS_FROM_PICTURE` (off by default), in `.env.example` and the configuration reference (§13).
+* **Events:** no new kind. A new run arrives as `run.created`, as before, and carries its link. **The first run of the family is published again as `run.updated`** (with its new `variation_count`) when a variation is made, sent to the bin, restored or deleted for good, so that the *Variations (n)* chip on a page that is already open follows; the first browser test found that without it the chip appeared only after a reload. The daily clean-up and *Empty bin* can remove many runs at once and **do not** do this: a count on an open page may be a moment behind after those until it is reloaded.
+
+### 43.7 Acceptance criteria (continue §42; numbering carries on from §41.6)
+
+332. **More like this** is offered in the viewer and on an image run's card; not for music, drawings or readings, and not in the bin. (1.24)
+333. **More takes** makes 1 to 4 pictures with fresh random seeds, none of them one of the source's, with the source's size, steps, guidance, negative words and (for an edit) input pictures, and with words that can be edited. (1.24)
+334. **In the viewer and on the card, More takes is the same request**; the viewer only records which picture was on the screen. (1.24)
+335. **Variations of this picture is off until switched on**: greyed in the dialog with a reason, refused by the server with `422`; when on, it makes an edit run with the picked picture as its input and the dialog's words. (1.24)
+336. **A variation records where it came from** (run, picture, how) and the card says so; the source's card shows how many variations it has. (1.24)
+337. **A click on the chip shows the family** (the source and its variations) with a pill that clears it; `GET /api/runs?family=` answers the same. (1.24)
+338. **A source in the bin or gone leaves the variation working**, and the chip says which. (1.24)
+339. **Retry of a variation keeps its link; Reuse does not.** (1.24)
+340. **Schema 11 is made from a 10 after a copy, without losing a run**, and a migrated database equals a fresh one. (1.24)
+341. **The compare basket holds two pictures from any runs that are not in the bin**; a third is refused in words and offers to replace the first; Clear empties it. (1.24)
+342. **The compare view shows two pictures side by side and as a slider**, labelled, with Swap sides and Fit/100% that zoom and pan both together. (1.24)
+343. **The slider can be used by keyboard, mouse and finger**, and is announced as a slider with its value. (1.24)
+344. **Keep this one Keeps the picture's run**, says so, and changes nothing else. (1.24)
+345. **On a phone (360 px) the dialog, the basket and the compare view fit**, and side by side stacks. (1.24)
+346. **It is tested without a GPU** (unit tests, the server's tests, a real browser on the fake pipeline) and the new rules are mutation-checked. (1.24)
+
+### 43.8 Choices I made (tell me if you want any changed)
+
+1. **Your four answers**, above (§43.2).
+2. **More takes never reuses the source's seeds, and the viewer and the card make the same request.** When I asked where the button should be I said that in the viewer "its seed is the starting point". That was wrong: the same seed with the same settings only makes the same picture again, and a nearby seed is not a similar picture. The viewer's picture matters for the link and for *Variations of this picture*, and for nothing else.
+3. **Same size, steps and guidance as the source; no Draft.** A smaller picture from the same seed is a different picture (as a bigger one is, §24), so a quick draft of the takes would not show what the full-size run will make.
+4. **4 pictures by default, up to 4**, so that a click is one short run.
+5. **The words are edited in a box, never appended.** The Prompt builder is the tool for wordings.
+6. **Variations of a picture are an edit run of the picked picture**, off behind `STUDIO_VARIATIONS_FROM_PICTURE` until the experiment of §43.9 has been looked at.
+7. **The link is two columns (`variation_json`, `family_id`)**, and a family is the source and everything made from it, however deep; the chip names the direct source.
+8. **Keep this one Keeps the run**, because that is what Keep is today; the card and the button say so. A Keep for a single picture would be a larger change (§43.1) and is not part of this.
+9. **Compare takes two pictures from any runs through a basket**, so that two runs can be compared; pictures in the bin are left out (the bin only reads).
+10. **Images tab only.** Music tracks and drawings have their own viewers (a drawing's versions are already one group, §35); More like this and compare for them are not part of this.
+11. **Not built:** more than two pictures at once; comparing a picture with the same picture at another size automatically; a Draft option; a picture-level Keep; cropping or annotating in the compare view.
+
+### 43.9 What was tried, and what was not, and the experiment
+
+**Built and measured (2026-11-14), without a GPU.** *Server:* schema 11 (`runs.variation_json`, indexed `runs.family_id`, a copy of the database first), `variation_of` on `POST /api/runs`, `GET /api/runs?family=`, `capabilities.variations`, and `STUDIO_VARIATIONS_FROM_PICTURE`. *Page:* the More like this dialog (card and viewer), the two chips and the family view, the compare basket and the compare view. The whole backend suite **3,407 passed** (28 new tests of the server, 5 of the schema step, 4 of the setting, and 8 new cases in the shared filter table that the server's SQL and the page's `matches()` both run). The page: `tsc` clean, **2,049 unit tests passed** (32 new, and the same 8 table cases). The whole browser suite **325 passed** in 11.4 minutes, 8 of them new (`e2e/variations.spec.ts`: from a card, from the viewer, the family and a reload, the greyed choice, a refusal said inside the dialog, the basket and the compare view with the slider by keyboard and by mouse and *Keep this one*, a full basket, and a 360 px phone). **54 mutations of the new rules** (22 on the server, 31 on the page, and the mouse release of the slider), **every one killed**; the first run of the server's set had one that did not apply (a guessed line of code) and was run again once it did.
+
+**Found while building, and fixed:**
+
+1. **The source's *Variations (n)* chip never followed on an open page**: no event told the page a variation had been made. The server now publishes the family's first run again (§43.6). A browser test found it, not a unit test.
+2. **`compose.yaml` passes each setting by name**, so `STUDIO_VARIATIONS_FROM_PICTURE=true` in `.env` would never have reached the container. It is passed on now, and a test (`test_variations_config.py`) checks `compose.yaml` and `.env.example`.
+3. **The viewer on a 360 px phone.** The picture was limited to `100vh − 80px`, which assumes a button bar one row high; at 360 px the bar wraps (to four rows, and to five with More like this and Add to compare), and the existing test of the phone viewer, which had passed with the picture ending exactly on its limit, failed. The picture is now also limited by the room the stage has, however many rows the bar takes; on a desktop it is the same size as before (720 px high in an 800 px window).
+4. **The shared table's old cases did not name a family** and passed on the page only because `undefined === undefined` is true for a run with no family; they now default to none, as the server's `RunFilter` does.
+5. **Older tests that expected the old shape**: three that pinned *schema 10*, and one that expected a filter with no `family` (`projects.test.tsx`).
+
+**Not tried:** any of it with your models; **variations of a picture** on the real editing model (the experiment below, which is why it is off); the compare slider **by finger or pen** (the page uses pointer events, as it does for the mouse, which a browser test drives; `SPARK_TEST.md` §34 f asks you to try your thumb); and a count on an open page after the **daily clean-up or Empty bin**, which can remove many runs at once and does not republish the first run (a reload shows it right, §43.6).
+
+**The experiment for *Variations of this picture*** (a section of `docs/SPARK_TEST.md`, written with the build): on five of your own pictures, make four variations each through the dialog with the choice switched on (`STUDIO_VARIATIONS_FROM_PICTURE=1` in `.env`, then a restart), and look for: are they recognisably the same subject and style, and not four copies of the original; does the composition change; how long does one take, and is a model swap needed; what happens with a prompt that names a change. Tell me what you saw, and I will either leave the switch on by default, tune the request (the words sent with the picture, the number of steps), or leave the choice off.

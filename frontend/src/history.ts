@@ -14,25 +14,31 @@ export const NO_PROJECT = "none";
 /** One field per filter. `kept`: `null` = either, `true` = only runs that are kept, `false` = only runs that are not (nothing in the
  *  page asks for that yet; the server and `matches` already do it). `deleted`: `false` = the history, without the bin (what every
  *  filter means unless it says otherwise), `true` = only the bin (DESIGN.md §30), `null` = either (nothing in the page asks for it).
- *  `project`: `null` = any project or none, `NO_PROJECT` = only runs in no project, a project's id = only that project's runs (§32). */
+ *  `project`: `null` = any project or none, `NO_PROJECT` = only runs in no project, a project's id = only that project's runs (§32).
+ *  `family`: `null` = any run, a run's id = that run and every variation made from it (DESIGN.md §43.4): the view a Variations chip opens. It is chosen by a chip and not by the bar,
+ *  and it is never remembered (`saveFilter`), so a reload leaves it. */
 export interface HistoryFilter {
   kept: boolean | null;
   deleted: boolean | null;
   project: string | null;
+  family: string | null;
 }
 
 // The filters the page offers: everything, only the runs that are kept, and only the runs in the bin (the Deleted view, DESIGN.md §30).
-// None of them names a project: the Project drop-down adds that to whichever of these is chosen (`withProject`).
-export const NO_FILTER: HistoryFilter = { kept: null, deleted: false, project: null };
-export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false, project: null };
-export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true, project: null };
+// None of them names a project: the Project drop-down adds that to whichever of these is chosen (`withProject`). None names a family either: a Variations chip does (`withFamily`).
+export const NO_FILTER: HistoryFilter = { kept: null, deleted: false, project: null, family: null };
+export const ONLY_KEPT: HistoryFilter = { kept: true, deleted: false, project: null, family: null };
+export const ONLY_DELETED: HistoryFilter = { kept: null, deleted: true, project: null, family: null };
 
 export const FILTER_KEY = "studio.history.filter.v1";
 
-export const isDefault = (filter: HistoryFilter): boolean => filter.kept === null && filter.deleted === false && filter.project === null;
+export const isDefault = (filter: HistoryFilter): boolean => filter.kept === null && filter.deleted === false && filter.project === null && filter.family === null;
 
 /** The same filter, looking at another project: what the Project drop-down does. Kept and Deleted stay as they were. */
 export const withProject = (filter: HistoryFilter, project: string | null): HistoryFilter => ({ ...filter, project });
+
+/** A family on its own: what a Variations chip opens (the whole history, narrowed to one run and what was made from it), and with null, what its pill's close button does: back to the whole history. */
+export const withFamily = (filter: HistoryFilter, family: string | null): HistoryFilter => (family === null ? { ...filter, family: null } : { ...NO_FILTER, family });
 
 /** A stable name for a filter: the key of its view in the store, and what the browser remembers. */
 export function filterKey(filter: HistoryFilter): string {
@@ -41,7 +47,8 @@ export function filterKey(filter: HistoryFilter): string {
   const kept = filter.kept === null ? "" : filter.kept ? "kept" : "not-kept";
   const deleted = filter.deleted === null ? "any" : filter.deleted ? "deleted" : "";
   const project = filter.project === null ? "" : `project:${filter.project}`;
-  return [kept, deleted, project].filter(Boolean).join("+") || "all";
+  const family = filter.family === null ? "" : `family:${filter.family}`;
+  return [kept, deleted, project, family].filter(Boolean).join("+") || "all";
 }
 
 /** The query parameters of `GET /api/runs` for a filter: only what is not the default. `deleted=any` is not a thing the server takes,
@@ -51,6 +58,7 @@ export function filterParams(filter: HistoryFilter): Record<string, string> {
     ...(filter.kept === null ? {} : { kept: String(filter.kept) }),
     ...(filter.deleted ? { deleted: "true" } : {}),
     ...(filter.project === null ? {} : { project: filter.project }),
+    ...(filter.family === null ? {} : { family: filter.family }),
   };
 }
 
@@ -60,7 +68,10 @@ export const hasItemsInTheBin = (run: Pick<Run, "binned_images" | "binned_tracks
   run.binned_images.length > 0 || run.binned_tracks.length > 0 || run.binned_vectors.length > 0;
 
 /** The server's rule for one run (`RunFilter.conditions`): the page uses it to decide which runs it already holds a filter shows. */
-export function matches(run: Pick<Run, "pinned" | "deleted_at" | "project_id" | "binned_images" | "binned_tracks" | "binned_vectors">, filter: HistoryFilter): boolean {
+export function matches(
+  run: Pick<Run, "id" | "pinned" | "deleted_at" | "project_id" | "binned_images" | "binned_tracks" | "binned_vectors"> & { family_id?: string | null },
+  filter: HistoryFilter,
+): boolean {
   // The history (`deleted: false`) is every run that is not in the bin, whatever it has in the bin. The Deleted view (`true`) is every run that is
   // in the bin AND every run that has a picture, a track or a version in it (§33.3, §35.4): a run is in the bin exactly when it has a `deleted_at`. Either field
   // set to null means "either".
@@ -69,7 +80,9 @@ export function matches(run: Pick<Run, "pinned" | "deleted_at" | "project_id" | 
   const deletedOk = filter.deleted === null || (filter.deleted ? inTheDeletedView : run.deleted_at === null);
   // a project: null is any; "none" is the runs that are in no project; anything else is that project's id (one that does not exist matches nothing)
   const projectOk = filter.project === null || (filter.project === NO_PROJECT ? run.project_id === null : run.project_id === filter.project);
-  return keptOk && deletedOk && projectOk;
+  // a family: the run it is named for, or any run made from it (its `family_id`, which a run that is not a picture run does not have: undefined is never equal to an id)
+  const familyOk = filter.family === null || run.id === filter.family || run.family_id === filter.family;
+  return keptOk && deletedOk && projectOk && familyOk;
 }
 
 /** Whether a filter shows runs that are working whether or not they match it (DESIGN.md §29.3): every filter but the default and the
@@ -98,28 +111,32 @@ export function parseFilterKey(text: string): HistoryFilter | null {
   let kept: boolean | null = null;
   let deleted: boolean | null = false;
   let project: string | null = null;
+  let familyId: string | null = null;
   const seen = new Set<string>();
   for (const part of text.split("+")) {
-    // which family this part belongs to, and what it sets; a family twice, or a part nobody knows, makes the whole text unusable
-    let family: string;
+    // which group this part belongs to, and what it sets; a group twice, or a part nobody knows, makes the whole text unusable (a "group" here is a kind of part of the name, not a run's family)
+    let group: string;
     if (part === "kept" || part === "not-kept") {
-      family = "kept";
+      group = "kept";
       kept = part === "kept";
     } else if (part === "deleted" || part === "any") {
-      family = "deleted";
+      group = "deleted";
       deleted = part === "deleted" ? true : null;
     } else if (part.startsWith("project:") && (part.slice(8) === NO_PROJECT || PROJECT_ID.test(part.slice(8)))) {
-      family = "project";
+      group = "project";
       project = part.slice(8);
+    } else if (part.startsWith("family:") && PROJECT_ID.test(part.slice(7))) {
+      group = "family";
+      familyId = part.slice(7);
     } else {
       return null;
     }
-    if (seen.has(family)) return null;
-    seen.add(family);
+    if (seen.has(group)) return null;
+    seen.add(group);
   }
   // the bin on its own (kept must be unset) or the history; "either" is not something the page offers
   if (deleted === null || (deleted === true && kept !== null)) return null;
-  return { kept, deleted, project };
+  return { kept, deleted, project, family: familyId };
 }
 
 /** What the browser remembers is read defensively: a name this version does not know is the default. */
@@ -129,7 +146,8 @@ export function readFilter(store: KeyValueStore): HistoryFilter {
 }
 
 export function saveFilter(filter: HistoryFilter, store: KeyValueStore): void {
-  store.set(FILTER_KEY, filterKey(filter));
+  // A family is a place you went to from a chip, not a setting: a reload should not land inside one, so it is left out of what is remembered.
+  store.set(FILTER_KEY, filterKey({ ...filter, family: null }));
 }
 
 // ------------------------------------------------------------------ views

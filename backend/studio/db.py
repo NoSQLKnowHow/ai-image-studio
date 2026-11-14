@@ -28,7 +28,7 @@ from .runfilter import KINDS, RunFilter
 # 10: mode 'speech', runs.queue_key and runs.hidden, and the Speech tab's tables (§38.8); 9: the Prompt builder's tables and runs.prompt_id, runs.prompt_version (§37.4); 8: vectors.deleted_at, for a single version of a Vector run in the bin (DESIGN.md §35.4); 7: mode 'vector' and the vectors table (§31.12.6); 6: images.deleted_at and tracks.deleted_at, for a single picture in the bin (§33.3);
 # 5: the projects table and runs.project_id, for project folders (§32.4); 4: runs have deleted_at and restored_at, for the bin (§30);
 # 3: mode 'music', lyrics, tracks (§26.5)
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 log = logging.getLogger("studio.db")
 
 # A run that is no longer queued or running. Only such a run can have a single picture sent to the bin (DESIGN.md §33.2 item 1).
@@ -72,7 +72,9 @@ CREATE TABLE IF NOT EXISTS runs (
     prompt_id        TEXT,
     prompt_version   INTEGER,
     queue_key        REAL,
-    hidden           INTEGER NOT NULL DEFAULT 0
+    hidden           INTEGER NOT NULL DEFAULT 0,
+    variation_json   TEXT,
+    family_id        TEXT
 );
 -- Project folders (DESIGN.md §32.4): a name that runs are filed under. A project is a label in this table, not a folder on the disk, so filing a
 -- run moves no file. `name_key` is the name with its case folded away (see projects.py) and is unique, so "Logo" and "logo" are one project.
@@ -200,6 +202,7 @@ class Database:
             self._add_picture_bin_columns()
             self._add_prompt_columns()
             self._add_speech_columns()
+            self._add_variation_columns()
             self.has_fts5 = self._add_prompt_search()
             self._record_version(previous)
             self._queue_order = QUEUE_ORDER
@@ -313,6 +316,18 @@ class Database:
         if "hidden" not in have:
             self._conn.execute("ALTER TABLE runs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
 
+    def _add_variation_columns(self) -> None:
+        """Schema 11: the two last columns of `runs` (DESIGN.md §43.4), added to a table that lacks them. `variation_json` is where a run that was made with More like
+        this came from, `{run_id, image_id, how}` (null for every other run); `family_id` is the id of the first run of its family, indexed, so that a family can be
+        listed (`RunFilter.family`). Plain columns and not foreign keys, like `project_id` and `prompt_id`: deleting the run it came from for good leaves the link. They are
+        the last columns, in the order `_SCHEMA` has them, so that ALTER TABLE gives the same table as CREATE TABLE does; the index cannot be made before the column
+        exists, so it is not in `_SCHEMA`."""
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(runs)")}
+        for column in ("variation_json", "family_id"):
+            if column not in have:
+                self._conn.execute(f"ALTER TABLE runs ADD COLUMN {column} TEXT")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS idx_runs_family ON runs(family_id)")
+
     def _add_prompt_search(self) -> bool:
         """Schema 9: the word index over prompts (DESIGN.md §37.4). Returns whether this SQLite has FTS5; where it has not, the studio keeps working and
         searching falls back to a plain match (`has_fts5` is False)."""
@@ -414,6 +429,39 @@ class Database:
                 "edited": r["mode"] != "music" and text is not None and " ".join(r["prompt"].split()) != " ".join(text.split()),
             }
         return found
+
+    def variation_refs_for_runs(self, rows: Sequence[sqlite3.Row]) -> dict[str, dict[str, Any]]:
+        """Where each run that was made with More like this came from (DESIGN.md §43.4), by run id: `{run_id, image_id, how, source: {prompt, state}}`, where `state` says what
+        has become of the run it came from: `present`, `in_bin` or `gone` (deleted for good, so that its words are gone too: None). A run that is not a variation is not in
+        the answer. The link itself is kept as it was made: it stays when the source goes, and the card says so."""
+        links: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            if r["variation_json"]:
+                links[r["id"]] = json.loads(r["variation_json"])
+        if not links:
+            return {}
+        wanted = sorted({link["run_id"] for link in links.values()})
+        marks = ",".join("?" * len(wanted))
+        sources = {s["id"]: s for s in self._all(f"SELECT id, prompt, deleted_at FROM runs WHERE id IN ({marks})", tuple(wanted))}
+        found: dict[str, dict[str, Any]] = {}
+        for run_id, link in links.items():
+            source = sources.get(link["run_id"])
+            state = "gone" if source is None else "in_bin" if source["deleted_at"] is not None else "present"
+            found[run_id] = {**link, "source": {"prompt": source["prompt"] if source is not None else None, "state": state}}
+        return found
+
+    def variation_counts_for_runs(self, ids: Sequence[str]) -> dict[str, int]:
+        """How many variations each run in `ids` has (DESIGN.md §43.4): the runs in the history (not in the bin) whose `family_id` is its id. A run with none is not in the
+        answer. A variation of a variation has its family's first run's id as its `family_id`, so only that first run has a count."""
+        if not ids:
+            return {}
+        marks = ",".join("?" * len(ids))
+        sql = f"SELECT family_id, COUNT(*) AS n FROM runs WHERE family_id IN ({marks}) AND deleted_at IS NULL AND hidden = 0 GROUP BY family_id"
+        return {r["family_id"]: r["n"] for r in self._all(sql, tuple(ids))}
+
+    def picture_of_run(self, run_id: str, image_id: str) -> bool:
+        """Whether `image_id` is a picture of this run that is not in the bin: a result, or one of an edit's own copies of its input pictures (DESIGN.md §43.6)."""
+        return self._one("SELECT 1 FROM images WHERE id=? AND run_id=? AND deleted_at IS NULL", (image_id, run_id)) is not None
 
     def get_run(self, run_id: str) -> Optional[sqlite3.Row]:
         return self._one("SELECT * FROM runs WHERE id=?", (run_id,))
