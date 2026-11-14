@@ -285,7 +285,9 @@ if (( WAS_RUNNING )); then
   docker compose stop "$SERVICE" >/dev/null
 fi
 say "Packing your history, images, prompts and chats..."
-tar -czf "$STAGE/data.tar.gz" -C "$REPO" data
+# data/speech/audiobooks holds the M4B audiobook files that were built on request (DESIGN.md section 44.4). They are made again whenever they are asked for, are kept for a day,
+# and can be larger than the reading's own parts, so they are not backed up. (The size shown in the summary counts them; it can only be too large.)
+tar -czf "$STAGE/data.tar.gz" -C "$REPO" --exclude=data/speech/audiobooks data
 if (( STOPPED_BY_US )); then
   docker compose start "$SERVICE" >/dev/null
   STOPPED_BY_US=0

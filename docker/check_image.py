@@ -66,6 +66,14 @@ def speech_notes() -> list[str]:
     else:
         version = subprocess.run([ffmpeg, "-version"], capture_output=True, text=True).stdout.splitlines()
         notes.append("Speech: " + (version[0] if version else "ffmpeg is installed"))
+        # the audiobook (M4B) file needs an AAC encoder and the MP4 writer (DESIGN.md section 44.4): the studio's own check is run, so that the note says what the Speech tab will say
+        try:
+            from studio.speech.audiobook import probe
+
+            found = probe(ffmpeg)
+            notes.append("Speech: ffmpeg has an AAC encoder (the audiobook file can be made)" if found.available else f"Speech: the audiobook file cannot be made: {found.reason}")
+        except Exception as exc:  # noqa: BLE001 - only a note
+            notes.append(f"Speech: could not find out whether ffmpeg can make the audiobook file ({type(exc).__name__}: {exc})")
     try:
         from studio.config import Settings
         from studio.speech import registry

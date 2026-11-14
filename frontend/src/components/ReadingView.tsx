@@ -6,10 +6,11 @@ import {
   ARROW_SECONDS, SKIP_SECONDS, SPEEDS, TEXT_SIZES, clockText, partListText, partPlayable, pieceMade, playerAction, readingFacts, readingTitle, speedText, wholeTime,
 } from "../speech";
 import { partDownloadUrl, speechApi } from "../speechApi";
-import type { PartPiece, ReadingInfo, ReadingPieceEvent } from "../speechTypes";
+import type { AudiobookCaps, PartPiece, ReadingInfo, ReadingPieceEvent } from "../speechTypes";
 import type { SpeechRun } from "../types";
 import { useMediaSession } from "../useMediaSession";
 import { usePlayer, type Player } from "../usePlayer";
+import { AudiobookControl } from "./AudiobookControl";
 import { DownloadIcon, PauseIcon, PlayIcon } from "./icons";
 
 // The reading view (DESIGN.md §38.2, §38.7): what opens when Listen is pressed on a reading's card. A player (play and pause, back and forward fifteen seconds,
@@ -21,6 +22,7 @@ export interface ReadingViewProps {
   pieces: Pick<Emitter<ReadingPieceEvent>, "subscribe">; // the `reading.piece` events
   store: KeyValueStore; // where the speed, the text size, the line spacing and Follow along are kept
   onClose: () => void;
+  audiobook?: AudiobookCaps; // whether this server can make the M4B file, and why not if it cannot (§44.4)
   autoplay?: boolean; // start playing when opened: Listen was pressed, which is the press a browser wants before it lets a page make sound
   api?: Pick<typeof speechApi, "part" | "savePosition" | "editPiece">;
   saveEveryMs?: number;
@@ -170,6 +172,7 @@ function ReadAlong({ player, run, editApi }: { player: Player; run: SpeechRun; e
                 role={heading ? "heading" : undefined} aria-level={heading ? 4 : undefined} aria-current={current ? "true" : undefined}
                 title={made ? "Hear from here" : undefined} onClick={made ? () => player.playPiece(piece.idx) : undefined}
               >
+                {piece.speaker && <span className="piece-speaker">{piece.speaker}<span className="sr-only">:</span> </span>}
                 {piece.text}
                 {!made && <span className="sr-only"> (not made yet)</span>}
               </p>
@@ -188,7 +191,7 @@ function ReadAlong({ player, run, editApi }: { player: Player; run: SpeechRun; e
 }
 
 // ------------------------------------------------------------------ the view
-export function ReadingView({ run, pieces, store, onClose, autoplay = true, api, saveEveryMs, mediaSession }: ReadingViewProps) {
+export function ReadingView({ run, pieces, store, onClose, audiobook, autoplay = true, api, saveEveryMs, mediaSession }: ReadingViewProps) {
   const first = useRef<HTMLAudioElement>(null);
   const second = useRef<HTMLAudioElement>(null);
   const root = useRef<HTMLElement>(null);
@@ -232,6 +235,9 @@ export function ReadingView({ run, pieces, store, onClose, autoplay = true, api,
       </header>
 
       <PlayerBar player={player} reading={reading} run={run} />
+
+      {/* the audiobook file of what is finished (DESIGN.md §44.4), beside the player: the same control as on the reading's card */}
+      {reading.parts_done > 0 && <AudiobookControl runId={run.id} reading={reading} audiobook={audiobook} />}
 
       <div className="reading-view-status" role="status">
         {player.loading && <span>Loading…</span>}

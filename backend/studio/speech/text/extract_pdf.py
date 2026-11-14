@@ -19,6 +19,7 @@ from typing import Any, Optional
 from .clean import is_page_number, join_lines, normalize
 from .errors import PASTE_HINT, PrepareError
 from .model import Block, Chapter, Extracted
+from .speakers import speaker_keys, starts_speaker_line
 
 MAX_PAGES = 3000
 EDGE_LINES = 3  # how many lines at the top and at the bottom of a page count as its header and footer
@@ -61,8 +62,9 @@ def _strip_furniture(pages: list[list[str]]) -> int:
     return removed
 
 
-def _paragraphs(lines: list[str]) -> list[str]:
-    """Paragraphs from the lines of one or more pages (see the module's description, step 3)."""
+def _paragraphs(lines: list[str], keys: Optional[set[str]] = None) -> list[str]:
+    """Paragraphs from the lines of one or more pages (see the module's description, step 3). A line that begins with a speaker's label (`keys`, DESIGN.md §44.5) starts a
+    paragraph of its own, as a script's lines have no blank lines between them."""
     lengths = [len(line.strip()) for line in lines if len(line.strip()) > 20]
     usual = statistics.median(lengths) if lengths else 0
     paragraphs: list[str] = []
@@ -78,6 +80,8 @@ def _paragraphs(lines: list[str]) -> list[str]:
         if not stripped:
             flush()
             continue
+        if keys and current and starts_speaker_line(stripped, keys):
+            flush()
         current.append(stripped)
         if usual and _SENTENCE_END.search(stripped) and len(stripped) < 0.75 * usual:
             flush()
@@ -101,7 +105,7 @@ def _outline_starts(reader: Any, page_count: int) -> list[tuple[str, int]]:
     return sorted(((title, page) for page, title in starts.items()), key=lambda pair: pair[1])
 
 
-def extract_pdf(path: str) -> Extracted:
+def extract_pdf(path: str, speakers: bool = True) -> Extracted:
     try:
         from pypdf import PdfReader
     except ImportError as exc:
@@ -137,9 +141,10 @@ def extract_pdf(path: str) -> Extracted:
     if blank and blank >= max(2, page_count // 10):
         warnings.append(f"{blank} of the {page_count} pages have no text (pictures, or scanned pages) and were left out.")
     _strip_furniture(pages)
+    keys = speaker_keys(line.strip() for lines in pages for line in lines) if speakers else None  # the speakers of the whole document, found before it is cut into chapters
 
     def blocks_for(first: int, last: int) -> list[Block]:
-        return [Block("paragraph", p) for p in _paragraphs([line for lines in pages[first:last] for line in lines])]
+        return [Block("paragraph", p) for p in _paragraphs([line for lines in pages[first:last] for line in lines], keys)]
 
     if len(outline) >= 2:
         chapters: list[Chapter] = []

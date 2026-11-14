@@ -167,6 +167,23 @@ describe("a reading's card", () => {
     expect(screen.queryByText("Non-commercial use only")).toBeNull();
   });
 
+  it("says how much of the pronunciation list the reading was made with, when it changed any word, and says nothing when it changed none (§44.3)", () => {
+    card(makeSpeechRun({ reading: reading(done(), { pronunciations: { entries: 3, uses: 14 } }) }));
+    expect(screen.getByText("Pronunciation list: 3 entries, 14 words said your way.").getAttribute("data-note")).toBe("pronunciation");
+    cleanup();
+    card(makeSpeechRun({ reading: reading(done(), { pronunciations: { entries: 0, uses: 0 } }) }));
+    expect(screen.queryByText(/Pronunciation list:/)).toBeNull();
+  });
+
+  it("says who speaks besides the main voice, from the cast the reading kept, and says nothing for a reading with no speakers (§44.5)", () => {
+    const bea = { kind: "preset" as const, id: "bea", label: "Bea" };
+    card(makeSpeechRun({ reading: reading(done(), { speakers: [{ name: "Alice", voice: bea, lines: 3 }, { name: "Bob", voice: null, lines: 2 }] }) }));
+    expect(screen.getByText("Speakers: Alice in Bea, Bob in the main voice.").getAttribute("data-note")).toBe("speakers");
+    cleanup();
+    card(makeSpeechRun({ reading: reading(done(), { speakers: [] }) }));
+    expect(screen.queryByText(/^Speakers:/)).toBeNull();
+  });
+
   it("says it is in a project even when the page does not know that project's name (yet)", () => {
     card(makeSpeechRun({ project_id: "f".repeat(32) }));
     expect(document.querySelector("[data-project-chip]")?.textContent).toContain("Project");
@@ -414,6 +431,14 @@ describe("the history under the Speech tab", () => {
     expect(screen.getByRole("heading", { name: "Speech isn't available on this server" })).toBeTruthy();
     expect(screen.getByRole("article", { name: /reading, First book/ })).toBeTruthy();
     expect(screen.getByRole("link", { name: /Download/ })).toBeTruthy();
+  });
+
+  it("gives each card what the server said of ffmpeg, so a card says why the audiobook cannot be made (DESIGN.md §44.4)", () => {
+    const caps = { ...CAPS, speech: { ...CAPS.speech, audiobook: { available: false, reason: "The audiobook file needs ffmpeg, and it was not found on this server.", hint: null } } };
+    show(history([a()]), caps);
+    const card = within(screen.getByRole("region", { name: "Your readings" })).getByRole("article");
+    expect(within(card).getByText(/needs ffmpeg, and it was not found/)).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Make audiobook (M4B)" }).getAttribute("aria-disabled")).toBe("true");
   });
 
   it("is not there at all when the page gives no history (the panel on its own)", () => {

@@ -297,6 +297,24 @@ check "the live data was not modified" test "$(tree_hash "$REPO/data")" = "$PRIS
 contains "the summary says how to copy it to a NAS" "$out" "NAS"
 contains "the summary says how to check the copy" "$out" "restore.sh --verify"
 
+# DESIGN.md section 44.4: the M4B audiobook files built on request live in data/speech/audiobooks, are made again whenever they are asked for, and can be larger than the
+# reading's own parts. A backup leaves the folder out and keeps everything else beside it (a reading, a voice), which is what the exclude in backup.sh must do exactly.
+section "the audiobook files (data/speech/audiobooks) are not in the backup; the readings beside them are"
+fresh
+mkdir -p "$REPO/data/speech/audiobooks"
+head -c 50000 /dev/urandom > "$REPO/data/speech/audiobooks/run1-abc123abc123.m4b"
+head -c 700 /dev/urandom > "$REPO/data/speech/audiobooks/run1-abc123abc123.m4b.part"   # and one that was being made
+out=$(bk "$DEST" 2>&1); rc=$?
+equals "exits 0" "$rc" 0
+B=$(latest)
+rm -rf "$T/xa"; mkdir -p "$T/xa"; member data.tar.gz | tar -xz -C "$T/xa"
+check "the audiobook file is not in the data piece" test ! -e "$T/xa/data/speech/audiobooks/run1-abc123abc123.m4b"
+check "nor is the half-made one" test ! -e "$T/xa/data/speech/audiobooks/run1-abc123abc123.m4b.part"
+check "the audiobook folder is not there at all" test ! -d "$T/xa/data/speech/audiobooks"
+check "the reading beside it is" cmp -s "$T/xa/data/speech/readings/run1/0000/00000.wav" "$REPO/data/speech/readings/run1/0000/00000.wav"
+check "so is the saved voice's recording" cmp -s "$T/xa/data/speech/voices/v1/reference.wav" "$REPO/data/speech/voices/v1/reference.wav"
+check "and the live audiobook file was not touched" test -s "$REPO/data/speech/audiobooks/run1-abc123abc123.m4b"
+
 # The new default. With all three models in the cache, a plain backup holds all three, in a fixed order, and nothing else from the
 # cache (another tool's model in the same folder must stay out).
 section "the models are in every backup, by default"

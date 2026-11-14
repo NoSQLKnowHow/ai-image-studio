@@ -5,10 +5,12 @@
 // piece is being spoken, where to resume). Nothing here names an engine: what an engine can do comes from `capabilities.speech`.
 
 import type { KeyValueStore } from "./options";
+import { pronunciationLine } from "./pronunciation";
 import type {
-  EngineState, PartDetail, PartPiece, PositionBody, PresetVoice, Prepared, ReadingBody, ReadingInfo, ReadingPart, ReadingPosition, SavedVoice, SourceInfo, SpeechCaps, SpeechEngine,
-  SampleBody, SpeechJob, SpeechLimits, StagedRecording,
+  EngineState, PartDetail, PartPiece, PositionBody, PresetVoice, Prepared, ReadingBody, ReadingInfo, ReadingParagraphBody, ReadingPart, ReadingPosition, ReadingSpeakerBody, SavedVoice,
+  SourceInfo, SpeechCaps, SpeechEngine, SampleBody, SpeechJob, SpeechLimits, StagedRecording,
 } from "./speechTypes";
+import type { Cast } from "./speakers";
 import type { SpeechRun } from "./types";
 
 // ------------------------------------------------------------------ numbers as words
@@ -60,6 +62,8 @@ export interface DraftParagraph {
   text: string;
   skipped: string | null; // why it will not be read (code, a table), or null; the server decides this, and the switch "read code and tables too" asks it again
   edited: boolean; // the person changed its words here
+  speaker: string | null; // the speaker whose line it is (DESIGN.md §44.5); `text` is then the words without the name that began the line
+  label: string | null; // the words that began the line (`Alice:`), put back in front of the words if the person turns that name off
 }
 
 /** A part as it is being reviewed. `key` is what React keeps it by: it stays with a part when others are merged or renamed. */
@@ -78,7 +82,7 @@ export function draftFromPrepared(prepared: Prepared): DraftPart[] {
     title: part.title,
     include: part.include,
     note: part.note,
-    paragraphs: part.paragraphs.map((p) => ({ kind: p.kind, text: p.text, skipped: p.skipped, edited: false })),
+    paragraphs: part.paragraphs.map((p) => ({ kind: p.kind, text: p.text, skipped: p.skipped, edited: false, speaker: p.speaker ?? null, label: p.label ?? null })),
   }));
 }
 
@@ -179,15 +183,16 @@ export function reviewChanged(parts: readonly DraftPart[], prepared: Prepared): 
   });
 }
 
-/** The two switches of a text: clean it up, and read code and tables too. */
+/** The three switches of a text: clean it up, read code and tables too, and find the speakers (lines that begin with a name and a colon, §44.5). */
 export interface Switches {
   clean: boolean;
   readExtras: boolean;
+  speakers: boolean;
 }
 
 /** Whether the switches now differ from the ones the review was asked for with: the review does not change by itself, and the page says to prepare again. The
  *  page compares with what it asked, not with the `options` the server sends back, so that it does not depend on the server repeating them. */
-export const switchesChanged = (made: Switches, now: Switches): boolean => made.clean !== now.clean || made.readExtras !== now.readExtras;
+export const switchesChanged = (made: Switches, now: Switches): boolean => made.clean !== now.clean || made.readExtras !== now.readExtras || made.speakers !== now.speakers;
 
 /** "5 of 6 parts included · about 1 h 20 min of audio": the line above the parts. */
 export function reviewLine(parts: readonly DraftPart[], limits: Pick<SpeechLimits, "chars_per_second">): string {
@@ -360,11 +365,20 @@ export function readingProblem(parts: readonly DraftPart[], engine: SpeechEngine
   return null;
 }
 
+/** What a paragraph is sent as (§44.5). A line of a speaker who is on goes with the name and without its label. A line of a name that was turned off goes as it was written: the
+ *  label is put back in front of the words and no speaker is named, so the main voice reads it, name and all. */
+export function paragraphToSend(paragraph: { kind: "heading" | "paragraph"; text: string; speaker: string | null; label: string | null }, cast: Cast): ReadingParagraphBody {
+  if (!paragraph.speaker) return { kind: paragraph.kind, text: paragraph.text };
+  if (cast[paragraph.speaker]?.on ?? true) return { kind: paragraph.kind, text: paragraph.text, speaker: paragraph.speaker };
+  return { kind: paragraph.kind, text: `${paragraph.label ?? `${paragraph.speaker}:`} ${paragraph.text}` };
+}
+
 /** The request for a reading (`POST /api/readings`): the parts that will be read, their paragraphs that will be spoken, the engine and the voice. The title is the
- *  one the person left in the box, else the one the review gave. */
+ *  one the person left in the box, else the one the review gave. `speakers` (already chosen by `speakersToSend`) and the `cast` they came from are what makes it a reading in
+ *  several voices; with neither, it is the reading it was before release 1.25. */
 export function buildReadingBody(
   title: string, source: SourceInfo | Record<string, unknown>, parts: readonly DraftPart[], engine: SpeechEngine, voice: PresetVoice | SavedVoice, style: string,
-  language: string,
+  language: string, speakers: ReadingSpeakerBody[] = [], cast: Cast = {},
 ): ReadingBody {
   const saved = isSaved(voice);
   const shownTitle = collapse(title) || "Reading";
@@ -378,8 +392,9 @@ export function buildReadingBody(
     language: languageToSend(engine, language),
     parts: partsToRead(parts).map((part) => ({
       title: collapse(part.title),
-      paragraphs: part.paragraphs.filter((p) => p.skipped === null && collapse(p.text)).map((p) => ({ kind: p.kind, text: collapse(p.text) })),
+      paragraphs: part.paragraphs.filter((p) => p.skipped === null && collapse(p.text)).map((p) => paragraphToSend({ ...p, text: collapse(p.text) }, cast)),
     })),
+    speakers,
   };
 }
 
@@ -461,7 +476,8 @@ export function queuedText(run: SpeechRun): string {
   const r = run.reading;
   const title = r?.title || run.options.title || run.prompt;
   if (!r) return `Queued “${title}”.`;
-  return `Queued “${title}”: ${plural(r.parts_total, "part")}, ${aboutLength(r.seconds_total)}.`;
+  const said = pronunciationLine(r.pronunciations); // how much of the pronunciation list the reading took with it (DESIGN.md §44.3)
+  return `Queued “${title}”: ${plural(r.parts_total, "part")}, ${aboutLength(r.seconds_total)}.${said ? ` ${said}` : ""}`;
 }
 
 /** The facts under a card's title: where the text came from, the engine and the voice. */

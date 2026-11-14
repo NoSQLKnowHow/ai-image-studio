@@ -107,6 +107,10 @@ export function SpeechSourceBox({ source, limits }: Props) {
           <input type="checkbox" checked={source.readExtras} disabled={busy} onChange={(e) => source.setReadExtras(e.target.checked)} />
           <span>Read code and tables too <span className="field-hint">(they are left out otherwise)</span></span>
         </label>
+        <label className="choice">
+          <input type="checkbox" checked={source.speakers} disabled={busy} onChange={(e) => source.setSpeakers(e.target.checked)} />
+          <span>Find speakers <span className="field-hint">(lines that begin with a name and a colon, as in a script, can be read in different voices)</span></span>
+        </label>
       </div>
 
       {busy && (

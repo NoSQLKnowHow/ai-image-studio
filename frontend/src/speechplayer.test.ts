@@ -49,7 +49,7 @@ class StandIn extends EventTarget {
 
 const RATE = 1000;
 const piece = (idx: number, start: number | null, part = 0, frames = 2000): PartPiece => ({
-  idx, kind: "paragraph", text: `Paragraph ${idx}`, continues: false, status: start === null ? "pending" : "done", frames: start === null ? null : frames,
+  idx, kind: "paragraph", text: `Paragraph ${idx}`, continues: false, speaker: null, status: start === null ? "pending" : "done", frames: start === null ? null : frames,
   start_frame: start, error: null, url: start === null ? null : `/p${part}/${idx}.wav`,
 });
 /** A part of five pieces, two seconds each, of which `made` are made, and none of it whole yet. */

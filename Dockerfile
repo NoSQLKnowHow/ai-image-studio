@@ -66,10 +66,11 @@ ENV STUDIO_MUSIC_LIBS=/opt/music-libs
 # with its reason on the Speech tab, and docker/check_image.py prints a line for each ("Speech: ..."). None of it can fail the build, and none of it replaces NVIDIA's builds
 # (the pins protect them, and check_image.py fails the build if one was replaced).
 #
-# ffmpeg reads a voice recording that is not a plain WAV (MP3, M4A, OGG, FLAC, WebM).
+# ffmpeg reads a voice recording that is not a plain WAV (MP3, M4A, OGG, FLAC, WebM), and makes the M4B audiobook file (DESIGN.md section 44.4), for which it needs an AAC
+# encoder. The system package's own encoder ("aac") is built into ffmpeg and needs no extra library; docker/check_image.py prints whether this ffmpeg has it.
 # hadolint ignore=DL3008
 RUN (apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*) \
-    || echo "NOTE: ffmpeg could not be installed; a voice recording that is not a plain WAV file will be refused (DESIGN.md section 38.4)"
+    || echo "NOTE: ffmpeg could not be installed; a voice recording that is not a plain WAV file will be refused, and so will the M4B audiobook file (DESIGN.md sections 38.4 and 44.4)"
 COPY backend/requirements-speech-kokoro.txt backend/requirements-speech-piper.txt backend/requirements-speech-qwen3-extras.txt \
      backend/requirements-speech-qwen3.txt backend/requirements-speech-voxtral.txt /app/backend/
 # Kokoro, Piper and what Qwen3-TTS imports besides torch and transformers do not conflict with anything in the image, so they are installed with it, under its pins.

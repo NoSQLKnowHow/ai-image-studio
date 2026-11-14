@@ -17,6 +17,7 @@ from .clean import Report, clean_text, collapse_spaces, normalize
 from .errors import PASTE_HINT, PrepareError
 from .model import SKIP_CODE, SKIP_TABLE, Chapter, Extracted, Paragraph
 from .parts import draft_parts, title_from
+from .speakers import accepted, candidate, tally
 
 SKIPPED_PREVIEW_CHARS = 1000  # how much of a skipped block the review carries: it is shown greyed, not read
 
@@ -77,8 +78,30 @@ def _paragraphs(chapter: Chapter, report: Report, clean: bool, read_extras: bool
     return out
 
 
-def build_review(extracted: Extracted, limits: Limits, source: dict[str, Any], *, clean: bool = True, read_extras: bool = False) -> dict[str, Any]:
-    """The review of a source: its parts and paragraphs, what was cleaned, any warnings. Raises PrepareError for a source with no text or too much."""
+def _tag_speakers(cache: dict[int, list[Paragraph]]) -> list[dict[str, Any]]:
+    """Find the speakers (DESIGN.md §44.5) among the cleaned paragraphs of every chapter and mark their lines: a paragraph of a speaker gets the speaker's name, the label
+    it began with, and its words without the label. The paragraphs in `cache` are replaced in place. Returns the names found, in the order they first appear, with the number
+    of lines and the first of them. Only a paragraph that is not a heading and is not left out can be a speaker's line, and the name is the first spelling met (`ALICE:` and
+    `Alice:` are one speaker)."""
+    lines = [p.text for paragraphs in cache.values() for p in paragraphs if p.kind == "paragraph" and p.skipped is None]
+    found = accepted(tally(lines))
+    if not found:
+        return []
+    for key, paragraphs in cache.items():
+        tagged = []
+        for p in paragraphs:
+            label = candidate(p.text) if p.kind == "paragraph" and p.skipped is None else None
+            if label is not None and label.key in found:
+                tagged.append(Paragraph(p.kind, label.rest, None, speaker=found[label.key].name, label=label.label))
+            else:
+                tagged.append(p)
+        cache[key] = tagged
+    return [{"name": f.name, "lines": f.lines, "sample": f.sample} for f in found.values()]
+
+
+def build_review(extracted: Extracted, limits: Limits, source: dict[str, Any], *, clean: bool = True, read_extras: bool = False, speakers: bool = True) -> dict[str, Any]:
+    """The review of a source: its parts and paragraphs, what was cleaned, any warnings, and (with `speakers`) the speakers its lines name. Raises PrepareError for a source
+    with no text or too much."""
     report = Report()
     cache: dict[int, list[Paragraph]] = {}
 
@@ -94,6 +117,7 @@ def build_review(extracted: Extracted, limits: Limits, source: dict[str, Any], *
         raise PrepareError("no_text", "No text that can be read was found.", PASTE_HINT)
     if spoken > limits.max_chars:
         raise PrepareError("too_large", f"The text has {spoken:,} characters; one reading can hold {limits.max_chars:,}. Leave some parts out, or make two readings.")
+    cast = _tag_speakers(cache) if speakers else []  # before the parts are made: they are made of the paragraphs as they now stand
     parts = draft_parts(extracted.chapters, paragraphs_of, limits.part_max_chars)
     first_included = next((p for p in parts if p.include), parts[0])
     title = (collapse_spaces(extracted.title) if extracted.title else None) or title_from(first_included.paragraphs)
@@ -106,6 +130,7 @@ def build_review(extracted: Extracted, limits: Limits, source: dict[str, Any], *
         "cleaning": report.lines() if clean else [],
         "chars": total,
         "minutes": round(total / limits.chars_per_second / 60, 1),
-        "options": {"clean": clean, "read_extras": read_extras},
+        "speakers": cast,
+        "options": {"clean": clean, "read_extras": read_extras, "speakers": speakers},
         "chapters_found": len(included),
     }

@@ -12,6 +12,7 @@ import re
 from .clean import Report, normalize, split_paragraphs
 from .errors import PrepareError
 from .model import Block, Chapter, Extracted
+from .speakers import speaker_keys, starts_speaker_line
 
 # A line that stands alone and names a division of a book. Case does not matter; the rest of the line (a number, a title) is limited so that a sentence
 # that happens to start with "Part of the reason" is not taken for a heading: the whole line must be short and must not end like a sentence.
@@ -44,14 +45,16 @@ def decode_text(data: bytes) -> str:
 _LOOKS_LIKE_MARKDOWN = re.compile(r"^(?:#{1,6}[ \t]+\S|\s{0,3}(?:```|~~~)|\s*\|.+\|[ \t]*\n[ \t]*\|[ \t:|-]+\|)", re.MULTILINE)
 
 
-def extract_plain(text: str) -> Extracted:
+def extract_plain(text: str, speakers: bool = True) -> Extracted:
     """Pasted text or a .txt file: paragraphs from the blank lines, chapters from lines that name one (two or more of them, else the text is one piece).
-    Text that is really Markdown (see `_LOOKS_LIKE_MARKDOWN`) is read as Markdown, because people paste it from chat programs and editors."""
+    Text that is really Markdown (see `_LOOKS_LIKE_MARKDOWN`) is read as Markdown, because people paste it from chat programs and editors. With `speakers` on (the
+    default), a line that begins with a speaker's name starts a paragraph of its own (DESIGN.md §44.5); the speakers are found from the whole text first."""
     if _LOOKS_LIKE_MARKDOWN.search(text):
-        return extract_markdown(text)
+        return extract_markdown(text, speakers)
     report = Report()
     blocks: list[Block] = []
-    for paragraph in split_paragraphs(text, report):
+    keys = speaker_keys(normalize(text).split("\n")) if speakers else None
+    for paragraph in split_paragraphs(text, report, keys):
         blocks.append(Block("heading", paragraph, 1) if _names_a_division(paragraph) else Block("paragraph", paragraph))
     return Extracted(title=None, chapters=_chapters(blocks, split_level=1, minimum=2))
 
@@ -65,10 +68,11 @@ def _names_a_division(line: str) -> bool:
     return not re.search(r"[.!?]$", line) or len(line.split()) <= 4
 
 
-def extract_markdown(text: str) -> Extracted:
+def extract_markdown(text: str, speakers: bool = True) -> Extracted:
     """A Markdown file. Chapters are cut at the level-1 headings if there are two or more of them, else at the level-2 headings if there are two or more
-    of those; a single level-1 heading is the document's title."""
+    of those; a single level-1 heading is the document's title. With `speakers` on, a line that begins with a speaker's name starts a new paragraph (DESIGN.md §44.5)."""
     lines = normalize(text).split("\n")
+    keys = speaker_keys(line.strip() for line in lines) if speakers else set()
     blocks: list[Block] = []
     paragraph: list[str] = []
 
@@ -120,7 +124,10 @@ def extract_markdown(text: str) -> Extracted:
             flush()
         else:
             quote = _QUOTE.match(line)
-            paragraph.append((quote.group(1) if quote else line).strip())
+            words = (quote.group(1) if quote else line).strip()
+            if keys and paragraph and starts_speaker_line(words, keys):
+                flush()  # a speaker's line begins here, with no blank line before it
+            paragraph.append(words)
         i += 1
     flush()
     levels = [b.level for b in blocks if b.kind == "heading"]
